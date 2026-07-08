@@ -1,0 +1,493 @@
+Title: Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference
+
+URL Source: https://arxiv.org/pdf/2606.31093v1
+
+Published Time: Wed, 01 Jul 2026 00:33:24 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# OMNI -F LOW : A U NIFIED WORKFLOW ORCHESTRATION AND DISTRIBUTED 
+
+# KV C ACHE SHARING FRAMEWORK FOR MULTIMODAL INFERENCE 
+
+Bin Xiao * 1 Jingfu Dong * 2 Changran Wang 1 Yitian Chen 1
+
+Xiaoyu Zhao 1 Yuqi Peng 1 Jianping Lin 1 Yuchen Xie 1   
+
+> 1Meituan 2Peking University *Equal contribution Code: https://github.com/meituan-longcat/omni-flow.git
+
+# ABSTRACT 
+
+As large language model (LLM) inference evolves from text-only to multimodal paradigms, inference systems face three challenges: (1) flexible orchestration of multimodal workflows, where heterogeneous computing units exhibit complex dependencies and concurrent control; (2) efficient transmission of massive intermediate data across processes and nodes, with tensors flowing at high speed among heterogeneous roles; and (3) efficient sharing of KV caches and model weights across roles to eliminate redundant GPU memory. Existing solutions deploy LLMs and diffusion models independently, lacking a system-level abstraction for multimodal pipelines; this scatters orchestration logic, tightly couples transmission paths to specific models, and incurs high cost to integrate new models. To address these challenges, we present Omni-Flow, a distributed scheduling framework for multimodal inference through a three-layer abstraction. The Control Flow layer defines workflows via a Python DSL, orchestrating heterogeneous units into a unified dataflow graph that supports static DAGs and dynamic routing, with built-in service discovery and diverse load-balancing strategies. The Data Flow layer provides a distributed KV cache abstraction beyond prefill/decode separation, unifying allocation and enabling direct cross-role transmission across a three-tier paged storage hierarchy (GPU/CPU/SSD) over zero-copy, low-latency channels. The Compute Flow layer supports complex multimodal prefix matching for KV reuse across multi-turn dialogues, and takes over KV cache and sampling logic via a unified SGLang interface, letting diffusion models directly reuse the LLM forward path under unified parallel semantics. We demonstrate that Omni-Flow supports diverse heterogeneous scenarios with a consistent programming model, including omni-modal dialogue (LongCat-Next) and complex image generation pipelines (HunyuanImage-3). 
+
+# 1 INTRODUCTION 
+
+Multimodal large language model (MLLM) applications are becoming increasingly widespread. However, multimodal inference frameworks have not kept pace with this rapid evolution. Current MLLMs require multiple heterogeneous computational modules to collaborate during inference, in-cluding text encoders, vision encoders (Dosovitskiy et al., 2021; Radford et al., 2021; Zhai et al., 2023), audio en-coders (Radford et al., 2022; Du et al., 2024), large language models (LLMs) for text generation or Diffusion Transformer (DiT) forward computation (Vaswani et al., 2017; Touvron et al., 2023), diffusion denoising modules (Ho et al., 2020; Rombach et al., 2022; Peebles & Xie, 2023), and varia-tional autoencoder (VAE) encoders and decoders (Kingma & Welling, 2014). Multimodal model architectures are still evolving rapidly, and different tasks exhibit substantially different model topologies. Image understanding (Liu et al., 2023; Chen et al., 2023b), image generation (Podell et al.,  
+
+> Correspondence to: Bin Xiao <xiaobin14@meituan.com >.
+
+2023; Black Forest Labs, 2024), speech recognition, and spoken dialogue employ different encoder and decoder struc-tures as well as different execution schedules. At this stage, therefore, building a unified system framework that can effi-ciently accommodate diverse model architectures is more urgent than aggressively optimizing for a single fixed archi-tecture. As shown in Fig. 1, recent model designs represented by BAGEL (Deng et al., 2025) and HunyuanImage-3 (Ten-cent Hunyuan Team, 2025) are increasingly unifying under-standing and generation within a shared Transformer back-bone (Xie et al., 2024; Wu et al., 2024; Emu3 Team, BAAI, 2024). The LLM performs cross-modal understanding, while the diffusion process reuses the same model weights during generation and shares the KV cache to avoid redun-dant GPU memory consumption. LongCat-Next (Meituan LongCat Team et al., 2026), in contrast, adopts an architec-ture consisting of an LLM and multiple multimodal heads, where the text, image, and audio heads exhibit substantially  
+
+> arXiv:2606.31093v1 [cs.DC] 30 Jun 2026 Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference
+> Figure 1. Multimodal Model Architectures and Convergence Trends
+
+different computational loads. Any-to-any multimodal models compose multiple heteroge-neous models into a single inference pipeline. Consequently, intermediate tensors and KV caches are no longer confined to a single inference engine, but must be efficiently shared and transferred across different computational roles. This shift introduces several new system requirements. Resource-constrained single-node deployments require local sharing of model weights and KV caches to avoid doubling GPU memory consumption. High-performance deployments spanning multiple machines require a unified mechanism for distributed KV-cache management. Meanwhile, continu-ously evolving multimodal model topologies demand a flexi-ble workflow abstraction capable of accommodating diverse heterogeneous execution pipelines. Existing production-grade inference frameworks, however, lack a system-level abstraction that jointly addresses these requirements. To address these challenges, we present O MNI -F LOW , a model-agnostic serving framework for heterogeneous mul-timodal inference. O MNI -F LOW organizes a unified multi-modal inference system around three cooperating abstrac-tions: Control Flow, Data Flow, and Compute Flow (overall architecture shown in Fig. 2). (1) Control Flow provides a unified representation of multimodal workflows and their execution logic. It models multimodal inference as a declar-ative directed graph with support for cycles, where nodes represent heterogeneous computational roles and edges rep-resent data-transfer channels. The abstraction supports advanced workflow semantics, including OR-AND aggre-gation, multi-yield streaming, diamond, serial, and multi-stream joins. It also incorporates service discovery and mul-tiple load-balancing policies, decoupling workflow topology from model implementation. (2) Data Flow provides uni-fied management of intermediate tensors and distributed KV caches through a common data plane that supports data sharing and transfer across processes, machines, and storage tiers. For KV-cache management, O MNI -F LOW integrates direct prefill-to-decode (PD) transfer (Patel et al., 2024; Zhong et al., 2024), paged management (Kwon et al., 2023), and hierarchical storage (Gao et al., 2024; Qin et al., 2024) into a distributed KV-cache manager. This design restricts the inference engine to model forward computation while delegating cache allocation, migration, sharing, and recla-mation across the L1/L2/L3 storage hierarchy to the data plane. It further supports direct data sharing and transfer across computational roles, storage tiers, and machines. The system also provides a zero-copy, low-latency communi-cation channel with a tiered fallback mechanism, while supporting zero-copy sharing of model weights, KV caches, and input/output parameters among multiple processes on the same machine. (3) Compute Flow provides a unified execution interface for heterogeneous models. It supports complex multimodal prefix matching—spanning both full matching and incremental matching modes—to enable KV reuse across multi-turn dialogues involving heterogeneous modal outputs. It uses SGLang as a deeply customizable LLM inference kernel and takes control of the KV-cache pool and sampling post-processing through a unified inter-face. For compatible diffusion models, the DiT module can directly reuse the execution path and PagedAttention infras-tructure (Kwon et al., 2023) of the LLM inference engine. This design enables model weights and KV caches to be shared under unified parallel-execution semantics, reducing duplicated implementation effort and improving resource reuse across heterogeneous models. These three abstrac-tions are decoupled yet cooperative, allowing model topol-ogy, data movement, and underlying computation to evolve independently. Together, they provide a unified, extensi-ble, and efficient serving framework for rapidly evolving multimodal models. To summarize, we make the following contributions. Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference  
+
+> Figure 2. Omni-Flow Overall Architecture: Control Flow, Data Flow, and Compute Flow
+
+• We propose a unified declarative workflow abstrac-tion that models multimodal inference as an execution graph, supporting heterogeneous computation roles, conditional execution, multi-yield streaming, flexible join patterns, and iterative workflows with loops. • We propose a unified data plane that manages the life-cycle of intermediate tensors and KV caches, unifying cache management, data transfer, hierarchical storage, and zero-copy sharing into a single framework for effi-cient cross-role and cross-machine resource sharing. • We propose a unified heterogeneous computation ab-straction that enables compatible Diffusion Transform-ers to reuse the execution infrastructure of LLM in-ference engines, reducing model adaptation overhead while improving resource reuse. • We implement Omni-Flow on top of SGLang and vali-date its effectiveness, generality, and scalability on rep-resentative multimodal models. We also share our AI-assisted development practices and engineering lessons in Appendix C. 
+
+# 2 RELATED WORK 
+
+2.1 Multimodal Inference Serving and Workflow Orchestration 
+
+Modern LLM serving systems, such as vLLM (Kwon et al., 2023) and SGLang (Zheng et al., 2024), incorporate a ma-ture set of optimizations, including paged KV-cache man-agement (Kwon et al., 2023), prefix caching (Zheng et al., 2024), continuous batching (Yu et al., 2022; Anyscale, 2023), prefill–decode disaggregation (Patel et al., 2024; Zhong et al., 2024; Agrawal et al., 2024), hierarchical KV-cache storage (Gao et al., 2024; Qin et al., 2024), and KV-cache compression for long contexts (Liu et al., 2024; Yang et al., 2024; Lee et al., 2024). These techniques substantially improve the throughput and resource utilization of autore-gressive inference, but are primarily designed around the ex-ecution of a single LLM and therefore do not readily gener-alize to any-to-any multimodal inference involving multiple heterogeneous models. Recent systems, including vLLM-Omni (vLLM Team, 2026) and SGLang-Omni (SGLang Team, 2025), extend LLM serving to multimodal workloads by decomposing a workflow into multiple stages. Their execution topologies, however, remain tightly coupled to model implementations. vLLM-Omni exposes only coarse-grained stages, leaving modality-specific components such as vision and audio encoders encapsulated within individ-ual models. SGLang-Omni supports finer-grained stages, but distributes topology specifications across configuration, routing, and executor components, complicating extension and maintenance. Both systems also provide limited support for dynamic control flow: vLLM-Omni cannot skip stages on a per-request basis, whereas SGLang-Omni supports only coarse-grained path routing. Moreover, their streaming interfaces depend on the underlying communication mecha-nisms, and their execution models are restricted to directed acyclic graphs, precluding iterative workflows with loops. General-purpose orchestration frameworks such as Lang-Graph (LangChain Inc., 2024) and LangChain (Chase, 2022) expose explicit graph abstractions, but target application-level agent orchestration rather than the tensor-level schedul-ing required within a multimodal inference engine. Rep-Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+resentative workflow definitions for these systems are pro-vided in Appendix B, and Table 1 summarizes the capability comparison. 
+
+2.2 KV-Cache Management for Multimodal Inference 
+
+The emergence of unified multimodal understanding and generation models, such as BAGEL (Deng et al., 2025), HunyuanImage-3 (Tencent Hunyuan Team, 2025), Show-o (Xie et al., 2024), and Janus (Wu et al., 2024), has made cross-model KV-cache sharing increasingly important for efficient multimodal inference. Existing multimodal serving systems, however, provide no general mechanism for such sharing. vLLM-Omni implements dedicated support for models such as BAGEL and HunyuanImage-3, whereas the publicly available version of SGLang-Omni does not yet support this class of models. Existing approaches are model-specific: they typically maintain a private tensor cache within each model and transfer KV-cache states between the autoregressive model and diffusion module through manual serialization and layer-wise injection. Confining the KV cache to a single request and process prevents efficient shar-ing across nodes. The absence of reuse across requests and interaction rounds further requires common prefixes to be recomputed for each inference request. Moreover, because cache-transfer logic is tightly coupled to model architecture, supporting a new multimodal model requires a dedicated KV-cache migration mechanism. These limitations moti-vate a model-agnostic KV-cache abstraction that supports distributed transfer and reuse across models, requests, and inference rounds. 
+
+# 3 CONTROL FLOW 
+
+The Control Flow layer abstracts the “multimodal, multi-heterogeneous computing unit inference pipeline” into a declarative graph DSL, with the framework layer taking over all scheduling and data transmission. This completely removes the burden of scheduling details from the business-side computational logic. The design pursues two key goals: universality —a single set of abstractions covering any arbitrary concatenation of heterogeneous roles such as LLM (Touvron et al., 2023; Qwen Team, 2024), Dif-fusion (Rombach et al., 2022; Black Forest Labs, 2024), Vision (Dosovitskiy et al., 2021; Radford et al., 2021), and Audio (Radford et al., 2022); and performance —fully asyn-chronous and decentralized execution flow to maximize throughput in real-time systems. First, taking the control flow example graph (Fig. 3) in this typical multimodal inference scenario as an example, we in-troduce two core capabilities and three types of dependency problems at the framework level, and subsequently present the solutions corresponding to each of the three dependency types.  
+
+> Figure 3. Control Flow Example Graph (left: execution flow; right: DSL definition)
+
+The execution flow of this graph is as follows: A request enters from entry , and parse request streams out data frame by frame, with each frame independently acti-vating downstream stages without waiting for all frames to complete. When frame T0 produces text-related data, it is immediately encoded via embedding and activates 
+
+llm.generate once. When frame T1 produces image-related data, it simultaneously triggers two encoding paths, 
+
+vit encode and vae encode ; the results from both paths join and then activate llm.generate again. Upon completion, llm.generate streams out token frames, which are streamed back to entry for the user in real time on one hand, and trigger diffusion to generate an image after all tokens are produced on the other hand. The image is then decoded by vae decode and sent back to entry .The aforementioned process reflects two core capa-bilities: (1) Streaming frame-by-frame activation —
+
+parse request independently activates downstream stages as soon as each frame is produced, without waiting for all frames to complete; (2) Runtime dynamic branch selec-tion —routing is automatically performed based on the out-put type of each frame (frame T0 takes the embedding path, while frame T1 simultaneously triggers both vit encode 
+
+and vae encode ), which also serves as the foundation for the framework to support cyclic graphs. These two core capabilities are supported and completed by static and dynamic graphs, as detailed in Sections 3.3 and 3.4. At the same time, implementing the aforementioned process poses three core scheduling challenges to the framework: 
+
+Problem 1: Multi-path convergence of single-source data—The Downstream Synchronization Problem. In Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference                 
+
+> Table 1. Capability comparison of open-source omni inference frameworks.
+> Capability vllm-omni sglang-omni Omni-Flow
+> Dynamic Branching ✗△(route fn )✓
+> Streaming Output △(async chunk )△(stream to )✓
+> Loop / Cycle ✗✗✓
+
+frame T1, parse request produces image-related data, which then simultaneously traverses two independent encod-ing paths: vit encode and vae encode . Ultimately, both results must converge into llm.generate to trigger its execution. Because vit encode and vae encode 
+
+process data at different speeds, they cannot be guaranteed to arrive at the convergence node at the same time. Con-sequently, llm.generate must wait until both paths are ready to be activated, rather than being triggered as soon as either single path arrives. 
+
+Problem 2: Ordered streaming outputs but potential out-of-order arrival downstream—The Arrival Order Guarantee Problem. llm.generate streams out tokens, and each text frame is logically strictly ordered. However, the path from text to entry in the graph is a return edge. After these frames undergo network transmission and asynchronous scheduling, their arrival order at entry 
+
+may not align with their production order—for instance, t2
+
+might arrive before t1. If entry streams these out-of-order tokens back to the user, the sequence of text received by the user will deviate from the generated order. 
+
+Problem 3: The number of paths is only deter-mined at runtime—The Dynamic Synchronization Problem. To increase throughput, the framework sup-ports segmented multi-frame production, which con-versely introduces the dynamic synchronization prob-lem: diffusion.generate image must synchro-nize text embeddings, conditional image encodings (from vit encode and vae encode ), and diffusion parameters—none of which can be missing. However, the number of conditional image paths varies per request: it is 0 for text-to-image (t2i) generation, and N for mixed text-and-image (ti2i) generation. The framework cannot determine 
+
+N during the parsing phase, yet it must correctly “synchro-nize all N paths before triggering” at runtime, avoiding both premature triggering and perpetual waiting. These three problems can be categorized into three dis-tinct dependency relationships: Problem 1 is a diamond dependency (single-source data splits and later converges downstream), Problem 2 is a sequence dependency (multi-frames produced in order may arrive downstream out of order), and Problem 3 is a multi-stream join (the number of single-source data paths is dynamic, requiring all data to arrive before activation). Our solutions targeting these three problems are detailed in Section 3.2. Omni-Flow completely encapsulates scheduling complexity within the framework layer: users declare field-level data dependencies via a Python DSL, which the framework com-piles into a static execution plan during the parsing phase. At runtime, this plan is driven by decentralized node schedulers through table lookups—leaving the business-side computa-tional logic completely free from the burden of scheduling details. 
+
+3.1 Graph Definition 
+
+Users declare graph structures via a Python DSL, which consists of four core building blocks: • Role: A computing role (e.g., LLM, Diffusion). 
+
+interface() declares input/output fields and scheduling strategies, while graph call() de-clares subgraph invocation entry points and completion conditions. • Placeholder: External data fields injected at the graph entry point. • GlobalParameters: Session-granularity global param-eters (e.g., KV Cache) shared across roles, with their lifecycles managed by the framework. • RoleRef / GlobalParametersRef: Cross-graph refer-ences, supporting a single role instance to host multiple graphs. 
+
+OR-AND Input Semantics. The inputs or of each 
+
+interface() uses a two-dimensional list: the outer list represents the OR groups (triggered as soon as any group is ready), and the inner list represents the AND groups (triggered only when all fields within the group have ar-rived). This structure models the branching logic in in-ference without the need to write any explicit conditional judgment code—the framework automatically selects the branch based on “which OR group is fully satisfied first.” 
+
+3.2 Implementation of the Three Types of Dependencies 
+
+These three types of dependencies (as illustrated in Fig. 4) frequently co-occur and overlap in real-world pipelines (see Appendix A). If one were to hand-write the scheduling logic for each case individually, the code would become extremely Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference  
+
+> Figure 4. Three Types of Dependencies: Diamond, Sequence, and Multi-Stream Join
+
+fragile and difficult to reuse. To address these three types of dependencies, Omni-Flow abstracts a Bucket model. The definition of a bucket is given below: 
+
+Definition of a Bucket: A bucket is a container used at convergence points to synchronize multi-path inputs be-fore triggering the forward pass of the current node. If a certain OR group of a node has ≥ 2 direct predecessors (i.e., multiple paths converge here, satisfying a diamond dependency, termed a convergence point), the framework al-locates a bucket for it; conversely, directly connected nodes (intermediate nodes in a linear chain, source nodes, or single-predecessor nodes) do not hold a bucket, and a forward pass is triggered immediately upon the arrival of each upstream frame without waiting for synchronization. That is, buck-ets only exist at positions where multi-path convergence is required. 
+
+Identity of a Bucket: The Quadruple. Each bucket is uniquely identified by a quadruple 
+
+(gc rid , owner node , or group , activation id ):• gc rid — The associated graph call invocation, used for cross-request isolation; • owner node — Identifies the node to which the bucket belongs; • or group — The OR group of the owning node (dif-ferent OR groups of the same node hold independent buckets); • activation id — Distinguishes buckets that belong to the same OR group of the same node but correspond to different frames. The quadruple orthogonalizes each concurrency axis where data mismatches could potentially occur; the absence of any dimension would lead to cross-bucket data leakage (bucket collision). While the first three dimensions can be finalized during the parsing phase, activation id is recursively calculated at runtime to ensure that the previous frame and the subsequent frame fall into different buckets, whereas data from the same source and the same frame falls into the exact same bucket. 
+
+Internal State and Triggering of a Bucket. Each path arriving at a bucket is named a static slot during the parsing phase. A bucket maintains four sets: required (the com-plete set of slots that must be synchronized), received 
+
+(slots that have received data), slot eos (slots that have received an end-of-stream indicator), and unreachable 
+
+(slots reported as unreachable by upstream). The triggering criterion for a bucket is: 
+
+required ⊆ received satisfied ∪ unreachable 
+
+when every required path has either arrived or been con-firmed unreachable, the bucket fires and schedules the cur-rent node’s forward pass. 
+
+Bucket Lifecycle: Buckets are not pre-registered—the framework lazily creates the corresponding bucket only af-ter an upstream node sends a frame from a specific path; a bucket can be reclaimed immediately after it is triggered or determined to be unreachable. 
+
+3.2.1 Diamond Dependency 
+
+Terminology: A diamond consists of three types of nodes— a fork source ( source ) (e.g., parse request ), interme-diate nodes ( pre-sink ) (e.g., vit.encode ), and a conver-gence point ( sink ) (e.g., llm.generate ). 
+
+Core Mechanism: Using the identity of the fork source and the frame sequence number as the seed for the aid .The framework computes an aid for each message flow-ing toward a convergence point by hashing a specific set of identity information. To ensure that multiple paths from the same source fall into the same bucket, the key lies in the selection of the seed: all paths uniformly use the identity of their common fork source as the seed, rather than the identities of their respective direct upstream nodes. Con-sequently, regardless of which intermediate nodes a path traverses or how long the path is, the seeds substituted into the hash function are completely identical, yielding a con-sistent aid and thus placing the messages into the same bucket; conversely, the subsequent frame corresponds to a different fork source frame sequence number, resulting in a different seed and naturally falling into a new bucket. 
+
+3.2.2 Sequence Dependency 
+
+The framework concentrates order preservation at the 
+
+SessionLoadBalance (SLB) nodes, while all other nodes are entirely free from queuing. For each queuing key q = (session , gc , interface ), the order-preserving node maintains an expected sequence number expected 
+
+and enforces two invariants: (i) it only permits the pas-sage of activations whose sequence numbers exactly match Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+Algorithm 1 Sequence-Order Advancement per queue key 
+
+q
+
+State per q: exp (expected seq), pending [seq ] (ready groups), settled [seq ] (done groups), busy 
+
+on GROUP READY (q, seq , g, first ):
+
+if first time: exp ← first pending [seq ].add (g); T RY ADVANCE (q)
+
+proc TRY ADVANCE (q):
+
+while ¬ busy and pending [exp ]̸ = ∅ do 
+
+busy ← true ; release pending [exp ] for execution 
+
+end while on GROUP SETTLED (q, seq , g ): {fired or DEAD }
+
+settled [seq ].add (g)
+
+if settled [seq ] covers all OR-groups of this node: 
+
+exp += 1 ; busy ← false ; T RY ADVANCE (q)
+
+expected ; and (ii) it advances expected only after the OR group corresponding to the current sequence number has been finalized. This convergence holds because any node with intra-session state dependencies is inherently declared as an SLB node, whereas stateless nodes such as RoundRobin or Broadcast do not require order preservation. The order-preserving information is passed segment-by-segment via the sequence numbers reassigned when exiting an SLB node, allowing intermediate ordinary nodes to execute fully out of order. This approach avoids introducing redundant serialization points while preserving end-to-end ordering. Source of Sequence Numbers: The seq and first seq 
+
+tags are embedded within messages. The seq in Algo-rithm 1 represents a tag (i.e., SeqId) written by upstream nodes and propagated hop-by-hop alongside the data frames. 
+
+3.2.3 Multi-Stream Join 
+
+For this type of node, activate by count is declared. Upon inbound arrival, the framework forcibly rewrites the bucket identities of these signals to the same constant, caus-ing multiple paths to converge into a single bucket. This mechanism is processed in two steps: 
+
+Step 1: Merging Buckets. Under default conditions, dif-ferent OR groups and different activations of the same node fall into their respective independent buckets. Since the se-mantics of an activate by count node dictate that “a single activation collects fields from all upstream paths,” the framework forcibly assigns all inputs into the exact same bucket upon inbound arrival, allowing multi-path inputs to accumulate uniformly at the node granularity. 
+
+Step 2: Triggering via Field-Level Thresholds. The merged bucket counts each trigger field independently. A field is considered satisfied once its arrived frame count reaches the declared threshold; the forward pass is triggered only when all required fields are satisfied. 
+
+3.3 Graph Parsing and Static Plan 
+
+The graph definitions written by users via the Python DSL are declarative descriptions, which the framework con-verts into data structures directly utilizable at runtime upon startup. This conversion yields two direct benefits: first, configuration errors are exposed before any requests arrive (fail-fast); second, the runtime hot path degrades into pure table lookups, eliminating the need for repetitive derivation. The Graph Parser (GraphParser ) takes the user-written graph definition module as input, extracts the interface dec-larations and field-level data dependencies of each node through static reflection, and outputs a structured Graph .In multi-graph scenarios, it is also responsible for routing based on gid and performing cross-graph consistency vali-dation. The Static Plan (StaticPlan ) takes the parsed Graph 
+
+as input and precomputes all indices required for runtime scheduling: • Edge Table (Edge): Field-level directed edges 
+
+{source } -> {destination } that describe the data flow. • Control Edges (CtrlEdge): Specifies which down-stream nodes an upstream node should send AR-RIVED, SLOT EOS, or UNREACHABLE signals to upon completing a yield. • Diamond Roots: Locates the common ancestor of each convergence node via a reverse BFS, utilized for calculating activation id .• Critical Slots: Marks the slots of a field that have a unique upstream path; when this path becomes un-reachable, the bucket can be directly determined as DEAD. 
+
+3.4 Dynamic Graph 
+
+The Dynamic Graph layer is responsible for translating the results of the Static Plan into actual request execution pro-cesses, concurrently handling multiple complex scenarios such as diamond synchronization, order preservation, and unreachability propagation. Its design goal is to cover all scenarios with a minimum number of orthogonal mecha-nisms, keeping the processing logic of each node simple and unified. The Core Scheduler (NodeController ) serves as the execution unit for each graph node, managing the complete Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+lifecycle of a request from inbound arrival to outbound dispatch: 
+
+Inbound Routing: It determines based on the static plan whether an incoming message should enter a bucket for accumulation (at convergence nodes) or directly trigger a forward pass (at directly connected nodes). 
+
+Outbound Dispatch: It dynamically routes frames down-stream according to the CtrlEdge after each execution— if an output field is present, it sends an ARRIVED signal to activate the corresponding downstream node; if a field is absent, it sends an UNREACHABLE signal to silently skip that branch, achieving runtime dynamic branch selection. Zero-yields, exceptions, and cancellations are all transpar-ently propagated through the UNREACHABLE path. The Bucket State Machine is responsible for data accumu-lation and triggering decisions at convergence nodes. Its core logic triggers a forward pass once “all required up-stream paths have either arrived or become unreachable.” Standard join buckets make this determination based on up-stream source granularity, whereas activate by count 
+
+buckets make it based on field-level count thresholds. The SeqId Segmented Order Preservation mechanism maintains the sequence information of streaming frames. The order-preserving tag, SeqId, is generated solely by multi-frame nodes and SLB nodes, while ordinary nodes merely propagate it transparently. This concentrates the order-preservation logic at the order-generating nodes with-out intruding upon each intermediate node. 
+
+3.5 Other Mechanisms 
+
+This section summarizes several relatively independent mechanisms and outlines their core concepts: 
+
+Unreachability Propagation and Cancellation: When a node encounters a zero-yield, an exception, a cancella-tion, or a field mismatch, it sends an UNREACHABLE signal (distinguishing among empty, error, and cancel) to its ctrl edges . If a critical slot is hit, the bucket is marked as DEAD and this state propagates recursively down-stream; if a non-critical slot is hit, it is merely recorded in 
+
+unreachable inputs , and the bucket can still be trig-gered normally. 
+
+Task Completion Determination (ActivityTracker ): The ActivityTracker maintains a global inflight set; a node registers upon activation and deregisters after its forward pass and control signal dispatches are completed. The GC is determined to have concluded as soon as the inflight set becomes empty, which subsequently triggers 
+
+system finish .
+
+Cross-GraphCall Serialization (GCScheduler ): Con-current graph call instances within the same session will introduce race conditions over shared GlobalParameters (such as the KV cache and history). The GCScheduler 
+
+enforces a session-level FIFO queue, permitting only the head of the queue to proceed and releasing the next one only after the preceding GC has completely exited; exe-cution across different sessions remains non-blocking. By lifting the serialization point to the invocation entry layer, the framework completely avoids deadlocks caused by the interleaving of intra-node queuing and delayed callbacks. 
+
+Concurrency Model: The Control Flow layer does not employ business-level locks; instead, serialization is de-rived from a “single-threaded event loop + non-branching invocation chains.” Inbound messages unfold along a con-tinuous await chain: send → on inbound → bucket accumulation → fire → forward, without spawning separate new tasks. This guarantees that when an upstream send 
+
+returns within a process, the downstream forward has inherently finished, fundamentally eliminating race condi-tions from out-of-order callbacks. Under cyclic topolo-gies, UNREACHABLE signals are deduplicated based on (origin , node , or group ) to prevent infinite recursion within the loop. 
+
+Service Discovery & Load Balancing : The 
+
+ServiceRegistry implements distributed regis-tration and discovery based on Redis (Redis Ltd., 2009), with heartbeats maintained over an independent connection to isolate Redis jitter from the main data path. Failed instances are evicted on timeout, and routing is automati-cally reconstructed during scaling. Built atop this registry, 
+
+LoadBalance offers three strategies: RoundRobin for stateless dispatch, and SessionLoadBalance for session-affinity routing (affinity states are persisted in Redis for cross-process sharing, which also underpins sequence-level dependency tracking). 
+
+# 4 DATA FLOW 
+
+Current multimodal models are converging toward a unified backbone architecture (Deng et al., 2025; Tencent Hunyuan Team, 2025; Xie et al., 2024)—where the LLM handles cross-modal understanding and the Diffusion model man-ages generation, both sharing the exact same set of Trans-former weights and KV cache. Concurrently, predictable ultra-long-context tasks (Beltagy et al., 2020; Lin et al., 2024) will inevitably catalyze requirements for KV cache compression and compaction (Liu et al., 2024; Yang et al., 2024; Lee et al., 2024): the compressed KV must remain reusable by multiple downstream roles rather than being restricted to a single consumer. Consequently, the capa-bility for multi-role sharing of the KV cache is no longer a luxury but an architectural imperative for evolutionary advancement. Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference   
+
+> Figure 5. Existing KV Cache Sharing Scheme
+> Figure 6. Unified Distributed KV Cache Architecture
+
+Existing KV cache sharing schemes (as shown in Fig. 5) are relatively fragmented: prefill/decode separation (Patel et al., 2024; Zhong et al., 2024; Agrawal et al., 2024) relies on dedicated point-to-point transfer channels, local capac-ity expansion leverages L2/L3 storage (Gao et al., 2024; Alizadeh et al., 2024), and cross-service sharing depends on L3/L4 global caching (Qin et al., 2024; Srivatsa et al., 2024). These three mechanisms operate in isolation and are difficult to compose beyond a small number of fixed roles. To address this, we propose a unified distributed KV cache abstraction centered on a Global Params Pool (as shown in Fig. 6). Allocation and reclamation across the L1/L2/L3 storage hierarchy are consolidated under a single data plane, and all data transfers—whether between different roles or between replicas of the same role—are uniformly routed through direct data-plane channels. Unlike prefill/decode separation schemes that only open a single fixed transfer path, the Global Params Pool establishes a fully connected data fabric: any role or replica can push to or pull from any other, without any hardcoded pairing assumptions. The inference engine remains solely responsible for forward computation, completely agnostic to data locality and own-ership. This consolidated design naturally scales to an ar-bitrary number of collaborative roles without architectural modification. The Data Flow subsystem adopts a Client-Server architec-ture: the MemoryManager serves as the core server com-ponent, uniformly managing all memory pools and handling RPC requests, while the MemoryManagerClient is em-bedded within each Role process to communicate with the server via ZMQ (Hintjens, 2013) IPC. Memory is catego-rized into three major pools based on usage: • Global Params Pool: The designated destination for the KV Cache, utilizing a paged, tiered storage hierar-chy (Gao et al., 2024) (L1 GPU / L2 CPU / L3 SSD) with automated data migration between tiers based on hot/cold data access patterns. • Tmp Buffer Pool: The transit hub for intermediate data, nested within the system to automatically ac-complish zero-copy, low-latency transfers of input and output tensors across different role interfaces. • Weight Share: The sharing layer for model weights, which performs matching based on structured, generic names to enable multiple co-located roles on the same GPU to reuse the exact same physical weights, reduc-ing the GPU memory overhead down to that of a single replica. 
+
+4.1 Global Params Pool 
+
+Distinct from existing KV cache schemes (where the engine internally manages a radix tree, maintains point-to-point prefill/decode direct transmission channels, and indepen-dently manages local L2/L3 storage), the core divergence of the Global Params Pool lies in its holistic takeover of management: • All KV cache slot allocations and reclamations on High Bandwidth Memory (HBM) are uniformly managed by the data plane. The inference engine is solely respon-sible for forward calculation, remaining completely agnostic to data location and ownership. • The L1/L2/L3 three-tier storage hierarchy is entirely registered within a distributed metadata center. Rather than using point-to-point prefill/decode direct trans-mission, the sharing channel is transformed into a subscribe-and-preload mechanism—notifications are automatically pushed upon data publication, and sub-scribers pull data on demand. • The cross-replica retrieval path of KV cache shards is uniformly determined by the global metadata cen-ter based on layout information and a candidate-combination algorithm. Shards can be gathered from any arbitrary source node, independent of its specific role or replica index. The subsystem is organized across four layers: the phys-ical paging layer → the multi-tier slot engine → the distributed metadata coordination layer → the complete dataflow closed-loop. Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+4.1.1 Physical Paging Layer 
+
+The Physical Paging Layer is responsible for low-level stor-age management across the three memory tiers (L1 GPU / L2 CPU / L3 SSD) and provides the cross-tier copy primi-tives used by the Slot Engine during migration. Rather than imposing a monolithic single-tensor layout, it supports flex-ible compositional definitions: each global parameter is de-scribed by a two-level metadata spec—an outer sub name 
+
+dimension (e.g., one entry per Transformer layer) and an in-ner slice name dimension (e.g., per-head KV caches (Su et al., 2021) buffers, or any future slice type)—so that hetero-geneous model architectures can be accommodated without modifying any allocation code. Upper layers retrieve any tensor view with zero-copy overhead by supplying three co-ordinates (sub names tuple , page idx , slice idx tuple ),whose Cartesian product automatically covers all layer ×
+
+page × slice combinations. 
+
+4.1.2 Multi-Tier Slot Engine 
+
+The Slot Engine maps pages across three tiers of physi-cal media. Eviction is guided by a TinyLFU (Einziger & Friedman, 2014) Count-Min Sketch that estimates per-page access frequency with periodic decay, feeding a four-tier frequency-aware LRU (cold / warm1 / warm2 / hot) that always reclaims from the coldest bucket. Rather than integer reference counters, each slot maintains four 
+
+Set[str] trackers (active requests, write tasks, eviction tasks, and readback tasks), guaranteeing eviction safety through set idempotency and eliminating both negative-count and memory-leak bugs. Cross-tier migration uses a custom CUDA kernel for zero-copy format conversion between the GPU-optimized NHD block-stack layout and the flat serialization layout used by CPU/SSD. Finally, con-current misses on the same page are deduplicated via an in-flight upload dictionary: the first requester acts as owner and performs the physical I/O, while latecomers wait and reuse the result—compressing N parallel uploads into a sin-gle operation and preventing thundering-herd amplification. 
+
+4.1.3 Distributed Metadata Coordination 
+
+With Redis (Redis Ltd., 2009) as the single source of truth, all write operations are executed atomically via Lua scripts and reads are batched through pipelines to minimize RTT. The coordination layer is organized around four functional blocks. 
+
+Layout Identification and Cross-Node Consistency. Each node encodes its physical layout metadata as a JSON docu-ment and takes the first 16 hex characters of its SHA-256 hash as a globally unique layout ID. When a single node covers only a partial page (e.g., node A holds K, node B holds V), a candidate combination algorithm enumerates all node-layout unions that cover a complete page, sorted by combination size, occurrence frequency, then lexicographic order. 
+
+Session Prefix Matching. Given a session ID and a query page sequence, the system performs longest-prefix match-ing against the cached page chains in Redis, automatically truncating expired tails and verifying replica availability of candidate combinations page by page—stopping at the first page with no valid provider. 
+
+Replica Publishing and Provider Selection. After com-pleting computation, a node registers itself as a replica provider for the corresponding pages. During queries, the provider with the highest-priority candidate combination is selected, preferring nodes that cover more pages to mini-mize cross-machine transmission overhead. 
+
+Atomic Eviction with Three-Layer Protection. All evic-tion checks are executed within a single Lua script to elimi-nate TOCTOU races: (1) replica reference lock—does the target page have active locks from other nodes; (2) session run lock—are there ongoing inference requests associated with this page; (3) candidate combination integrity—does each combination still have at least one complete replica after removal. The script confirms all three conditions and executes deletion atomically, leaving no window between check and action. 
+
+4.1.4 Complete Data Flow Loop 
+
+Initialization. When the upper layer creates a global param-eter, the API allocates the physical paging tensor, registers the memory region with the RDMA (Gangidi et al., 2024) engine, establishes the L1/L2/L3 slot engine structure, and registers the layout and its candidate combinations in Redis. 
+
+Inference Write → Publication → Preload. Upon com-pleting computation, a request invokes the publication in-terface, which maps page IDs to local slots, registers the node as a replica provider, and appends the new pages to the session’s page chain. Downstream preload is triggered automatically with batched notification delivery to reduce redundant cross-node messages. 
+
+Cross-Node Demand Pulling via RDMA. On a preload notification or local cache miss, the subscriber first searches its local multi-tier storage. On a miss, it queries Redis for remote providers and initiates an RDMA bulk read encapsu-lated in a strict Search–Transfer–Release lifecycle: register-ing search markers on local slots, executing the cross-node direct read, and releasing markers upon completion. 
+
+Copy-on-Write and Fragmented Page Handling. When incremental data is appended to a page shared by multiple active requests (reference count > 1), a Copy-on-Write is triggered automatically. For partial writes that do not fill a complete page, a dirty-key tracking mechanism records Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+which segments have been overwritten, ensuring subsequent reads return a correctly stitched tensor view. Fragmented pages in multimodal pipelines are always retained in full, because a fragmented page may span content produced by different model roles (e.g., KV cache written by the LLM component that the Diffusion component cannot recompute), making partial eviction or truncation unsafe. 
+
+Eviction Under Memory Pressure. When local HBM is under pressure, the slot engine identifies cold-priority candi-dates and submits a three-layer protected eviction request to Redis. Eviction decisions never block active inference: the four Set[str] reference trackers described in §4.1.2 provide automatic mutual exclusion between eviction and inference tasks. 
+
+4.2 Tmp Buffer Pool 
+
+Intermediate tensors (activation values, encoder outputs, etc.) transferred between workers are managed via a pre-allocated slab—a contiguous, byte-addressable tensor parti-tioned into fixed-size chunks that are carved out on demand— avoiding operating-system-level memory allocations on a per-request basis. 
+
+Reference Counting + LRU Dual-Track Reuse. Each allocated block operates on a reference count: initializing to 1 upon allocation; incrementing by 1 when downstream consumers reuse it via zero-copy add ref ; and physi-cally reclaiming only when free decrements the count to 0. Concurrently, an OrderedDict-structured LRU cache is embedded—borrowing existing written blocks based on 
+
+cache key ; upon a cache hit, ref increments by 1 but the block remains in the cache without being popped, al-lowing multiple concurrent requests to borrow the same read-only data. During OOM events, the engine exclu-sively evicts idle cache blocks where ref ==0, while active blocks remain protected by reference counts. Addition-ally, find alloc by ptr supports an O( log N ) reverse lookup via any arbitrary byte offset to trace back to its parent allocation block, resolving the provenance problem where an externally obtained tensor slice pointer falls into the middle of a block rather than at its starting address. A key difference from conventional schemes is the pull-on-demand paradigm for cross-host transfers rather than a push paradigm—the data producer never proactively pushes data; instead, the consumer pulls it via RDMA only when needed, completely eliminating redundant transfers and the overhead of managing receiver-side buffer zones. 
+
+4.3 Weight and KV Cache Sharing Model Weight Sharing. By monkey-patching PyTorch’s factory functions ( torch.empty , torch.zeros , etc.), all parameter allocations are redirected to the meta device during model construction, resulting in zero GPU memory footprint at build time. Once construction is complete, the framework allocates or reuses cross-process IPC shared ten-sors keyed by names derived from the model architecture and TP/EP topology, with the Owner process writing check-point data into shared GPU memory and Follower processes using a SkipCopyParameter whose copy () is a no-op—since all processes physically point to the same memory block, redundant copies would silently corrupt each other’s data. Shared-weight initialization uses client-side polling rather than server-side condition variables: if all followers blocked on a condition.wait() , they would saturate the MemoryManager thread pool and deadlock; polling once per second on the client side entirely avoids this. The overall effect is that multi-role deployments consume only a single replica’s worth of weight memory. 
+
+KV Cache Sharing. Multiple co-located roles (e.g., LLM and diffusion model) share a unified KV cache pool whose size is set to the minimum of all roles’ propos-als, preventing any single role from over-allocating. A
+
+kv pool barrier resolves a subtle timing hazard: roles that finish weight loading earlier observe artificially high free memory and would over-estimate the available KV pool; the barrier ensures all co-located roles complete weight load-ing before the pool size is evaluated. 
+
+# 5 COMPUTE FLOW × SGL ANG 
+
+The computation plane of the Native Multimodal Model (NMM) inference framework addresses a fundamental ten-sion: model topologies are highly fluid across modali-ties (image understanding, generation, speech transcription, voice dialogue each have distinct encoders/decoders), yet in-ference execution must remain highly efficient. The strategy is to unify all modalities into a single HiddenState rep-resentation before they enter the LLM backbone, allowing proven LLM optimization techniques—such as KV cache reuse (Kwon et al., 2023; Gao et al., 2024), shared mem-ory I/O (Dao et al., 2022; Dao, 2023), speculative decod-ing (Chen et al., 2023a; Cai et al., 2024), and weight quan-tization (Frantar et al., 2023; Lin et al., 2023)—to apply uniformly across any modality. The compute flow layer treats SGLang (Zheng et al., 2024) as a deeply customizable LLM kernel, takes over its memory and sampling through a unified interface, and forces modality encoders and diffu-sion models to converge onto the same forward execution path. Three core mechanisms are described below: pre-fix matching, interface abstraction and KV takeover, and diffusion reusing the LLM path. 
+
+5.1 Prefix Matching 
+
+Traditional LLM prefix caching operates on token ID se-quences, which is insufficient for multimodal inference Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+where outputs (generated images, audio, video) cannot be trivially re-tokenized in subsequent turns. The framework addresses this by decomposing prefix matching into two modes that share a common underlying mechanism. 
+
+Full Matching applies to scenarios without complex modal outputs. The server runs all modality encoders to obtain exact segment lengths, concatenates the resulting hidden states into a complete sequence, and performs page-by-page prefix matching. To avoid redundant encoding, each encoder maintains a cross-request LRU cache keyed by the hash of the raw input payload (image URL, base64, etc.), so a cache hit skips the encoder forward pass entirely. 
+
+Incremental Matching applies when the input references prior modal outputs whose token IDs cannot be recovered by re-parsing. The client carries a step offset declaring its already-acquired data position; the server truncates history to that position and processes only the new incremental data. A negative or absent step degrades to an append semantic that consumes all current history. Both modes share the same underlying Chained Paged Hashing mechanism: each page’s hash encodes the hash of its predecessor, so hashes are equal only when the entire prefix matches page-by-page. This compresses radix-tree semantics into a flat hash string that is directly comparable across processes and replicas without maintaining a shared prefix tree. The prefix reuse of the LLM is further deconstructed into two semantic layers. Layer 1—Recomputable Complete Inputs (emb , small footprint, stored on CPU): all inputs from different modalities are uniformly abstracted into hid-den states. Even if all GPU KV caches are lost, the sys-tem relies on this emb to execute a fresh prefill and recon-struct the KV, guaranteeing correctness and recoverability. 
+
+Layer 2—KV-Cache Matching, “Use If Available” : KV cache hits on the GPU are purely opportunistic—the system reuses however much is hit, and any unmatched portions fall back to Layer 1 for recomputation, guaranteeing perfor-mance. Decoupling these two layers means the expensive volatile KV cache is reused only best-effort, while the inex-pensive reliable emb serves as a safety net. Rather than emitting a single frame per request, the pre-fix matching phase yields multiple frames on demand to maximize asynchronous concurrency. If any historical pre-fix is unmatched, a recomputation frame is emitted first to reconstruct the KV cache independently. Each modal seg-ment is then yielded as its own frame with its offset, length, and hidden state slice. This segmented emission enables pipelined prefill: downstream nodes begin computing each segment as soon as its frame arrives, without waiting for the full sequence. Combined with OR-group activation, preparation and computation of different segments overlap in a pipeline, transforming serial within-request waiting into across-segment asynchronous parallelism. 
+
+5.2 Interface Abstraction over SGLang and KV Takeover 
+
+The framework does not use SGLang’s native memory and sampling logic directly; instead, it hollows out the SGLang runtime via a unified plugin singleton, transferring full con-trol to the framework’s data plane. This refactoring covers two main areas. 
+
+Abstracted I/O Parameter Interface. Each request car-ries precise metadata (session ID, prefix/extension/prefill lengths, max new tokens, physical slots, page IDs, etc.). At execution time, input tensors such as cached hidden states are copied into persistent GPU buffers and attached to the forward batch; on completion, generated token and hidden state slices are copied back out. Which tensors flow in and out is driven by a configurable key list, making model I/O a declarative interface rather than hardcoded logic. 
+
+Holistic KV-Cache Takeover. SGLang’s native radix-tree insertion is entirely bypassed. Prefix matching directly re-turns physical slots precomputed by the framework, and request completion simply publishes status back to the data plane. True KV cache ownership resides in the framework’s global parameter memory pool: slot allocation, hit/miss delimitation, post-commit publication, and the translation from business-side slot IDs to engine page IDs are all man-aged by the data plane, while SGLang’s attention kernel is solely responsible for writing into those slots. 
+
+5.3 Diffusion Reusing the LLM Path 
+
+A key engineering decision is that the Diffusion (DiT) (Pee-bles & Xie, 2023; Rombach et al., 2022) module does not use a native diffusion runtime, but instead reuses the full LLM infrastructure—the same engine and scheduling stack, the same paged KV cache, and the same shared weight mechanism. The reuse is structured as a shared base class with runtime plugin selection: both LLM and DiT inherit from the same KV-and-weight management base, and envi-ronment switches toggle their respective implementations at runtime. DiT denoising steps are organized as sequences that execute along the standard paged attention pathway, with image and timestep data passed as extra fields on the forward batch. The motivation is parallelism alignment. Weight and KV cache sharing requires that both roles adopt identical split-ting dimensions across TP (Shoeybi et al., 2019), EP (Fedus et al., 2022; Jiang et al., 2024), and other parallel strate-gies (Huang et al., 2019; Zheng et al., 2022). Native diffu-sion stacks lack expert parallelism support, making cross-role sharing impractical. Transplanting DiT onto the LLM Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+pathway forces both roles into the same parallelism seman-tics, enabling them to share physical weights and KV cache directly. 
+
+# 6 DEPLOY WITH RAY 
+
+Single Replica as the Resource Unit. Resource configu-ration operates at the minimum granularity of a single role replica (Moritz et al., 2018)—users only declare the number of GPUs and nodes per replica, and the framework automat-ically infers the overall topology of the cluster. Replicas are homogeneous, physical card numbers are sliced automati-cally, and elastic scaling is achieved within a single resource group simply by modifying the replicas parameter. 
+
+Layer Abstraction—Physical Card Resource Reuse. 
+
+Roles at layer: 0 determine the Placement Group (PG) topology and physically request GPU allocations; roles at layer >= 1 declare num gpus=0 , bypass-ing Ray resource quotas but reusing the physical cards already allocated by layer 0 through the injection of 
+
+CUDA VISIBLE DEVICES . This decouples Ray’s re-source bookkeeping from actual physical allocations, serv-ing as the fundamental foundation for resource reuse in multi-role, co-located deployments. 
+
+# 7 CONCLUSION AND FUTURE WORK 
+
+Omni-Flow provides a unified workflow orchestration, data transmission, and key-value cache sharing solution for mul-timodal inference scenarios through three layers of abstrac-tion: Control Flow, Data Flow, and Compute Flow. The framework has successfully supported three typical scenar-ios: DeepSeek-V2 (DeepSeek-AI, 2024) pure LLM infer-ence (PD, streaming token output), LongCat-Next (Meituan LongCat Team et al., 2026) multimodal dialogue (LLM with different heads), and HunyuanImage-3 (Tencent Hunyuan Team, 2025) image generation pipeline (LLM+DiT). The framework is currently in its early stages, and future work directions include: (1) Performance optimization is the focus of the next stage, with the core goal of evolving to-wards real-time inference; (2) Deepening the distributed KV Cache—supporting more attention variants (Ainslie et al., 2023; Dao, 2023), hierarchical transmission strategies, ef-ficient transmission under different TP configurations, CP support, intelligent selection of KV shards, etc.; (3) More complex scheduling strategies, such as cache-aware schedul-ing, making routing decisions based on the KV Cache hit status of each replica; (4) RL integration (Ouyang et al., 2022; Kimi Team, 2025)—currently, model weights have been uniformly managed by the framework, and param-eter synchronization in RL training will naturally benefit from this shared infrastructure; (5) Supporting more model forms and continuously expanding the model coverage of the framework. 
+
+# REFERENCES 
+
+Agrawal, A., Kedia, N., Panwar, A., Mohan, J., Kwatra, N., Gulavani, B. S., Tumanov, A., and Ramjee, R. Tam-ing throughput-latency tradeoff in LLM inference with Sarathi-Serve, 2024. Ainslie, J., Lee-Thorp, J., de Jong, M., Zemlyanskiy, Y., Lebr ´on, F., and Sanghai, S. GQA: Training generalized multi-query transformer models from multi-head check-points, 2023. Alizadeh, K., Mirzadeh, I., Belenko, D., Khatamifard, K., Cho, M., Del Mundo, C. C., Rastegari, M., and Farajtabar, M. LLM in a flash: Efficient large language model infer-ence with limited memory. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) , 2024. Anyscale. How continuous batching enables 23x throughput in LLM inference while reducing p50 latency. https://www.anyscale.com/blog/ continuous-batching-llm-inference ,2023. Beltagy, I., Peters, M. E., and Cohan, A. Longformer: The long-document transformer, 2020. Black Forest Labs. FLUX.1: A suite of text-to-image generation models. https://github.com/ black-forest-labs/flux , 2024. Cai, T., Li, Y., Geng, Z., Peng, H., Lee, J. D., Chen, D., and Dao, T. Medusa: Simple LLM inference acceleration framework with multiple decoding heads. In Interna-tional Conference on Machine Learning , 2024. Chase, H. LangChain: Building applications with LLMs through composability. https://github.com/ langchain-ai/langchain , 2022. Chen, C., Borgeaud, S., Irving, G., Lespiau, J.-B., Sifre, L., and Jumper, J. Accelerating large language model decoding with speculative sampling, 2023a. Chen, Z., Wu, J., Wang, W., Su, W., Chen, G., Xing, S., Zhong, M., Zhang, Q., Zhu, X., Lu, L., et al. InternVL: Scaling up vision foundation models and aligning for generic visual-linguistic tasks, 2023b. Dao, T. FlashAttention-2: Faster attention with better paral-lelism and work partitioning, 2023. Dao, T., Fu, D. Y., Ermon, S., Rudra, A., and R ´e, C. FlashAt-tention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Pro-cessing Systems , volume 35, 2022. Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+DeepSeek-AI. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model, 2024. Deng, C., Zhu, D., Li, K., Gou, C., Li, F., Wang, Z., Zhong, S., Yu, W., Nie, X., Song, Z., Shi, G., and Fan, H. Emerg-ing properties in unified multimodal pretraining, 2025. Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., Zhai, X., Unterthiner, T., Dehghani, M., Minderer, M., Heigold, G., Gelly, S., et al. An image is worth 16x16 words: Transformers for image recognition at scale. In 
+
+International Conference on Learning Representations ,2021. Du, Z., Chen, Q., Zhang, S., Hu, K., Lu, H., Yang, Y., Hu, H., Zheng, S., Guo, Y., Wang, Z., et al. CosyVoice: A scalable multilingual zero-shot text-to-speech synthesizer based on supervised semantic tokens, 2024. Einziger, G. and Friedman, R. TinyLFU: A highly effi-cient cache admission policy. In 2014 22nd Euromicro International Conference on Parallel, Distributed, and Network-Based Processing , pp. 146–153. IEEE, 2014. Emu3 Team, BAAI. Emu3: Next-token prediction is all you need, 2024. Fedus, W., Zoph, B., and Shazeer, N. Switch transformers: Scaling to trillion parameter models with simple and ef-ficient sparsity. Journal of Machine Learning Research ,23(1):5232–5270, 2022. Frantar, E., Ashkboos, S., Hoefler, T., and Alistarh, D. GPTQ: Accurate post-training quantization for generative pre-trained transformers. In International Conference on Learning Representations , 2023. Gangidi, A., Miao, R., Zheng, S., Bondu, S. J., Goes, G., Morsy, H., Puri, R., Riftadi, M., Shetty, A. J., Yang, J., Zhang, S., Fernandez, M. J., Gandham, S., and Zeng, H. RDMA over ethernet for distributed training at meta scale. In Proceedings of the ACM SIGCOMM 2024 Conference ,pp. 57–70. ACM, 2024. Gao, B., He, Z., Sharma, P., Kang, Q., Jevdjic, D., Deng, J., Yang, X., Yu, Z., and Zuo, P. Cost-efficient large language model serving for multi-turn conversations with Cache-dAttention. In USENIX Annual Technical Conference (ATC) , 2024. Hintjens, P. ZeroMQ: Messaging for Many Applications .O’Reilly Media, 2013. Ho, J., Jain, A., and Abbeel, P. Denoising diffusion prob-abilistic models. In Advances in Neural Information Processing Systems , volume 33, pp. 6840–6851, 2020. Huang, Y., Cheng, Y., Bapna, A., Firat, O., Chen, M. X., Chen, D., Lee, H., Ngiam, J., Le, Q. V., Wu, Y., et al. Gpipe: Efficient training of giant neural networks using pipeline parallelism. In Advances in Neural Information Processing Systems , volume 32, 2019. Jiang, A. Q., Sablayrolles, A., Roux, A., Mensch, A., Savary, B., Bamford, C., Chaplot, D. S., de las Casas, D., Bres-sand, F., Lengyel, G., et al. Mixtral of experts, 2024. Kimi Team. Kimi k1.5: Scaling reinforcement learning with LLMs, 2025. Kingma, D. P. and Welling, M. Auto-encoding variational bayes. In International Conference on Learning Repre-sentations , 2014. Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J. E., Zhang, H., and Stoica, I. Efficient memory management for large language model serving with PagedAttention. In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles , pp. 611–626. ACM, 2023. LangChain Inc. LangGraph: Build resilient lan-guage agents as graphs. https://github.com/ langchain-ai/langgraph , 2024. Lee, W., Lee, J., Seo, J., and Sim, J. InfiniGen: Efficient gen-erative inference of large language models with dynamic KV cache management. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , 2024. Lin, B., Zhang, C., Peng, T., Zhao, H., Xiao, W., Sun, M., Liu, A., Zhang, Z., Li, L., Qiu, X., et al. Infinite-LLM: Efficient LLM service for long context with DistAttention and distributed KVCache, 2024. Lin, J., Tang, J., Tang, H., Yang, S., Dang, X., and Han, S. AWQ: Activation-aware weight quantization for LLM compression and acceleration, 2023. Liu, H., Li, C., Wu, Q., and Lee, Y. J. Visual instruction tuning, 2023. Liu, Y., Li, H., Cheng, Y., Ray, S., Huang, Y., Zhang, Q., Du, K., Yao, J., Lu, S., Ananthanarayanan, G., Maire, M., Hoffmann, H., Holtzman, A., and Jiang, J. CacheGen: KV cache compression and streaming for fast large lan-guage model serving. In Proceedings of the ACM SIG-COMM 2024 Conference . ACM, 2024. Meituan LongCat Team, Xiao, B., et al. LongCat-Next: Lexicalizing modalities as discrete tokens, 2026. Moritz, P., Nishihara, R., Wang, S., Tumanov, A., Liaw, R., Liang, E., Elibol, M., Yang, Z., Paul, W., Jordan, Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+M. I., and Stoica, I. Ray: A distributed framework for emerging AI applications. In 13th USENIX Symposium on Operating Systems Design and Implementation (OSDI 18) , pp. 561–577, 2018. Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C. L., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al. Training language models to follow in-structions with human feedback, 2022. Patel, P., Choukse, E., Zhang, C., Shah, A., Goiri, ´I., Maleki, S., and Bianchini, R. Splitwise: Efficient generative LLM inference using phase splitting. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architec-ture (ISCA) , pp. 118–132. IEEE, 2024. Peebles, W. and Xie, S. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision , pp. 4195–4205, 2023. Podell, D., English, Z., Lacey, K., Blattmann, A., Dockhorn, T., M ¨uller, J., Peng, J., and Rombach, R. SDXL: Im-proving latent diffusion models for high-resolution image synthesis, 2023. Qin, R., Li, Z., He, W., Zhang, M., Wu, Y., Zheng, W., and Xu, X. Mooncake: A KVCache-centric disaggregated architecture for LLM serving, 2024. Qwen Team. Qwen2 technical report, 2024. Radford, A., Kim, J. W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., et al. Learning transferable visual models from natural language supervision. In International Conference on Machine Learning , pp. 8748–8763. PMLR, 2021. Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C., and Sutskever, I. Robust speech recognition via large-scale weak supervision, 2022. Redis Ltd. Redis: The open-source, in-memory data struc-ture store. https://redis.io , 2009. Rombach, R., Blattmann, A., Lorenz, D., Esser, P., and Ommer, B. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition , pp. 10684–10695, 2022. SGLang Team. SGLang-Omni: High-performance multi-stage pipeline framework for omni models. https: //github.com/sgl-project/sglang-omni ,2025. Shoeybi, M., Patwary, M., Puri, R., LeGresley, P., Casper, J., and Catanzaro, B. Megatron-LM: Training multi-billion parameter language models using model paral-lelism, 2019. Srivatsa, V., He, Z., Abhyankar, R., Li, D., and Zhang, Y. Preble: Efficient distributed prompt scheduling for LLM serving, 2024. Su, J., Lu, Y., Pan, S., Murtadha, A., Wen, B., and Liu, Y. RoFormer: Enhanced transformer with rotary position embedding, 2021. Tencent Hunyuan Team. HunyuanImage 3.0 technical re-port, 2025. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models, 2023. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I. Atten-tion is all you need. In Advances in Neural Information Processing Systems , volume 30, 2017. vLLM Team. vLLM-Omni: Fully disaggregated serving for any-to-any multimodal models, 2026. Wu, C., Chen, X., Wu, Z., Ma, Y., Liu, X., Pan, Z., Liu, W., Xie, Z., Yu, X., Ruan, C., et al. Janus: Decoupling visual encoding for unified multimodal understanding and generation, 2024. Xie, J., Mao, W., Bai, Z., Zhang, D. J., Wang, W., Lin, K. Q., Gu, Y., Chen, Z., Yang, Z., and Shou, M. Z. Show-o: One single transformer to unify multimodal understanding and generation, 2024. Yang, Y., Ma, H., Yin, S., Wen, Z., Li, Y., and Chen, J. KVSharer: Efficient inference via layer-wise dissimilar KV cache sharing, 2024. Yu, G.-I., Jeong, J. S., Kim, G.-W., Kim, S., and Chun, B.-G. ORCA: A distributed serving system for transformer-based generative models. In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22) , pp. 521–538, 2022. Zhai, X., Mustafa, B., Kolesnikov, A., and Beyer, L. Sig-moid loss for language image pre-training. In Proceed-ings of the IEEE/CVF International Conference on Com-puter Vision , pp. 11975–11986, 2023. Zheng, L., Li, Z., Zhang, H., Zhuang, Y., Chen, Z., Huang, Y., Wang, Y., Xu, Y., Zhuo, D., Xing, E. P., et al. Alpa: Automating inter- and intra-operator parallelism for dis-tributed deep learning. In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22) , pp. 559–578, 2022. Zheng, L., Yin, L., Xie, Z., Sun, C., Huang, J., Yu, C. H., Cao, S., Kozyrakis, C., Stoica, I., Gonzalez, J. E., Bar-rett, C., and Sheng, Y. SGLang: Efficient execution of structured language model programs, 2024. Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+Zhong, Y., Liu, S., Chen, J., Hu, J., Zhu, Y., Liu, X., Jin, X., and Zhang, H. DistServe: Disaggregating prefill and decoding for goodput-optimized large language model serving, 2024. Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+# Appendix A NESTED SCENARIOS OF DIAMOND AND 
+
+# SEQUENCE DEPENDENCIES 
+
+The preceding sections independently introduced the ba-sic mechanisms of the three dependency types. How-ever, in real-world business graphs, multiple depen-dency types often co-occur (as shown in Fig. 7): tak-ing HunyuanImage-3’s image generation pipeline as an example, the fork source parse request yields multi-ple frames by modality (multi-frame), each frame passes through different encoders and converges at the same join point (diamond dependency), while the entire chain is nested within SessionLoadBalance ’s order-preserving link (sequence dependency). This section demonstrates how the 
+
+activation id mechanism remains valid under over-lapping scenarios without requiring special-case handling for each combination—first supplementing the generalized formula and per-frame metadata needed for generalization, then presenting three progressive cases showing the behav-ior when diamond and sequence dependencies overlap.  
+
+> Figure 7. Nested Scenarios of Diamond and Sequence Dependen-cies
+
+General Computation of aid : Per-Edge Binary Decision. 
+
+aid is computed per outgoing edge: each time a node pro-duces a frame and sends it along an outgoing edge to down-stream (v, g ), the framework makes a binary decision based on whether the downstream has a bucket—downstream with bucket follows Rule C, downstream without bucket follows Rule A. The criterion examines the downstream node and is determined per edge; therefore, different outgoing edges from the same node may follow different rules. Two branches of Rule C determine whether a diamond struc-ture, when superimposed with multiple frames, results in accumulation or binning: when s hits, the seed takes the out-put sequence number from a further upstream fork source, and this sequence number remains fixed for the multiple frames of the current node → multiple frames share the same aid → accumulation; when s misses (the current node itself is the fork source), the seed takes the yidx of the current frame → multiple frames have different aid s
+
+Algorithm 2 Compute aid for an outgoing message to downstream (v, g )
+
+Input: current activation a, yield index yidx , down-stream node v, OR-group g
+
+if HAS BUCKET (v, g ) and s ←
+
+diamond roots .lookup (ROOT (v, g )) hits then 
+
+{Rule C: use diamond-root’s fixed seed → same-source frames share one bucket }
+
+aid ← HASH (gc , s. aid , s. node , s. yidx , g, v )
+
+else 
+
+{Rule A: use current node as seed → each frame gets its own bucket }
+
+aid ← HASH (gc , a. aid , cur , yidx , g, v )
+
+end if return aid 
+
+→ binning. The diamond root identity needed for seeding is propagated along with messages via diamond roots (a diamond root state table, List[DiamondRootEntry] , each en-try containing the source node, source aid, and source yield index): bucket-less nodes pass through the incoming state table unchanged, while diamond root nodes append their own entry upon outgoing (deduplicated by source node); Rule C then looks up s by root from this table. 
+
+Case 1: Diamond root multi-frame, intermediate node single-frame —the convergence point splits buckets by the diamond root’s frames. Each time the diamond root yields a frame, its yield index differs; Rule C computes K dis-tinct aids, causing the convergence point to split into K
+
+buckets, each corresponding to one yield from the diamond root, independently gathering inputs and firing. When the convergence point is an SLB node, ordering must also be preserved: each yield from the diamond root corresponds exactly to one sequence number, and SLB releases the K
+
+buckets in expected order, maintaining ordering. 
+
+Case 2: Diamond root single-frame, intermediate node multi-frame —multiple frames accumulate within the same bucket in order. The intermediate node’s diamond root is further upstream and yields only one frame, so its yield index is fixed. The aid computed across the intermediate node’s M yields is entirely identical, and all M frames fall into the same bucket for accumulation; meanwhile, the intermediate node’s multiple frames must also accumulate in order within the bucket. 
+
+Case 3: Diamond root multi-frame, intermediate node also multi-frame —two layers superimposed. The outer layer splits into multiple buckets by the diamond root’s frames per Case 1; within each bucket, the correspond-ing intermediate node’s multiple frames accumulate per Case 2. Both layers are recursively derived from the same Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+formula: the diamond root’s yield index determines which outer bucket a frame falls into, while the intermediate node’s multiple frames share the same diamond root yield index and thus accumulate in order within the bucket. 
+
+# B WORKFLOW DEFINITION EXAMPLES FOR LANG GRAPH / VLLM -OMNI /
+
+SGLANG -OMNI 
+
+LangGraph 
+
+# Nodes = Python functions, # Edges = add_edge / add_conditional_edges, # State = TypedDict 
+
+import operator 
+
+from typing import TypedDict, Annotated, Any 
+
+from langgraph.graph import StateGraph, START, END 
+
+class S(TypedDict): prompt: str ; image: Any; gen_audio: 
+
+bool 
+
+messages: Annotated[ list , operator.add] streamed: Annotated[ list , operator.add] audio: bytes 
+
+def preprocess(s): return s
+
+def img_enc(s): 
+
+return {"img_emb": f"vit({s.get(’image ’,’’)})"} 
+
+def embed(s): 
+
+return {"txt_emb": f"emb({s[’prompt ’][:10]})"} 
+
+def thinker(s): 
+
+return {"messages": [{"role":"assistant", "content":f"ans:{s[’prompt ’][:10]}"}], "streamed": ["tok1","tok2","tok3"] }
+
+def talker(s): 
+
+if not s.get("gen_audio"): return {} 
+
+return {"audio": f"tts({s[’messages’][-1][’content ’][:10]})" .encode()} 
+
+def tools(s): 
+
+return {"messages": [{"role":"tool","content":"result" }]} g = StateGraph(S) g.add_node("pre", preprocess) g.add_node("img", img_enc) g.add_node("emb", embed) g.add_node("think", thinker) g.add_node("tts", talker) g.add_node("tools", tools) g.add_edge(START, "pre") g.add_edge("pre", "emb") 
+
+# Dynamic branching 
+
+g.add_conditional_edges("pre", 
+
+lambda s: ["img","emb"] 
+
+if s.get("image") else ["emb"],) g.add_edge("img", "think") g.add_edge("emb", "think") g.add_edge("think", "tools") g.add_conditional_edges("tools", 
+
+lambda s: "think" 
+
+if s["messages"][-1].get(" tool_calls") 
+
+else END, {"think": "think", END: END}) g.add_conditional_edges("think", 
+
+lambda s: ["tts"] 
+
+if s.get("gen_audio") else [END],) g.add_edge("tts", END) graph = g. compile () async for e in graph.astream_events( INPUT, version="v2"): 
+
+if (e["event"] == "on_chain_end" 
+
+and "streamed" in 
+
+e["data"].get("output",{})): 
+
+print (e["data"]["output"]["streamed "]) 
+
+vllm-omni 
+
+# Nodes = frozen dataclass, # Edges = input_sources tuple, # Bridge = function reference 
+
+P = PipelineConfig(model_type="m", stages=( StagePipelineConfig( stage_id=0, model_stage="thinker", execution_type= StageExecutionType.LLM_AR, input_sources=(), requires_multimodal_data=True, engine_output_type="text", ), StagePipelineConfig( stage_id=1, model_stage="talker", execution_type= StageExecutionType. LLM_GENERATION, input_sources=(0,), engine_output_type="audio", async_chunk_process_next_stage_input_func ="m.thinker2talker_chunk", sync_process_input_func= "m.thinker2talker_sync", ), )) 
+
+def thinker2talker_sync(src, **kw): 
+
+return [OmniTokensPrompt( prompt_token_ids=[0], additional_information={ "text": src[0].outputs[0].text })] Omni-Flow: A Unified Workflow Orchestration and Distributed KV Cache Sharing Framework for Multimodal Inference 
+
+sglang-omni                                  
+
+> #Nodes =JSON StageConfig +factory functions, #Edges =next/route_fn/wait_for/stream_to #pipeline.json
+> {"stages": [{"name":"pre","factory":"s.create_pre", "route_fn":"n.pre_next"}, {"name":"img","factory":"s.create_img", "next":"agg"}, {"name":"agg","factory":"s.create_agg", "wait_for":["pre","img"],"next":"think "}, {"name":"think","factory":"s. create_think", "stream_to":["tts","dec"]}, {"name":"tts","factory":"s.create_tts", "terminal":true}, {"name":"dec","factory":"s.create_dec", "terminal":true} ]}
+> # next_stage.py
+> def pre_next(rid, out): s=load_state(out) st =["agg"]
+> if s.has_image(): st.insert(0, "img")
+> if s.has_audio(): st.insert(0, "aud")
+> return st
+> #stages.py
+> def create_think(model_path): eng =create_sglang_ar_engine(...)
+> def _stream(payload, token):
+> return {"token_id": int (token)}
+> return EngineExecutor(eng, stream_builder=_stream)
+
+# C WITH AI C ODING 
+
+Omni-Flow was designed in late 2025 with development starting in early 2026, totaling roughly 1–2 person-half-years of engineering effort, the vast majority of which was produced with AI assistance. The iteration process roughly fell into three phases: (i) humans design the architecture, AI handles local fill-in —early AI was not yet capable of global design, so architects drove the structure while AI filled in method implementations and boilerplate; (ii) AI fixes bugs, humans supervise —once the framework took shape, high-volume bug fixes and edge-case handling were delegated to AI, with humans reviewing correctness and consistency; (iii) 
+
+humans provide design documents, AI refactors the frame-work —as AI reasoning improved and the design converged, AI progressively took ownership of refactoring, including the full rewrite of Control Flow v1 →v2 driven by detailed design documents. Several recurring challenges emerged and shaped our prac-tices: (1) AI tends toward local patching , accumulating framework band-aids—we mandate that every fix be eval-uated for whether it addresses the root cause, rolling back mere relocations; (2) readability of AI-generated code con-tinuously degrades —we require persistent human oversight, reading through each completed module to confirm align-ment with the overall design; (3) correctness control under parallel AI submissions —AI produces code too fast for manual diff review, so every module requires unit tests and all new logic must come with corresponding tests, making test coverage the only reliable guardrail; (4) AI diverges on larger modules —we first converge requirements into a document specifying interface definitions, core logic, and boundary conditions, then have AI execute strictly against it.

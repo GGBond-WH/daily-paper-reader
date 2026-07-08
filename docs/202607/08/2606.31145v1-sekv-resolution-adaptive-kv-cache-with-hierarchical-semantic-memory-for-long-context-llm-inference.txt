@@ -1,0 +1,1239 @@
+Title: SeKV: Resolution-Adaptive KV Cache with Hierarchical Semantic Memory for Long-Context LLM Inference
+
+URL Source: https://arxiv.org/pdf/2606.31145v1
+
+Published Time: Wed, 01 Jul 2026 00:38:58 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+## SEKV: Resolution-Adaptive KV Cache with Hierarchical Semantic Memory for Long-Context LLM Inference 
+
+Amirhossein Abaskohi 1* Giuseppe Carenini 1 Peter West 1 Yuhang He 21University of British Columbia 2Microsoft Research 
+
+Abstract 
+
+Large language models increasingly operate over long contexts, where the KV cache be-comes a dominant memory bottleneck: its size grows linearly with sequence length and must be retained throughout decoding, making full GPU caching prohibitively expensive without compression. Existing KV cache compression methods struggle to balance efficiency with faithful context preservation. Token eviction discards information, while semantic grouping fixes compression decisions at prefill time; nei-ther can recover token-level detail from a com-pressed span once it becomes relevant during generation. As a solution, we propose SEKV ,a resolution-adaptive semantic KV cache that organizes context into entropy-guided seman-tic spans and stores them across a GPU–CPU memory hierarchy without discarding infor-mation. Each span keeps a lightweight sum-mary vector on GPU for coarse routing and a low-rank SVD basis on CPU for on-demand token-level reconstruction. A trained zoom-in mechanism selectively expands query-relevant spans during decoding, enabling precise re-trieval without materializing the full KV cache on GPU. S EKV enables adaptive token-level re-construction while keeping the base LLM fully frozen and adding fewer than 0.05% trainable parameters. Across four benchmarks, S EKV improves over the strongest semantic compres-sion baseline by 5.9% on average while reduc-ing GPU memory by 53.3% versus full KV caching at 128K context. 1.
+
+1 Introduction 
+
+Large language models (LLMs) are increasingly expected to reason over long contexts in applica-tions such as document analysis (Luo et al., 2024), multi-turn dialogue (Zhang et al., 2025), and agen-tic planning (Huang et al., 2024). While recent     
+
+> *Corresponding author: aabaskoh@cs.ubc.ca .Part of this work was done during the internship at Microsoft Re-search (MSR), Vancouver Lab.
+> 1Code is available on §GitHub.
+
+models advertise context windows of 128K tokens or more, using these contexts in practice remains expensive: the Key-Value (KV) cache grows lin-early with sequence length and must be retained throughout decoding. As a result, full KV caching can become prohibitively memory-intensive, mak-ing long-context inference difficult to deploy with-out compression or memory-efficient cache man-agement. This creates a practical challenge distinct from simply extending the context window: long-context models must not only accept long inputs, but also preserve access to relevant evidence under tight memory constraints. Recent KV cache management methods reduce inference cost through token eviction, quantization, merging, retrieval, or offloading (Li et al., 2024; Cai et al., 2025; Wu and Tu, 2024; Chen et al., 2025; Zhao et al., 2026). However, most methods either treat context as a flat sequence of token-level states or apply semantic grouping with a static com-pression policy fixed at prefill time (Liu et al., 2026; Wu et al., 2026; Zhu et al., 2025). Both choices are limiting for long-context reasoning. Token-level compression can fragment coherent evidence or permanently discard information, while static semantic compression cannot recover token-level detail when a compressed span becomes relevant later in decoding. This is especially problematic when evidence that appears peripheral early be-comes a critical logical anchor for a later query. Therefore, in this paper, we argue that long-context KV caching requires not only stronger compres-sion, but a different memory organization: one that stores context at variable resolution and dynam-ically zooms into the appropriate level of detail based on query relevance. We introduce SEKV (Se mantic KV Cache), a resolution-adaptive semantic KV cache for efficient long-context LLM inference. S EKV organizes the KV cache as a hierarchical semantic memory .First, the input context is segmented into seman-1
+
+> arXiv:2606.31145v1 [cs.CL] 30 Jun 2026 The international energy summit opened in Geneva on March 3rd, with delegates from 52 countries in attendance. Opening remarks focused on global
+> cooperation frameworks...
+> [... several pages of background discussion ...]
+> Dr. Elena Marsh, lead negotiator for the EU, stated that emissions must fall 40% by 2035 to meet climate targets.
+> [... further discussion of logistics, voting procedures, side agreements ...]
+> The final session concluded with 38 nations voting in favor of the accord, 9 abstaining, and 5 absent.
+
+Question:  What emissions reduction target did Dr. Marsh propose? 
+
+(a) Token Eviction Methods  (b) SeKV (Ours)  
+
+> High attention (sink tokens) - irrelevant to the query
+> Dr. Elena Marsh ... emissions must fall 40% by 2035
+> ✗Evicted
+> High attention (recency bias) — "38 in favor, 9 abstaining"
+
+Beginning of document 
+
+Middle context (answer buried here) 
+
+End of document 
+
+Attention distribution over tokens    
+
+> beginning middle (answer) end
+> Spans 1-N (summary) distant context compressed as span summaries
+> on GPU
+
+Beginning and Middle of document    
+
+> "Dr. Elena Marsh ... emissions must fall
+> 40% ★by 2035 ★" ← anchor tokens
+
+Key fact span (zoomed-in) 
+
+> "The final vote was 38 in favor, 9 abstaining." (recent tokens)
+
+End (local window — always on GPU) 
+
+Attention distribution over tokens         
+
+> Spans 1-N distant-context key fact span local window
+> Token-level detail: "fall" | "40%" ★| "by" | "2035" ★| "to"
+> Anchor tokens reconstructed from SVD basis (CPU→GPU)
+> Answer: [hallucinated] 23% ✗
+
+Critical tokens discarded. Attention pools at boundaries. 
+
+Semantic units fragmented. Answer lost.  
+
+> Answer: 40% ✓
+
+Semantic spans preserve all context. Relevant span 
+
+retrieved and expanded. Anchor tokens ensure precision. Figure 1: (a) Existing token eviction methods discard semantically critical tokens from distant context, causing attention to pool at document boundaries while the answer region receives near-zero attention, leading to hallu-cination; (b) SeKV organizes context into entropy-guided semantic spans, preserving all information across a GPU/CPU memory hierarchy. A trained zoom-in mechanism dynamically expands the most query-relevant span to full token-level resolution, with anchor tokens always retained on GPU for precise retrieval. 
+
+tically coherent spans using token surprisal as a boundary signal, which is available from the model’s prefill forward pass and often peaks at semantic transitions such as topic shifts and entity introductions (Zhao et al., 2025). High-surprisal 
+
+anchor tokens at span boundaries are preserved at full resolution on GPU, as they carry concentrated semantic information useful for later routing and reconstruction. Second, each span is represented by a lightweight summary vector on GPU (used for efficient coarse routing) and a low-rank SVD basis 
+
+on CPU that compactly encodes the span’s token-level structure for faithful reconstruction. Third, a trained zoom-in mechanism dynamically se-lects which spans to expand to token-level reso-lution during decoding, triggering asynchronous CPU-to-GPU fetches of SVD bases for relevant spans while GPU computation proceeds in parallel. Crucially, S EKV avoids irreversible token eviction: each span is represented by GPU-resident summary vectors for coarse routing and CPU-resident low-rank bases that enable approximate token-level re-construction on demand. Across four long-context understanding benchmarks, S EKV achieves 5.9% improvement over the strongest semantic compres-sion baseline while reducing GPU memory con-sumption by 53.3% compared to full KV caching at 128K context length. In summary, this work makes three contributions. 
+
+(1) we propose SEKV , a resolution-adaptive se-mantic KV cache that stores context at multiple res-olutions and dynamically adjusts cache detail based on query relevance during decoding. (2) We intro-duce entropy-guided span segmentation , which uses token surprisal during prefilling to identify co-herent semantic spans and preserve high-surprisal anchor tokens at full resolution for reliable later retrieval. (3) We design a dual-representation KV structure with GPU-resident span summaries for coarse routing, CPU-resident low-rank bases for ap-proximate token-level reconstruction, and a trained zoom-in mechanism that selectively expands only 2the query-relevant spans during decoding. 
+
+2 Related Work 
+
+KV cache compression and eviction. The domi-nant approach to KV cache compression is token eviction, where tokens are permanently discarded based on attention statistics (Zhang et al., 2023; Liu et al., 2023; Xiao et al., 2024b; Li et al., 2024; Cai et al., 2025). Head-aware methods distinguish retrieval heads from streaming heads to apply spar-sity selectively (Xiao et al., 2025; Tang et al., 2025), while cross-layer methods exploit the high similar-ity between adjacent layer KV states to merge or share representations (Liu et al., 2024; Wu and Tu, 2024; Sun et al., 2024; Hu et al., 2025). To scale beyond GPU memory limits, retrieval-based sys-tems offload KV pairs to CPU and fetch relevant entries on demand using lightweight GPU-resident proxies (Xiao et al., 2024a; Chen et al., 2025; Zhao et al., 2026). DesireKV (Cheng et al., 2026) tar-gets reasoning models specifically by jointly con-sidering attention-derived importance and quanti-zation sensitivity to make differentiated per-token compression decisions. While collectively effec-tive, these methods all fix compression decisions at prefill time, operate at the token level, and per-manently discard information — properties that limit their ability to recover evidence that becomes relevant only during generation. SEKV differs fundamentally: it organizes context into semantic spans, avoids irreversible token eviction through a GPU–CPU memory hierarchy, and dynamically re-covers token-level detail on demand with a trained zoom-in mechanism. 
+
+Semantic KV cache compression. Recent meth-ods introduce semantically structured KV com-pression by grouping tokens before compression. ChunkKV (Liu et al., 2026) preserves local co-herence by selecting contiguous token chunks; SemantiCache (Wu et al., 2026) segments con-text, clusters tokens by key similarity, and merges each cluster into representative KV pairs; and Sen-tenceKV (Zhu et al., 2025) stores sentence-level semantic vectors on GPU and offloads selected token-level KV pairs to CPU for dynamic retrieval during decoding. These methods show that se-mantic structure can improve cache efficiency over flat token eviction. However, their semantic units and retained cache representations are largely fixed during prefill, making it difficult to recover finer-grained evidence outside the retained token pool when it becomes relevant later. S EKV addresses this limitation with entropy-guided spans, GPU-resident routing summaries, CPU-resident low-rank bases, and a trained zoom-in mechanism that reconstructs query-relevant spans on demand. 
+
+3 SEKV 
+
+SEKV reorganizes the KV cache from a flat token-level sequence into a hierarchical semantic memory. As illustrated in Figure 2, the context is segmented into semantically coherent spans, each represented at two resolutions simultaneously: a compact sum-mary vector on GPU for efficient coarse routing, and a low-rank SVD basis on CPU for faithful token-level reconstruction on demand. A trained zoom-in mechanism with per-head per-layer rout-ing projections, a learned per-span rank budget, and learned thresholds dynamically selects which spans to expand during decoding and at what fidelity. We describe each component below. 
+
+3.1 Entropy-Guided Span Segmentation 
+
+SEKV segments the input context into semanti-cally coherent spans using token-level surprisal as a zero-cost boundary signal. During prefilling, the surprisal of the token at each position t is computed as 
+
+Ht = − log p xt | x<t 
+
+, (1) where xt is the token at position t and x<t =(x1, . . . , x t−1) denotes the preceding tokens. This quantity is already produced by the prefill forward pass and requires no additional computation. High-surprisal tokens often mark semantic transitions such as topic shifts, entity introductions, and log-ical turns (Zhao et al., 2025). We therefore treat positions where Ht > μ + ασ as span boundaries, where μ and σ are the mean and standard devia-tion of surprisal over the sequence and α controls boundary sensitivity. These boundary tokens are re-tained as anchor tokens at full resolution on GPU, while the tokens between two neighboring anchors form a semantic span S.Compared with fixed-size chunking (Liu et al., 2026) or delimiter-based splitting (Wu et al., 2026), surprisal-based segmentation is content-adaptive and requires no external tagger, splitter, or ad-ditional model. It allocates finer resolution to information-dense regions, which produce shorter spans and more anchors, while compressing lower-density text into longer spans. The resulting spans 3Ht μ+ασ   
+
+> S1S2S3
+> GPU CPU
+
+KS1  (l, h) 
+
+> Surprisal
+> Weighted
+> Projection
+> W(l, h)
+
+KS2 (l, h) 
+
+KS3 (l, h) 
+
+> truncated SVD
+> rank r
+> async prefetch
+> on zoom -in
+
+U Σ V T
+
+> rank r << |S1|
+
+U Σ V T
+
+> rank r << |S1|
+
+U Σ V T
+
+> rank r << |S1|
+
+Prefilling  Decoding (per head h and layer l) 
+
+query q(l, h) 
+
+S1
+
+S2
+
+S3   
+
+> Stage 1: Routing Attention
+> αS(l, h)
+> τ(l, h)
+> Zoom -In
+> Merge
+> Stage 2:
+> fine -grained
+> attention
+> fetch SVD basis
+> (CPU →GPU )
+
+KS1 (l, h) =U Σ V T KS3 (l, h) =U  Σ V T
+
+^
+
+^
+
+> Local window
+> w tokens
+> Coarse Summary
+> Vectors
+> S2
+> attention output o (l, h)
+
+Figure 2: Overview of S EKV. The input is segmented into entropy-guided spans. Anchor tokens and summary vectors reside on GPU for coarse routing, while SVD bases are stored on CPU. At each decoding step, Stage 1 routing identifies relevant spans and triggers asynchronous fetching of their SVD bases. Stage 2 reconstructs token-level KV pairs for zoomed spans and computes fine-grained attention, with outputs merged across both stages. 
+
+are then encoded into the dual-resolution represen-tation described in Section 3.2. 
+
+3.2 Dual-Resolution Span Representation and Memory Hierarchy 
+
+Each semantic span S is represented at two resolu-tions: a GPU-resident summary used for efficient span-level routing, and a CPU-resident low-rank basis used for approximating token-level recon-struction when the span is selected for zoom-in. 
+
+Summary vector (GPU). For each token t ∈ S,let Ht denote its surprisal under the frozen LLM during prefilling. We first convert token surprisals into normalized span-local weights: 
+
+wt = Ht
+
+P 
+
+> k∈S
+
+Hk
+
+. (2) This weights non-anchor tokens by their residual surprisal. For each layer l and attention head h, let 
+
+K(l,h ) 
+
+> t
+
+∈ Rdh denote the key vector of token t,where dh is the head dimension ( dh = 128 on LLAMA -3-8B). We compute a compact summary key ¯K(l,h ) 
+
+> S
+
+∈ Rd′
+
+, where d′ ≪ dh is the rout-ing dimension ( d′ = 32 ), by projecting token keys with a learned per-head, per-layer projection 
+
+W (l,h ) ∈ Rd′×dh and taking a normalized surprisal-weighted average: 
+
+¯K(l,h ) 
+
+> S
+
+=
+
+P 
+
+> t∈S
+
+wtW (l,h )K(l,h )
+
+> t
+
+P 
+
+> t∈S
+
+wtW (l,h )K(l,h ) 
+
+> t2
+
+, (3) where the per-head, per-layer projection W (l,h )
+
+lets each head-layer pair learn its own relevance space, since attention patterns vary across heads and layers (Voita et al., 2019). This summary is used only for routing. We additionally keep on GPU the surprisal-weighted mean key and value in the original space, ¯k(l,h ) 
+
+> S
+
+= P 
+
+> t∈S
+
+wtK(l,h ) 
+
+> t
+
+and 
+
+¯v(l,h ) 
+
+> S
+
+= P 
+
+> t∈S
+
+wtV (l,h ) 
+
+> t
+
+, both in Rdh , which serve as the coarse contribution of a non-expanded span in the output attention (Sec. 3.3). At each decoding step, we project the current query into the same routing space as the span sum-maries: 
+
+q(l,h ) = W (l,h )q(l,h ) 
+
+> t
+
+∈ Rd′
+
+. (4) Since zoom-in is an independent per-span decision, we use a sigmoid relevance gate rather than a com-petitive softmax: 
+
+˜α(l,h ) 
+
+> S
+
+= sig 
+
+
+
+q(l,h )
+
+ ¯K(l,h )
+
+> S
+
+⊤
+
+√d′ + log |S|
+
+ , (5) 4where sig( x) = 1 /(1 + e−x) is the logistic func-tion. The log |S| term acts as a monotone size prior, preventing longer spans from being systematically under-selected. Because ˜α(l,h ) 
+
+> S
+
+is span-independent, the threshold in Sec. 3.3 remains stable across con-text lengths. 
+
+Low-rank SVD basis with a learned rank bud-get (CPU). To support token-level reconstruc-tion without keeping full KV pairs on GPU, we store a compact low-rank representation of each span on CPU. For each layer l and head h, let 
+
+K(l,h ) 
+
+> S
+
+∈ R|S|× dh denote the key matrix formed by stacking the token keys in span S. We com-pute its truncated SVD up to a maximum rank 
+
+R = min( |S|, d h, R max ), for a fixed cap Rmax ,
+
+K(l,h ) 
+
+> S
+
+=
+
+> R
+
+X
+
+> i=1
+
+σ(l,h ) 
+
+> S,i
+
+u(l,h )
+
+> S,i
+
+
+
+v(l,h )
+
+> S,i
+
+⊤
+
+, (6) with left and right singular vectors u(l,h ) 
+
+> S,i
+
+∈ R|S|
+
+and v(l,h ) 
+
+> S,i
+
+∈ Rdh . Rather than truncating at a single global rank, a lightweight predictor gϕ assigns per-component soft gates 
+
+m(l,h ) 
+
+> S,i
+
+= sig 
+
+
+
+gϕ
+
+ σ(l,h ) 
+
+> S, ·
+
+, ¯K(l,h )
+
+> S
+
+
+
+> i
+
+
+
+∈ (0 , 1) , (7) computed from the singular spectrum and the span summary, and the gated reconstruction is 
+
+ˆK(l,h ) 
+
+> S
+
+=
+
+> R
+
+X
+
+> i=1
+
+m(l,h ) 
+
+> S,i
+
+σ(l,h ) 
+
+> S,i
+
+u(l,h )
+
+> S,i
+
+
+
+v(l,h )
+
+> S,i
+
+⊤
+
+. (8) The effective rank of span S is r(l,h ) 
+
+> S
+
+= P 
+
+> i
+
+m(l,h ) 
+
+> S,i
+
+.At deployment, components with negligible gates are dropped, so the stored and transferred fac-tors U (l,h ) 
+
+> S
+
+∈ R|S|× rS , Σ(l,h ) 
+
+> S
+
+∈ RrS ×rS , and 
+
+V (l,h ) 
+
+> S
+
+∈ Rdh×rS adapt per span: information-dense spans retain more components, redun-dant spans fewer. We apply the same gated decomposition to the value matrix V(l,h ) 
+
+> S
+
+∈
+
+R|S|× dh , obtaining its own gates mV,(l,h ) 
+
+> S,j
+
+and fac-tors U V,(l,h ) 
+
+> S
+
+, ΣV,(l,h ) 
+
+> S
+
+, V V,(l,h ) 
+
+> S
+
+, which are likewise stored on CPU. Here V (l,h ) 
+
+> S
+
+and V V,(l,h ) 
+
+> S
+
+denote the right singular vectors of the key and value matrices, while V(l,h ) 
+
+> S
+
+denotes the value matrix itself. Because entropy-guided segmentation groups to-kens into coherent spans, their KV matrices are of-ten more compressible than arbitrary token blocks, so a small number of components can preserve most span information. Storing a retained rank-rS
+
+factorization costs rS (|S|+dh +1) values per head and layer, compared with |S|dh for the full key ma-trix, yielding savings when rS ≪ dh. The repre-sentation is therefore compact in transfer volume, although the left factor still scales with span length. To avoid unnecessary overhead, spans shorter than 
+
+Lmin are kept at full resolution on GPU. Key and value decompositions are computed once during prefilling; randomized truncated SVD keeps this step parallelizable and amortizes its cost over de-coding. Together, these representations define the mem-ory hierarchy in S EKV. Anchor tokens remain uncompressed on GPU and always participate in fine-grained attention, while span summaries sup-port coarse routing. Low-rank SVD bases for non-anchor tokens reside on CPU and are fetched asyn-chronously only for selected spans. During decod-ing, S EKV overlaps GPU computation with CPU– GPU prefetching, following pipelined orchestra-tion designs (Chen et al., 2025). Unlike retrieval-based offloading methods that transfer full token-level KV pairs from CPU (Xiao et al., 2024a; Zhu et al., 2025), S EKV transfers compact low-rank bases and reconstructs only zoomed spans, reduc-ing transfer volume while avoiding irreversible to-ken eviction. 
+
+3.3 Trained Zoom-In Mechanism 
+
+At each decoding step, S EKV first routes over span summary vectors. For each layer l and head h, the routing gate assigns a per-span relevance probabil-ity ˜α(l,h ) 
+
+> S
+
+, and a learned per-head per-layer thresh-old τ (l,h ) determines whether span S is expanded: 
+
+z(l,h ) 
+
+> S
+
+= 1
+
+h
+
+˜α(l,h ) 
+
+> S
+
+> τ (l,h )i
+
+. (9) Per-head thresholds matter because heads have dif-ferent selectivity: retrieval heads may expand many distant spans, while streaming heads should rarely trigger expansion. Each decoding step then per-forms a single attention computation over a mixed-resolution memory. Anchor tokens always con-tribute full key–value pairs. Non-expanded spans contribute one coarse entry, given by their retained mean key and value ¯k(l,h ) 
+
+> S
+
+and ¯v(l,h ) 
+
+> S
+
+, with a log |S|
+
+correction added to the pre-softmax score so that one summary competes proportionally to the |S|
+
+tokens it represents (Mohtashami and Jaggi, 2023). Expanded spans fetch their low-rank bases from CPU, reconstruct token-level KV pairs via Eq. 8, 5and enter attention at full resolution. Since coarse summaries and reconstructed tokens share the same softmax, zooming refines a span’s contribution rather than adding a separate attention path, and no span is dropped from context. For fair comparison with fixed-budget baselines, we define the budget as the peak GPU-resident KV during a decoding step, including persistent anchors, summaries, coarse means, and any spans reconstructed at that step. The learned thresholds 
+
+τ (l,h ) provide the default expansion rule. If the selected spans exceed the budget, we keep spans in decreasing order of ˜α(l,h ) 
+
+> S
+
+until the budget is filled. Thus, the threshold sets the operating point, while the cap enforces the matched memory budget. We train only the lightweight routing compo-nents while keeping the base LLM frozen, using a straight-through estimator (Bengio et al., 2013) for the binary decision in Eq. 9. The objective combines four terms: 
+
+L = Ldistill + λ1Lzoom + λ2Lrecon + λ3Lbudget .
+
+(10) 
+
+Distillation. The distillation loss aligns S EKV with a full-KV teacher and provides the end-task signal that flows, through the straight-through gate, to both the routing projections and the thresholds: 
+
+Ldistill = DKL (pfull ∥ pSEKV ) . (11) 
+
+Zoom supervision. We supervise the routing probability directly against a teacher-derived target rather than against the thresholded decision, which keeps the loss well-posed and free of the trainable threshold. Let a(l,h ) 
+
+> S
+
+= P 
+
+> t∈S
+
+α(l,h ),teacher  
+
+> t
+
+be the teacher attention mass on span S, and let C(l,h ) 
+
+> ρ
+
+be the smallest set of spans whose cumulative mass reaches a fixed fraction ρ. The fixed binary target is 
+
+y(l,h ) 
+
+> S
+
+= 1
+
+h
+
+S ∈ C (l,h )
+
+> ρ
+
+i
+
+, (12) which depends only on the teacher and not on τ (l,h ).The zoom loss is a positive-weighted binary cross-entropy on the routing probability, 
+
+Lzoom = X
+
+> l
+
+X
+
+> h
+
+X
+
+> S
+
+BCE w+
+
+
+
+˜α(l,h ) 
+
+> S
+
+, y (l,h )
+
+> S
+
+
+
+,
+
+(13) where positive weight w+ compensates for the rar-ity of relevant spans. Since the target is fixed and in-dependent of τ (l,h ), this loss trains the routing pro-jections to separate relevant from irrelevant spans without letting the threshold define its own super-vision. 
+
+Reconstruction. The reconstruction loss super-vises the per-span rank budget through the per-component soft gates m(l,h ) 
+
+> S,i
+
+∈ (0 , 1) predicted by 
+
+gϕ (Eq. 7), and their value counterparts mV,(l,h ) 
+
+> S,j
+
+.Since the singular components are orthonormal, the gated approximation error of a single factoriza-tion is E(m, σ ) = P
+
+> i
+
+(1 − mi)2σ2 
+
+> i
+
+. Summing over keys and values, heads, layers, and spans gives 
+
+Lrecon = X
+
+> l,h,S
+
+E m(l,h ) 
+
+> S
+
+, σ (l,h )
+
+> S
+
+
+
++ X
+
+> l,h,S
+
+E mV,(l,h ) 
+
+> S
+
+, σ V,(l,h )
+
+> S
+
+ (14) where σ(l,h ) 
+
+> S
+
+and σV,(l,h ) 
+
+> S
+
+are the singular values of the key and value matrices of span S. This is differentiable in the gates and therefore trains the rank predictor gϕ. The singular values and vectors come from the frozen keys and values and are treated as constants (no gradient flows through the SVD), which avoids the instability of SVD backpropagation under near-degenerate singular values. 
+
+Budget. The reconstruction loss alone is mini-mized by retaining every component, and distilla-tion likewise prefers more rank and more expan-sions, so a cost term is required to make the rank budget and the threshold meaningful: 
+
+Lbudget = X
+
+> l
+
+X
+
+> h
+
+X
+
+> S
+
+z(l,h ) 
+
+> S
+
++ β X
+
+> i
+
+m(l,h )
+
+> S,i
+
+!
+
+.
+
+(15) The first term penalizes the number of expanded spans and, through the straight-through gate, en-courages higher thresholds when expansions are too costly. The second term penalizes the total re-tained rank P 
+
+> i
+
+m(l,h ) 
+
+> S,i
+
+, balancing Lrecon so that rank is allocated only where it meaningfully reduces er-ror. The coefficient β > 0 sets the relative cost of retained rank against span expansion, controlling how the budget is split between transferring more spans and reconstructing each at higher rank. 
+
+Learnable parameters. SEKV keeps the base LLM frozen and learns only the routing projections 
+
+{W (l,h )}, the zoom thresholds {τ (l,h )} ∈ RL×H ,and the shared rank-gate predictor gϕ. L LAMA -3-8B (Llama Team, 2024) uses grouped-query atten-tion with L = 32 layers, H = 32 query heads, and 8 key-value heads. Each query head routes against a summary built from its group’s shared 6key-value head, so the projections are indexed per query head, with {W (l,h )} ∈ RL×H×d′×dh . With 
+
+dh = 128 and d′ = 32 , the projections account for about 4.19 M parameters, the thresholds for 
+
+L × H = 1024 , and gϕ for under 0.1M, total-ing approximately 4.3M, about 0.05% of the base model. 
+
+4 Experiments and Results 
+
+4.1 Experimental Setup Benchmarks. We evaluate SEKV on four long-context benchmarks: LongBench (Bai et al., 2024), RULER (Hsieh et al., 2024), In-finiteBench (Zhang et al., 2024), and Needle-in-a-Haystack (NIAH) (gkamradt, 2023). Together, these benchmarks cover realistic long-document understanding, controlled synthetic retrieval and reasoning, ultra-long context stress tests, and tar-geted retrieval fidelity up to 128K tokens. We addi-tionally evaluate GSM8K (Cobbe et al., 2021) in a many-shot setting to test whether compression pre-serves step-by-step reasoning over long prompts. Refer to Appendix B for more details. 
+
+Baselines. We compare S EKV with full KV caching and representative KV-cache compres-sion baselines. Token-level methods include StreamingLLM (Xiao et al., 2024b), H2O (Zhang et al., 2023), SnapKV (Li et al., 2024), and Pyra-midKV (Cai et al., 2025); semantic or chunk-level methods include ChunkKV (Liu et al., 2026), SemantiCache (Wu et al., 2026), and Sen-tenceKV (Zhu et al., 2025). All compression meth-ods are evaluated under matched GPU-resident KV memory budgets, with main results at 10% of full KV and additional 5%, 15%, and 20% budget re-sults in the ablation study. Further baseline details are provided in Appendix B. 
+
+Backbone models. We evaluate S EKV on five backbones: L LAMA -3.2-3B-I NSTRUCT , L LAMA -3-8B, L LAMA -3.1-8B-I NSTRUCT (Llama Team, 2024), M ISTRAL -7B-I NSTRUCT -V0.3 (Jiang et al., 2023), and QWEN 2.5-14B-I NSTRUCT (Team, 2025). This suite covers different model scales and families, allowing us to test whether S EKV gener-alizes across backbones. Within each benchmark, all methods use the same backbone, tokenizer, de-coding strategy, and maximum generation length. For contexts beyond a model’s default limit, we enable its available long-context configuration; for settings above 128K tokens, we use Q WEN 2.5-14B-I NSTRUCT -1M when full-context evaluation is required. 
+
+Tasks & Metrics. We follow each benchmark’s of-ficial protocol, reporting average F1 on LongBench QA subsets, average accuracy on RULER, accu-racy on the InfiniteBench Retrieve subset, retrieval accuracy on NIAH, and exact-match accuracy on GSM8K. 
+
+Implementation and inference details. SEKV is implemented in PyTorch 2 with HuggingFace Trans-formers 3. The base LLM remains frozen; we train only the per-head per-layer routing projections, the zoom-in thresholds, and the shared rank-gate pre-dictor gϕ (Section 3.3). These lightweight compo-nents are trained on long documents from RedPa-jama (Weber et al., 2024) (arXiv, books, and code subsets), with the zoom objective supervised only at mined query positions whose teacher attention concentrates beyond a local window of w = 512 
+
+tokens; no instruction or synthetic-retrieval data is used, and the training corpus is disjoint from LongBench, RULER, InfiniteBench, NIAH, and GSM8K. Training uses AdamW (Loshchilov and Hutter, 2019) (learning rate 1×10 −3, weight decay 
+
+0.01 , cosine decay with 10% warmup) in bf16 for roughly 3K steps over about 0.5B tokens, with an 
+
+8K → 32 K length curriculum and an effective batch of 8 sequences (one per GPU). We use a maximum SVD rank R = 32 with the per-span effective rank set by gϕ, summary dimension d′ = 32 , boundary sensitivity α = 1 .0, permissive threshold initializa-tion τ = 0 .05 , and loss weights λ1 = 1 .0 (zoom), 
+
+λ2 = 0 .5 (reconstruction), and λ3 = 0 .1 (budget, annealed from 0 over the first half of training), with rank sub-weight β = 0 .1, positive class weight 
+
+w+ = 10 , and coverage fraction ρ = 0 .9. Train-ing a single backbone takes 2 to 6 hours on one 
+
+8×NVIDIA A100 (80GB) node, with Q WEN 2.5-14B-I NSTRUCT at the upper end; the full hyper-parameter list is given in Appendix A. At infer-ence time, we use greedy decoding with tempera-ture 0 and benchmark-specific maximum genera-tion lengths. Anchor tokens, span summaries, and coarse span means remain on GPU, while low-rank SVD bases are stored on CPU and fetched asyn-chronously when zoom-in is triggered; to match a target budget, spans are expanded in decreasing routing-score order until the GPU-resident KV bud-get is reached. LongBench, RULER, NIAH, and GSM8K are evaluated on a single A100 80GB GPU 
+
+> 2https://pytorch.org/
+> 3https://huggingface.co/
+
+7LongBench RULER Method                                                                                                                                                                                      
+
+> Llama-3.2-3B
+> Llama-3-8B
+> Llama-3.1-8B
+> Mistral-7B
+> Qwen2.5-14B
+> Llama-3.2-3B
+> Llama-3-8B
+> Llama-3.1-8B
+> Mistral-7B
+> Qwen2.5-14B
+> Full KV 43.21 50.34 51.18 41.83 55.47 73.67 81.94 88.35 68.38 90.74 StreamingLLM (Xiao et al., 2024b) 28.43 38.41 39.17 34.82 42.31 41.32 52.17 58.43 38.24 61.87 H2O (Zhang et al., 2023) 31.72 43.84 44.52 37.63 47.18 48.71 61.33 67.82 45.17 71.24 SnapKV (Li et al., 2024) 34.18 46.23 47.11 38.91 49.34 54.83 68.42 74.31 51.63 77.48 PyramidKV (Cai et al., 2025) 35.44 47.13 48.02 39.74 50.17 56.17 70.14 76.23 53.41 79.33 ChunkKV (Liu et al., 2026) 36.82 48.31 49.14 40.83 51.42 58.34 72.83 78.41 55.72 81.17 SemantiCache (Wu et al., 2026) 37.14 48.73 49.61 41.17 51.88 59.12 73.47 79.18 56.33 82.04 SentenceKV (Zhu et al., 2025) 37.83 49.12 49.93 41.44 52.31 60.43 74.82 80.37 57.84 83.41
+> SEKV (Ours) 39.47 50.18 51.02 42.63 54.71 63.84 78.43 84.17 61.23 87.34 InfiniteBench NIAH Method
+> Llama-3.2-3B
+> Llama-3-8B
+> Llama-3.1-8B
+> Mistral-7B
+> Qwen2.5-14B
+> Llama-3.2-3B
+> Llama-3-8B
+> Llama-3.1-8B
+> Mistral-7B
+> Qwen2.5-14B
+> Full KV 21.16 25.27 28.88 22.77 36.51 76.72 85.23 91.52 72.39 95.28 StreamingLLM (Xiao et al., 2024b) 11.43 14.82 17.31 12.64 22.17 38.43 47.82 54.17 34.71 58.34 H2O (Zhang et al., 2023) 13.72 17.43 20.14 14.83 25.38 47.83 58.41 64.83 43.72 68.47 SnapKV (Li et al., 2024) 15.84 19.73 22.47 16.72 28.14 54.17 66.83 73.42 51.34 76.83 PyramidKV (Cai et al., 2025) 16.43 20.81 23.62 17.44 29.37 56.43 68.72 75.83 53.17 78.41 ChunkKV (Liu et al., 2026) 17.12 21.83 24.71 18.23 30.84 59.84 72.14 79.23 56.83 81.72 SemantiCache (Wu et al., 2026) 17.83 22.47 25.33 18.84 31.42 61.17 73.83 80.74 58.14 83.17 SentenceKV (Zhu et al., 2025) 18.34 23.14 26.07 19.47 32.17 63.42 75.47 82.13 60.23 84.83
+> SEKV (Ours) 19.72 24.83 27.94 21.13 34.83 68.83 81.34 87.42 65.74 91.17
+
+Table 1: Performance comparison of KV cache compression methods across four benchmarks and five models. All compression methods use a GPU-resident KV budget equal to 10% of the full KV cache. Best compressed result in 
+
+bold , second best underlined. 
+
+whenever the method fits. For InfiniteBench and full-KV reference runs that exceed single-device memory, we use tensor parallelism across up to 
+
+8 A100 80GB GPUs. All efficiency comparisons among compression methods use the single-GPU deployment setting. 
+
+4.2 Long-Context Reasoning Long-context benchmark performance. Table 1 shows that S EKV is the strongest compressed-cache method across all four benchmarks and all five backbone models. SEKV wins every com-pressed setting: 20 out of 20 benchmark–model comparisons. Averaged over all settings, S EKV improves over the strongest baseline, SentenceKV, by 5.9% under the same 10% KV budget. The gains are especially large on retrieval-heavy bench-marks: +5.68 on NIAH and +3.63 on RULER ,showing that adaptive zoom-in is particularly use-ful when a small piece of evidence must be recov-ered from a long context. On more heterogeneous benchmarks, the gains remain consistent: +1.48 on LongBench and +1.85 on InfiniteBench . These re-sults support the central claim of S EKV: static com-pression preserves coarse context, but dynamic res-olution recovery is needed to retrieve fine-grained evidence at generation time. We further isolate the contribution of each SEKV component and analyze sensitivity to the GPU-resident KV budget and key hyperparameters in Appendix C. 
+
+Comparison to Full KV and model scaling. De-spite using only 10% of the KV budget, S EKV remains close to Full KV, with average gaps of only 0.80 points on LongBench and 1.23 points 
+
+on InfiniteBench. The gap is larger on retrieval-sensitive benchmarks such as RULER and NIAH, but S EKV still substantially narrows it compared to prior methods. Its gains over SentenceKV are also stable across backbones, ranging from +2.94 to 
+
++3.83 , with the largest improvement on Q WEN 2.5-14B, suggesting that stronger models benefit more from resolution-adaptive cache access. 
+
+Needle retrieval behavior. Figure 3 shows NIAH heatmaps for L LAMA -3.1-8B with a fixed KV cache size of 128. SEKV maintains strong re-trieval across context lengths and needle depths, with most cells remaining high-success. Prior meth-ods degrade more noticeably at longer contexts and deeper insertions: SentenceKV and ChunkKV re-main competitive but show more failures, while 810                        
+
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Depth (%)
+> (a) SeKV, accuracy 87.4% (b) SentenceKV, accuracy 82.1% (c) ChunkKV, accuracy 79.2%
+> 1K 2K 3K 4K 5K 6K 7K 8K
+> Context length
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Depth (%)
+> (d) PyramidKV, accuracy 75.8%
+> 1K 2K 3K 4K 5K 6K 7K 8K
+> Context length
+> (e) SnapKV, accuracy 73.4%
+> 1K 2K 3K 4K 5K 6K 7K 8K
+> Context length
+> (f) StreamingLLM, accuracy 54.2%
+
+Figure 3: Needle-in-a-Haystack retrieval maps for L LAMA -3.1-8B with KV cache size 128 and contexts up to 8K tokens. Greener cells indicate higher retrieval success across needle depths and context lengths. S EKV shows the most stable retrieval behavior, consistent with its strongest NIAH score in Table 1. 
+
+SnapKV PyramidKV ChunkKV SentenceKV SEKV 
+
+LLAMA -3.2-3B-I NSTRUCT FullKV: 60.8 53.4 54.2 55.6 56.1 58.4 
+
+LLAMA -3-8B FullKV: 69.4 61.7 63.2 64.6 65.4 67.8 
+
+LLAMA -3.1-8B-I NSTRUCT FullKV: 82.4 68.2 70.3 74.9 76.8 79.3 
+
+MISTRAL -7B-I NSTRUCT FullKV: 74.6 66.7 68.1 69.3 70.4 72.5 
+
+QWEN 2.5-14B-I NSTRUCT FullKV: 86.7 77.9 79.4 80.7 82.1 84.5 
+
+Table 2: Many-shot GSM8K accuracy with 50-shot prompts. FullKV is the uncompressed reference; com-pressed methods use a 10% GPU-resident KV budget. 
+
+token-eviction methods such as SnapKV, Pyra-midKV, and StreamingLLM exhibit broader low-success regions. This indicates that S EKV’s gains are consistent across the length–depth space rather than concentrated on easy needle positions. 
+
+4.3 Many-Shot Reasoning 
+
+Table 2 evaluates whether KV-cache compression preserves reasoning behavior in a long-prompt set-ting. Unlike NIAH or RULER, GSM8K does not primarily test retrieval of a single hidden fact; in-stead, the model must preserve many in-context demonstrations that define the reasoning pattern. SEKV achieves the best compressed-cache re-sult across all five backbones, improving over the strongest baseline, SentenceKV, by +2.3 points on average . The gap to FullKV also remains small: SEKV is within 2.4 points of FullKV on average, with particularly strong results on L LAMA -3.1-8B-
+
+Method Input Output Lat. (s) ↓ Throughput (T/S) ↑
+
+FullKV 4096 1024 43.60 105.92 StreamingLLM 4096 1024 34.10 132.40 
+
+ChunkKV 4096 1024 37.52 118.85 SentenceKV 4096 1024 39.84 112.64 
+
+SEKV 4096 1024 38.05 120.11 FullKV 4096 4096 175.50 37.73 StreamingLLM 4096 4096 148.92 44.23 
+
+ChunkKV 4096 4096 164.55 40.58 SentenceKV 4096 4096 169.64 38.91 
+
+SEKV 4096 4096 166.72 40.31 FullKV 8192 1024 46.48 184.08 StreamingLLM 8192 1024 33.94 245.35 
+
+ChunkKV 8192 1024 37.83 228.96 SentenceKV 8192 1024 40.52 210.74 
+
+SEKV 8192 1024 38.64 223.18 FullKV 8192 4096 183.42 55.93 StreamingLLM 8192 4096 150.86 70.41 
+
+ChunkKV 8192 4096 164.78 65.14 SentenceKV 8192 4096 171.26 60.82 
+
+SEKV 8192 4096 166.95 64.21 
+
+Table 3: Runtime comparison on Q WEN 2.5-14B-INSTRUCT with batch size 1. S EKV achieves competi-tive latency and throughput while improving accuracy. 
+
+INSTRUCT and Q WEN 2.5-14B-I NSTRUCT . These results show that S EKV preserves both sparse re-trieval and many-shot reasoning structure. 
+
+4.4 Efficiency Analysis 
+
+Table 3 compares latency and throughput across input–output lengths. S EKV is consistently faster than FullKV, reducing latency from 43.60s to 38.05s in the 4K/1K setting and from 183.42s to 166.95s in the 8K/4K setting, while improving throughput from 105.92 to 120.11 T/S and from 55.93 to 64.21 T/S. Although StreamingLLM is fastest due to aggressive eviction, it suffers sub-stantial accuracy loss in Table 1. Among semantic methods, S EKV offers the best trade-off: faster 98K 16K 32K 64K 128K 
+
+> Context length (K tokens)
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> GPU memory usage (GB)
+> High GPU-memory regime
+> FullKV
+> StreamingLLM
+> ChunkKV
+> SentenceKV
+> SeKV
+
+Figure 4: GPU memory scaling with context length on QWEN 2.5-14B-I NSTRUCT at batch size 1. 1 7 13 19 25 31 37 43 
+
+> Layer
+> 1
+> 6
+> 11
+> 16
+> 21
+> 26
+> 31
+> 36
+> Attention head
+> Qwen2.5-14B-Instruct on NIAH
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Zoom-in rate
+
+Figure 5: Average zoom-in rate across layers and heads for S EKV on NIAH with Q WEN 2.5-14B-I NSTRUCT .Brighter regions indicate more frequent reconstruction. 
+
+than SentenceKV, close to ChunkKV, and sub-stantially more accurate. Figure 4 further shows that S EKV keeps GPU memory nearly flat as con-text length grows, increasing only from 31.2GB to 34.9GB between 8K and 128K, compared with FullKV’s growth from 36.0GB to 74.8GB. Over-all, S EKV improves retrieval fidelity without pro-hibitive runtime or memory overhead. A detailed memory and computational complexity analysis is provided in Appendix D. 
+
+4.5 Zoom-In Behavior Analysis 
+
+Figure 5 shows that S EKV expands compressed spans selectively rather than uniformly. Zoom-in decisions are sparse and concentrated in specific heads, especially in mid-to-late layers, indicating that only a small subset of retrieval-oriented heads frequently require token-level reconstruction. This supports the use of per-head per-layer thresholds and shows that S EKV saves memory by allocating fine-grained resolution only where needed. Addi-tional heatmaps are provided in Appendix E. 
+
+5 Conclusion 
+
+We introduced S EKV, a resolution-adaptive se-mantic KV cache for efficient long-context LLM inference. S EKV organizes context into entropy-guided spans, keeps lightweight routing summaries on GPU, and reconstructs low-rank CPU-resident span bases on demand, enabling query-adaptive cache resolution without modifying the base LLM. Across four benchmarks, SEKV outperforms prior KV compression methods, including token-eviction approaches (StreamingLLM (Xiao et al., 2024b), H2O (Zhang et al., 2023), SnapKV (Li et al., 2024), PyramidKV (Cai et al., 2025)) and se-mantic or chunk-level approaches (ChunkKV (Liu et al., 2026), SemantiCache (Wu et al., 2026), SentenceKV (Zhu et al., 2025)), improving over the strongest semantic baseline, SentenceKV, by 5.9% on average while reducing GPU memory by 53.3% compared to Full KV at 128K context length. These results show that efficient long-context in-ference can be achieved by allocating fine-grained resolution only where needed. 
+
+Limitations 
+
+SEKV has some limitations worth noting. First, its effectiveness depends on the quality of the se-mantic span construction. Since S EKV allocates cache resolution based on entropy-guided seman-tic segmentation, noisy boundaries or poorly cali-brated uncertainty estimates can lead to suboptimal memory allocation, especially in documents with highly fragmented discourse, dense tables, code, or unusual formatting. Second, S EKV introduces sev-eral design choices, including the entropy threshold for span formation, the number of retained anchor tokens, the rank of span-level low-rank bases, and the retrieval budget for CPU-resident spans. These parameters control the tradeoff between memory usage, reconstruction quality, and decoding latency, and may require validation when transferring to new models or context lengths. Third, although SEKV reduces GPU memory by moving inactive span representations to CPU, this introduces de-pendence on host-device bandwidth. In settings with slow CPU–GPU transfer or highly adversarial queries that repeatedly activate many distant spans, the latency advantage may be reduced. Finally, SEKV keeps the base LLM frozen and only adds lightweight routing components, which improves deployability but may limit the ability of the model to fully adapt its internal attention behavior to the 10 compressed memory structure. Jointly training the routing module with more expressive span repre-sentations or adaptive reconstruction policies is an important direction for future work. 
+
+References 
+
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2024. LongBench: A bilingual, multi-task benchmark for long context understanding. In 
+
+Proceedings of the 62nd Annual Meeting of the As-sociation for Computational Linguistics (Volume 1: Long Papers) , pages 3119–3137, Bangkok, Thailand. Association for Computational Linguistics. Yoshua Bengio, Nicholas Léonard, and Aaron Courville. 2013. Estimating or propagating gradients through stochastic neurons for conditional computation. 
+
+Preprint , arXiv:1308.3432. Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, and Wen Xiao. 2025. Pyra-midKV: Dynamic KV cache compression based on pyramidal information funneling. In Second Confer-ence on Language Modeling .Yaoqi Chen, Jinkai Zhang, Baotong Lu, Qianxi Zhang, Chengruidong Zhang, Jingjia Luo, Di Liu, Huiqiang Jiang, Qi Chen, Jing Liu, Bailu Ding, Xiao Yan, Ji-awei Jiang, Chen Chen, Mingxing Zhang, Yuqing Yang, Fan Yang, and Mao Yang. 2025. Retroinfer: A vector-storage approach for scalable long-context llm inference. Preprint , arXiv:2505.02922. Pengyu Cheng, Jiacheng Wang, Tianle Chen, Bei Liu, Xiaofeng Hou, and Jiacheng Liu. 2026. De-sirekv: Decoupling sensitivity and importance for reasoning-aware kv cache compression. Proceedings of the AAAI Conference on Artificial Intelligence ,40(25):20518–20526. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. 2021. Training verifiers to solve math word prob-lems. Preprint , arXiv:2110.14168. gkamradt. 2023. Llmtest needle in a haystack - pressure testing llms. https://github.com/gkamradt/ LLMTest_NeedleInAHaystack .Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Acharya, Dima Rekesh, Fei Jia, and Boris Gins-burg. 2024. RULER: What’s the real context size of your long-context language models? In First Confer-ence on Language Modeling .Yuxuan Hu, Jianchao Tan, Jiaqi Zhang, Wen Zan, Ping-wei Sun, Yifan Lu, Yerui Sun, Yuchen Xie, Xunliang Cai, and Jing Zhang. 2025. Optimizing native sparse attention with latent attention and local global alter-nating strategies. Preprint , arXiv:2511.00819. Xu Huang, Weiwen Liu, Xiaolong Chen, Xingmei Wang, Hao Wang, Defu Lian, Yasheng Wang, Ruim-ing Tang, and Enhong Chen. 2024. Understanding the planning of llm agents: A survey. Preprint ,arXiv:2402.02716. Albert Q. Jiang, Alexandre Sablayrolles, Arthur Men-sch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guil-laume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. 2023. Mistral 7b. Preprint ,arXiv:2310.06825. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. SnapKV: LLM knows what you are looking for before gener-ation. In The Thirty-eighth Annual Conference on Neural Information Processing Systems .Akide Liu, Jing Liu, Zizheng Pan, Yefei He, Gholam-reza Haffari, and Bohan Zhuang. 2024. Minicache: KV cache compression in depth dimension for large language models. In The Thirty-eighth Annual Con-ference on Neural Information Processing Systems .Xiang Liu, Zhenheng Tang, Peijie Dong, Zeyu Li, Li-uyue, Bo Li, Xuming Hu, and Xiaowen Chu. 2026. ChunkKV: Semantic-preserving KV cache compres-sion for efficient long-context LLM inference. In The Thirty-ninth Annual Conference on Neural Informa-tion Processing Systems .Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyril-lidis, and Anshumali Shrivastava. 2023. Scis-sorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. In Advances in Neural Information Processing Sys-tems , volume 36, pages 52342–52364. Curran Asso-ciates, Inc. AI@Meta Llama Team. 2024. The llama 3 herd of models. Preprint , arXiv:2407.21783. Ilya Loshchilov and Frank Hutter. 2019. Decoupled weight decay regularization. In International Confer-ence on Learning Representations .Chuwei Luo, Yufan Shen, Zhaoqing Zhu, Qi Zheng, Zhi Yu, and Cong Yao. 2024. Layoutllm: Layout instruc-tion tuning with large language models for document understanding. In 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,pages 15630–15640. Amirkeivan Mohtashami and Martin Jaggi. 2023. Random-access infinite context length for transform-ers. In Advances in Neural Information Processing Systems , volume 36, pages 54567–54585. Curran As-sociates, Inc. 
+
+11 Yutao Sun, Li Dong, Yi Zhu, Shaohan Huang, Wen-hui Wang, Shuming Ma, Quanlu Zhang, Jianyong Wang, and Furu Wei. 2024. You only cache once: Decoder-decoder architectures for language models. In Advances in Neural Information Processing Sys-tems , volume 37, pages 7339–7361. Curran Asso-ciates, Inc. Hanlin Tang, Yang Lin, Jing Lin, Qingsen Han, Danning Ke, Shikuan Hong, Yiwu Yao, and Gongyi Wang. 2025. Razorattention: Efficient kv cache compres-sion through retrieval heads. In International Con-ference on Learning Representations , volume 2025, pages 16632–16646. Qwen Team. 2025. Qwen2.5 technical report. Preprint ,arXiv:2412.15115. Elena Voita, David Talbot, Fedor Moiseev, Rico Sen-nrich, and Ivan Titov. 2019. Analyzing multi-head self-attention: Specialized heads do the heavy lift-ing, the rest can be pruned. In Proceedings of the 57th Annual Meeting of the Association for Computa-tional Linguistics , pages 5797–5808, Florence, Italy. Association for Computational Linguistics. Maurice Weber, Daniel Y Fu, Quentin Gregory An-thony, Yonatan Oren, Shane Adams, Anton Alexan-drov, Xiaozhong Lyu, Huu Nguyen, Xiaozhe Yao, Virginia Adams, Ben Athiwaratkun, Rahul Chala-mala, Kezhen Chen, Max Ryabinin, Tri Dao, Percy Liang, Christopher Re, Irina Rish, and Ce Zhang. 2024. Redpajama: an open dataset for training large language models. In The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track .Haoyi Wu and Kewei Tu. 2024. Layer-condensed KV cache for efficient inference of large language mod-els. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 11175–11188, Bangkok, Thailand. Association for Computational Linguistics. Shunlong Wu, Hai Lin, Shaoshen Chen, Tingwei Lu, Yongqin Zeng, Shaoxiong Zhan, Hai-Tao Zheng, and Hong-Gee Kim. 2026. Semanticache: Efficient kv cache compression via semantic chunking and clus-tered merging. Preprint , arXiv:2603.14303. Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and Maosong Sun. 2024a. InfLLM: Training-free long-context extrapolation for LLMs with an effi-cient context memory. In The Thirty-eighth Annual Conference on Neural Information Processing Sys-tems .Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, junxian guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. 2025. Duoattention: Efficient long-context LLM inference with retrieval and streaming heads. In 
+
+The Thirteenth International Conference on Learning Representations .Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024b. Efficient streaming language models with attention sinks. In Interna-tional Conference on Learning Representations , vol-ume 2024, pages 21875–21895. Chen Zhang, Xinyi Dai, Yaxiong Wu, Qu Yang, Yasheng Wang, Ruiming Tang, and Yong Liu. 2025. A survey on multi-turn interaction capabilities of large language models. Preprint , arXiv:2501.09959. Xinrong Zhang, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen, Moo Hao, Xu Han, Zhen Thai, Shuo Wang, Zhiyuan Liu, and Maosong Sun. 2024. 
+
+∞Bench: Extending long context evaluation beyond 100K tokens. In Proceedings of the 62nd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , pages 15262– 15277, Bangkok, Thailand. Association for Compu-tational Linguistics. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Re, Clark Barrett, Zhangyang Wang, and Beidi Chen. 2023. H2o: Heavy-hitter ora-cle for efficient generative inference of large language models. In Thirty-seventh Conference on Neural In-formation Processing Systems .Jihao Zhao, Zhiyuan Ji, Yuchen Feng, Pengnian Qi, Simin Niu, Bo Tang, Feiyu Xiong, and Zhiyu Li. 2025. Meta-chunking: Learning text segmenta-tion and semantic completion via logical perception. 
+
+Preprint , arXiv:2410.12788. Zihan Zhao, Baotong Lu, Shengjie Lin, Yizou Chen, Jing Liu, Yanqi Zhang, Ziming Miao, Ming-Chang Yang, Haiying Shen, Qi Chen, and Fan Yang. 2026. Unifying sparse attention with hierarchical mem-ory for scalable long-context llm serving. Preprint ,arXiv:2604.26837. Yuxuan Zhu, Ali Falahati, David H. Yang, and Mo-hammad Mohammadi Amiri. 2025. SentenceKV: Efficient LLM inference via sentence-level semantic KV caching. In Second Conference on Language Modeling .
+
+A Training Details 
+
+Training data. Because S EKV keeps the back-bone frozen and trains only the lightweight routing components of Section 3.3, it requires little data and a single language-modeling corpus suffices. We train on long documents from RedPajama (We-ber et al., 2024) (arXiv, books, and code subsets). The distillation and reconstruction objectives use all positions, while the zoom objective is super-vised only at mined query positions whose teacher attention is concentrated on non-local spans; the attended spans form the coverage target Cρ. This matches the router to the teacher’s own long-range 12 attention without any distribution shift from a QA template, and uses no synthetic retrieval or instruc-tion data, so the training corpus is disjoint from every benchmark in Section 4.1. A separate set of routing parameters is trained for each backbone. 
+
+Training details. The teacher is the frozen back-bone with a full KV cache. We optimize the rout-ing projections, thresholds, and rank-gate predic-tor with AdamW (Loshchilov and Hutter, 2019) (learning rate 1 × 10 −3, weight decay 0.01 , cosine decay, 10% warmup) for roughly 3K steps over about 0.5B tokens, at a maximum sequence length of 32 K with an 8K → 32 K length curriculum and early stopping on a held-out split. We anneal the budget weight from 0 to its target over the first half of training and initialize the thresholds permis-sively so that spans expand early and gradients flow through the straight-through gate. Teacher span-attention targets are computed at a sampled subset of query positions to bound the cost of materializ-ing attention weights. Training a single backbone takes 2 to 6 hours on a single 8×A100 (80GB) node. We use loss weights λ1 = 1 for the zoom term and λ2 = 0 .5 for the reconstruction term, with the budget weight annealed to λ3 = 0 .1 and rank sub-weight β = 0 .1; the zoom BCE uses a positive class weight w+ = 10 , and the remain-ing components use coverage fraction ρ = 0 .9,segmentation sensitivity α = 1 .0, minimum span length Lmin = 16 , routing dimension d′ = 32 , and maximum rank R = 32 .
+
+B Benchmark and Baseline Details 
+
+B.1 Benchmark Details 
+
+We evaluate S EKV on a diverse set of long-context benchmarks that stress different aspects of KV-cache compression: multi-task long-document un-derstanding, controlled retrieval, ultra-long-context reasoning, needle retrieval, and many-shot mathe-matical reasoning. Table 4 summarizes the evalua-tion datasets used in our experiments. 
+
+LongBench (Bai et al., 2024) is a multi-task benchmark designed to evaluate language models on long-context inputs. It contains 17 datasets cov-ering single-document question answering, multi-document question answering, summarization, few-shot learning, synthetic retrieval, and code comple-tion. The average input length ranges from roughly 1K to 18K tokens depending on the task. Long-Bench is useful for evaluating whether KV-cache                    
+
+> Benchmark # Train # Eval Context Length
+> LongBench –4,750 1K–18K RULER –4000 4K–128K InfiniteBench –3,946 100K avg NIAH –∼800 per setting up to 128K GSM8K 7,473 1,319 13K-15K
+> Table 4: Dataset statistics for the benchmarks used in our experiments. # Train and # Eval denote the number of training and evaluation examples when fixed by the benchmark. For RULER and NIAH, the evaluation size depends on the chosen context lengths, tasks, and depth/grid settings. GSM8K is used only for many-shot evaluation; its training set is not used to train S EKV.
+
+compression preserves broad long-document un-derstanding rather than only synthetic retrieval be-havior. In our experiments, we report the official task-specific average score, using F1, exact match, accuracy, or ROUGE-L depending on the task. 
+
+RULER (Hsieh et al., 2024) provides controlled long-context tasks at configurable sequence lengths, commonly ranging from 4K to 128K tokens. It includes synthetic retrieval and reasoning tasks designed to measure whether models can effec-tively use information placed deep inside long con-texts. Unlike LongBench, where document lengths and task formats vary naturally, RULER allows controlled scaling of context length and therefore directly probes effective context utilization under different KV-cache budgets. We report aggregate accuracy across the evaluated RULER tasks and context lengths. 
+
+InfiniteBench (Zhang et al., 2024) evaluates models on substantially longer inputs, often exceed-ing 100K tokens on average. It includes tasks such as long-document question answering, summariza-tion, code debugging, and key-value retrieval. This benchmark is particularly important for KV-cache compression because it reaches the regime where FullKV becomes expensive or infeasible on a sin-gle GPU. We follow the official task-level evalua-tion protocol and report the aggregate score across tasks. 
+
+Needle-in-a-Haystack (NIAH (gkamradt, 2023) evaluates whether a model can retrieve a specific inserted fact from a long distractor context. The needle is placed at different depth percentages and evaluated across increasing context lengths. This benchmark directly measures retrieval fidelity under compression: if a method evicts or over-13 compresses the wrong region, the model fails to recover the hidden needle. We report retrieval ac-curacy averaged across context lengths and needle depths. 
+
+GSM8K many-shot setting (Cobbe et al., 2021) is a grade-school mathematical reasoning bench-mark. We use it in a 50-shot setting to test whether KV-cache compression preserves the long-context structure needed for in-context reasoning. Unlike NIAH or RULER, GSM8K does not primarily test retrieval of a single hidden fact. Instead, the model must retain many demonstrations that define the reasoning pattern. We report exact-match accuracy after standard answer normalization. 
+
+B.2 Baseline Details 
+
+We compare S EKV with representative KV-cache compression methods spanning token eviction, importance-based retention, structured chunk com-pression, and semantic cache compression. FullKV is included as an uncompressed reference. 
+
+FullKV stores all key and value states for ev-ery token at every layer and head. It provides the highest-fidelity cache representation because no token-level information is removed or compressed. However, its memory cost grows linearly with con-text length, making it increasingly expensive and often infeasible at very long context lengths. We therefore treat FullKV as an upper-bound reference rather than a scalable baseline. 
+
+StreamingLLM (Xiao et al., 2024b) is a token-retention method designed for streaming genera-tion. It keeps a small set of initial attention-sink tokens together with a recent local window, dis-carding most middle-context tokens. This makes StreamingLLM fast and memory-efficient, but it can fail on tasks requiring retrieval from distant parts of the context because discarded tokens can-not be recovered. 
+
+H2O (Zhang et al., 2023) evicts KV states based on accumulated attention importance. It identi-fies heavy-hitter tokens that receive high attention over time and preserves them under a fixed cache budget. Compared with simple recency-based evic-tion, H2O better retains globally important tokens. However, its decisions are still token-level and ir-reversible, so evidence that appears unimportant early can be permanently removed. 
+
+SnapKV (Li et al., 2024) compresses the KV cache by selecting important tokens based on atten-tion patterns observed during prefilling. It uses the prompt-side attention distribution to identify tokens likely to be useful during generation. SnapKV is effective and efficient for many long-context tasks, but its compression decisions are fixed after prefill and cannot adapt when later decoding steps require previously compressed information. 
+
+PyramidKV (Cai et al., 2025) applies a layer-wise KV-cache allocation strategy. It observes that different layers contribute differently to long-context retrieval and assigns cache budgets in a pyramid-like manner across layers. This improves over uniform token eviction, but the method still operates by retaining or evicting token-level states and cannot reconstruct discarded evidence. 
+
+ChunkKV (Liu et al., 2026) moves beyond indi-vidual token eviction by selecting contiguous token chunks. This preserves local coherence better than token-level pruning because neighboring tokens of-ten jointly encode meaningful evidence. However, ChunkKV still makes static compression decisions and does not provide a mechanism to dynamically recover fine-grained token-level detail from a com-pressed chunk during decoding. 
+
+SemantiCache (Wu et al., 2026) introduces se-mantic grouping for KV-cache compression. It segments text using linguistic boundaries, clus-ters tokens according to key-vector similarity, and merges each cluster into a compact representative KV state. It also applies proportional attention correction to reduce aggregation bias caused by representing multiple tokens with one compressed state. SemantiCache is a strong semantic compres-sion baseline, but its merged representations are fixed after prefill and cannot be expanded back into token-level KV states on demand. 
+
+SentenceKV (Zhu et al., 2025) compresses the cache at the sentence level. It keeps compact sen-tence representations on GPU and retrieves relevant token-level states during decoding. This makes it the closest baseline to S EKV because it com-bines semantic units with GPU–CPU cache man-agement. However, SentenceKV relies on sentence-level segmentation and static sentence representa-tions, whereas S EKV uses entropy-guided spans, GPU-resident anchor tokens, low-rank span bases, and a trained per-head zoom-in mechanism for adaptive token-level reconstruction. 14 Variant LongBench RULER NIAH SEKV 54.71 87.34 91.17                      
+
+> w/o entropy-guided segmentation 53.02 83.61 86.42 w/o anchor tokens 53.47 84.28 87.31 w/o surprisal-weighted summaries 53.91 85.02 88.14 w/o trained zoom-in 52.76 82.73 85.96 w/o SVD reconstruction 51.84 80.92 83.47 Fixed global threshold 53.38 84.57 87.82 Mean pooling summary 53.86 85.21 88.43
+
+Table 5: Ablation study on Q WEN 2.5-14B-I NSTRUCT 
+
+under a 10% GPU-resident KV budget. We report Long-Bench, RULER, and NIAH scores. Removing trained zoom-in or SVD reconstruction causes the largest degra-dation, showing that adaptive span expansion and token-level recovery are central to S EKV’s performance. 
+
+C Ablation Studies 
+
+Component ablations. Table 5 shows that each component contributes to S EKV’s performance. The largest drops come from removing SVD re-construction and trained zoom-in, reducing NIAH from 91.17 to 83.47 and 85.96 , respectively. This confirms that span summaries alone are insufficient: the model must be able to recover token-level detail when a span becomes relevant. Replacing entropy-guided segmentation with fixed chunks also hurts substantially, especially on RULER and NIAH, in-dicating that content-adaptive span boundaries bet-ter preserve retrieval evidence. Finally, removing anchor tokens, using mean pooling, or replacing per-head thresholds with a global threshold pro-duces smaller but consistent drops. Together, these ablations show that S EKV’s gains come from the combination of semantic span construction, learned zoom-in, and recoverable fine-grained KV reconstruction. KV-budget sensitivity. Table 6 shows that SEKV is especially effective under tight memory budgets. At only 5% KV budget, S EKV reaches 
+
+86.31 NIAH accuracy, outperforming SentenceKV by +7.69 points and ChunkKV by +12.00 points. Increasing the budget to 10% gives the largest jump, improving S EKV to 91.17 ; beyond this point, gains saturate, with only +1.29 improvement from 10% to 20%. This suggests that S EKV recovers most of the useful long-context evidence with a small GPU-resident cache, while additional budget yields di-minishing returns. Beyond the KV budget, S EKV introduces several implementation hyperparame-ters, including the SVD rank r, the surprisal thresh-old α, and the local window size w.                    
+
+> KV Budget SnapKV ChunkKV SentenceKV SEKV
+> 5% 69.84 74.31 78.62 86.31
+> 10% 76.83 81.72 84.83 91.17
+> 15% 79.24 83.76 86.92 92.08
+> 20% 80.63 85.14 88.21 92.46
+
+Table 6: KV-budget sensitivity on NIAH using QWEN 2.5-14B-I NSTRUCT . We vary the GPU-resident KV budget and report retrieval accuracy. S EKV consis-tently outperforms token-level and semantic compres-sion baselines across all budgets, with the largest gains in the low-budget regime. 
+
+Hyperparameter Sensitivity. Table 7 reports the sensitivity of S EKV to its main hyperparameters across all four benchmarks. Because S EKV learns a per-span rank rather than fixing one, this setting controls the maximum rank R that the gate predic-tor may allocate. Raising the cap from R = 8 to 32 
+
+improves performance across benchmarks, since a tight cap clips spans whose reconstruction needs more components than allowed. The gains satu-rate beyond R = 32 : increasing to 64 yields only marginal changes, indicating that the learned gates rarely request more than about 32 components, so this cap captures most of the useful span-level KV structure while bounding memory and transfer over-head. For entropy-guided segmentation, α = 1 .0
+
+performs best overall. Smaller thresholds create too many short spans, reducing compression efficiency, while larger thresholds produce overly coarse spans that make zoom-in less precise. Finally, increas-ing the local window from w = 256 to w = 512 
+
+improves performance, but w = 1024 gives only minor additional gains. These trends support the default configuration used in the main experiments as a balanced setting across retrieval, reasoning, and long-context understanding tasks. 
+
+D Memory and Complexity Analysis 
+
+This section analyzes the memory and computa-tional cost of S EKV compared to FullKV and prior KV-cache compression methods. We focus on the dominant inference-time cost in long-context gen-eration: storing, accessing, and transferring key-value states. 
+
+FullKV memory cost. For a transformer with 
+
+L layers, Hkv key-value heads, head dimension 
+
+dh, sequence length n, and b bytes per scalar, the memory required by FullKV is 
+
+Mem FullKV = 2 LH kv dhnb, (16) 15 Setting Value LongBench RULER InfiniteBench NIAH                                                
+
+> Max rank Rmax
+> 852.86 83.94 32.47 87.64 16 53.82 85.76 33.61 89.83 32 54.71 87.34 34.83 91.17
+> 64 54.86 87.61 34.96 91.42 Surprisal threshold α
+> 0.5 53.96 85.71 33.82 89.42 1.0 54.71 87.34 34.83 91.17
+> 1.5 54.18 86.42 34.21 90.36 2.0 53.37 84.83 33.46 88.74 Local window w
+> 256 54.02 86.21 34.06 89.96 512 54.71 87.34 34.83 91.17
+> 1024 54.78 87.46 34.91 91.31
+
+Table 7: Full hyperparameter sensitivity of S EKV on QWEN 2.5-14B-I NSTRUCT . Unless varied, we use the default configuration: maximum rank Rmax = 32 , sur-prisal threshold α = 1 .0, local window size w = 512 ,and a 10% GPU-resident KV budget. Results are re-ported on all four long-context benchmarks. S EKV is robust across hyperparameter settings, with the default configuration providing a strong accuracy–efficiency trade-off. 
+
+where the factor of 2 accounts for storing both keys and values. This cost grows linearly with the context length n. For example, for a model with L = 48 , Hkv = 8 , dh = 128 , and bf16 KV states ( b = 2 ), the KV cache requires approx-imately 192KB per token. At 128K tokens, this corresponds to roughly 24GB of KV-cache mem-ory alone, excluding model weights, activations, temporary buffers, and runtime overhead. 
+
+SEKV GPU memory cost. SEKV decomposes the context into entropy-guided spans and stores different components at different memory resolu-tions. Let S denote the set of spans, |S| = m,and let a denote the number of anchor tokens. The GPU-resident memory of S EKV consists of full-resolution anchor KV states, compact span sum-maries, and the active local window. The approxi-mate GPU memory cost is 
+
+Mem SEKV  
+
+> GPU
+
+≈ 2LH kv dh(a + w)b + 2 LHd ′mb, 
+
+(17) where w is the local window size, H is the num-ber of attention heads used for routing, and d′ is the projected summary dimension. The first term corresponds to full-resolution KV states for anchor tokens and local-window tokens, while the sec-ond term corresponds to compact span summaries. Since a + w ≪ n and d′ ≪ dh, the GPU-resident memory grows much more slowly than FullKV. 
+
+SEKV CPU storage cost. The remaining non-anchor token information is stored on CPU as low-rank span bases. For each span S of length |S|,SEKV stores a rank-r approximation of both key and value matrices. The CPU storage cost per span is approximately 
+
+Mem CPU (S) = 2 LH kv r(|S| + dh + 1) b, (18) where the terms correspond to US , VS , and ΣS
+
+for both keys and values. Summing over all spans gives 
+
+Mem SEKV  
+
+> CPU
+
+= X
+
+> S∈S
+
+2LH kv r(|S| + dh + 1) b. (19) This representation is approximate because trun-cated SVD retains only the top r singular directions. Thus, S EKV avoids permanent token eviction, but it does not claim exact lossless storage of all full-rank KV states. Instead, it preserves recoverable low-rank token-level structure and reconstructs rel-evant spans on demand. 
+
+CPU-to-GPU transfer cost. During decoding, SEKV first routes over GPU-resident span sum-maries. Only spans selected by the zoom-in mech-anism are fetched from CPU and reconstructed on GPU. If Zt is the set of zoomed spans at decoding step t, the CPU-to-GPU transfer cost at that step is 
+
+Transfer t = X
+
+> S∈Z t
+
+2LH kv r(|S| + dh + 1) b. (20) This is substantially smaller than transferring full token-level KV states when r ≪ dh. Importantly, transfer cost depends on the number and size of zoomed spans, not on the full context length. Since zoom-in decisions are sparse, only a small fraction of spans are expanded at each decoding step. 
+
+Routing and reconstruction complexity. The Stage 1 routing cost is proportional to the number of spans rather than the number of tokens. For each layer and head, routing compares the current query with m span summaries: 
+
+O(LHmd ′). (21) Since m ≪ n and d′ ≪ dh, this coarse routing step is much cheaper than attending over the full token-level context. For zoomed spans, S EKV reconstructs token-level KV states from low-rank bases. For a selected span S, reconstruction has approximate complexity 
+
+O(LH kv |S|rd h), (22) up to a constant factor for reconstructing both keys and values. This cost is incurred only for selected spans, so the full decoding overhead depends on the zoom-in rate rather than the full context length. 16 1 7 13 19 25 31 37 43                                                         
+
+> 1
+> 6
+> 11
+> 16
+> 21
+> 26
+> 31
+> 36
+> NIAH
+> Attention head
+> Qwen2.5-14B-Instruct
+> 15913 17 21 25 29
+> 1
+> 5
+> 9
+> 13
+> 17
+> 21
+> 25
+> 29
+> Attention head
+> Llama-3.1-8B-Instruct
+> 15913 17 21 25 29
+> 1
+> 5
+> 9
+> 13
+> 17
+> 21
+> 25
+> 29
+> Attention head
+> Mistral-7B-Instruct
+> 1713 19 25 31 37 43
+> 1
+> 6
+> 11
+> 16
+> 21
+> 26
+> 31
+> 36
+> RULER
+> Attention head
+> 15913 17 21 25 29
+> 1
+> 5
+> 9
+> 13
+> 17
+> 21
+> 25
+> 29
+> Attention head
+> 15913 17 21 25 29
+> 1
+> 5
+> 9
+> 13
+> 17
+> 21
+> 25
+> 29
+> Attention head
+> 1713 19 25 31 37 43
+> Layer
+> 1
+> 6
+> 11
+> 16
+> 21
+> 26
+> 31
+> 36
+> InfiniteBench
+> Attention head
+> 15913 17 21 25 29
+> Layer
+> 1
+> 5
+> 9
+> 13
+> 17
+> 21
+> 25
+> 29
+> Attention head
+> 15913 17 21 25 29
+> Layer
+> 1
+> 5
+> 9
+> 13
+> 17
+> 21
+> 25
+> 29
+> Attention head
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Zoom-in rate
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Zoom-in rate
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Zoom-in rate
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> Zoom-in rate
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> Zoom-in rate
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> Zoom-in rate
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Zoom-in rate
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Zoom-in rate
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Zoom-in rate
+
+SeKV Zoom-in Behavior Across Models and Benchmarks Figure 6: Additional zoom-in behavior heatmaps for S EKV across models and benchmarks. Each heatmap shows the average zoom-in rate across layers and attention heads. Brighter cells indicate heads that more frequently trigger token-level reconstruction from CPU-resident span bases. Across NIAH, RULER, and InfiniteBench, zoom-in decisions remain sparse and concentrated in a subset of heads, especially in middle and later layers. This pattern is consistent across Q WEN 2.5-14B-I NSTRUCT , L LAMA -3.1-8B-I NSTRUCT , and M ISTRAL -7B-I NSTRUCT ,supporting the use of per-head per-layer routing thresholds. 
+
+Comparison with prior compression methods. 
+
+Token-eviction methods such as StreamingLLM, H2O, SnapKV, and PyramidKV reduce GPU mem-ory by keeping only a subset of token-level KV states. Their GPU memory is approximately 
+
+Mem evict = 2 LH kv dhkb, (23) where k is the number of retained tokens. These methods are efficient because they reduce the effec-tive cache length, but discarded KV states cannot be recovered later. Semantic compression methods reduce memory by grouping tokens into chunks, clusters, or sentences. Their memory cost depends on the number of semantic units retained on GPU and the representation used for each unit. S EKV differs by separating routing and reconstruction: compact summaries remain on GPU for efficient span selection, while CPU-resident low-rank bases allow selected spans to be reconstructed at token-level resolution. The main memory advantage of S EKV comes from replacing a full token-level GPU cache with a variable-resolution hierarchy. FullKV stores every token at full resolution on GPU, giving memory cost linear in n. S EKV stores only anchor tokens, local-window tokens, and span summaries on GPU, while moving recoverable low-rank span bases to CPU. As a result, GPU memory grows primarily with the number of anchors, active local tokens, and spans, rather than with all tokens in the con-text. This explains the memory-scaling behavior observed in Figure 4: S EKV avoids the steep GPU-memory growth of FullKV while retaining the abil-ity to dynamically recover fine-grained token-level information when needed. 
+
+E Additional Zoom-In Behavior Analysis 
+
+Figure 6 provides additional zoom-in behavior visualizations for S EKV across three backbone models and three long-context benchmarks. Each 17 heatmap reports the average zoom-in rate across layers and attention heads, where brighter regions correspond to heads that more frequently trigger token-level reconstruction. The rows correspond to NIAH, RULER, and InfiniteBench, while the columns correspond to Q WEN 2.5-14B-I NSTRUCT ,LLAMA -3.1-8B-I NSTRUCT , and M ISTRAL -7B-INSTRUCT .The heatmaps show three consistent trends. First, zoom-in is sparse: most heads remain dark across most layers, indicating that S EKV does not uni-formly expand compressed spans during decoding. Second, higher zoom-in rates are concentrated in a limited number of heads, suggesting that only a subset of attention heads specialize in long-range evidence recovery. Third, zoom-in activity is gen-erally stronger in middle and later layers, where long-range retrieval and semantic integration are more likely to occur. These observations support the design of learned per-head per-layer thresholds. A single global threshold would either over-expand spans for mostly local heads or under-expand spans for retrieval-oriented heads, which is consistent with the performance drop observed in the fixed-threshold ablation in Table 5. The benchmark-level differences also align with the nature of each task. NIAH produces sparse but sharp zoom-in patterns because the task requires recovering a specific inserted fact. RULER induces a broader routing pattern because it contains mul-tiple controlled retrieval and reasoning tasks. In-finiteBench shows the most distributed zoom-in behavior, reflecting its longer and more heteroge-neous inputs. Overall, these visualizations confirm that S EKV allocates token-level resolution adap-tively: it preserves efficiency by leaving most spans compressed, while selectively reconstructing the spans most relevant to the current decoding state. 18

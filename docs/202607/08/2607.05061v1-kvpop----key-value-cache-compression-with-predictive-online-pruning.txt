@@ -1,0 +1,1808 @@
+Title: KVpop – Key-Value Cache Compression with Predictive Online Pruning
+
+URL Source: https://arxiv.org/pdf/2607.05061v1
+
+Published Time: Tue, 07 Jul 2026 03:37:56 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+July 6, 2026 
+
+# KVpop — Key-Value Cache Compression with Predictive Online Pruning 
+
+Lukas Hauzenberger 1,2 , Niklas Schmidinger 1,2 , Anamaria-Roberta Hartl 2, David Stap 1, Thomas Schmied †, Sebastian Böck 1, Günter Klambauer 1,2 , Sepp Hochreiter 1,2 
+
+> 1
+
+NXAI 2Johannes Kepler University Linz, Austria †Work done while at NXAI 
+
+Correspondence: Lukas Hauzenberger (lukas.hauzenberger@nx-ai.com) 
+
+sirluk/Qwen3-8B-KVpop-4x 
+
+## Abstract 
+
+Key-value ( KV ) cache growth is a major bottleneck in autoregressive decoding, as memory and bandwidth scale linearly with context length. Existing KV eviction methods often rely on static heuristics or proxy scores, which poorly track future token utility and cause brittle eviction as relevance shifts. To address this, we introduce KVpop , which learns a fixed-budget KV eviction policy by directly supervising the keep-or-drop decision. The scorer is trained against a novel future-attention target, computed efficiently without materializing dense attention maps. We further introduce a delayed memory-based scorer that, uniquely among learned eviction methods, defers scoring for a fixed number of steps to exploit near-future context. On AIME and HMMT mathematical reasoning, 
+
+KVpop retains 98% of full-attention performance on Qwen3-4B at 75% KV cache compression and 97% at 88% compression, consistently outperforming established eviction baselines. Qwen3-8B shows even stronger results, reaching near-full teacher performance. These results show that supervising eviction with future-attention signals cuts memory costs while maintaining quality. 
+
+## 1 Introduction 
+
+Transformer-based large language models ( LLM s) rely on a key–value ( KV ) cache to make autoregressive decoding efficient. At each generation step, the model stores the key and value representations of previous tokens, allowing future queries to attend to the past without recomputing the full sequence history (Vaswani et al., 2017). Although this mechanism is essential for practical token-by-token generation, the KV cache grows linearly with context length, becoming a bottleneck for long-context inference (Kwon et al., 2023). A natural way to reduce this cost is to evict unimportant tokens and retain only a bounded subset, but token utility is hard to predict. Locally salient tokens may quickly become irrelevant, while tokens that receive little immediate attention may matter many steps later. KV cache reduction is therefore a question of which tokens will be useful for future queries. 
+
+KV cache reduction with supervised eviction policies. Existing approaches address this prediction problem in different ways. Sliding-window and sink-token methods preserve a small set of initial tokens together with a recent window exempt from eviction (Xiao et al., 2023; Xiao et al., 2024). Score-based methods estimate token importance online from attention-derived or query-local signals (Z. Zhang et al., 2023; Li et al., 2024; Oren et al., 2024). Learned approaches train retention policies during retrofitting. DMC, for example, merges token representations with learned compression policies (Nawrot et al., 2024), while DMS trains binary eviction gates and delays eviction until tokens leave a protected window of recent tokens (Łańcucki et al., 2025). However, none of these methods directly supervise which tokens will matter in the future. Moreover, methods with a protected window delay eviction but not the eviction decision itself. Retention of a given token is decided at insertion time, forgoing the evidence that accumulates while the token remains in the protected window. 
+
+1
+
+> arXiv:2607.05061v1 [cs.LG] 6 Jul 2026 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+KVpop. We introduce KVpop (KV compression with Predictive Online Pruning), a sparse-attention retrofit that addresses both limitations. Each KV head retains a small set of sink tokens, a protected window of recent tokens, and a learned long-range top-k cache for older tokens. The long-range cache is populated by lightweight head-wise scoring modules that assign importance scores to tokens and rank them under the top-k budget. This gives a bounded KV cache for inference without changing the base architecture. Two design choices distinguish KVpop from prior learned eviction. First, scoring module supervision is anchored to the future-attention mass a token receives after it leaves the protected window. The loss is evaluated at the eviction boundary where the keep-or-drop decision is made, and the target is computed during training with a transposed-attention pass that avoids materializing the dense attention map. Second, scoring need not happen when a token enters the cache. 
+
+KVpop also supports stateful scorers that delay scoring until the eviction boundary, accumulating evidence while the token remains in the protected window. Unlike DMS-style gates and prior auxiliary scorers that score at insertion, eviction decisions are then informed by near-future context. An overview of KVpop is shown in Figure 1. 
+
+KVpop combines two ingredients 
+
+• Cheap future-attention target. The scoring target is computed without ever forming a dense S × S attention map. A transposed-attention pass recovers each token’s post-softmax future-attention mass by reusing the LSE normalizers the attention kernel already returns. 
+
+• Stateful scoring with near-future context. KVpop can optionally use a memory-based scorer that can exploit near-future context by deferring the scoring decision for a token until it reaches the eviction boundary. 
+
+Contributions. We make the following contributions: (i) we formulate fixed-budget KV eviction as supervised prediction at the eviction boundary, using a future-attention target and boundary-aware loss to train long-range top-k decisions; (ii) we compute this target with a training-only transposed-attention pass, avoiding dense attention-map materialization and inference-time overhead; (iii) we study eviction timing, showing that a delayed memory-based scorer can use near-future context before a token becomes evictable; (iv) empirically, KVpop retains 95% and 94% of dense-attention performance on Qwen3-4B at 75% and 88% KV cache compression, respectively, and 95% and 99% on Qwen3-8B ,outperforming heuristic and learned eviction baselines. Moreover, we show that the learned eviction policy transfers to out-of-domain code generation and STEM reasoning benchmarks while yielding nearly constant memory use and faster long-generation decoding. 
+
+## 2 Related Work 
+
+Prior work on KV cache reduction can be broadly organized into three categories: sparse retrieval methods reduce the number of tokens read per query while keeping the full cache available, heuristic eviction methods reduce the persistent cache by removing tokens according to fixed rules or online scores, and learned eviction methods train an eviction policy during retrofitting. 
+
+Sparse retrieval over full KV cache. Rather than permanently evicting tokens, sparse retrieval methods select pages, blocks, landmarks, or token groups likely to matter for the current step. Quest retrieves relevant memory pages using lightweight approximations to token importance (Tang et al., 2024), and Landmark Attention introduces special tokens that route attention to relevant blocks (Mohtashami and Jaggi, 2023). Other approaches learn the selection rule itself: Native Sparse Attention combines coarse block selection with fine token selection in a trained sparse-attention pattern (Yuan et al., 2025), DeepSeek Sparse Attention scales this idea to a deployed frontier model with a lightning indexer driving fine-grained token selection (DeepSeek-AI et al., 2025). TokenButler trains a lightweight query-aware predictor of fine-grained token importance (Akhauri et al., 2025). These methods reduce attention work and avoid irreversible deletion, but because the full history remains stored, they do not enforce a bounded KV cache.              
+
+> 2KVpop — Key-Value Cache Compression with Predictive Online Pruning +) +)         
+>          (    #     
+> (    #     
+> .
+> -5  /
+> 7
+> )?  /
+
+,,, ,,,   
+
+> (    (   
+
+Figure 1: Overview of KVpop. (1) Training and inference: In each attention layer, keys and values are passed to a lightweight per-KV-head scoring module. The cache always retains sink tokens and a protected recent window, and uses predicted scores to select the remaining long-range top-k
+
+entries. Attention is computed over the retained set. (2) Training only: Future-attention targets are computed on the fly and used to supervise the eviction decision induced by the fixed budget. Sparse Attention Pattern: KVpop yields a sparse attention pattern for efficient decoding, maintaining constant memory per head during inference. 
+
+Heuristic eviction methods. A second line of work imposes a bounded cache by deciding which past tokens to remove. The simplest policies use structural priors, e.g. keeping recent tokens, keeping attention sinks, and evicting everything else (Xiao et al., 2023; Xiao et al., 2024). Other training-free methods score cached tokens online, for example using cumulative attention, current attention, or recent-query similarity, and evict low-scoring entries (Z. Zhang et al., 2023; Li et al., 2024; Oren et al., 2024; Cai et al., 2025). Expected Attention (Devoto, Jeblick, and Jégou, 2025) estimates future attention analytically from an assumed query distribution, combined with value magnitude. However, these scores remain proxies, since tokens that look unimportant locally may become important later, which is especially problematic in reasoning traces where earlier statements are reused after a delay. 
+
+Learned eviction methods. Learned methods replace hand-designed eviction rules with policies trained during retrofitting. This improves token selection and, unlike inference-only approaches, enables the model to adapt to the train–inference mismatch introduced by KV cache sparsification. Dynamic Memory Compression (DMC) learns layer- and head-specific compression policies for pretrained models by merging unimportant tokens online (Nawrot et al., 2024). Dynamic Memory Sparsification (DMS) evicts uninformative tokens instead of compressing them, training binary eviction gates with a differentiable relaxation and deferring removal through a sliding window so that tokens marked for eviction remain attendable for a short period (Łańcucki et al., 2025). 
+
+Sparse retrieval vs. eviction 
+
+• Sparse retrieval restricts each query to attend to a subset of keys, cutting attention compute and bandwidth. However, the full KV cache stays in memory, so it imposes no memory bound. 
+
+• Eviction instead permanently drops cached tokens to enforce a hard, fixed-size cache, directly shrinking the KV footprint. KVpop is a learned eviction method. Rather than learning eviction via differentiable relaxations, KVpop trains an explicit token-level predictor of future utility, supervised by the attention mass a token receives after it exits the protected window. The target is computed during training without materializing the dense attention map, and at decoding time KVpop enforces a bounded KV cache rather than retaining the full one. Because the importance signal is only needed at the eviction boundary, the scorer can be delayed and integrate near-future context before the keep-or-drop decision is made. 
+
+> 3KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+## 3 KVpop                                   
+
+> Require:
+> student model fθ, dense teacher f¯θ
+> sequence x1: S, budget (s, w, k )
+> 1: H0←Embed( x1: S)
+> 2: Lscore ←0
+> 3: for ℓ= 1 , . . . , L do
+> 4: (Qℓ, K ℓ, V ℓ)←Proj ℓ(Hℓ−1)
+> 5: ˆrℓ←Scorer ℓ(Kℓ, V ℓ)
+> 6: rℓ(q)←ApplyDecay(ˆ rℓ, q )
+> 7: Mℓ←TopKMask( rℓ, s, w, k )
+> 8: (Hℓ,
+
+˜LSE ℓ        
+
+> )←SparseAttn( Qℓ, K ℓ, V ℓ, M ℓ)
+> 9: rℓ
+> tgt ←FutureTarget( Qℓ, K ℓ,
+
+˜LSE ℓ        
+
+> , w )
+> 10: Lscore ← L score + BndLoss( rℓ, r ℓ
+> tgt , s, w, k )
+> 11: end for
+> 12: Lscore ← L score /L
+> 13: L ← KL
+
+(f¯θ (x1: S ) ∥∥ LMHead( HL)) + Lscore       
+
+> 14: Update θusing ∇θL
+> 15: return L
+
+Algorithm 1: KVpop distillation. A scorer pre-dicts importance scores used to construct a fixed-budget sparse attention mask. Future attention tar-gets supervise the eviction decision. Targets are computed only during training and add no inference overhead. We propose KVpop (KV compression with Predictive Online Pruning), a sparse-attention retrofit that enforces a fixed per-head KV budget in pretrained language mod-els. Each KV head always retains the first 
+
+s sink tokens and a protected window of the 
+
+w most recent tokens. All remaining tokens compete for a long-range top-k budget, and attention is computed only over the retained set. Thus the per-head KV budget during decoding is 
+
+B = s + w + k (1) The retention policy is controlled by lightweight importance scorers that produce per-head rankings of eligible tokens online. At training time, we additionally compute a future-attention supervision target that the scorers regress against. At inference, only the budget B is enforced. Figure 1 provides an overview, and Algorithm 1 details one training step of KVpop .
+
+3.1 Importance Scorer Supervision 
+
+The scoring target should reflect future utility, not only past attention or local token statistics. We therefore define supervision in terms of the future attention mass a key receives after it has left the protected window. The target is independent of the scorer architecture and can supervise both stateless and stateful policies (see Section 3.3). 1 Protected 
+
+> Masked
+> 2
+
+Figure 2: Transposed Attention. (1) Blue tiles show the future attention mass for token t. (2) Transposing q and 
+
+k turns the per-key column-sum into a per-query row-sum, which attention kernels return as their auxiliary LSE. 
+
+Future-attention target. Let S be the training sequence length and let g ∈{1, . . . , G } index the query heads that share KV head h under grouped-query attention (Ainslie et al., 2023). Let p(h,g )
+
+> d→t
+
+denote the dense causal attention proba-bility from query head (h, g ) at position d
+
+to key (h, t ). Since token t is protected un-til queries are at least w positions ahead, we define its mean future-attention mass per group as 
+
+m(h,g ) 
+
+> t
+
+= 1
+
+NtS−1∑
+
+> d=t+w
+
+p(h,g )
+
+> d→t
+
+where Nt = max(1 , S − (t + w)) 
+
+(2) Since a KV entry is shared by all G query heads, we aggregate the per-group log-masses to obtain the future-utility target. 
+
+rtgt  
+
+> h,t
+
+= Agg g
+
+[
+
+log 
+
+(
+
+ϵ + m(h,g )
+
+> t
+
+)] 
+
+(3) where ϵ > 0 is a small constant. In the experiments, Agg g is max aggregation. Alternatives are discussed in Appendix B. 
+
+> 4KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+Effective scores and teacher policy. At query position q, only tokens outside the sink region and outside the protected recent window compete for the long-range budget: 
+
+E(q) = {t | s ≤ t ≤ q − w} (4) The token tnew = q − w has just left the protected window and becomes newly eligible. The teacher ranks eligible tokens by target effective scores 
+
+rtgt  
+
+> h,t
+
+(q) = rtgt  
+
+> h,t
+
++ 
+
+> ⌊
+
+q − tn
+
+> ⌋
+
+log γh (5) where γh ∈ (0 , 1) is a per-head decay factor and n is the decay step size. The decay term introduces a recency bias that prevents tokens with very high scores from occupying cache slots indefinitely, allowing newer tokens to compete for retention over time. The teacher and student share the same 
+
+γh, ensuring the supervision matches the inference-time ranking rule. The teacher retains the top-k
+
+tokens in E(q) under Eq. (5). Let tbnd be the boundary token at the teacher cutoff, i.e. the last retained token under the teacher ranking. The teacher label for the newly eligible token is 
+
+yq,h =
+
+> {
+
++1 , if tnew is retained 
+
+−1, otherwise (6) 
+
+Boundary-aware retention loss. Let ˆrh,t (q) be the predicted effective score used by the sparse attention policy, defined analogously to Eq. (5) from the predicted raw score ˆrh,t . Since the decay term is identical for any two tokens at the same query position q, the comparison reduces to the difference of raw scores. We train the scorer with a pairwise logistic loss at the retention boundary: 
+
+Lscore = Eq,h 
+
+> [
+
+ωq,h softplus 
+
+> (
+
+−yq,h 
+
+ˆrh,t new (q) − ˆrh,t bnd (q)
+
+τ
+
+> )]
+
+(7) where τ is a temperature and ωq,h is an optional weighting term. Setting ωq,h = 1 gives the unweighted objective. In our implementation, we use ωq,h to downweight ambiguous teacher decisions and balance keep/drop decisions across heads. Details are given in Appendix B. The boundary loss focuses capacity on the single comparison that changes cache membership and costs O(1) per sampled query position once the teacher cutoff is known. 
+
+Boundary loss intuition 
+
+The loss looks at a single pair per query: the newly evictable token tnew and the teacher’s cutoff token tbnd (i.e. the lowest-scoring token still within the top-k). It pushes the student’s score for tnew above the cutoff when the teacher keeps it and below when the teacher drops it. The 
+
+softplus acts as a smooth hinge: ≈ 0 once the decision is correct by a margin, growing with the score gap when it is wrong. 
+
+3.2 Efficient Target Implementation 
+
+The target in Eq. (3) is defined through dense causal attention probabilities, but we never materialize the corresponding S × S probability matrices. The student forward pass already computes a fixed-budget sparse attention pattern and returns per-query log-normalizers from the sparse attention kernel. We reuse these sparse log-normalizers as an approximation to the dense causal normalizers, and compute the future-attention target with one additional transposed-attention pass implemented with efficient attention kernels such as FlexAttention (Dong et al., 2025). 
+
+Transposed-attention target computation. Let ℓ(h,g )(d, t ) = ⟨q(h,g ) 
+
+> d
+
+, k(h) 
+
+> t
+
+⟩/√dk be the pre-softmax attention logit, and let LSE (h,g ) 
+
+> d
+
+be the causal log-sum-exp (LSE) normalizer for query position d. The 
+
+> 5KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+mean future-attention mass m(h,g ) 
+
+> t
+
+from Eq. (2) can equivalently be written as 
+
+log m(h,g ) 
+
+> t
+
+= log 
+
+> S−1∑
+> d=t+w
+
+exp 
+
+> (
+
+ℓ(h,g )(d, t ) − LSE (h,g )
+
+> d
+> )
+
+− log Nt (8) The first term is a log-sum-exp over future query positions for a fixed key t, corresponding to a column-wise reduction over the dense logit matrix. We evaluate it by swapping the roles of queries and keys in a second attention-like call (Figure 2). Original key positions t become queries, original query positions d become keys, and the dot products recover the original logits ℓ(h,g )(d, t ). We subtract the per-query normalizer as a score modifier and apply a block mask enforcing d ≥ t + w. The auxiliary LSE returned by the attention kernel then gives the first term of Eq. (8) for all keys in parallel, after which we subtract log Nt to obtain log m(h,g ) 
+
+> t
+
+. Adding ϵ inside the log and aggregating across query heads sharing KV head h yields rtgt  
+
+> h,t
+
+as in Eq. (3) . Using the dense causal LSE (h,g ) 
+
+> d
+
+would make this identity exact. Instead, we reuse the sparse query LSE values 
+
+> ˜
+
+LSE (h,g ) 
+
+> d
+
+= log 
+
+> d∑
+> t′=0
+
+Md,t ′ exp 
+
+> (
+
+ℓ(h,g )(d, t ′)
+
+> )
+
+(9) already returned by the student attention pass, where M is the fixed-budget sparse mask. The transposed pass therefore only requires a masked LSE through the same kernel interface, adding no inference-time overhead. We find empirically that this sparse-LSE approximation matches the dense-LSE target in downstream performance, while avoiding the cost of a separate dense-attention pass during training. The per-group targets are aggregated across query heads sharing KV head h to produce rtgt  
+
+> h,t
+
+as in Eq. (3). Appendix D provides the full derivation. 
+
+Running top-k sparse attention. At each query position q, the sparse attention mask retains the union of the sink tokens, the protected recent window, and the top-k tokens from E(q) under predicted effective scores. The predicted effective score has the same form as the teacher score. For a fixed query, the query-dependent part is shared across eligible tokens up to the decay-step discretization. The top-k selection therefore reduces to a running threshold over static token priorities rather than recomputing a full top-k from scratch at every query. Concretely, we sort tokens once by their static priority and compute a rank for each token. As q
+
+increases, exactly one new token, t = q − w, enters the eligible set. We insert its rank into a Fenwick tree (Fenwick, 1994) and retrieve the rank of the k-th best eligible token by binary lifting. This gives a query-specific cutoff rank τq, so the retained long-range keys are exactly those eligible tokens with rank at most τq. The resulting predicate is evaluated inside FlexAttention , which generates the sparse mask on the fly inside the fused attention kernel rather than storing a dense S × S mask. The cutoff computation costs O(S log S) time and O(S) space per head, while the attention computation itself is performed by the sparse kernel. Appendix I contains the full algorithm. 
+
+Efficient kernel for running top-k
+
+We compute the per-query cutoff rank with an online Fenwick tree over static ranks, implemented as a custom Triton kernel parallelized over batch elements and KV heads. The result is handed to FlexAttention, which builds the sparse mask on the fly, never storing a dense S × S matrix. 
+
+3.3 Online Importance Scorers 
+
+The target and loss above can supervise any module that assigns scalar importance scores to cached tokens. We use lightweight scorers per KV head whose inputs are derived from cached keys and values. Crucially, the scorer inputs are detached from the computation graph, so the scorer is optimized independently of the backbone: the retention loss in Eq. (7) updates only the scorer parameters, while the base model is trained solely by the distillation objective.       
+
+> 6KVpop — Key-Value Cache Compression with Predictive Online Pruning   
+> -,+ -,. -,1 6,- 
+> 7
+> D
+> :<; 9
+> ( $%  
+>   
+> UL < $J  
+
+Figure 3: KVpop stateful eviction policy. (1) The mLSTM -memory is updated with the most recent KV pair. (2) For delayed scoring, the memory is read with the token at position q − w that has just exited the protected sliding window. (3) The mLSTM emits an importance score, and ranking determines whether the token is kept or evicted. 
+
+Stateless scorers. The simplest scorer predicts token importance from the token’s own representation. We concatenate the key and value at position t as xh,t = [ kh,t ; vh,t ] and compute ˆrh,t = f (h) 
+
+> θ
+
+(xh,t ),where f (h) 
+
+> θ
+
+is a small headwise scorer. In our experiments we use a two-layer MLP with a SiLU activation. Stateless scorers are cheap, but they score each token using only local information. 
+
+Stateful scorers. Stateless scorers assign an importance score from the token’s representation at insertion time. The token’s own representation, however, may not capture how it relates to earlier context, and it cannot incorporate context that accumulates afterward. A stateful scorer instead maintains a memory shaped by the retention objective, and the protected window enables delayed 
+
+scoring. A token does not need a score when it enters the KV cache, only when it leaves the window and begins competing for the long-range budget. At query position q, the scorer can therefore update its memory with tokens up to q before scoring tnew = q − w, using near-future context relative to the token being scored (Figure 3). This is distinct from delayed eviction as in DMS (Łańcucki et al., 2025), which postpones the decision without incorporating the accumulated evidence. We instantiate this with an mLSTM (Beck et al., 2024) scorer for each KV head. Let Ch,q and zh,q denote the 
+
+mLSTM state and normalizer after processing tokens up to position q, and let ˜qh,t new be a projected feature vector of the newly eligible token. The delayed readout is 
+
+hh,t new = ˜q⊤ 
+
+> h,t new
+
+Ch,q 
+
+˜q⊤ 
+
+> h,t new
+
+zh,q 
+
+(10) and the raw importance score is produced by a small headwise projection 
+
+ˆrh,t new = a⊤ 
+
+> h
+
+SiLU( hh,t new ) + bh (11) Appendix E gives the full mLSTM formulation, feature maps, gates, initialization, and implementation variants. Appendix A provides background on mLSTM and Linear Attention. 
+
+## 4 Experiments 
+
+We apply KVpop distillation to Qwen3-4B-Instruct-2507 and Qwen3-8B (A. Yang et al., 2025). We use a training sequence length of S = 16384 . For sparsification, we use the Nemotron-Math v2 dataset (Du et al., 2025), selecting the subset with high reasoning effort and filtering for sequences of length at most S under the Qwen tokenizer. We apply sequence packing to improve token utilization. We train both a stateless variant, KVpop mlp , and a stateful variant, KVpop , for 2,000 steps. Since recurrent state introduces additional memory overhead for stateful scorers, we reduce the top-k budget 
+
+> 7KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+Table 1: Pass@1 on AIME and HMMT shown as absolute scores (Abs) and w.r.t. teachers (Rel)                                                                                                                                                                               
+
+> Qwen3 4B Qwen3 8B Variant AIME HMMT Average AIME HMMT Average 2024 2025 2502 2511 Abs. Rel. 2024 2025 2502 2511 Abs. Rel. Teacher .61 .46 .30 .43 .45 1.00 .58 .49 .28 .37 .43 1.00
+> CR  = 75%  StreamLLM .47 .33 .24 .33 .34 .76 .13 .11 .03 .05 .08 .19
+> TOVA .56 .38 .28 .10 .33 .73 .37 .23 .15 .28 .26 .60
+> StreamLLM+ .55 .44 .30 .36 .41 .92 .53 .41 .25 .35 .39 .91
+> DMS .62 .44 .28 .38 .43 .96 .56 .45 .27 .35 .41 .95
+> KVpop mlp .62 .43 .29 .40 .44 .98 .59 .46 .30 .38 .43 1.00
+> KVpop .62 .44 .31 .39 .44 .98 .57 .48 .31 .38 .44 1.00
+> CR  = 88%  StreamLLM .30 .23 .15 .17 .21 .47 .13 .11 .03 .05 .08 .19
+> TOVA .36 .23 .19 .28 .26 .58 .08 .07 .09 .08 .08 .19
+> StreamLLM+ .45 .33 .26 .29 .33 .74 .42 .30 .18 .24 .29 .67
+> DMS .58 .41 .27 .35 .40 .89 .52 .38 .22 .31 .36 .84
+> KVpop mlp .59 .44 .27 .38 .42 .93 .57 .39 .31 .40 .42 .98
+> KVpop .61 .44 .30 .39 .44 .97 .58 .44 .31 .39 .43 1.00
+
+of the stateful variants to match the memory footprint of the stateless scorers. We use a cosine schedule for the scorer parameters with peak learning rate 10 −3, keep the base-model learning rate fixed at 
+
+8 × 10 −5, and include a KL-divergence loss. Full hyperparameters are provided in Appendix F. 
+
+Baselines. We compare against both training-free and trained KV cache baselines and the original full-attention teachers. Sparse-retrieval methods are excluded from comparison since they retain the full KV cache. For Qwen3-8B , which is a hybrid reasoning model, we enable thinking mode. As training-free eviction methods, we use StreamingLLM (Xiao et al., 2023), which keeps attention sinks and a recent sliding window, and TOVA (Oren et al., 2024), which evicts tokens according to attention scores once the cache budget is reached. To isolate the effect of learned scoring from training under a fixed sparse pattern, we additionally train a StreamingLLM variant (StreamingLLM+) with the same budget and setup as KVpop . Finally, we compare against Dynamic Memory Sparsification (DMS) (Łańcucki et al., 2025), a learned KV cache sparsification method that uses differentiable relaxations to train the eviction policy. We train DMS with the same budget as KVpop and match its parameter count to the KVpop scorers, so differences reflect the retention objective rather than scorer capacity. 
+
+4.1 Results 
+
+Mathematical Reasoning. We report pass@1 on AIME24/25 and HMMT (Feb/Nov 2025) in Table 1 under two cache budgets B ∈ { 2048 , 4096 }, corresponding to compression ratios (CR) of 88% and 75%. Pass@1 is estimated using 16 rollouts per prompt. We report absolute and relative scores w.r.t. teachers. At CR=88%, training-free StreamingLLM and TOVA collapse, and StreamingLLM+ recovers only partially. KVpop preserves 97% and 100% of Qwen3-4B and Qwen3-8B respectively. The stateless 
+
+KVpop mlp reaches 93% and 98%. The progression from StreamingLLM to StreamingLLM+ to 
+
+KVpop isolates the contribution of training. While training the model with a fixed attention pattern recovers some of the gap, a learned eviction policy effectively closes it. Moreover, the results suggest that the supervision target of the eviction policy also matters. DMS trains its policy via a Gumbel-sigmoid instead of distilling from teacher attention and trails KVpop by 8-16 points in relative performance. At CR=75%, all methods improve, but the ordering holds, KVpop outperforms all sparse baselines on average.      
+
+> 8KVpop — Key-Value Cache Compression with Predictive Online Pruning 16k 32k 64k 128k
+> Generation Length
+> 0
+> 5000
+> 10000
+> 15000
+> 20000
+> 25000
+> 30000
+> 35000
+> Seconds
+> Dense DMS KVpop
+
+(a) End-to-end latency. 16k 32k 64k 128k    
+
+> Generation Length
+> 15
+> 20
+> 25
+> 30
+> 35
+> GB
+> Dense DMS KVpop
+
+(b) Peak allocated VRAM. 
+
+Figure 4: Inference efficiency on Qwen3-8B. We measure end-to-end decoding latency and peak allocated VRAM at batch size 1, 75% KV compression, and varying generation lengths. Dense attention incurs growing memory cost as the KV cache expands, whereas DMS and KVpop grow more slowly. KVpop further reduces latency, maintaining stable throughput across long generations and outperforming both dense attention and DMS at the longest sequence lengths. Table 2: Results for Qwen3-4B on 
+
+GPQA-D and LCB .Variant GPQA-D LCB Teacher .59 .35 
+
+> CR  = 75%
+
+StreamLLM .54 .36 
+
+TOVA .58 .34 
+
+StreamLLM+ .55 .32 
+
+DMS .55 .37 
+
+KVpop mlp .59 .35 
+
+KVpop .57 .33 
+
+> CR  = 88%
+
+StreamLLM .49 .35 
+
+TOVA .54 .35 
+
+StreamLLM+ .52 .29 
+
+DMS .54 .35 
+
+KVpop mlp .57 .35 
+
+KVpop .56 .34 
+
+Sparsification generalization beyond mathematical reasoning. To test whether the learned sparsification policy generalizes beyond the training data distribution and the main mathematical reasoning benchmarks, we also evaluate the sparsified Qwen3-4B models on out-of-domain reasoning tasks. Following the general-purpose evaluation protocol of DMS (Łańcucki et al., 2025), we report accuracy on GPQA Diamond (GPQA-D) (Rein et al., 2024) and pass@1 on LiveCodeBench v6 (LCB) (Jain et al., 2025) in Table 2. These benchmarks probe scientific reasoning and code generation, respectively, and therefore cover domains not included in the sparsification training data. Across both benchmarks and compression ratios, 
+
+KVpop stays close to the dense teacher despite being trained only on mathematical reasoning data. Eviction methods perform comparably on these tasks, which require smaller reasoning budgets than AIME and HMMT. 
+
+Inference efficiency. We benchmark end-to-end autore-gressive decoding at batch size 1 and generation lengths up to 131k tokens, reporting peak allocated VRAM and latency averaged over five steady-state runs (excluding warmup and compilation) in Figure 4. For baselines, we use the provided Hugging Face implementations. 1 Dense attention exhibits the expected linear KV growth, with peak VRAM rising from 18GB at 16k tokens to 36GB at 131k, while both DMS and KVpop only grow by 19% to 19GB. 
+
+Why KVpop decodes faster than DMS 
+
+KVpop enforces the same fixed budget on every KV head while DMS lets dynamic gates concentrate capacity in a few heads, yielding ragged per-head caches that are harder to execute and compile (see Figure 8). For this reason KVpop sustains higher long-generation throughput at a comparable cache budget. Evaluating whether this advantage persists under paged KV -cache managers such as vLLM (Kwon et al., 2023) or SGLang (Zheng et al., 2024) remains future work.   
+
+> 1For DMS we use the cache implementation from https://huggingface.co/nvidia/Qwen3-8B-DMS-8x. As mentioned in Section 4 we match parameters of the scorer with KVpop .9
+
+KVpop — Key-Value Cache Compression with Predictive Online Pruning 17000/22500=5.2
+
+> .
+> Thus
+> ·( 30,2
+> ).
+> Pattern :
+> ·a
+> ·multiples
+> ·of 10,
+> ·b =2
+> ·works
+> ·for
+> ·a =10,30?
+> ·Also
+> ·a =20
+> ,b =1.
+> ·Try
+> ·a =40:
+> ·N =64000+90000=154000.
+> ·D =1600
+> ·b ^2+300.
+> ·b =1:1900
+> ·divides ?·154000/
+> 0
+> 3
+> 6
+> 9
+> 12
+> 15
+> 18
+> 21
+> 24
+> 27
+> 30
+> 33
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+
+Figure 6: Eviction patterns in a mathematical reasoning trace. We visualize the last 112 tokens of a randomly sampled sequence. Rows denote layers, columns denote token strings, and color indicates how many attention heads in a layer retained the corresponding token. KVpop tends to evict purely numeric tokens more often, while retaining reasoning-structural tokens. 
+
+4.2 Delayed scoring improves stateful eviction 500 1k 1.5k 2k 
+
+> Training Step
+> 0.770
+> 0.771
+> 0.772
+> 0.773
+> 0.774
+> Token Accuracy
+> KVpop
+> KVpop (w/o delay)
+
+Figure 5: Effect of delayed scoring. To-ken accuracy with and without delayed scor-ing. We ablate the effect of delayed scoring in Figure 5, comparing an mLSTM scorer with and without delayed readout. After 2,000 steps, delayed mL-STM scoring achieves a 0.2-point increase in token accuracy over immediate scoring. A memory-based scorer is beneficial only when its state can integrate additional context before the eviction decision. Without delayed scoring, the 
+
+mLSTM , like a stateless scorer, must commit before near-future evidence is available. Delayed readout addresses this by aligning the eviction decision with the moment near-future context becomes available. 
+
+4.3 Eviction Policy Analysis 
+
+Eviction Pattern Visualization. Figure 6 visualizes token retention over the final 112 evictable tokens of a randomly sampled mathematical reasoning sequence. Rows are transformer layers, columns are token strings, and color encodes how many attention heads retain each token. KVpop does not retain tokens uniformly. Purely numeric tokens are dropped more often, while tokens that organize or advance the reasoning, such as discourse markers ( Thus ), operation words ( multiplies ), and symbolic tokens ( =), are retained by more heads and across more layers. The first layer is a notable exception, retaining nearly all tokens across heads, consistent with prior observations that early layers perform broader processing before higher layers specialize (Tenney, Das, and Pavlick, 2019). This indicates that 
+
+KVpop learns a policy beyond simple recency, preferentially keeping tokens useful for interpreting the evolving solution. Additional examples are in Appendix Figure 9. As a complementary comparison, Appendix H analyzes the sparsity patterns learned by DMS, showing that its dynamic gates concentrate long-range capacity in a small subset of heads. 
+
+Recovering oracle eviction decisions. In Appendix Figure 7 we plot the top-k retention recall distribution over heads across all layers of Qwen3-4B at 75% KV cache compression. For a given head the metric measures what fraction of the full-attention teacher’s top-k retained tokens are also kept by the learned KVpop scorer under the same cache budget. Most layer-wise distributions remain in a high range, with a global mean recall of 81%, indicating high agreement with the teacher policy. 
+
+10 KVpop — Key-Value Cache Compression with Predictive Online Pruning 
+
+## 5 Conclusion 
+
+Limitations. While mLSTM scoring provides a strong stateful KV pruning mechanism, we leave a broader exploration of alternative memory-based scorers for future work. KVpop is designed as an efficient post-training retrofit for Transformers with dense attention, rather than a compressed-cache architecture trained from scratch. Finally, our homogeneous per-head cache budget enables efficient GPU execution, but hybrid dense-sparse layers may further improve the quality-efficiency trade-off. 
+
+Conclusion. We introduced KVpop , a fixed-budget KV cache compression method that learns predictive online decisions from future-attention supervision. By training scorers at the eviction boundary and optionally delaying stateful scoring until near-future context is available, KVpop directly targets the token-retention decision that determines cache membership. The resulting sparse retrofit bounds inference memory and improves the quality-efficiency trade-off over prior eviction methods. Across AIME and HMMT, KVpop retains 95% of dense-attention performance on Qwen3-4B at 75% KV cache compression and 94% at 88% compression. On Qwen3-8B , retention reaches 95% and 99% at the same compression ratios. Moreover, despite being distilled on mathematical reasoning data, the learned eviction policy remains competitive on code generation and STEM reasoning benchmarks. These results show that predictive learned eviction can preserve long-context reasoning quality under aggressive cache compression. 
+
+## Acknowledgments 
+
+We acknowledge EuroHPC Joint Undertaking for awarding us access to Leonardo at CINECA, Italy, Deucalion at MACC, Portugal, Discoverer at SofiaTech, Bulgaria. This work was supported by European Union’s Horizon Europe research and innovation programme under grant agreement number 101214398 (ELLIOT). 
+
+> 11 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+## References 
+
+Fenwick, Peter M. (1994). “A New Data Structure for Cumulative Frequency Tables”. In: Software— Practice and Experience 24.3, pp. 327–336. doi : 10.1002/SPE.4380240306 .Hochreiter, Sepp and Jürgen Schmidhuber (1997). “Long short-term memory”. In: Neural computation 
+
+9.8, pp. 1735–1780. Vaswani, Ashish et al. (2017). “Attention Is All You Need”. In: Advances in Neural Information Processing Systems . Vol. 30. arXiv: 1706.03762. Long Beach, CA, USA: Curran Associates, Inc., pp. 5998–6008. Tenney, Ian, Dipanjan Das, and Ellie Pavlick (July 2019). “BERT Rediscovers the Classical NLP Pipeline”. In: Proceedings of the 57th Annual Meeting of the Association for Computational Lin-guistics . Ed. by Anna Korhonen, David Traum, and Lluís Màrquez. Florence, Italy: Associa-tion for Computational Linguistics, pp. 4593–4601. doi : 10.18653/v1/P19- 1452 . url : https: //aclanthology.org/P19-1452/ .Katharopoulos, Angelos et al. (2020). “Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention”. In: Proceedings of the 37th International Conference on Machine Learning .Vol. 119. arXiv: 2006.16236. virtual: PMLR, pp. 5156–5165. Ainslie, Joshua et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints . arXiv: 2305.13245 [cs.CL] . url : https://arxiv.org/abs/2305.13245 .Kwon, Woosuk et al. (Oct. 2023). “Efficient Memory Management for Large Language Model Serving with PagedAttention”. In: Proceedings of the 29th Symposium on Operating Systems Principles .SOSP ’23. New York, NY, USA: Association for Computing Machinery, pp. 611–626. isbn : 979-8-4007-0229-7. doi : 10.1145/3600006.3613165 . (Visited on 12/30/2025). Mohtashami, Amirkeivan and Martin Jaggi (2023). “Random-Access Infinite Context Length for Transformers”. In: Thirty-seventh Conference on Neural Information Processing Systems . url :
+
+https://openreview.net/forum?id=7eHn64wOVy .Xiao, Guangxuan et al. (Oct. 2023). “Efficient Streaming Language Models with Attention Sinks”. en. In: (visited on 12/30/2025). Zhang, Zhenyu et al. (Dec. 2023). “H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models”. en. In: Advances in Neural Information Processing Systems 36, pp. 34661–34710. (Visited on 12/30/2025). Alkin, Benedikt et al. (2024). “Vision-lstm: xlstm as generic vision backbone”. In: arXiv preprint arXiv:2406.04303 .Beck, Maximilian et al. (Dec. 2024). “xLSTM: Extended Long Short-Term Memory”. en. In: Advances in Neural Information Processing Systems 37, pp. 107547–107603. doi : 10.52202/079017-3417 .(Visited on 12/30/2025). Gu, Albert and Tri Dao (2024). “Mamba: Linear-Time Sequence Modeling with Selective State Spaces”. In: Conference on Language Modeling . Vol. 1. Philadelphia, PA, USA: OpenReview. Li, Yuhong et al. (2024). “SnapKV: LLM Knows What You are Looking for Before Generation”. In: The Thirty-eighth Annual Conference on Neural Information Processing Systems . url : https: //openreview.net/forum?id=poE54GOq2l .Nawrot, Piotr et al. (July 2024). “Dynamic Memory Compression: Retrofitting LLMs for Accelerated Inference”. en. In: Proceedings of the 41st International Conference on Machine Learning . ISSN: 2640-3498. PMLR, pp. 37396–37412. (Visited on 12/30/2025). Oren, Matanel et al. (Nov. 2024). “Transformers are Multi-State RNNs”. In: Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing . Ed. by Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen. Miami, Florida, USA: Association for Computational Linguistics, pp. 18724–18741. doi : 10.18653/v1/2024.emnlp-main.1043 . url : https://aclanthology.org/ 2024.emnlp-main.1043/ .
+
+> 12 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+Rein, David et al. (2024). “GPQA: A Graduate-Level Google-Proof Q&A Benchmark”. In: First Conference on Language Modeling . url : https://openreview.net/forum?id=Ti67584b98 .Schmidinger, Niklas et al. (2024). “Bio-xLSTM: Generative modeling, representation and in-context learning of biological and chemical sequences”. In: arXiv preprint arXiv:2411.04165 .Schmied, Thomas et al. (2024). “A large recurrent action model: xLSTM enables fast inference for robotics tasks”. In: arXiv preprint arXiv:2410.22391 .Tang, Jiaming et al. (July 2024). “QUEST: Query-Aware Sparsity for Efficient Long-Context LLM Inference”. en. In: Proceedings of the 41st International Conference on Machine Learning . ISSN: 2640-3498. PMLR, pp. 47901–47911. (Visited on 12/30/2025). Xiao, Guangxuan et al. (2024). “Efficient Streaming Language Models with Attention Sinks”. In: The Twelfth International Conference on Learning Representations . url : https://openreview.net/ forum?id=NG7sS51zVF .Yang, Songlin, Jan Kautz, and Ali Hatamizadeh (2024). “Gated delta networks: Improving mamba2 with delta rule”. In: arXiv preprint arXiv:2412.06464 .Yang, Songlin et al. (2024). “Gated Linear Attention Transformers with Hardware-Efficient Training”. In: Proceedings of the 41st International Conference on Machine Learning . Vol. 235. ISSN: 2640-3498. Vienna, Austria: PMLR, pp. 56501–56523. Zhang, Michael et al. (2024). “The Hedgehog & the Porcupine: Expressive Linear Attentions with Softmax Mimicry”. In: The Twelfth International Conference on Learning Representations . url :
+
+https://openreview.net/forum?id=4g02l2N2Nx .Zheng, Lianmin et al. (2024). “SGLang: Efficient Execution of Structured Language Model Programs”. In: The Thirty-eighth Annual Conference on Neural Information Processing Systems . url : https: //openreview.net/forum?id=VqkAKQibpq .Akhauri, Yash et al. (Mar. 2025). TokenButler: Token Importance is Predictable . arXiv:2503.07518 [cs]. 
+
+doi : 10.48550/arXiv.2503.07518 . (Visited on 12/30/2025). Auer, Andreas et al. (2025). “Tirex: Zero-shot forecasting across long and short horizons with enhanced in-context learning”. In: arXiv preprint arXiv:2505.23719 .Beck, Maximilian et al. (2025). “xlstm 7b: A recurrent llm for fast and efficient inference”. In: arXiv preprint arXiv:2503.13427 .Buitrago, Ricardo and Albert Gu (2025). “Understanding and Improving Length Generalization in Recurrent Models”. In: Forty-second International Conference on Machine Learning . url : https: //openreview.net/forum?id=2OEb20dy7B .Cai, Zefan et al. (2025). “PyramidKV: Dynamic KV Cache Compression based on Pyramidal Informa-tion Funneling”. In: Second Conference on Language Modeling . url : https://openreview.net/ forum?id=ayi7qezU87 .DeepSeek-AI et al. (2025). DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models .arXiv: 2512.02556 [cs.CL] . url : https://arxiv.org/abs/2512.02556 .Devoto, Alessio, Maximilian Jeblick, and Simon Jégou (2025). “Expected attention: Kv cache compres-sion by estimating attention from future queries distribution”. In: arXiv preprint arXiv:2510.00636 .Dong, Juechu et al. (2025). “FlexAttention: A Programming Model for Generating Fused Attention Variants.” In: Eighth Conference on Machine Learning and Systems .Du, Wei et al. (2025). “Nemotron-Math: Efficient Long-Context Distillation of Mathematical Reasoning from Multi-Mode Supervision”. In: arXiv preprint arXiv:2512.15489 .Jain, Naman et al. (2025). “LiveCodeBench: Holistic and Contamination Free Evaluation of Large Lan-guage Models for Code”. In: The Thirteenth International Conference on Learning Representations .
+
+url : https://openreview.net/forum?id=chfJJYC3iL .Łańcucki, Adrian et al. (Oct. 2025). “Inference-Time Hyper-Scaling with KV Cache Compression”. en. In: (visited on 12/30/2025). 
+
+> 13 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+Yang, An et al. (2025). Qwen3 Technical Report . arXiv: 2505.09388 [cs.CL] .Yuan, Jingyang et al. (2025). Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention . arXiv: 2502.11089 [cs.CL] . url : https://arxiv.org/abs/2502.11089 .Hauzenberger, Lukas et al. (2026). “Effective Distillation to Hybrid xLSTM Architectures”. In: arXiv preprint arXiv:2603.15590 .
+
+> 14 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+## Appendix 
+
+A Background: Linear Attention and mLSTM 16 B Target Variants and Boundary-Loss Details 17 
+
+B.1 Future-Attention Target Variants . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 B.2 Count Normalization . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 B.3 Temporal Decay and Static Priorities . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.4 Margin Weighting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.5 Keep/Drop Balancing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.6 Sampling Query Positions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 
+
+C Efficient Running Top-k Sparse Attention 19 
+
+C.1 Mask Definition . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 C.2 Fenwick-Tree Cutoff Computation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 C.3 Use with FlexAttention . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 
+
+D Efficient Future-Target Computation 20 
+
+D.1 Dense Target Identity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.2 Transposed Attention . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.3 Sparse Normalizer Approximation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.4 Implementation Steps . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 
+
+E Scorer Architecture Details 22 
+
+E.1 Headwise Inputs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 E.2 Stateless Linear and MLP Scorers . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 E.3 mLSTM Scorer . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 E.4 Delayed Readout . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 E.5 Initialization and Practical Variants . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 
+
+F Experiment Details 23 G KVpopSparsity Patterns 23 H DMS Sparsity Patterns 24 I KVpopPseudocode 27 
+
+> 15 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+## A Background: Linear Attention and mLSTM 
+
+Linear attention replaces the softmax similarity κexp (q, k) = exp (q⊤k/√dqk 
+
+) with a kernel 
+
+κϕ(q, k) = ϕ(q)⊤ϕ(k) that admits an explicit feature representation, where ϕ : Rdqk → Rdqk 
+
+(Katharopoulos et al., 2020). Through associativity, this factorization yields two mathematically equivalent causal attention imple-mentations: (i) a (chunkwise) parallel computation suited for training and prefill, and (ii) an online recurrent update used for step-by-step decoding. By switching between these views, one obtains linear-time prefill and training and constant-memory autoregressive generation (S. Yang et al., 2024). In the recurrent formulation, each head maintains a running key–value summary Ct ∈ Rdqk ×dv ,optionally together with a normalizer zt ∈ Rdqk . Given the token at time t, the state is updated via rank-one outer products: 
+
+Ct = Ct−1 + ϕ(kt) ⊗ vt
+
+zt = zt−1 + ϕ(kt)
+
+where ⊗ denotes the outer product. For a query qt, the head output is obtained by reading from the current summary with normalization: 
+
+ht = ϕ(qt)Ct
+
+ϕ(qt)zt
+
+Here qt, kt ∈ Rdqk and vt ∈ Rdv .
+
+mLSTM . Recently, modern recurrent architectures, such as xLSTM (Beck et al., 2024), Mamba (Gu and Dao, 2024), and Gated Delta Networks (S. Yang, Kautz, and Hatamizadeh, 2024) have emerged as competitive linear-complexity alternatives to Transformers. Inspired by the gating structure of the original LSTM cell (Hochreiter and Schmidhuber, 1997), these operators augment the outer product update of linear attention with expressive gates. In this work, we choose mLSTM , which was introduced as a sublayer of xLSTM , as a stateful importance scorer. mLSTM has been shown to perform well in language modelling (Beck et al., 2025), computer vision (Alkin et al., 2024), biological modeling Schmidinger et al., 2024, decision-making (Schmied et al., 2024), and time series forecasting (Auer et al., 2025). The mLSTM introduces three input-dependent gates into the state update of linear attention, each governing a different part of the computation. Let wi ∈ Rd×1 and wf ∈ Rd×1
+
+parameterize scalar input and forget gates, and let Wog ∈ Rd×dv parameterize a vector-valued output gate. Given a token representation xt, we compute 
+
+it = exp( xtwi), ft = σ(xtwf ), ot = σ(xtWog ),
+
+where it scales the new key–value write, ft attenuates the running state, and ot gates the readout. The resulting recurrent updates are 
+
+Ct = ft Ct−1 + it ϕ(kt) ⊗ vt
+
+zt = ft zt−1 + it ϕ(kt)
+
+with numerical stabilization for the exponential input gate omitted here for clarity. A query then performs the usual normalized retrieval, and the output gate modulates it elementwise: 
+
+ht = ot ⊙ ϕ(qt)Ct
+
+ϕ(qt)zt
+
+(12) 
+
+Lightweight stateful scoring with mLSTM . We tailor the mLSTM scorer for minimal retrofit overhead in a pretrained Transformer. We remove the mLSTM output gate, reuse the Transformer’s existing attention projections, and build scorer inputs solely from cached quantities. For each KV head, we form xt = [ kt; vt] ∈ R2dqkv and apply a small head-specific linear projection Wq/k/v ∈ R(2 dqkv )×(dqkv /2) 
+
+followed by a Hedgehog activation ϕ in its softmax-stabilized form (M. Zhang et al., 2024): 
+
+ϕ(xt) = [softmax( xt); softmax( −xt)] ∈ Rdqkv 
+
+> 16 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+where the softmax is taken over the feature dimension. Crucially, this adds only one small matrix for each query, key, and value head. We base these mLSTM adaptions on Hauzenberger et al., 2026. 
+
+## B Target Variants and Boundary-Loss Details 
+
+This appendix provides details omitted from Section 3.1: GQA aggregation variants, normalization of the future-attention target, temporal score decay, and the optional weighting and sampling choices used by the boundary-aware loss. 
+
+B.1 Future-Attention Target Variants 
+
+For each KV head h, multiple query heads g = 1 , . . . , G attend to the same key and value vectors. We first compute a per-group future-attention mass, 
+
+¯m(h,g ) 
+
+> t
+
+=
+
+> S−1
+
+∑
+
+> d=t+w
+
+p(h,g ) 
+
+> d→t
+
+(13) which is related to the normalized mass m(h,g ) 
+
+> t
+
+from Eq. (2) by m(h,g ) 
+
+> t
+
+= ¯m(h,g ) 
+
+> t
+
+/N t. Because a single KV entry is shared by all G query heads, these per-group masses must be aggregated into one target score per KV head and token. Our default choice is max aggregation, 
+
+¯mh,t = max  
+
+> g
+
+¯m(h,g ) 
+
+> t
+
+¯rtgt  
+
+> h,t
+
+= log( ¯ mh,t + ϵ) (14) which implements an existential criterion: a token should be retained if any query head that shares the KV entry strongly relies on it. This is the variant used in our main experiments unless specified otherwise. As an alternative, we also consider probability-space mean aggregation, 
+
+¯mh,t = 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+¯m(h,g ) 
+
+> t
+
+¯rtgt  
+
+> h,t
+
+= log( ¯ mh,t + ϵ) (15) which rewards tokens that are broadly useful across the query heads sharing a KV head. Mean aggregation can be preferable when average shared utility is more important than preserving rare head-specific dependencies, but it may underweight tokens that are crucial for only one query head. 
+
+B.2 Count Normalization 
+
+The unnormalized future-attention mass in Eq. (13) can be larger for early tokens because they have more future query positions. When desired, we normalize by the number of future queries that can attend to a key after it leaves the protected window. For token t, this count is 
+
+Nt = max(1 , S − (t + w)) (16) The normalized log-target is therefore 
+
+rtgt  
+
+> h,t
+
+= ¯ rtgt  
+
+> h,t
+
+− log Nt (17) This variant measures average rather than total future attention. If a finite lookahead window L is used in the target computation, the count is clipped to Nt ≤ L + 1 .
+
+> 17 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+B.3 Temporal Decay and Static Priorities 
+
+Both the teacher and learned retention policies rank eligible tokens with an effective score 
+
+rh,t (q) = rh,t +
+
+⌊ q − tn
+
+⌋
+
+log γh, γh ∈ (0 , 1) (18) where n is the decay step size. For n = 1 , the query-dependent term decomposes as 
+
+rh,t (q) = ( rh,t − t log γh) + q log γh (19) At fixed q, the term q log γh is common to all eligible tokens, so the top-k ranking is equivalent to sorting by the static priority 
+
+¯rh,t = rh,t − t log γh (20) For n > 1, the same idea applies with piecewise-constant age buckets. In our implementation, the decay factor is learned per KV head by mapping an unconstrained parameter into a fixed log-decay range, 
+
+log γh = log γmin + σ(αh) (log γmax − log γmin ) (21) with 0 < γ min < γ max < 1. This constraint stabilizes training and prevents degenerate decay values. 
+
+B.4 Margin Weighting 
+
+Some boundary decisions are ambiguous because the newly eligible token and the teacher boundary token have nearly equal target scores. We optionally downweight such examples using the teacher margin 
+
+∆tgt  
+
+> q,h
+
+= yq,h 
+
+(
+
+rtgt  
+
+> h,t new
+
+(q) − rtgt  
+
+> h,t bnd
+
+(q)
+
+)
+
+≥ 0 (22) The margin weight is 
+
+ωmargin  
+
+> q,h
+
+= ωmin + (1 − ωmin )σ
+
+( ∆tgt 
+
+> q,h
+
+τω
+
+)
+
+(23) where ωmin is the minimum example weight and τω controls the sharpness. This keeps high-margin decisions near weight one while reducing the influence of near-ties. 
+
+B.5 Keep/Drop Balancing 
+
+The boundary label distribution may be imbalanced for a given head, especially when the scorer or decay strongly favors either old or newly eligible tokens. We optionally apply a headwise balancing factor so that keep and drop decisions have similar aggregate weight. Let ρh be the fraction of valid sampled boundary decisions with yq,h = +1 for head h. We use 
+
+ωbal  
+
+> q,h
+
+=
+
+
+
+clip 
+
+( 12ρh , c min , c max 
+
+)
+
+, yq,h = +1 clip 
+
+( 12(1 −ρh) , c min , c max 
+
+)
+
+, yq,h = −1 (24) and normalize the resulting weights by their mean over valid examples. The final weight in Eq. (7) is the product of the margin and balancing weights. 
+
+B.6 Sampling Query Positions 
+
+Computing the boundary loss for every query position is unnecessary. We sample a small set of positions after the long-range budget is saturated: 
+
+q ≥ s + w + k. (25) Our default sampler mixes uniform samples with samples biased toward later positions. This improves coverage of both early saturation behavior and the long-range regime where cache pressure is strongest. The teacher ranks and cutoffs are computed for all positions once, so evaluating the loss at sampled positions costs only a gather and a pairwise logistic term. 
+
+> 18 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+## C Efficient Running Top-k Sparse Attention 
+
+This appendix describes the fixed-budget sparse mask used during training and prefill. During autoregressive decoding, the cache itself contains only retained entries, so attention can be computed directly over the compact cache. During training, however, we need a parallel sparse-attention mask over the full sequence. 
+
+C.1 Mask Definition 
+
+For each query position q, the retained keys are the union of three sets: 1. sink tokens {t : t < s }
+
+2. recent-window tokens {t : q − t < w }
+
+3. the top-k tokens in E(q) = {t : s ≤ t ≤ q − w} under the predicted effective score Let rank (t) be the rank of token t under the static priority from Eq. (20) , with smaller ranks indicating higher priority. Let τq be the cutoff rank of the k-th best eligible token at query q. The sparse mask is 
+
+Mq,t = 1[t < s ] ∨ 1[q − t < w ] ∨ (1[t ∈ E (q)] ∧ 1[rank( t) ≤ τq]) (26) This mask enforces the fixed budget B = s + w + k once the sequence is longer than s + w + k.
+
+> 19 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+C.2 Fenwick-Tree Cutoff Computation                                            
+
+> Require:
+> static ranks rank(0) , . . . , rank( S−1)
+> budget (s, w, k )
+> 1: initialize Fenwick tree Twith zeros 2: τq← − 1for all q
+> 3: for q= 0 , . . . , S −1do
+> 4: t←q−w
+> 5: if t≥sthen
+> 6: insert rank( t)into T
+> 7: end if
+> 8: if |E (q)| ≥ kthen
+> 9: τq←FindByPrefixCount( T, k )
+> 10: end if
+> 11: end for
+> 12: return τ0, . . . , τ S−1
+
+Algorithm 2: Running top-k cutoff computation for one KV head. A Fenwick tree maintains eligi-ble long-range tokens ordered by their static rank. For each query position, the cutoff τq is the rank threshold corresponding to the current top-k eligi-ble tokens. The cutoff sequence τq can be computed in 
+
+O(S log S) time and O(S) space per head. First, sort tokens once by static priority and compute 
+
+rank (t) for all t. Then scan query positions from left to right. When q increases by one, exactly one new token t = q − w enters the eligible set. We insert its rank into a Fenwick tree over ranks. The cutoff τq is the smallest rank whose prefix count reaches k, i.e. the rank of the k-th highest-priority eligible token. Algorithm 2 summarizes the procedure. The same thresholds are used both to instanti-ate the sparse attention mask and to construct the teacher boundary token for the loss. Our GPU implementation parallelizes this proce-dure over batch elements and KV heads. The Fenwick tree is implemented in Triton; binary lifting retrieves the k-th inserted rank without materializing an S × S mask. 
+
+C.3 Use with FlexAttention 
+
+Given rank (t) and τq, the predicate in Eq. (26) can be evaluated inside a sparse attention kernel. We use FlexAttention with a mask function that checks whether a key is a sink, belongs to the recent window, or is an eligible long-range token whose rank is below the query-specific threshold. The mask is generated on the fly by the kernel, avoiding explicit storage of a dense boolean matrix. 
+
+## D Efficient Future-Target Computation 
+
+This appendix derives the transposed-attention computation used to obtain the future-attention target in Eq. (3). 
+
+D.1 Dense Target Identity 
+
+Fix KV head h and query group g. Define the dense causal attention logit 
+
+ℓ(h,g )(d, t ) = ⟨q(h,g ) 
+
+> d
+
+, k(h) 
+
+> t
+
+⟩/√dk (27) and the causal log-normalizer 
+
+LSE (h,g ) 
+
+> d
+
+= log 
+
+> d
+
+∑
+
+> t′=0
+
+exp 
+
+(
+
+ℓ(h,g )(d, t ′)
+
+)
+
+(28) Then the causal attention probability is 
+
+p(h,g ) 
+
+> d→t
+
+= exp 
+
+(
+
+ℓ(h,g )(d, t ) − LSE (h,g )
+
+> d
+
+)
+
+t ≤ d (29) The unnormalized future-attention mass for key t is 
+
+¯m(h,g ) 
+
+> t
+
+=
+
+> S−1
+
+∑
+
+> d=t+w
+
+exp 
+
+(
+
+ℓ(h,g )(d, t ) − LSE (h,g )
+
+> d
+
+)
+
+(30) 
+
+> 20 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+Taking logs gives 
+
+log ¯ m(h,g ) 
+
+> t
+
+= LSE d:t+w≤d<S 
+
+> [
+
+ℓ(h,g )(d, t ) − LSE (h,g )
+
+> d
+> ]
+
+(31) Thus the target is a log-sum-exp over future queries for each fixed key. 
+
+D.2 Transposed Attention 
+
+Equation (31) can be evaluated by a second attention-like pass with swapped query and key roles. Define transposed inputs 
+
+q′ 
+
+> t
+
+= k(h) 
+
+> t
+
+k′ 
+
+> d
+
+= q(h,g ) 
+
+> d
+
+(32) Their dot product gives the original attention logit ℓ(h,g )(d, t ). We then apply a score modifier that subtracts the original query normalizer, 
+
+ℓ(h,g )(d, t ) 7 → ℓ(h,g )(d, t ) − LSE (h,g ) 
+
+> d
+
+(33) and a mask enforcing d ≥ t + w. The auxiliary log-sum-exp returned for transposed query position t is exactly Eq. (31) . Because the value output of this second pass is not used, the value tensor can be any tensor with a compatible shape. 
+
+D.3 Sparse Normalizer Approximation 
+
+If Eq. (28) is used, the transposed computation gives the exact dense future-attention target. To reduce training cost, we may reuse the log-normalizer returned by the sparse attention pass: 
+
+> ˜
+
+LSE (h,g ) 
+
+> d
+
+= log 
+
+> d∑
+> t′=0
+
+Md,t ′ exp 
+
+> (
+
+ℓ(h,g )(d, t ′)
+
+> )
+
+(34) where M is the fixed-budget sparse mask. Replacing LSE (h,g ) 
+
+> d
+
+with ˜LSE (h,g ) 
+
+> d
+
+yields an approximate target. We find this approximation empirically sufficient, since the top-k retained set captures most of the softmax mass, so ˜LSE (h,g ) 
+
+> d
+
+closely tracks LSE (h,g ) 
+
+> d
+
+. This approximation is also practical because it reuses quantities already produced by the forward sparse-attention call and avoids an additional dense causal pass. In settings where exact supervision is desired, the dense normalizer can be computed instead. 
+
+D.4 Implementation Steps 
+
+The target computation proceeds as follows: 1. Run the main attention pass and obtain per-query log-normalizers. These may be dense causal normalizers or sparse normalizers, depending on the chosen target variant. 2. Run a transposed attention pass with keys as queries and queries as keys. 3. In the transposed pass, subtract the original per-query log-normalizer as a score modifier and mask out positions with d < t + w.4. Use the auxiliary log-sum-exp from the transposed pass to obtain log ¯ m(h,g ) 
+
+> t
+
+for all keys t.5. Aggregate across query groups according to Appendix B.1, and apply count normalization (Ap-pendix B.2) to recover m(h,g ) 
+
+> t
+
+as defined in the main paper. The transposed pass is used only while training the scorer. It is not required for autoregressive decoding. 
+
+> 21 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+## E Scorer Architecture Details 
+
+This appendix describes the stateless and stateful scorer variants used with the same target and boundary loss. 
+
+E.1 Headwise Inputs 
+
+For each KV head h and token t, we form the scorer input from cached quantities, 
+
+xh,t = [ kh,t ; vh,t ] (35) Using [k; v] has two advantages. First, it aligns the scorer with the KV heads used in grouped-query attention. Second, it enables delayed scoring without storing additional hidden states, because both keys and values are already present in the cache until the token’s eviction decision is made. 
+
+E.2 Stateless Linear and MLP Scorers 
+
+A stateless scorer predicts each token’s score independently: 
+
+ˆrh,t = f (h) 
+
+> θ
+
+(xh,t ) (36) We consider a headwise linear layer and a small headwise MLP. These scorers add minimal overhead and are easy to parallelize during training and prefill. Their limitation is that they cannot use context that arrives after token t but before t becomes evictable. 
+
+E.3 mLSTM Scorer 
+
+Our memory-based scorer uses an mLSTM -style recurrent state for each KV head. Given the input 
+
+xh,t , small headwise projections produce features for the recurrent write and delayed read: 
+
+˜qh,t = ϕ(W (h) 
+
+> q
+
+xh,t ) ˜kh,t = ϕ(W (h) 
+
+> k
+
+xh,t ) ˜vh,t = W (h) 
+
+> v
+
+xh,t (37) The feature map ϕ may be a softmax feature map or the Hedgehog feature map. For the Hedgehog variant, the projected feature dimension is halved before applying positive and negative softmax features, reducing parameter overhead. The recurrent state consists of a matrix memory Ch,t and a normalizer zh,t . With scalar input and forget gates ih,t and fh,t , the update is 
+
+Ch,t = fh,t Ch,t −1 + ih,t ˜kh,t ⊗ ˜vh,t (38) 
+
+zh,t = fh,t zh,t −1 + ih,t ˜kh,t (39) The gates are produced by headwise projections of xh,t :
+
+ih,t = exp( α(i)
+
+> h,t
+
+) fh,t = σ(α(f ) 
+
+> h,t
+
+) (40) with optional softcapping of the preactivations for numerical stability. In the implementation, we use the numerically stabilized mLSTM formulation. 
+
+E.4 Delayed Readout 
+
+At query position q, the newly eligible token is u = q − w. The recurrent state has already processed tokens up to q, while the read query is derived from the newly eligible token u:
+
+hh,u |q = ˜q⊤
+
+> h,u
+
+Ch,q 
+
+˜q⊤
+
+> h,u
+
+zh,q 
+
+(41) 
+
+> 22 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+The raw score is 
+
+ˆrh,u = a⊤ 
+
+> h
+
+SiLU(Norm( hh,u |q)) + bh (42) where the normalization is optional. This time-shifted readout is causal because all information in 
+
+Ch,q is available at query position q. It is nevertheless forward-looking relative to token u, since the state summarizes the protected-window context observed before u becomes evictable. 
+
+E.5 Initialization and Practical Variants 
+
+We initialize the scorer so that the recurrent projections start close to simple identity-style mappings from the base attention keys and values. The query and key scorer projections are initialized from the key pathway, the value projection from the value pathway, and the final score projection can be zero-initialized so that the sparse policy starts from a neutral ranking before training. Gate biases are initialized to encourage stable memory updates early in training. We also evaluate several practical variants: value projection versus direct use of cached values, optional skip connections from the delayed token to the score projection, optional headwise normalization, softcapping of gate preactivations, and stateless MLP scoring. All variants are trained with the same target and boundary loss, allowing us to isolate the effect of memory-based delayed scoring. 
+
+## F Experiment Details 
+
+Training details. All experiments were run on 8 H100 GPUs using PyTorch FSDP. We used a global batch size of 128 via gradient accumulation, mixed precision (bfloat16 for model parameters and most compute; float32 for gradient all-gather/reductions), and gradient clipping to 1.0 for full finetuning. For numerical stability, we compute score decay and top-k ranking/selection in float32; all other activations remain in bfloat16. To maximize GPU utilization, we pack multiple samples into a single sequence up to the maximum context length. We found that preserving the attention mask across packed segments (i.e., not resetting attention at packing boundaries) improved performance for our hybrid architecture, consistent with observations in prior work (Buitrago and Gu, 2025). We train KVpop by minimizing the KL Divergence to the teacher. For efficiency we compute the KL term over the top-256 teacher logits. This truncation substantially reduces the cost of teacher supervision and suggests a variant where teacher logits could be precomputed offline, avoiding loading the teacher model during training. We leave this optimization for future work. We evaluate all models with the same decoding configuration to ensure that performance differences reflect the retention policy rather than sampling variability. We use nucleus sampling with temperature 
+
+0.6, top-p 0.95 , top-k 20 , no repetition penalty, and a zero-shot prompt format. Table 3 summarizes the hyperparameters used throughout our training and evaluation pipeline. 
+
+## G KVpopSparsity Patterns 
+
+Figure 9 shows additional qualitative examples of the learned token retention patterns. Across sequences, KVpop does not simply preserve the most recent tokens or apply a uniform sparsity pattern. Instead, it often retains contiguous blocks of text that appear to carry the structure of the reasoning trace, while evicting many intermediate computation steps and purely numerical tokens once they have served their local role. This behavior is especially visible in later layers, where retained tokens tend to cluster around symbolic expressions, operation words, discourse markers, and other tokens that connect or summarize parts of the derivation. These examples further support the observation that KVpop learns a content-dependent eviction policy that preferentially preserves tokens useful for 
+
+> 23 KVpop — Key-Value Cache Compression with Predictive Online Pruning
+
+Table 3: Training and Inference Hyperparameters. 
+
+Training General 
+
+Token budget 2B Context size 16384 
+
+Batch size 128 
+
+Weight decay 0.0001 
+
+Optimizer AdamW Adam Betas (0.9, 0.95 )Trainable Parameters all Sequence packing true Learning rate (existing params) Constant LR 8e −5
+
+Learning rate (new params) 100 Steps Warmup + Cosine Schedule (1e −3 to 8e −5)KL temperature 1
+
+KL reverse false KL Top-k 256 
+
+Training KVpop 
+
+Decay step size 1
+
+Pairwise loss temperature 1.0
+
+Pairwise loss margin weighting true Sliding window 256 
+
+Sink tokens 4
+
+Top-k budget 2016 & 4032 
+
+Decay min 0.999 
+
+Decay max 0.999999 
+
+Inference 
+
+Temperature 0.6
+
+Top-p 0.95 
+
+Top-k 20 
+
+Min-p 0.0
+
+Repetition penalty 1.0
+
+Number of shots 0
+
+interpreting the evolving solution, rather than treating all operands and intermediate values equally. 
+
+## H DMS Sparsity Patterns 
+
+Dynamic Memory Sparsification (DMS) learns data-dependent eviction gates and therefore allows the effective cache allocation to vary across heads and layers (Łańcucki et al., 2025). To understand how a retrofit model uses this dynamic allocation in practice, we train DMS under the same 75% compression setting as KVpop and analyze the resulting attention patterns for Qwen3-4B . Specifically, we compute the median eviction ratio over 100 randomly sampled sequences, where 0 indicates dense/full attention and 1 indicates that attention is restricted to the local sliding window. Shown in Figure 8, DMS exhibits highly heterogeneous eviction patterns. A small subset of heads uses nearly the full long-range token budget and behaves close to dense attention, while many other heads—especially in early and late layers—collapse to sliding-window-only attention. This suggests a winner-takes-all allocation dynamic, where the available long-range budget is concentrated in a few heads rather than distributed evenly across the model. This behavior contrasts with KVpop , where 
+
+> 24
+
+KVpop — Key-Value Cache Compression with Predictive Online Pruning 0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> 27
+> 28
+> 29
+> 30
+> 31
+> 32
+> 33
+> 34
+> 35
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Teacher top-budget recall
+
+Top-budget recall distributions by layer 
+
+Figure 7: Alignment with the future-attention oracle. We plot the top-k retention recall distribution over heads for all layers of Qwen3-4B at 75% KV-cache compression. The metric measures what fraction of the full-attention teacher’s top-k retained tokens are also kept by the learned 
+
+KVpop scorer under the same cache budget. Higher values indicate better agreement with the teacher retention policy. 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 
+
+> Layer
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> KV head
+> Median DMS evict ratio across 100 samples
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 Median evict ratio
+
+Figure 8: DMS evict ratio. We compute the median eviction ratio over 100 randomly sampled sequences for Qwen3-4B with DMS at a 75% compression ratio. A value of 0 indicates dense/full attention, whereas a value of 1 indicates that attention is restricted to the local sliding window. DMS exhibits highly heterogeneous eviction patterns: some heads use the full long-range token budget and behave close to dense-attention heads, while many heads—especially in early and late layers—collapse to sliding-window-only attention. 
+
+25 KVpop — Key-Value Cache Compression with Predictive Online Pruning 17000/22500=5.2
+
+> .
+> Thus
+> ·( 30,2
+> ).
+> Pattern :
+> ·a
+> ·multiples
+> ·of 10,
+> ·b =2
+> ·works
+> ·for
+> ·a =10,30?
+> ·Also
+> ·a =20
+> ,b =1.
+> ·Try
+> ·a =40:
+> ·N =64000+90000=154000.
+> ·D =1600
+> ·b ^2+300.
+> ·b =1:1900
+> ·divides ?·154000/
+
+0
+
+3
+
+6
+
+9
+
+12 
+
+15 
+
+18 
+
+21 
+
+24 
+
+27 
+
+30 
+
+33 800
+
+> ·too
+> ·big .
+> ·* 387
+> ·= ·1,334,537*300=400,361,100;
+> ·* 80=106,762,960
+> ·total ·507,124,060;
+> ·* 7=9,341,759
+> ·total ·516,465,819.
+> ·Subtract
+> ·from ·517,717,280
+> ·gives ·1,2
+
+0
+
+3
+
+6
+
+9
+
+12 
+
+15 
+
+18 
+
+21 
+
+24 
+
+27 
+
+30 
+
+33 ·9k
+
+> ·
+> 51-10981
+> ·mod 64.
+> ·Compute ·10981
+> ·mod 64:·64*171=10944
+> ·remainder ·37.
+> ·So ·51-37=14.
+> ·So ·9k
+> ·
+> 14
+> ·mod 64.
+> ·Need
+> ·inverse
+> ·of ·9
+> ·mod 64.·9*?
+> ·
+> 1
+> ·mod 64.·9*57=513
+> ·
+> ·513-512=1.
+> ·So
+
+0
+
+3
+
+6
+
+9
+
+12 
+
+15 
+
+18 
+
+21 
+
+24 
+
+27 
+
+30 
+
+33 7
+
+> \\
+> 9,18
+> ·& ·9
+> \\
+> 11,22
+> ·& ·11
+> \\
+> 13
+> ·& ·13
+> \\
+> 17
+> ·& ·17
+> \\
+> 19
+> ·& ·19
+> \\
+> 21
+> ·& ·21
+> \\
+> 23
+> ·& ·23
+> \
+> end {
+> array
+> } \
+> ]
+> ---### ·3.·
+> ·Compute
+> ·\( Q
+> ·\ p
+> mod {1000
+> }\
+> )
+> Multip
+> lying
+> ·the
+> ·contributions
+> ·\( m
+> _k ^
+> {\ ,k
+> }\ )
+> ·modulo
+> ·\( 1000
+> \)
+> ·(
+> all
+> ·are
+> ·cop
+
+0
+
+3
+
+6
+
+9
+
+12 
+
+15 
+
+18 
+
+21 
+
+24 
+
+27 
+
+30 
+
+33 ). 
+
+> ··
+> Equ
+> ation
+> ·( 1)
+> ·is
+> ·examined
+> ·for
+> ·each
+> ·possible
+> ·units
+> ·digit
+> ·\( d\
+> ).  *
+> ·For
+> ·\( d=9
+> \)
+> ·and
+> ·\( d=7
+> \)
+> ·the
+> ·right
+> hand
+> ·side
+> ·is
+> ·too
+> ·small
+> ·or
+> ·gives
+> ·a
+> contr
+> ad
+> iction
+> ·modulo
+> ·\( 4\
+> ).  *
+> ·For
+> ·\( d=8
+> \)
+> ·we
+> ·obtain
+> ··  \
+> [ 400b+40c
+> ·=
+> ·-30
+> ·+ ·100x+10y
+> ·.  \
+> ]
+> Writing
+> ·the
+> ·right
+> hand
+> ·side
+> ·as
+> ·\( 10(10x
+> +y -3
+> )\ )
+> ·and
+> ·requiring
+> ·it
+> ·to
+> ·be
+
+0
+
+3
+
+6
+
+9
+
+12 
+
+15 
+
+18 
+
+21 
+
+24 
+
+27 
+
+30 
+
+33 0 1 2 3 4 5 6 7 8
+
+Heads retaining tokens 
+
+26 KVpop — Key-Value Cache Compression with Predictive Online Pruning 
+
+each head receives a fixed long-range token allocation by construction, yielding homogeneous and explicitly controlled sparse-attention budget. 
+
+## I KVpopPseudocode 
+
+The pseudocode summarizes the KVpop forward pass used for training: each KV entry receives a learned retention score, and sparse attention keeps sinks, the protected recent window, and the highest-ranked long-range entries under a running prefix top-k rule. During training, the same sparse attention pass also provides the log-normalizers used to estimate each key’s future attention mass by a transposed FlexAttention call. This self-targeted signal trains the scorer to preserve keys that continue to receive probability mass after they leave the protected window. 
+
+> 27
+
+KVpop — Key-Value Cache Compression with Predictive Online Pruning 
+
+Algorithm 3 KVpop in PyTorch-style pseudocode.  
+
+> 1
+
+def kvpop_attention(Q, K, V, scorer, cfg, training):  
+
+> 2
+
+# Predict one score per KV entry. With delayed \mlstm~ scoring,  
+
+> 3
+
+# key t is scored when it reaches the eviction boundary.  
+
+> 4
+
+r = scorer(K, V, delay=cfg.window)  
+
+> 56
+
+# Prefix top-k over decayed KV scores.  
+
+> 7
+
+rank, cutoff = running_prefix_topk(  
+
+> 8
+
+r,  
+
+> 9
+
+sinks=cfg.sinks,  
+
+> 10
+
+window=cfg.window,  
+
+> 11
+
+topk=cfg.topk,  
+
+> 12
+
+decay=cfg.decay,  
+
+> 13
+
+decay_step=cfg.decay_step,  
+
+> 14
+
+) 
+
+> 15 16
+
+def sparse_mask(b, qh, q, t):  
+
+> 17
+
+kh = kv_head(qh)  
+
+> 18 19
+
+sink = t < cfg.sinks  
+
+> 20
+
+recent = q - cfg.window < t <= q  
+
+> 21
+
+eligible = cfg.sinks <= t <= q - cfg.window  
+
+> 22
+
+selected = rank[b, kh, t] <= cutoff[b, kh, q]  
+
+> 23 24
+
+return t <= q and (sink or recent or (eligible and selected))  
+
+> 25 26
+
+# Sparse student attention.  
+
+> 27
+
+Y, sparse_lse = flex_attention(  
+
+> 28
+
+Q, K, V,  
+
+> 29
+
+block_mask=create_block_mask(sparse_mask),  
+
+> 30
+
+return_lse=True,  
+
+> 31
+
+) 
+
+> 32 33
+
+if not training:  
+
+> 34
+
+return Y 
+
+> 35 36
+
+# Reuse the sparse-attention denominators to estimate each key’s  
+
+> 37
+
+# future attention mass under the current sparse policy.  
+
+> 38
+
+def future_mask(b, qh, t, q):  
+
+> 39
+
+return q >= t + cfg.window  
+
+> 40 41
+
+def logprob_score(score, b, qh, t, q):  
+
+> 42
+
+return score - sparse_lse[b, qh, q]  
+
+> 43 44
+
+_, log_mass = flex_attention(  
+
+> 45
+
+repeat_kv_heads(K), # original keys become queries  
+
+> 46
+
+Q, # original queries become keys  
+
+> 47
+
+zeros_like(Q),  
+
+> 48
+
+score_mod=logprob_score,  
+
+> 49
+
+block_mask=create_block_mask(future_mask),  
+
+> 50
+
+return_lse=True,  
+
+> 51
+
+) 
+
+> 52 53
+
+target = log_mass[..., :-cfg.window]  
+
+> 54
+
+target = target - log_num_future_queries_per_key(cfg.window)  
+
+> 55
+
+target = aggregate_query_heads(target, mode=cfg.group_agg)  
+
+> 56 57
+
+loss = prefix_topk_boundary_loss(r, target, cfg)  
+
+> 58 59
+
+return Y, loss 
+
+28

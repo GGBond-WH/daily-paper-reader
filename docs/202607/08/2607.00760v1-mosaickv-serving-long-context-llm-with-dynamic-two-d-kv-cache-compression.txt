@@ -1,0 +1,807 @@
+Title: MosaicKV: Serving Long-Context LLM with Dynamic Two-D KV Cache Compression
+
+URL Source: https://arxiv.org/pdf/2607.00760v1
+
+Published Time: Thu, 02 Jul 2026 01:08:16 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# MosaicKV: Serving Long-Context LLM with Dynamic Two-D KV Cache Compression 
+
+Sheng Qiang 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+qiangsheng@sjtu.edu.cn 
+
+Ruiwei Chen 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+chenruiwei@sjtu.edu.cn 
+
+Yinpeng Wu 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+wyp1536481268@foxmail.com 
+
+Jinyu Gu 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+gujinyu@sjtu.edu.cn 
+
+Zhichao Hua ∗
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+zchua@sjtu.edu.cn 
+
+Yubin Xia 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+xiayubin@sjtu.edu.cn 
+
+Binyu Zang 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+byzang@sjtu.edu.cn 
+
+Haibo Chen 
+
+Institute of Parallel and Distributed Systems, Shanghai Jiao Tong University Shanghai, China 
+
+haibochen@sjtu.edu.cn 
+
+Abstract 
+
+Long-context LLM services now sustain prompts with hun-dreds of thousands to millions of tokens, making the key-value (KV) cache a first-order serving cost. Because the cache grows linearly with context length, it can exhaust GPU mem-ory, force smaller batches, and reduce serving throughput. Prior KV cache compression techniques typically target only the sequence dimension or only the channel dimension, which leaves limited headroom as context windows scale. Compressing both dimensions promises higher memory re-duction, but applying the two forms of compression directly leads to significant accuracy loss. This paper introduces MosaicKV, a dynamic two-D (di-mensional) KV cache compression system for extremely long-context serving. MosaicKV uses dynamic two-D com-pression to address the accuracy challenge, exploiting the non-uniform importance distribution of elements within the KV cache. Instead of applying one compression pattern glob-ally, MosaicKV identifies important elements for each KV vector and selects compression strategies at the granularity of KV cache segments. To address the performance challenge, where fine-grained sparsity and compression management overhead can offset the gains from compression, MosaicKV introduces compressed KV cache management . This mecha-nism uses underutilized GPU and CPU resources to maintain compressed KV caches and accelerate attention computa-tion. Evaluation on an H800 GPU with multiple LLMs shows 
+
+> ∗Corresponding author.
+
+that MosaicKV delivers up to 16 × attention speedup, 4.8 ×
+
+lower decode latency, and 7.3 × higher throughput than the uncompressed baseline. At the same time, it reduces memory usage by 3× and incurs only 1.76% average accuracy loss on LongBench and RULER. 
+
+1 Introduction 
+
+Large language models (LLMs) are increasingly deployed in scenarios that demand extremely long contexts, such as repository-level code generation [ 56 , 57 ], multi-document question answering [ 17 , 45 ], and multi-turn agentic work-flows [ 4, 8 , 30 , 46 ]. In response, frontier models [ 2 , 3 , 6 , 7 , 9]have rapidly extended their supported context windows to 1M tokens, e.g., GPT-5.4 [6] and Gemini 3.1 Pro [3]. However, long contexts impose a severe memory bottle-neck through the key-value (KV) cache, whose size scales linearly with the sequence length during inference. For in-stance, serving 8 concurrent LLaMA-3.1-8B requests at 128K tokens requires 128 GB for the KV cache alone—already 8 ×
+
+the model weights; at 1M tokens, this grows to 1 TB, 64 × the model weights. Such memory pressure exhausts GPU capac-ity, forces drastic reductions in batch size, and significantly increases per-step decode latency, ultimately degrading serv-ing throughput. Prior work addresses this bottleneck through KV cache compression [ 28 , 43 , 44 , 50 , 59 ], which operates along two dimensions: sequence compression and channel compression .Sequence compression retains only a subset of historical 
+
+> 1
+> arXiv:2607.00760v1 [cs.LG] 1 Jul 2026
+
+tokens for attention computation. For example, Quest [ 44 ]performs query-aware token selection at runtime to achieve both high accuracy and low latency. Channel compression, in contrast, retains a subset of channels from each token’s KV vectors. For example, ThinK [ 50 ] computes a uniform channel mask from the prefill key cache and applies it to select important elements across all key vectors. However, each dimension alone cannot benefit from the other, making it difficult to further increase compression rates as context windows continue to expand. A natural next step is there-fore to combine the two compression dimensions to achieve higher compression rates for extremely long-context serving. 
+
+Challenge 1: Accuracy Loss. Recent works attempt to combine the two dimensions of compression. For example, ThinK [ 50 ] first applies channel compression to key vectors and then selects important tokens for attention computation. However, it observes that accuracy degrades significantly when both channel and sequence compression are applied to the KV cache simultaneously. Consequently, ThinK applies two-dimensional compression only to key vectors, while value vectors undergo sequence compression alone. Other existing works, including InfiniGen [ 28 ] and ShadowKV [ 43 ], also cannot apply two-dimensional compression to both key and value vectors throughout token selection and attention computation. The fundamental reason is that naïvely apply-ing such full-lifecycle two-dimensional compression signifi-cantly degrades model accuracy. In our evaluation, applying a 70% channel compression rate on top of sequence compres-sion causes an 82.8% accuracy loss (Figure 3). 
+
+Observation & Approach 1: Dynamic Two-D Compression. 
+
+We observe that the importance distribution of elements is non-uniform within the KV cache. Existing works do not ac-count for this variation and apply a one-size-fits-all compres-sion strategy to the entire KV cache, leading to significant ac-curacy degradation under two-dimensional compression. To address these limitations, this paper introduces MosaicKV, a novel framework that exploits the differentiated importance distribution of the KV cache to serve long-context LLM in-ference with low memory usage, high decode performance, and low accuracy loss. To overcome the accuracy challenge, MosaicKV introduces dynamic two-D (dimensional) com-pression , which performs two-dimensional compression with a dynamic compression strategy. MosaicKV exploits two levels of differentiation. First, the importance distribution differs across individual KV vectors, even after SVD rotation, as shown in Figure 4. Only 62.28% of the top-25% important elements reside in the globally top-25% important channels, even with a small 256-token context. Unlike existing works that apply a uniform channel mask to all KV vectors, MosaicKV introduces per-vector ele-ment selection , which identifies the important elements for each KV vector individually. Second, the element distribution characteristics vary across KV cache regions. For example, in some regions, element magnitudes exhibit high variance with pronounced outliers, while in others, elements are dis-tributed more uniformly with similar magnitudes. Based on this observation, MosaicKV introduces a dynamic com-pression strategy that partitions the KV cache into multiple segments and applies a suitable strategy to each segment. The dynamic two-D compression method enables MosaicKV to apply two-dimensional KV cache compression through-out the entire decode stage, increasing the compression rate while preserving model accuracy. 
+
+Challenge 2: Performance Degradation. Although Mo-saicKV’s dynamic two-D compression achieves a high KV cache compression rate, it introduces fine-grained sparse memory access patterns and substantial memory manage-ment overhead. Both of them hurt inference performance, potentially even worse than the uncompressed baseline. For the former, per-vector element selection produces a fine-grained sparse KV cache matrix with poor cache locality. Ac-cessing such a matrix significantly increases the GPU cache miss rate, negating the potential speedup from compression. For the latter, the dynamic compression strategy introduces heavy KV cache management overhead, including memory partitioning, SVD computation, and recompression, into the critical decode stage, further degrading performance. 
+
+Observation & Approach 2: Compressed KV Cache Man-agement. We observe that attention computation dominates both memory usage and latency during long-context decod-ing. Moreover, the decode-stage attention exhibits a highly imbalanced workload: GPU memory bandwidth is fully satu-rated, while the GPU compute units (especially CUDA cores) and the CPU remain significantly underutilized, even with FlashAttention [ 19 ]. Profiling FlashInfer [ 53 ] during the de-code stage of a 256K-token request on LLaMA-3.1-8B with an A800 GPU, we find that memory bandwidth utilization reaches 90.5%, while CUDA core utilization is only 10.35% and almost all CPU cores are idle. To overcome the perfor-mance challenge, MosaicKV introduces a novel compressed KV cache management method that exploits these under-utilized resources to manage the compressed KV cache and accelerate attention computation. MosaicKV first introduces packed sparse attention to accel-erate attention computation over the two-D compressed KV cache. It packs the sparse KV cache matrix into a dense for-mat in GPU memory and leverages the underutilized CUDA cores, instead of tensor cores, to perform attention compu-tation without unpacking. This approach significantly re-duces both the GPU cache miss rate and GPU memory usage, thereby accelerating attention computation. Furthermore, MosaicKV introduces heterogeneous double compression buffering to reduce the overhead of compressed KV cache management. A GPU-side buffer stores temporar-ily compressed, newly generated KV vectors that are used for decode computation in the interim. A CPU-side buffer is used to perform asynchronous KV cache management opera-tions, including partitioning KV cache segments, computing              
+
+> 2Quest
+> (Sequence)
+> Generate per-block keys Query Per-block Keys Block Scores
+> ✔✘✔✘✘✘
+> Select important blocks
+> ✘✔✘✘✘✔
+> ThinK
+> (Channel)
+> Channel Scores
+> ✔✘✔✘✘✘
+> Select important channels
+> Prefill Keys Prefill Queris
+> ✔✘✔✘✘✘
+> InfiniGen
+> (Sequence)
+> Generate rotated keys Rotated Keys Token Scores
+> Select important tokens
+> ✔✘✘✘✔✘✔✘✔✘✘✘
+> ✔✘✘✘✔✘✘✔✘✘✘✔
+> KV Cache Only K Cache KV Cache
+> Strawman
+> (Two-Dimensional)
+> Generate rotated per-block keys and KV cache Per-block Keys Block Scores
+> ✔
+> ✘✔✘✘✘
+> Select important blocks & channels
+> ✘✔✘✘✘✔
+> StreamLLM
+> (Sequence)
+> Channel Sequence
+> Select static token patterns
+> KV Cache KV Cache
+> Select part of prefill query
+> Query Query Token block
+> Token block
+
+Figure 1. Different KV cache compression methods. SVD rotation matrices, generating compression strategies, and recompressing new segments. A switching mechanism replaces the temporarily compressed KV segment with the final compressed version without blocking the decode stage. We implement a prototype of MosaicKV and evaluate it on an H800 GPU across multiple LLM models. Compared with the uncompressed baseline, MosaicKV achieves up to 16 × at-tention speedup, 4.8 × lower decode latency, and 7.3 × higher throughput, while reducing GPU memory usage by 3×. De-spite these performance improvements, MosaicKV preserves model accuracy, incurring only an average of 1.76% accuracy loss on the LongBench [ 12 ] and RULER [ 24 ] benchmarks. This paper makes the following contributions: 
+
+• A dynamic two-D compression method that applies both channel and sequence compression to the KV cache throughout the entire decode stage. It employs per-vector element selection and a dynamic compres-sion strategy to preserve accuracy under high com-pression rates. 
+
+• A compressed KV cache management system that ex-ploits underutilized GPU and CPU resources to man-age the compressed KV cache and accelerate attention computation. 
+
+• A prototype implementation and evaluation. MosaicKV achieves up to 16 × attention speedup, 4.8 × lower de-code latency, and 7.3 × higher throughput, while incur-ring only an average of 1.76% accuracy loss compared to the uncompressed baseline. 
+
+2 Background and Motivation 
+
+2.1 Large KV Cache in Long-Context LLM Inference 
+
+Large language models (LLMs) are increasingly deployed in scenarios that require extremely long contexts, including repository-level code generation [ 56 , 57 ], multi-document question answering [ 17 , 45 ], and multi-turn agentic work-flows [ 30 , 46 ]. Frontier models [ 2 , 3, 6 , 7 , 9] now support 1M token context windows, e.g., Claude 4.6 [ 9] and GPT-5.4 [ 6]. LLM inference consists of a prefill stage that processes input tokens and a decode stage that generates output tokens au-toregressively. To avoid redundant recomputation, modern inference frameworks maintain a KV cache to store key (K) and value (V) vectors of all historical tokens at each attention layer. The KV cache resides in GPU memory to minimize com-putation latency. However, its size scales linearly with the context length, making it the primary memory bottleneck. For LLaMA-3.1-8B serving 8 concurrent requests at 128K to-kens, the KV cache requires 128 GB (8 × the model weights); at 1M tokens, this escalates to 1 TB (64 × the model weights). This memory pressure also increases attention latency: at-tention computation accounts for 84.7% and 97.9% of the total Time-Between-Tokens (TBT) at 128K and 1M contexts, respectively. 
+
+2.2 Existing KV Cache Compression Methods 
+
+Existing works [ 28 , 43 , 44 , 50 , 59 ] compress the KV cache to reduce both memory footprint and latency along two dimen-sions: sequence compression and channel compression. 
+
+Sequence Compression. Also referred to as sparse at-tention, this approach selects a subset of important tokens for attention computation. It exploits the observation that the softmax operation exponentially amplifies score differ-ences, concentrating probability mass on a few high-scoring tokens. As illustrated in Figure 1, existing methods compute attention scores via dot products between the current query and cached K vectors, retaining only the top-scoring tokens. Quest [ 44 ] accelerates this by computing scores at block granularity, while InfiniGen [ 28 ] applies SVD to compress K vectors for fast selection. 
+
+> 3
+
+2 &      
+
+
+
+ 
+
+ 
+
+ 
+
+
+
+>  !   !     
+
+   
+
+> #'  !"$%%!  '%&
+> '  
+
+Figure 2. Model accuracy of sequence compression. 
+
+Channel Compression. This approach compresses KV vectors along the channel dimension, exploiting the observa-tion that outlier elements with large magnitudes are concen-trated in a small subset of channels [ 23 , 50 ]. These methods identify important channels across the KV cache and retain only these channels during attention computation, as shown in Figure 1. For example, ThinK [ 50 ] computes a uniform channel mask from the prefill-stage K cache and applies it to compress all key vectors. Other works [ 14 , 43 ] leverage Singular Value Decomposition (SVD) to concentrate high-variance information into a small subset of channels, further improving compression quality. 
+
+The Need for Two-Dimensional Compression. Con-text lengths have scaled exponentially from 64–128K to 1– 10M tokens [ 2 , 6 ], yet single-dimensional compression can-not scale accordingly. As shown in Figure 2, model accuracy degrades significantly as the sequence compression rate in-creases for Quest. Moreover, dynamic sequence compression must retain the full KV cache in memory since any token may be selected at each decoding step, constraining the max-imum batch size. While offloading the KV cache to CPU or remote memory is feasible, it introduces substantial cross-device data transfer overhead and latency penalties [ 42 , 47 ]. Channel compression similarly cannot achieve higher com-pression rates without accuracy loss. Combining both dimen-sions could enable higher compression rates for extended contexts. Existing works have partially explored this direction. In-finiGen [ 28 ] uses channel compression to accelerate token se-lection but retains the full KV cache and uses uncompressed vectors for attention. ThinK [ 50 ] applies channel compres-sion only to K vectors, reporting significant accuracy loss when both dimensions are applied to the entire KV cache. Consequently, no existing system achieves two-dimensional KV cache compression throughout the entire decode stage, encompassing both token selection and attention computa-tion. 
+
+2.3 Singular Value Decomposition (SVD) 
+
+Channel compression leverages Singular Value Decomposi-tion (SVD) to concentrate significant information into a small 0 0 0 0 0 00   
+
+>   !#$$  %  
+
+
+
+ 
+
+ 
+
+
+
+
+
+>        
+
+%#' %'  
+
+"&  !#$$  &$% 
+
+Figure 3. Accuracy of naively applying channel compression to sequence compression. number of top channels. Given a matrix 𝐾 , SVD decomposes it as 𝐾 = 𝐾 ′ · 𝑅 , where 𝐾 ′ is a rotated matrix with high-magnitude elements concentrated in the first few columns, and 𝑅 is computed via eigendecomposition of 𝐾 𝑇 · 𝐾 . In prac-tice, channel compression computes rotation matrices ( 𝑅 𝑘 
+
+and 𝑅 𝑣 ) for the KV cache, applies the rotations ( 𝐾 · 𝑅 𝑇 𝑘 and 
+
+𝑉 · 𝑅 𝑇 𝑣 ), and retains only the top-𝑟 channels. During atten-tion, the rotated KV cache must be transformed back to the original space. 
+
+3 Overview of MosaicKV 
+
+3.1 Goals 
+
+The primary goal of MosaicKV is to build a high-performance framework for serving long-context LLM inference. By com-bining channel and sequence KV cache compression, Mo-saicKV aims to achieve: (1) Low Memory Usage : both K and V caches are compressed along two dimensions. The mem-ory reduction is sustained throughout token selection and attention computation; (2) High Performance : both decode latency and throughput are improved; (3) High Accuracy :accuracy loss is minimized. 
+
+3.2 Challenges and Approaches 
+
+To further reduce the size of the KV cache, a straightforward approach is to combine channel and sequence compression. However, realizing the full benefit of such two-D (dimen-sional) compression is non-trivial, presenting the following challenges: 
+
+Challenge 1: Accuracy Challenge. Naively applying channel compression to sequence compression introduces significant accuracy loss. We propose a strawman design that applies channel compression to Quest, a dynamic se-quence compression method, as shown in Figure 1. It applies SVD rotation to the KV cache, selects the top-𝑟 important channels for both K and V vectors, and then selects the top 10% important token blocks for attention computation. We evaluate this strawman on LongBench [ 12 ] by varying the channel compression rate (Figure 3). Compared to sequence 
+
+> 4
+
+0     
+
+ 
+
+0
+
+ 
+
+ 
+
+ 
+
+ 
+
+>   
+> 
+
+0     
+
+ 
+
+0
+
+ 
+
+ 
+
+ 
+
+  
+
+>   
+>  
+
+Figure 4. Distribution of top-25% elements in KV cache applied with SVD. (Red line: top-25% channels) compression alone (Quest), the strawman significantly de-grades accuracy, with accuracy loss reaching 24.5% at a 30% channel compression rate and 82.8% at 70%. 
+
+Observation 1: Non-Uniform Importance Distribu-tion. We observe that the importance distribution within the KV cache is non-uniform. However, existing compres-sion methods often apply a one-size-fits-all strategy to the entire KV cache. For example, ThinK [ 50 ] applies a uniform channel mask to all tokens, and InfiniGen [ 28 ] applies a uniform SVD rotation matrix to all requests, as shown in Fig-ure 1. Such uniform strategies discard a significant number of important elements, thereby degrading model accuracy. Specifically, the importance distribution exhibits two levels of non-uniformity. First, the distribution of important ele-ments varies significantly across individual KV vectors. As shown in Figure 4, only 62.28% of the top-25% important elements (marked in black) reside in the globally top-25% important channels (above the red line) for a small context of 256 tokens, even after SVD is applied. Second, the element distribution characteristics vary across different KV cache regions. For example, in some regions, element magnitudes exhibit high variance with pronounced outliers, while in others, elements are distributed more uniformly with similar magnitudes. The former is amenable to a high compression rate, whereas the latter requires a lower rate. Moreover, ap-plying a single SVD rotation matrix to the entire KV cache cannot efficiently cluster important elements, compared to using a separate rotation matrix per region. 
+
+Approach-1: Dynamic Two-D Compression. Based on the above observations, MosaicKV introduces dynamic two-D compression, which performs two-dimensional compres-sion with adaptive strategies, to address the accuracy chal-lenge (Section 4). Unlike existing works that apply a uniform channel mask to all KV vectors, MosaicKV first introduces 
+
+per-vector element selection , which identifies important el-ements for each KV vector individually. Furthermore, Mo-saicKV introduces a dynamic compression strategy that parti-tions the KV cache into multiple segments and applies the most suitable strategy to each segment. The dynamic two-D compression enables MosaicKV to apply two-dimensional KV cache compression throughout the entire decode stage, increasing the compression rate while preserving model ac-curacy. 
+
+Challenge 2: Performance Challenge. Although Mo-saicKV’s dynamic two-D compression achieves a high KV cache compression rate, it introduces fine-grained sparse memory access patterns and substantial memory manage-ment overhead, which can degrade performance to below the uncompressed baseline. First, as shown in Figure 5, Mo-saicKV generates a fine-grained and unstructured sparse KV cache matrix, whereas modern GPUs are optimized for dense tensor operations. Such a sparse matrix exhibits poor cache locality and significantly increases the GPU cache miss rate. Theoretically, although a 75%-compressed matrix reduces memory accesses by 75%, it may increase the cache miss rate by 4×, negating the speedup from compression. Addi-tionally, handling the sparsity (e.g., skipping zero values) introduces further overhead, making the attention latency with such a sparse KV cache substantially higher than with the uncompressed full KV cache. We measure the attention latency using a 25%–80%-compressed KV cache generated by MosaicKV’s method with cuSPARSE [ 5 ], and find it 25–136 ×
+
+higher than the uncompressed baseline. This overhead also stems from the format conversion required by cuSPARSE, which is designed for extreme sparsity, e.g., 99% of values are zero. Second, heavy KV cache management operations are introduced into the critical decode stage. On one hand, KV vectors need to be compressed and decompressed during inference. On the other hand, the dynamic compression strat-egy introduces memory partitioning, SVD computation, and recompression operations for newly generated KV cache seg-ments. These operations further add overhead to the decode stage. 
+
+Observation 2: Imbalanced Resource Utilization. For long-context requests, attention computation dominates both memory usage and latency. We observe that decode-stage at-tention exhibits a highly imbalanced workload: GPU memory bandwidth is fully saturated, while GPU compute units (espe-cially CUDA cores) and the CPU remain significantly under-utilized, even with highly optimized operators [ 18 , 19 , 40 , 53 ]. Profiling FlashInfer [ 53 ] during the decode stage of a 256K-token request on LLaMA-3.1-8B with an A800 GPU, we find that memory bandwidth utilization reaches 90.5%, while CUDA core utilization is only 10.35% and almost all CPU cores are idle. 
+
+Approach-2: Compressed KV Cache Management. Based on the above observation, MosaicKV introduces a novel com-pressed KV cache management method that exploits under-utilized resources to manage the compressed KV cache and accelerate attention computation, thereby addressing the per-formance challenge (Section 5). MosaicKV first introduces 
+
+packed sparse attention to accelerate attention computation 
+
+> 5
+
+over the two-D compressed KV cache. Furthermore, hetero-geneous double compression buffering is introduced to reduce the overhead of compressed KV cache management. 
+
+3.3 System Overview 
+
+MosaicKV is a novel framework that exploits the non-uniform importance distribution of the KV cache to perform two-dimensional compression along both the channel and se-quence dimensions. As introduced above, MosaicKV employs a dynamic two-D compression method to achieve both a high KV cache compression rate and model accuracy (Section 4). It further introduces a compressed KV cache management method to realize the performance benefits of compression (Section 5). 
+
+Dynamic Two-D Compression. MosaicKV combines per-vector element selection with dynamic token selection to perform two-dimensional compression. Specifically, it introduces a two-stage two-D compression method (Sec-tion 4.2). Stage 1 performs per-vector channel compression during both the prefill and decode stages for input and output tokens. It applies SVD rotation to the KV cache and selects the top-𝑟 important elements for each token’s KV vectors. Stage 2 performs dynamic sequence compression during the decode stage. Before each attention layer, it selects the top-𝑘 
+
+tokens from the channel-compressed KV cache using the cur-rent query vector. Additionally, the dynamic compression strategy partitions the KV cache into multiple segments and applies the most suitable strategy to each segment (Sec-tion 4.3). 
+
+Compressed KV Cache Management. MosaicKV lever-ages underutilized GPU CUDA cores and the CPU to acceler-ate attention computation and manage the compressed KV cache. First, MosaicKV introduces packed sparse attention to accelerate attention computation over the two-D com-pressed KV cache by leveraging underutilized CUDA cores. It introduces a packed KV format to represent the sparse KV cache in a dense format, and a compressed KV encod-ing to efficiently perform stage-1 compression and convert the results to the packed KV format during the prefill stage. This packed format improves cache locality for the sparse KV cache and reduces the GPU cache miss rate. During the decode stage, PackedAttention is introduced to leverage underutilized CUDA cores for performing stage-2 compres-sion and attention computation with the packed KV cache (Section 5.3). Furthermore, MosaicKV introduces heterogeneous dou-ble compression buffering to reduce the overhead of dy-namic KV cache compression and management by leveraging the underutilized CPU (Section 5.4). Once a new token is generated, it is temporarily compressed and stored in the GPU-side compression buffer for subsequent decode compu-tation in the interim. Meanwhile, a CPU-side compression buffer is used to perform KV cache management operations Channel SVD Rotate      
+
+> Per-Block Keys
+> Query
+> R1
+> Sequence
+> KV Cache
+> Rotated KV Cache
+> Rotation Matrix Token Block
+> Select Top-r Elements
+> Channel-Compressed Per-Block Keys Channel-Compressed KV Cache
+> R1
+> Rotated Query Block Scores
+> Rotation Matrix
+> Two-D-Compressed KV Cache
+> Select Top-k Blocks
+> Stage-1: Channel Compression Stage-2: Sequence Compression
+> Ri
+> Ri
+> ……Segment 1Segment i
+
+Figure 5. Dynamic Two-D Compression. asynchronously, including segment partitioning and com-pression strategy generation. Once a new segment is fully generated and compressed, a switching mechanism replaces the temporarily compressed KV segment with the final com-pressed version without blocking the decode stage. An in-cremental method is proposed to accelerate compression strategy generation (Section 5.4). 
+
+4 Dynamic Two-D Compression 
+
+4.1 Basic Method 
+
+MosaicKV introduces dynamic two-D compression to exploit the non-uniform importance distribution of the KV cache with dynamic compression strategies. Figure 5 presents an overview. The entire KV cache is partitioned into multi-ple segments, and MosaicKV performs a two-stage two-D compression on both the K and V vectors for each segment (Section 4.2). The compressed KV caches from all segments are then passed to the attention computation. At runtime, MosaicKV dynamically partitions the KV cache and assigns a suitable compression strategy to each segment (Section 4.3), aiming for a better balance between performance and accu-racy. 
+
+4.2 Two-Stage Two-D Compression 
+
+The two-stage compression consists of per-vector channel compression (stage 1) and dynamic sequence compression (stage 2). Stage 1 is performed during both the prefill and decode stages for input and output tokens, respectively, while    
+
+> 6Score Top-k Selection Attention
+> 1, 3
+> Block Scores Block Index
+> KV Cache (Packed KV Format)
+> Segment 1
+> SVD Rotation
+> R1
+> Compressed KV Encoding
+> Encoding to Packed KV Format Fetching KV Cache
+
+Prefill Stage Decode Stage        
+
+> Position Bitmaps KV Cache Channel-Compressed KV Cache
+> Top-r Element Selection
+> Channel-Compressed Per-block Keys
+> R
+> SVD Rotation Matrix
+> Per-block Key Generation
+> KV cache Packed Value
+> Per-block Keys Rotation Matrix
+> Rn
+> …
+> Segment n
+> 010110
+> k2k4k1
+> Packed Vector Product Packed Kvector Qvector
+> q0
+> q2
+> q3
+> q4
+> q1
+> q5
+> Position Bitmap 124
+> Q × K
+> PackedAttention
+> ×××∑
+> Update Buffer KV of New Token
+> Batched Compression
+> Generating Token
+> KV Cache Updater
+> Append KV Cache
+> Element Index
+
+Figure 6. Overview of Packed Sparse Attention: including packed KV format, flexible KV encoding and PackedAttention. stage 2 is performed during the decode stage before each attention layer. 
+
+Stage-1: Per-Vector Channel Compression. Stage-1 compression selects the top-𝑟 important elements for each KV vector. It first computes the SVD rotation matrix 𝑅 for the current segment’s K and V matrices, respectively, and rotates both matrices by their corresponding 𝑅 to cluster important elements. For each KV vector, the top-𝑟 elements with the largest absolute values are selected and all remaining ele-ments are discarded. For input tokens, whose KV segments are available after the prefill stage, compression is applied directly (Section 5.2). For output tokens, which are gener-ated one by one, MosaicKV introduces heterogeneous double compression buffering to perform channel compression in-crementally (Section 5.4). 
+
+Stage-2: Dynamic Sequence Compression. Stage-2 compression dynamically selects the top-𝑘 important tokens before each attention layer during the decode stage. For each KV cache segment, MosaicKV partitions all tokens into small blocks (e.g., 8 or 16 tokens) and computes a per-block key vector as the mean of the key vectors within each block. The per-block keys are also channel-compressed together with the original K vectors during stage-1. During stage-2, an attention score is computed for each block via the dot product between the current query vector and the per-block key, and the top-𝑘 blocks with the highest scores are selected for attention computation. Benefiting from stage-1, both the per-block key vectors and the selected tokens’ KV vectors are channel-compressed. 
+
+4.3 Dynamic Compression Strategy 
+
+MosaicKV partitions the entire KV cache into multiple seg-ments and assigns a distinct compression strategy to each. Input and output tokens are partitioned separately: input tokens’ KV cache is split into configurable fixed-size seg-ments (e.g., 64K tokens) during the prefill stage to minimize partitioning overhead, while output tokens’ KV cache is dy-namically partitioned during the decode stage. For output tokens, MosaicKV maintains a compression loss quantifying the quality degradation of the current compression strat-egy on newly generated KV vectors. As each new token is generated, it is appended to the current segment and the compression loss is updated; once the loss exceeds a pre-defined threshold, MosaicKV finalizes the current segment and initiates a new one. A maximum segment length (64K tokens) is imposed to ensure periodic refresh even when the compression loss remains stable. 
+
+Compression Strategy. Each segment’s compression strategy includes parameters for both channel and sequence compression. The channel compression parameters include: 1) SVD rotation matrix, used to rotate the segment’s K and V matrices, respectively; 2) channel compression rate, de-termining how many elements are discarded per vector; 3) element group size, specifying the granularity at which neighboring elements are selected together (Section 5.1). The sequence compression parameters include: 1) sequence com-pression rate, determining how many tokens are discarded per block; 2) token block size, specifying the granularity at which neighboring tokens are selected together. Section 5.4 describes how MosaicKV partitions the KV cache into seg-ments and generates the compression strategy. 
+
+> 7
+
+5 Compressed KV Cache Management 
+
+5.1 Packed KV Format 
+
+Both the KV vectors and per-block keys are channel-compressed and stored in GPU memory as fine-grained, unstructured sparse matrices that cannot be efficiently processed by GPUs. MosaicKV introduces the packed KV format to convert them into a dense representation, which is subsequently used by PackedAttention (Section 5.3). Let 𝐷 denote the number of channels of the original vector and 𝑟 denote the number of retained elements. As shown in Figure 5, MosaicKV packs all retained elements contiguously for each sparse vector and employs a 𝐷 -bit position bitmap, where each bit indicates whether the corresponding element is retained, rather than storing per-element indices as in conventional COO/CSR formats. 
+
+Variable-Granularity Bitmap. After compacting the sparse KV cache, the position bitmap occupies substantial memory. For a KV vector with a 75% compression rate and 8-bit elements, the packed elements occupy 25% of the original memory, while the bitmaps account for 12.5%. To reduce this overhead, MosaicKV selects groups of adjacent elements to-gether rather than individual elements, using one bit per ele-ment group. The dynamic compression strategy (Section 4.3) selects a suitable element group size (1, 2, or 4) for each KV cache segment. 
+
+5.2 Compressed KV Encoding 
+
+During the prefill stage, the compressed KV encoding per-forms channel compression and converts the compressed KV cache into the packed KV format. Section 5.4 describes how the output tokens’ KV cache is channel-compressed and encoded. Each input KV cache segment has a distinct compression strategy and is encoded separately. Once the KV cache is computed, MosaicKV calculates the SVD rota-tion matrices for the K and V matrices and rotates them accordingly. Meanwhile, all tokens are divided into multiple token blocks, with the block size specified by the strategy. A per-block key is computed as the average of the key vec-tors within each block. MosaicKV then performs channel compression on the K, V, and per-block key matrices, and stores the results in the packed KV format in GPU memory (Figure 6). 
+
+Channel Truncation. MosaicKV observes that globally unimportant channels consistently exhibit low values across tokens after SVD rotation. As shown in Figure 4, the bottom 25% channels (by importance) are never selected. Accord-ingly, MosaicKV truncates these channels, which need not be represented in the position bitmap, accelerating channel compression and reducing bitmap memory overhead. 
+
+Asynchronous Encoding. During the prefill stage, the input tokens’ KV cache is computed layer by layer. The com-pressed KV encoding is overlapped with the prefill computa-tion. Encoding 𝑙𝑎𝑦𝑒𝑟 𝑖 −1’s KV cache runs concurrently with Compressed KV Cache …Segment 1       
+
+> New KV
+> GPU CPU
+> S1Segment i-1 Segment i
+> Compressed
+> GPU-side Compression Buffer
+> Uncompressed Segment i
+> Si
+> Compressed Segment i
+> Ri
+> Segment Partition
+> Compression Loss Loss
+> Dynamic SVD
+> > Threshold
+> Truncating Segment
+> Intermediate Matrix %
+> Compress
+> CPU-Side Compression Buffer
+> Si
+> Ri
+> SVD Rotation Matrix
+> Compression Strategy
+> New KV
+> KV of New Token
+> Buffer Replacing
+> Generating Strategy
+> Si-1
+> S1-1
+> Temporarily Compressed
+
+Figure 7. Heterogeneous Double Compression Buffering. the normal computation of 𝑙𝑎𝑦𝑒𝑟 𝑖 . The encoding overhead is evaluated in Section 6. 
+
+5.3 PackedAttention 
+
+PackedAttention performs sequence compression and atten-tion computation in each attention layer of the decode stage. As shown in Figure 6, it computes the attention score for each token block, selects the top-𝑘 blocks, and performs at-tention computation with the two-D-compressed KV cache. The attention score computation and the attention computa-tion are the two main bottlenecks. Both computations must access the channel-compressed and packed per-block keys and KV caches. Naively, these vectors would need to be un-packed and decompressed before use, significantly degrading performance. PackedAttention eliminates these overheads. First, PackedAttention operates directly on packed vec-tors without unpacking them. In both the attention score and attention computation, the packed K, V, and per-block key matrices must be dot-producted with another vector, e.g., the query vector. Instead of unpacking and using Tensor cores, MosaicKV leverages CUDA cores to operate directly on packed vectors. As shown in the top-right of Figure 6, a packed vector product computes the dot product between a dense vector (e.g., the query) and a packed sparse vector (e.g., a key) by reconstructing element positions on-the-fly. For each set bit in the position bitmap, MosaicKV retrieves the element index, fetches the corresponding element from the query vector, and performs the multiplication; all products are accumulated to produce the final result. To accelerate this computation, MosaicKV partitions the position bitmap into multiple chunks and assigns each chunk to a thread. This approach exhibits good cache locality and reduces the GPU cache miss rate when accessing sparse vectors, yield-ing significant performance improvements from per-vector channel compression. Second, PackedAttention merges the decompression oper-ation into the single uncompressed vector rather than apply-ing it to the entire compressed matrix. Taking the attention score computation as an example, the query vector must be dot-producted with the channel-compressed per-block 
+
+> 8
+
+key matrix, which is SVD-rotated. It must be rotated back before the dot product. Instead of rotating the large matrix, MosaicKV merges the rotation into the single query vector and uses the rotated query to compute the attention scores. This approach is mathematically equivalent and offers sub-stantially better performance. 
+
+Compatibility with FlashAttention. PackedAttention is implemented on top of FlashAttention [ 19 ], which pro-cesses the KV cache in small chunks (e.g., 8 tokens), allowing unselected chunks to be directly skipped. The standard dot product is replaced with the packed vector product. Although PackedAttention applies different compression strategies to different KV cache segments, the segment size is substan-tially larger than the chunk size, so this incurs no additional overhead. 
+
+KV Cache Update Buffer. For the KV vectors of newly generated tokens, MosaicKV uses an update buffer to tem-porarily hold them without any compression, as shown in Figure 6. Once the buffer is full, all KV vectors within it are channel-compressed and packed, and per-block keys are computed, following the same procedure as the compressed KV encoding (Section 5.2). In our current implementation, the buffer size is 32 tokens, which exceeds the maximum block size. 
+
+5.4 Heterogeneous Double Compression Buffering 
+
+MosaicKV assigns a compression strategy to each KV cache segment, but the strategy can only be generated after the entire segment is determined. However, the decode stage gen-erates tokens one by one, and leaving a large non-terminated segment (e.g., 32K tokens) uncompressed is inefficient. Het-erogeneous double compression buffering addresses this by leveraging the underutilized CPU for segment partitioning, strategy generation, and compression. As shown in Figure 7, a GPU-side compression buffer tem-porarily holds the KV cache of the current segment (segment 𝑖 
+
+in the figure). It is compressed using the previous segment’s strategy since the current segment has not yet been finalized. Meanwhile, all KV vectors of newly generated tokens are copied to the CPU-side compression buffer without compres-sion. Using this buffer, the CPU computes the compression loss of compressing segment 𝑖 with the previous strategy. Once the loss exceeds a predefined threshold, the CPU fi-nalizes the current segment, computes a new compression strategy, and performs stage-1 compression following the same procedure as the compressed KV encoding (Section 5.2). All CPU-side operations run asynchronously without block-ing the GPU-side decode stage. Once segment 𝑖 is compressed, MosaicKV replaces the temporarily compressed GPU-side segment with the final CPU-side result, and the new strategy is transferred to the GPU. 
+
+5.5 Incremental Strategy Generation 
+
+MosaicKV executes most KV cache management operations, including segment partitioning, SVD computation, strategy generation, and compression, on the CPU. An incremental mechanism is introduced for segment partitioning and SVD rotation matrix generation. Rather than processing the en-tire segment at once, MosaicKV performs these operations incrementally for each newly generated token. For segment partitioning, MosaicKV computes the com-pression loss for each token’s KV vectors by comparing the channel-compressed vectors with the original ones, and maintains an accumulated total loss. Once the total loss ex-ceeds a predefined threshold, the current segment is final-ized. For the SVD rotation matrix, which is derived from the covariance matrix Σ of a segment’s KV matrix via eigende-composition. MosaicKV incrementally updates Σ using each new token’s outer product. With this mechanism, MosaicKV can rapidly determine whether the current segment should be finalized, and the SVD rotation matrix can be directly computed from the up-to-date Σ. Subsequently, MosaicKV selects suitable strategy parameters for the newly terminated segment. The SVD ro-tation matrices are already computed at this point. All other parameters are selected from several candidate values. For channel compression, MosaicKV first reorders the rotated matrices so that channels with similar selection patterns be-come neighbors. Then, MosaicKV evaluates the compression loss for each candidate compression rate (e.g., 87.5%, 75%, and 62.5%) and element group size (e.g., 1, 2, 4). The highest compression rate and largest group size whose loss remains below a threshold are selected. For sequence compression, MosaicKV computes the intra-block key variance for multi-ple candidate block sizes (e.g., 4, 8, 16) and selects the largest size whose variance remains below a threshold. This compu-tation can also be performed incrementally for each newly generated token block. The sequence compression rate is statically determined in our current implementation. 
+
+6 Evaluation 
+
+We implement a prototype of MosaicKV based on PyTorch [ 38 ]with approximately 5,300 lines of Python and 2,800 lines of CUDA. The evaluation aims to answer the following ques-tions: 
+
+• Q1 : How does MosaicKV affect model accuracy on long-context tasks? 
+
+• Q2 : How effectively does MosaicKV reduce the KV cache memory footprint? 
+
+• Q3 : What is the attention latency of MosaicKV? 
+
+• Q4 : What is the end-to-end serving performance of MosaicKV? 
+
+> 9
+
+Table 1. Model accuracy with RULER and LongBench.                                                                                                                                                                                                                                                                       
+
+> RULER Model Method S1 S2 S3 MK1 MK2 MK3 MQ MV QA-1 QA-2 VT FWE Avg
+> LLaMA-3.1-8B Full 100.00 100.00 100.00 100.00 98.00 96.00 100.00 98.00 56.00 62.83 99.20 88.67 91.56 Quest 100.00 100.00 100.00 98.00 98.00 88.00 100.00 98.50 54.00 61.50 96.40 90.67 90.42 MosaicKV 100.00 100.00 100.00 98.00 98.00 92.00 97.50 99.50 52.00 58.83 96.40 86.00 89.85 Qwen3-4B Full 100.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00 70.00 54.17 99.20 92.00 92.95 Quest 100.00 100.00 100.00 100.00 100.00 98.00 98.50 99.00 68.00 54.83 99.20 88.00 92.13 MosaicKV 100.00 100.00 98.00 100.00 98.00 100.00 99.00 98.00 58.00 54.17 91.20 89.30 90.47 Ministral-3-8B Full 100.00 100.00 100.00 98.00 98.00 98.00 96.00 98.50 56.00 52.11 100.00 84.00 90.05 Quest 100.00 100.00 100.00 98.00 98.00 98.00 96.50 100.00 54.00 50.83 100.00 76.67 89.33 MosaicKV 100.00 100.00 100.00 90.00 98.00 94.00 90.00 96.50 50.00 48.11 100.00 76.67 86.94
+> LongBench Model Method LCC SAM TQA 2Wiki Hotp MUS MFQA NQA QAS MN QM PC Avg
+> LLaMA-3.1-8B Full 33.15 44.26 92.29 24.23 32.51 15.90 40.82 31.37 28.02 26.77 24.22 8.57 33.51 Quest 32.37 44.25 92.28 23.37 34.63 16.44 40.65 30.66 20.94 25.21 23.63 7.06 32.62 MosaicKV 32.87 43.71 90.16 24.62 37.78 18.96 35.60 30.87 24.34 25.56 23.66 6.00 32.84 Qwen3-4B Full 5.25 46.96 88.01 11.38 12.44 7.14 28.19 9.08 18.87 21.91 18.50 3.60 22.61 Quest 5.07 45.75 88.44 12.08 12.17 6.74 29.32 11.47 20.51 21.44 18.68 3.56 22.94 MosaicKV 5.10 45.48 88.58 11.66 11.65 6.69 28.46 10.89 14.23 21.29 18.67 3.37 22.17 Ministral-3-8B Full 25.90 25.89 89.87 11.82 10.61 8.32 35.02 13.53 15.23 12.87 23.71 4.50 23.11 Quest 26.43 25.54 89.87 12.77 10.83 8.23 35.26 13.76 16.03 12.18 24.12 4.00 23.25 MosaicKV 25.80 24.96 89.53 11.51 9.91 7.38 34.31 14.17 20.30 17.55 23.26 2.50 23.43
+
+6.1 Setup 
+
+We evaluate the accuracy and performance of MosaicKV on an NVIDIA H800 GPU equipped with 80GB HBM. We compare MosaicKV against two baselines: 1) Full baseline, which does not perform any KV cache compression. For the microbenchmark, it employs a FlashAttention-based atten-tion kernel. For the end-to-end evaluation, it uses vLLM [ 27 ]. 2) Quest [ 44 ], which performs sequence-only compression. LLaMA-3.1-8B [ 1 ] is used in our performance evaluation, and accuracy is further evaluated with Qwen3-4B [ 51 ] and Ministral-3-8B [ 32 ]. By default, Quest uses a block size of 16 while MosaicKV uses a block size of 8. Both methods se-lect 10% of tokens. MosaicKV is configured to retain 25% of channels. The floating-point precision is BF16 for all systems. 
+
+6.2 Accuracy Long Context Benchmarks. To answer Q1 , we evaluate the accuracy of MosaicKV on two widely-used long-context benchmarks: RULER [ 24 ] and LongBench [ 12 ]. We com-pare MosaicKV against the Full baseline (uncompressed) and Quest across three models: LLaMA-3.1-8B-Instruct, Qwen3-4B-Instruct, and Ministral-3-8B-Base. The default compres-sion configuration is used, consistent with the subsequent performance evaluation. Table 1 shows the results. For LongBench, MosaicKV in-curs only 0.86% average accuracy loss compared to the un-compressed baseline, and 0.64% compared to Quest. On RULER, it is configured to test 64K-context task. The average scores of MosaicKV are 89.85, 90.47, 86.94 for LLaMA-3.1-8B, Qwen3-4B, and Ministral-3-8B respectively, incurring only 1.86% , 2.58% , and 3.55% accuracy loss compared to the uncompressed baseline. Correspondingly, the accuracy loss compared to Quest are 0.55% , 1.74% , and 2.69% .
+
+Accuracy with Different Optimizations. To further analyze how individual optimizations affect model accuracy, we present an incremental accuracy breakdown in Figure 9. It shows the normalized accuracy relative to the uncompressed baseline on LongBench with LLaMA-3.1-8B. Starting from a baseline that retains 10% of tokens via sequence compres-sion and applies uniform top-𝑟 channel selection without SVD rotation, we incrementally add: (1) SVD rotation, (2) per-vector element selection, and (3) dynamic compression strategy. SVD rotation and per-vector selection improve the normalized accuracy by 20.8% and 64.5%, respectively. The dynamic compression strategy further improves the total accuracy to 98%. 
+
+6.3 Microbenchmark Memory Footprint. To answer Q2 , we break down the KV cache memory footprint of MosaicKV on LLaMA-3.1-8B across different context lengths, as shown in Figure 10(a). The Full baseline stores the entire KV cache, while Quest additionally maintains per-block keys, adding 6.25% memory overhead (block size 16). With 25% channel retention, Mo-saicKV reduces the KV cache size by 3× and 3.18 × compared to Full and Quest, respectively. 
+
+> 10
+
+F                               1          
+
+>  1  1 1
+>    
+> 
+> 
+> 
+> 
+> 
+> 
+> "   !
+>         
+
+(a) Batch size = 1 1           
+
+>  1  1 1
+>    
+> 
+> 
+> 
+> 
+> 
+> 
+> "   !
+>         
+
+(b) Batch size = 4 1          
+
+>  1  1 1
+>    
+> 
+> 
+> 
+> 
+> 
+> 
+> "   !
+>          
+
+(c) Batch size = 8 1           
+
+>  1  1 1
+>    
+> 
+> 
+> 
+> 
+> 
+> 
+> "   !
+>          
+
+(d) Batch size = 1 1           
+
+>  1  1 1
+>   
+> 
+> 1
+> 
+> 
+> 
+> 
+> !   
+> 1 1       
+
+(e) Batch size = 4 1           
+
+>  1  1 1
+>   
+> 
+> 1
+> 
+> 
+> 
+> 
+> !   
+>         
+
+(f) Batch size = 8 
+
+Figure 8. Attention latency breakdown across batch sizes. Token selection rate: 6.25% in (a)-(c) and 12.5% in (d)-(f). 0 0 0 0 0 00 
+
+> $&"!+  ($ )!! '!#  
+
+$%& ##! 
+
+ 
+
+&($ # 
+
+*#" (&(* 
+
+     
+
+Figure 9. Accuracy with Different Optimizations. 
+
+Attention Latency. To answer Q3 , we evaluate the atten-tion latency of MosaicKV on LLaMA-3.1-8B across different context lengths and batch sizes, as shown in Figure 8. For MosaicKV and Quest, the latency is broken down into score computing (Score), token selection (TopK), and attention computation (Attn). We further evaluate two token selection rates: 6.25% in Figure 8(a)-(c) and 12.5% in Figure 8(d)-(f). MosaicKV achieves up to 16 × speedup in total attention la-tency over the Full baseline. Compared to Quest, MosaicKV achieves up to 2.4 × speedup in total attention latency. For score computing, MosaicKV achieves an average of 4.2 ×
+
+speedup over Quest. 
+
+6.4 End-to-End Serving Performance 
+
+To answer Q4 , we evaluate both the decode latency and throughput of MosaicKV on LLaMA-3.1-8B across different 
+
+Table 2. Compression overhead to the prefill stage. 
+
+64K 128K 256K 512K 1M 
+
+Prefill (s) 13.7 57.3 241.9 1001.5 4093.9 Overhead (s) 1.0 2.1 4.1 8.3 16.6 Percentage (%) 7.6% 3.6% 1.7% 0.8% 0.4% 
+
+context lengths. We use vLLM [ 27 ] as the Full baseline. Due to the limited GPU memory of the H800, both vLLM and Quest cannot accommodate the entire KV cache for a 512K-token request, with batch size 1. MosaicKV extends this limit to about 1.44M tokens. To evaluate longer contexts, we profile a subset of attention layers and extrapolate the total latency and throughput, as all transformer layers perform identical operations, for extremely long-context requests. 
+
+Decode Latency. We evaluate the Time-Between-Tokens (TBT) as the decode latency metric, with results shown in Figure 10(b). The batch size is 4 for all systems. At 1M context length, MosaicKV achieves 4.8 × lower TBT than vLLM and 
+
+1.8 × lower than Quest. The average speedups are 3.8 × and 
+
+1.5 × over vLLM and Quest, respectively. 
+
+Decode Throughput. Figure 10(c) shows the decode throughput of MosaicKV and the two baselines. Due to the reduced memory footprint, MosaicKV supports a batch size 3× larger than vLLM and Quest. At 1M context length, Mo-saicKV delivers 7.3 × higher throughput than vLLM and 2.2 ×
+
+higher than Quest. The average speedups are 5.5 × and 2.3 ×
+
+over vLLM and Quest, respectively. 
+
+Compression Overhead. MosaicKV introduces additional operations, including SVD computation and compression, to the prefill stage. We evaluate the total overhead during prefill 
+
+11 6   6        
+
+> #'    &
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> !$(    
+> ' 
+> '%& 
+> '%& $! (%
+> !% 
+> !%  &"
+> !% $! (%
+> !%  
+
+(a) KV cache memory footprint 6    6                    
+
+>  #  "
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>  !
+>           
+> $
+> #!"
+> !
+
+(b) Decode Latency 6     6        
+
+> !% $
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> "%  %$ $##
+>         
+> &
+> %#$
+> #
+
+(c) Decode throughput 
+
+Figure 10. Performance of end-to-end long-context serving, with different context lengths. across different input token lengths. The results are shown in Table 2. The total overhead is 7.6% at 64K tokens and de-creases to 0.4% at 1M tokens. During the decode stage, com-pressing the entire update buffer costs only 40.6 𝜇 s, which is negligible relative to the attention computation. 
+
+7 Discussion 
+
+Compatibility. MosaicKV is compatible with diverse model architectures. It is applicable to all attention-based LLMs, in-cluding those employing Grouped-Query Attention (GQA) [ 11 ]and Multi-head Latent Attention (MLA) [ 20 ]. Although these architectures share KV cache across query heads, MosaicKV can still reduce the KV cache size. Notably, the LLaMA-3.1-8B model used in our evaluation adopts GQA. Furthermore, Mixture of Experts (MoE) models [ 21 , 41 ] also incorporate attention layers and can therefore benefit from MosaicKV. MosaicKV is also compatible with commonly-used LLM serving optimizations. It can be integrated with PagedAtten-tion [ 27 ] and RadixAttention [ 61 ], as the full token sequence is retained and page-level scheduling and prefix sharing re-main unaffected. Moreover, MosaicKV is compatible with FlashAttention [ 19 ], upon which our implementation is built (Section 5.3). 
+
+KV Cache Offloading. MosaicKV stores the entire KV cache in GPU memory. Existing long-context approaches [ 16 ,33 , 47 ] offload the KV cache to CPU memory and selectively fetch the required KV vectors to the GPU for attention com-putation. However, such methods introduce additional PCIe traffic on the critical decode path, which becomes a bottle-neck for decode latency and throughput. Several optimiza-tions have been proposed to mitigate this issue, including GPU-side KV cache caching and accelerated KV cache fetch-ing [ 15 , 22 , 47 ]. These offloading methods and their associ-ated optimizations are complementary to MosaicKV, which can still achieve a high compression rate and corresponding performance improvement. Furthermore, since MosaicKV compresses both K and V vectors, it can further reduce the PCIe traffic by fetching only the compressed vectors to the GPU. 
+
+Combining with Chunked Prefill. First, MosaicKV can still optimize the decode stage when chunked prefill [ 10 ] is employed. Second, with chunked prefill, MosaicKV can fur-ther compress the KV vectors of input tokens to accelerate the prefill stage. Chunked prefill generates the KV cache for input tokens at chunk granularity. Analogous to compress-ing output tokens during the decode stage, MosaicKV can compress these input chunks’ KV vectors using the hetero-geneous double compression buffering. 
+
+Combining with Quantization. MosaicKV is orthogo-nal to quantization techniques and can be combined with them. Quantizing the elements of the compressed KV cache can directly reduce the memory footprint. Moreover, exist-ing works such as DiffKV [ 58 ] propose importance-aware token quantization. By combining with such approaches, MosaicKV can assess the importance of each compressed element and apply appropriate quantization accordingly. 
+
+Limitations and Future Work. First, MosaicKV cur-rently focuses on accelerating the decode stage of long-context requests, which is particularly relevant as thinking models become increasingly prevalent. As discussed pre-viously, MosaicKV can further accelerate the prefill stage when combined with chunked prefill, which represents a promising direction for future work. Second, MosaicKV cur-rently leverages only CUDA cores for PackedAttention. This is sufficient at present, as memory bandwidth remains the bottleneck even on server-grade HBM-equipped GPUs. How-ever, if future HBM memory achieves substantially higher bandwidth such that memory is no longer the bottleneck, CUDA cores may limit MosaicKV’s performance. A potential solution is to combine both tensor cores and CUDA cores to accelerate PackedAttention. 
+
+8 Related Work 
+
+KV Cache Compression. Existing works compress the KV cache by selecting important tokens [ 13 , 16 , 28 , 29 , 34 , 36 ,44 , 48 , 49 , 54 , 55 , 59 ] or important channels [ 14 , 25 , 31 , 39 ,43 , 50 ]. Quest [ 44 ] performs query-aware token selection. Approaches such as MoBA [ 36 ] and NSA [ 54 ] retrain the model to achieve higher accuracy under sequence compres-sion. InfiniGen [ 28 ] accelerates token selection by compress-ing the channels of key vectors. However, they cannot per-form channel compression on the KV cache during attention 
+
+> 12
+
+computation. SparK [ 31 ] applies fine-grained unstructured compression to K but requires decompression before each attention step. Unlike existing systems, MosaicKV performs per-token dynamic two-dimensional compression through-out the entire decode stage, including both token selection and attention computation, achieving high memory com-pression rates, high performance, and low accuracy loss. 
+
+Quantization. Quantization methods [ 23 , 26 , 35 , 52 , 60 ]are also employed to reduce the KV cache size. KVQuant [ 23 ]observes that element-level outliers are the key challenge for low-bit KV cache quantization and proposes per-vector dense-and-sparse quantization to isolate outliers. DiffKV [ 58 ]applies importance-aware KV cache quantization. As dis-cussed previously, MosaicKV can be combined with quanti-zation techniques to achieve further memory reduction. 
+
+Sparse GPU Kernels. Traditional sparse matrix kernels, such as cuSPARSE [ 5 ], are primarily designed for extreme sparsity ( >99%). They record the location of each non-zero element to reduce memory consumption. NVIDIA provides a sparse tensor operation [ 37 ] that requires 2:4 structured spar-sity. PIT [ 62 ] densifies sparse tensors via permutation invari-ant transformation. FlashInfer [ 53 ] accelerates block-sparse attention. MosaicKV leverages the underutilized CUDA cores and the packed KV format to efficiently execute the decode stage with sparse KV cache. 
+
+9 Conclusion 
+
+This paper presented MosaicKV, a long-context LLM infer-ence framework that combines channel and sequence KV cache compression to overcome the memory bottleneck im-posed by long context requests. To address the accuracy challenge of two-dimensional compression, MosaicKV intro-duces dynamic two-D compression, which exploits the non-uniform importance distribution of the KV cache through per-vector element selection and a dynamic compression strategy that partitions the KV cache into segments with tai-lored strategies. To translate the high compression rate into real performance gains, MosaicKV introduces compressed KV cache management, which leverages the underutilized CUDA cores and CPU during decode-stage attention to per-form packed sparse attention over the compressed KV cache and heterogeneous double compression buffering for asyn-chronous KV cache management. Evaluation on an H800 GPU across multiple models and benchmarks shows that MosaicKV achieves up to 16 × attention speedup, 4.8× lower decode latency, and 7.3× higher throughput, while reducing KV cache memory by 3× with only 1.76% average accuracy loss. 
+
+References 
+
+[1] 2024. Introducing Llama 3.1: Our most capable models to date. https: //ai.meta.com/blog/meta-llama-3-1/ 
+
+[2] 2025. The Llama 4 herd: The beginning of a new era of natively multi-modal AI innovation. https://ai.meta.com/blog/llama-4-multimodal-intelligence/ 
+
+[3] 2025. A new era of intelligence with Gemini 3. https://blog.google/ products-and-platforms/products/gemini/gemini-3/ 
+
+[4] 2026. Claude Code docs. https://code.claude.com/docs/en/overview 
+
+[5] 2026. cuSPARSE Documentation. https://developer.nvidia.com/ cusparse 
+
+[6] 2026. Introducing GPT-5.4 | OpenAI. https://openai.com/index/ introducing-gpt-5-4/ 
+
+[7] 2026. LLMs with largest context windows. https://codingscape.com/ blog/llms-with-largest-context-windows 
+
+[8] 2026. OpenClaw — Personal AI Assistant. https://openclaw.ai/ 
+
+[9] 2026. What’s New in Claude 4.6. https://platform.claude.com/docs/ en/about-claude/models/whats-new-claude-4-6 
+
+[10] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav Gulavani, Alexey Tumanov, and Ramachandran Ram-jee. 2024. Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . USENIX Association, Santa Clara, CA, 117–134. https://www.usenix.org/conference/osdi24/presentation/ agrawal 
+
+[11] Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebron, and Sumit Sanghai. 2023. GQA: Training General-ized Multi-Query Transformer Models from Multi-Head Checkpoints. In Proceedings of the 2023 Conference on Empirical Methods in Natu-ral Language Processing , Houda Bouamor, Juan Pino, and Kalika Bali (Eds.). Association for Computational Linguistics, Singapore, 4895– 4901. doi: 10.18653/v1/2023.emnlp-main.298 
+
+[12] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhid-ian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2024. LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguis-tics (Volume 1: Long Papers) , Lun-Wei Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational Linguistics, Bangkok, Thailand, 3119–3137. doi: 10.18653/v1/2024.acl-long.172 
+
+[13] Iz Beltagy, Matthew E. Peters, and Arman Cohan. 2020. Longformer: The Long-Document Transformer. doi: 10.48550/arXiv.2004.05150 
+
+arXiv:2004.05150 [cs]. [14] Chi-Chih Chang, Wei-Cheng Lin, Chien-Yu Lin, Chong-Yan Chen, Yu-Fang Hu, Pei-Shuo Wang, Ning-Chi Huang, Luis Ceze, Mohamed S. Abdelfattah, and Kai-Chiang Wu. 2025. Palu: KV-Cache Compression with Low-Rank Projection. In The Thirteenth International Confer-ence on Learning Representations . https://openreview.net/forum?id= LWMS4pk2vK 
+
+[15] Yaoqi Chen, Jinkai Zhang, Baotong Lu, Qianxi Zhang, Chengruidong Zhang, Jingjia Luo, Di Liu, Huiqiang Jiang, Qi Chen, Jing Liu, Bailu Ding, Xiao Yan, Jiawei Jiang, Chen Chen, Mingxing Zhang, Yuqing Yang, Fan Yang, and Mao Yang. 2025. RetroInfer: A Vector-Storage Approach for Scalable Long-Context LLM Inference. arXiv:2505.02922 [cs.LG] https://arxiv.org/abs/2505.02922 
+
+[16] Zhuoming Chen, Ranajoy Sadhukhan, Zihao Ye, Yang Zhou, Jianyu Zhang, Niklas Nolte, Yuandong Tian, Matthijs Douze, Leon Bottou, Zhihao Jia, and Beidi Chen. 2025. MagicPIG: LSH Sampling for Efficient LLM Generation. In The Thirteenth International Conference on Learn-ing Representations . https://openreview.net/forum?id=ALzTQUgW8a 
+
+[17] Rong Cheng, Jinyi Liu, Yan Zheng, Fei Ni, Jiazhen Du, Hangyu Mao, Fuzheng Zhang, Bo Wang, and Jianye Hao. 2025. DualRAG: A Dual-Process Approach to Integrate Reasoning and Retrieval for Multi-Hop Question Answering. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Pa-pers) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Moham-mad Taher Pilehvar (Eds.). Association for Computational Linguistics, Vienna, Austria, 31877–31899. doi: 10.18653/v1/2025.acl-long.1539 
+
+> 13
+
+[18] Tri Dao. 2023. FlashAttention-2: Faster Attention with Better Par-allelism and Work Partitioning. arXiv:2307.08691 [cs.LG] https: //arxiv.org/abs/2307.08691 
+
+[19] Tri Dao, Daniel Y Fu, Stefano Ermon, Atri Rudra, and Christopher Re. 2022. FlashAttention: Fast and Memory-Efficient Exact Attention with IO -Awareness. In Advances in Neural Information Processing Systems ,Alice H. Oh, Alekh Agarwal, Danielle Belgrave, and Kyunghyun Cho (Eds.). https://openreview.net/forum?id=H4DqfPSibmx 
+
+[20] DeepSeek-AI, Aixin Liu, Bei Feng, et al . 2024. DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. arXiv:2405.04434 [cs.CL] https://arxiv.org/abs/2405.04434 
+
+[21] William Fedus, Barret Zoph, and Noam Shazeer. 2022. Switch Trans-formers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity. arXiv:2101.03961 [cs.LG] https://arxiv.org/abs/2101.03961 
+
+[22] Jitai Hao, Yuke Zhu, Tian Wang, Jun Yu, Xin Xin, Bo Zheng, Zhaochun Ren, and Sheng Guo. 2025. OmniKV: Dynamic Context Selection for Efficient Long-Context LLMs. In The Thirteenth International Confer-ence on Learning Representations . https://openreview.net/forum?id= ulCAPXYXfa 
+
+[23] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. 2024. KVQuant: towards 10 million context length LLM inference with KV cache quantization. In Proceedings of the 38th International Conference on Neural Information Processing Systems (NIPS ’24, Vol. 37) . Curran Associates Inc., Red Hook, NY, USA, 1270–1303. [24] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, and Boris Ginsburg. 2024. RULER: What’s the Real Context Size of Your Long-Context Language Models?. In First Conference on Language Modeling . https://openreview.net/forum?id= kIoBbc76Sy 
+
+[25] Donghyeon Joo, Helya Hosseini, Ramyad Hadidi, and Bahar Asgari. 2025. MUSTAFAR: Promoting Unstructured Sparsity for KV Cache Pruning in LLM Inference. In The Thirty-ninth Annual Conference on Neural Information Processing Systems . https://openreview.net/forum? id=C69741fMFX 
+
+[26] Hao Kang, Qingru Zhang, Souvik Kundu, Geonhwa Jeong, Zaoxing Liu, Tushar Krishna, and Tuo Zhao. 2024. GEAR: An Efficient KV Cache Compression Recipe for Near-Lossless Generative Inference of LLM. arXiv:2403.05527 [cs.LG] https://arxiv.org/abs/2403.05527 
+
+[27] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient Memory Management for Large Language Model Serv-ing with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP ’23) . Association for Computing Machinery, New York, NY, USA, 611–626. doi: 10.1145/3600006.3613165 
+
+[28] Wonbeom Lee, Jungi Lee, Junghwan Seo, and Jaewoong Sim. 2024. InfiniGen: Efficient Generative Inference of Large Language Models with Dynamic KV Cache Management. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . USENIX Asso-ciation, Santa Clara, CA, 155–172. https://www.usenix.org/conference/ osdi24/presentation/lee 
+
+[29] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Lo-catelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. SnapKV: LLM knows what you are looking for before generation. In 
+
+Proceedings of the 38th International Conference on Neural Information Processing Systems (NIPS ’24, Vol. 37) . Curran Associates Inc., Red Hook, NY, USA, 22947–22970. [30] Yubo Li, Xiaobin Shen, Xinyu Yao, Xueying Ding, Yidi Miao, Ramayya Krishnan, and Rema Padman. 2026. Beyond Single-Turn: A Survey on Multi-Turn Interactions with Large Language Models. doi: 10.48550/ arXiv.2504.04717 arXiv:2504.04717 [cs]. [31] Huanxuan Liao, Yixing Xu, Shizhu He, Guanchen Li, Xuanwu Yin, Dong Li, Emad Barsoum, Jun Zhao, and Kang Liu. 2025. SparK: Query-Aware Unstructured Sparsity with Recoverable KV Cache Channel Pruning. arXiv:2508.15212 [cs.CL] https://arxiv.org/abs/2508.15212 
+
+[32] Alexander H. Liu, Kartik Khandelwal, Sandeep Subramanian, et al .2026. Ministral 3. https://arxiv.org/abs/2601.08584v1 
+
+[33] Di Liu, Meng Chen, Baotong Lu, Huiqiang Jiang, Zhenhua Han, Qianxi Zhang, Qi Chen, Chengruidong Zhang, Bailu Ding, Kai Zhang, Chen Chen, Fan Yang, Yuqing Yang, and Lili Qiu. 2025. RetrievalAttention: Accelerating Long-Context LLM Inference via Vector Retrieval. In 
+
+The Thirty-ninth Annual Conference on Neural Information Processing Systems . https://openreview.net/forum?id=8z3cOVER4z 
+
+[34] Zichang Liu, View Profile, Aditya Desai, View Profile, Fangshuo Liao, View Profile, Weitao Wang, View Profile, Victor Xie, View Profile, Zhaozhuo Xu, View Profile, Anastasios Kyrillidis, View Profile, Anshu-mali Shrivastava, and View Profile. 2023. Scissorhands. In Proceedings of the 37th International Conference on Neural Information Processing Systems . 52342–52364. doi: 10.5555/3666122.3668401 
+
+[35] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen (Henry) Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. 2024. KIVI: a tuning-free asymmetric 2bit quantization for KV cache. In Proceedings of the 41st International Conference on Machine Learning (ICML’24, Vol. 235) .JMLR.org, Vienna, Austria, 32332–32344. [36] Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, et al .2025. MoBA: Mixture of Block Attention for Long-Context LLMs. In 
+
+The Thirty-ninth Annual Conference on Neural Information Processing Systems . https://openreview.net/forum?id=RlqYCpTu1P 
+
+[37] Asit Mishra, Jorge Albericio Latorre, Jeff Pool, Darko Stosic, Dusan Stosic, Ganesh Venkatesh, Chong Yu, and Paulius Micikevicius. 2021. Accelerating Sparse Deep Neural Networks. arXiv:2104.08378 [cs.LG] 
+
+https://arxiv.org/abs/2104.08378 
+
+[38] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Brad-bury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Köpf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. 2019. PyTorch: an imperative style, high-performance deep learning library . Curran Associates Inc., Red Hook, NY, USA. [39] Luka Ribar, Ivan Chelombiev, Luke Hudlass-Galley, Charlie Blake, Carlo Luschi, and Douglas Orr. 2024. SparQ attention: bandwidth-efficient LLM inference. In Proceedings of the 41st International Con-ference on Machine Learning (ICML’24, Vol. 235) . JMLR.org, Vienna, Austria, 42558–42583. [40] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. 2024. FlashAttention-3: Fast and Accurate At-tention with Asynchrony and Low-precision. In Advances in Neural Information Processing Systems , A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.), Vol. 37. Curran Associates, Inc., 68658–68685. doi: 10.52202/079017-2193 
+
+[41] Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. 2017. Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer. arXiv:1701.06538 [cs.LG] https://arxiv.org/abs/1701.06538 
+
+[42] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Beidi Chen, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. 2023. FlexGen: High-Throughput Generative Inference of Large Lan-guage Models with a Single GPU. In Proceedings of the 40th Interna-tional Conference on Machine Learning (ICML ’23) .[43] Hanshi Sun, Li-Wen Chang, Wenlei Bao, Size Zheng, Ningxin Zheng, Xin Liu, Harry Dong, Yuejie Chi, and Beidi Chen. 2025. ShadowKV: KV Cache in Shadows for High-Throughput Long -Context LLM Inference. In Proceedings of the 42nd International Conference on Machine Learning .PMLR, 57355–57373. https://proceedings.mlr.press/v267/sun25b.html 
+
+[44] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. 2024. QUEST: query-aware sparsity for efficient long-context LLM inference. In Proceedings of the 41st International Con-ference on Machine Learning (Vienna, Austria) (ICML’24) . JMLR.org, 
+
+> 14
+
+Article 1955, 11 pages. [45] Yu Wang, Nedim Lipka, Ryan A. Rossi, Alexa Siu, Ruiyi Zhang, and Tyler Derr. 2024. Knowledge Graph Prompting for Multi-Document Question Answering. Proceedings of the AAAI Conference on Artificial Intelligence 38, 17 (March 2024), 19206–19214. doi: 10.1609/aaai.v38i17. 29889 
+
+[46] Zhepei Wei, Wenlin Yao, Yao Liu, Weizhi Zhang, Qin Lu, Liang Qiu, Changlong Yu, Puyang Xu, Chao Zhang, Bing Yin, Hyokun Yun, and Lihong Li. 2025. WebAgent-R1: Training Web Agents via End-to-End Multi-Turn Reinforcement Learning. In Proceedings of the 2025 Confer-ence on Empirical Methods in Natural Language Processing , Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and Violet Peng (Eds.). Association for Computational Linguistics, Suzhou, China, 7909–7928. doi: 10.18653/v1/2025.emnlp-main.401 
+
+[47] Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and Maosong Sun. 2024. InfLLM: training-free long-context extrapolation for LLMs with an efficient context memory. In Proceedings of the 38th International Conference on Neural Information Processing Systems (NIPS ’24, Vol. 37) . Curran Associates Inc., Red Hook, NY, USA, 119638–119661. [48] Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. 2024. DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads. arXiv:2410.10819 [cs.CL] https://arxiv.org/abs/2410.10819 
+
+[49] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024. Efficient Streaming Language Models with Attention Sinks. In The Twelfth International Conference on Learning Representa-tions . https://openreview.net/forum?id=NG7sS51zVF 
+
+[50] Yuhui Xu, Zhanming Jie, Hanze Dong, Lei Wang, Xudong Lu, Ao-jun Zhou, Amrita Saha, Caiming Xiong, and Doyen Sahoo. 2025. ThinK: Thinner Key Cache by Query-Driven Pruning. In The Thir-teenth International Conference on Learning Representations . https: //openreview.net/forum?id=n0OtGl6VGb 
+
+[51] An Yang, Anfeng Li, Baosong Yang, et al . 2025. Qwen3 Technical Report. arXiv:2505.09388 [cs.CL] https://arxiv.org/abs/2505.09388 
+
+[52] Hong Yankun, Li Xing, Zhen Hui-Ling, Yu Xianzhi, Liu Wulong, and Yuan Mingxuan. 2025. SVDq: 1.25-bit and 410x Key Cache Compression for LLM Attention. arXiv:2502.15304 [cs.LG] https://arxiv.org/abs/ 2502.15304 
+
+[53] Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yineng Zhang, Stephanie Wang, Tianqi Chen, Baris Kasikci, Vinod Grover, Arvind Krishnamurthy, and Luis Ceze. 2025. FlashInfer: Efficient and Cus-tomizable Attention Engine for LLM Inference Serving. In Eighth Conference on Machine Learning and Systems . https://openreview.net/ forum?id=RXPofAsL8F 
+
+[54] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng. 2025. Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mo-hammad Taher Pilehvar (Eds.). Association for Computational Linguis-tics, Vienna, Austria, 23078–23097. doi: 10.18653/v1/2025.acl-long.1126 
+
+[55] Manzil Zaheer, Guru Guruganesh, Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. 2020. Big bird: transformers for longer sequences. In Proceedings of the 34th International Conference on Neural Information Processing Systems (NIPS ’20) . Curran Associates Inc., Red Hook, NY, USA, 17283–17297. https://dl.acm.org/doi/10. 5555/3495724.3497174 
+
+[56] Fengji Zhang, Bei Chen, Yue Zhang, Jacky Keung, Jin Liu, Daoguang Zan, Yi Mao, Jian-Guang Lou, and Weizhu Chen. 2023. RepoCoder: Repository-Level Code Completion Through Iterative Retrieval and Generation. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , Houda Bouamor, Juan Pino, and Kalika Bali (Eds.). Association for Computational Linguistics, Singapore, 2471– 2484. doi: 10.18653/v1/2023.emnlp-main.151 
+
+[57] Kechi Zhang, Jia Li, Ge Li, Xianjie Shi, and Zhi Jin. 2024. CodeAgent: Enhancing Code Generation with Tool- Integrated Agent Systems for Real-World Repo-level Coding Challenges. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , Lun-Wei Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational Linguistics, Bangkok, Thailand, 13643–13658. doi: 10.18653/v1/2024.acl-long.737 
+
+[58] Yanqi Zhang, Yuwei Hu, Runyuan Zhao, John C. S. Lui, and Haibo Chen. 2025. DiffKV: Differentiated Memory Management for Large Language Models with Parallel KV Compaction. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles (Lotte Hotel World, Seoul, Republic of Korea) (SOSP ’25) . Association for Computing Machinery, New York, NY, USA, 431–445. doi: 10.1145/ 3731569.3764810 
+
+[59] Zhenyu Zhang, View Profile, Ying Sheng, View Profile , Tianyi Zhou, View Profile, Tianlong Chen, View Profile, Lianmin Zheng, View Pro-file, Ruisi Cai, View Profile, Zhao Song, View Profile, Yuandong Tian, View Profile, Christopher Ré, View Profile, Clark Barrett, View Profile, Zhangyang Wang, View Profile, Beidi Chen, and View Profile. 2023. H2o. In Proceedings of the 37th International Conference on Neural Infor-mation Processing Systems . 34661–34710. doi: 10.5555/3666122.3667628 
+
+[60] Yilong Zhao, Chien-Yu Lin, Kan Zhu, Zihao Ye, Lequn Chen, Size Zheng, Luis Ceze, Arvind Krishnamurthy, Tianqi Chen, and Baris Kasikci. 2024. Atom: Low-Bit Quantization for Efficient and Ac-curate LLM Serving. In Proceedings of Machine Learning and Sys-tems , P. Gibbons, G. Pekhimenko, and C. De Sa (Eds.), Vol. 6. 196–209. https://proceedings.mlsys.org/paper_files/paper/2024/file/ 5edb57c05c81d04beb716ef1d542fe9e-Paper-Conference.pdf 
+
+[61] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark Barrett, and Ying Sheng. 2024. SGLang: efficient execution of structured language model programs. In Pro-ceedings of the 38th International Conference on Neural Information Processing Systems (Vancouver, BC, Canada) (NIPS ’24) . Curran Asso-ciates Inc., Red Hook, NY, USA, Article 2000, 27 pages. [62] Ningxin Zheng, Huiqiang Jiang, Quanlu Zhang, Zhenhua Han, Lingx-iao Ma, Yuqing Yang, Fan Yang, Chengruidong Zhang, Lili Qiu, Mao Yang, and Lidong Zhou. 2023. PIT: Optimization of Dynamic Sparse Deep Learning Models via Permutation Invariant Transformation. In 
+
+Proceedings of the 29th Symposium on Operating Systems Principles 
+
+(Koblenz, Germany) (SOSP ’23) . Association for Computing Machinery, New York, NY, USA, 331–347. doi: 10.1145/3600006.3613139

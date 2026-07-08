@@ -1,0 +1,2044 @@
+Title: InduceKV: Fixed-Footprint Continual Adaptation of Multimodal LLMs via Inducing KV Memories
+
+URL Source: https://arxiv.org/pdf/2607.02010v1
+
+Published Time: Fri, 03 Jul 2026 00:53:55 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+2026-07-03 
+
+# InduceKV: Fixed-Footprint Continual Adaptation of Multimodal LLMs via Inducing KV Memories 
+
+Qianyu Chen 1 Ziteng Feng 1,2 Canran Xiao 3 Runxuan Tang 11Nanyang Technological University 
+
+> 2
+
+University of Science and Technology of China 
+
+> 3
+
+Shenzhen Campus of Sun Yat-sen University 
+
+Abstract 
+
+Multimodal large language models must adapt to evolving tasks and domains, yet continual improvement under bounded deployment footprint remains difficult because repeated parameter updates or growing replay stores can accumulate adaptation state over time. We study fixed-footprint continual adaptation: the deployed adaptation state is kept under a fixed memory budget, while the backbone model is left unchanged and task-specific updates are externalized. We propose INDUCE KV, a retrieval-based method that stores each selected training prefix as an attention-ready memory entry, consisting of a frozen retrieval key and compact layerwise key–value (KV) payloads that can be appended to the model’s self-attention cache. Under a strict memory budget, I NDUCE KV constructs a compact inducing set through bilevel selection: a lightweight calibration is fit for retrieval, while the selected memory balances current-task likelihood, anchor-based retention, and coverage in the frozen retrieval space. Across task-incremental instruction tuning, continual VQA, domain-incremental adaptation, and lifelong multimodal instruction tuning, I NDUCE KV consistently improves over PEFT, MoE, replay, and prompt-retrieval baselines under matched memory budgets. We further report backbone-matched, stage-1 CoIN, compute-matched, and scalability diagnostics, showing that the gains are not due to a stronger backbone, replay alone, or an unbounded candidate pool. 
+
+# 1 Introduction 
+
+Multimodal large language models (MLLMs) Yin et al. (2024) are becoming a common interface for visual understanding and instruction-following in real applications, from continual VQA Jian et al. (2024); Jia et al. (2025) to domain-specialized assistants Bian et al. (2025) and tool-augmented reasoning Hu et al. (2025). In these deployments, new tasks, domains, and datasets arrive over time, yet repeatedly retraining or jointly re-tuning on all historical data is often impractical due to compute, privacy, and product iteration constraints Huo and Tang (2025). The central challenge is therefore to continually adapt an MLLM while preserving prior competencies under a fixed deployed adaptation footprint. In this work, “fixed footprint” refers to a bounded external adaptation state after each task. Despite rapid progress, existing continual adaptation pipelines for VLMs/MLLMs expose a persistent methodological gap. A dominant line of work updates model parameters—typically through PEFT modules, expert routing, or architecture expansion—to trade off stability and plasticity in sequential instruction tuning and continual VQA Guo et al. (2025); Huai et al. (2025); Zhang et al. (2025b); Ge et al. (2025); Zhang et al. (2025a); Wang et al. (2024b); Wei et al. (2025). While these designs are effective, they inherently rewrite parts of the model over time, which can complicate budget control (e.g., growing expert/router state) and can entangle new-task adaptations with the pretrained cross-modal interface that underpins broad generalization. A second line reduces forgetting via replay-like mechanisms and synthetic or selective rehearsal, including dynamic data selection for lifelong instruction tuning and memory-efficient replay/distillation strategies Maharana et al. (2025); Marouf et al. (2025); Wu et al. (2025). However, these approaches still couple continual improvement to training-time data management and can face tension between (i) preserving diverse historical behaviors and (ii) fitting within a fixed, small memory footprint, especially when the candidate pool becomes large and redundant. Finally, continual learning on CLIP-style VLMs has highlighted the importance of retaining pretrained, zero-shot capabilities while learning new domains Liu et al. (2025a), suggesting that continual adaptation must be careful about where and how new information is injected into the inference pathway. This paper asks whether scalable continual adaptation is possible by keeping the multimodal backbone 1
+
+> arXiv:2607.02010v1 [cs.AI] 2 Jul 2026
+
+fixed and updating a compact external memory that affects generation through native attention. From a retrieval perspective, the key challenge is maintaining a budgeted, non-redundant inducing set that im-proves current likelihood while preserving historical competence. We therefore cast continual adaptation as budgeted online inducing-set construction with lightweight retrieval calibration, injecting task-specific evidence without repeated backbone updates, as shown in Fig.1. T1 T2 T3
+
+From tasks: extract KV candidates 
+
+…
+
+…
+
+Budgeted inducing-set selection 
+
+> Retrieve + inject
+> into attention
+> Compact
+> KV memory
+
+…
+
+> Fixed
+> budget
+> (B)
+
+## MLLM    
+
+> Self-Attention
+> Retain old
+> +adapt new
+> Frozen backbone
+> Compact, fixed
+> footprint
+> (B)
+
+T3
+
+T1
+
+## InduceKV  
+
+> adapts a frozen MLLM
+> through a compact,
+> budgeted inducing set
+> of retrieved KV
+> memories
+
+Figure 1: INDUCE KV for budgeted continual MLLM adaptation. 
+
+Our contributions are as follows: ( i) We reframe continual MLLM adaptation as budgeted online inducing-set selection for retrieval-based memory, making the stability–plasticity tension explicit as a memory allocation problem rather than an ever-growing parameter update process. ( ii ) We introduce a retrieval-driven adaptation mechanism that stores task increments as attention-compatible external KV memories and uses a lightweight calibration interface to control retrieval strength, while explicitly accounting for its prefill and KV-injection overhead. ( iii ) Our approach achieves consistent state-of-the-art results across diverse continual instruction-tuning and continual VQA settings. 
+
+# 2 Related Work 
+
+Continual adaptation of instruction-following MLLMs. Most continual multimodal instruction tuning and VQA methods adapt models by updating parameters via PEFT and modularization. Representative directions include dynamic data selection/pruning for lifelong instruction tuning Maharana et al. (2025), PEFT-based isolation and routing such as hierarchical layer decoupling Guo et al. (2025), mixtures of LoRA experts Ge et al. (2025); Wang et al. (2024b); Zhang et al. (2025a), and projector-centric adaptation Jin et al. (2025). For continual VQA, MoE routing and replay/distillation (e.g., dual-router momentum MoE and question-only replay with attention distillation) achieve strong stability–plasticity trade-offs Huai et al. (2025); Marouf et al. (2025), while domain-incremental settings often use domain-specific experts and routing Zhang et al. (2025b). However, these approaches still require continual gradient updates, often expand expert/router state or depend on rehearsal, and tie retention to parameter-space constraints that can limit plasticity under tight budgets. In contrast, I NDUCE KV freezes the backbone and influences generation by injecting retrieved, attention-ready KV payloads into the masked self-attention cache, learning only a tiny per-stream calibration. 
+
+Continual learning in CLIP-style VLMs. Recent CLIP-style continual learning methods combine adapters/regularization with consolidation objectives and new benchmarks for domain/class shifts Liu et al. (2025a;b), and mitigate forgetting via synthetic replay/distillation Wu et al. (2025), structured 2How many 
+
+> pears ?
+
+Count （task T-1 ）
+
+> multimodal stream
+
+locate （task T）
+
+The upcoming 
+
+task ...   
+
+> Where is
+> the person?
+> Frozen Entry Extraction
+> LLM
+> Mean
+> Pool Normalize
+> Key
+> P
+> P
+> Segment-
+> Mean
+> Pooling
+> Layerwise payload
+> New
+> entries
+> Old entries
+
+... 
+
+...                
+
+> Candidate
+> Pool (,)
+> (,)
+> (,)
+> (,)
+> (,)
+> fixed before task T
+> Bilevel Inducing-Set Selection
+> Top B
+> Memory concatenate weighted payloads
+> Key
+> Value
+> Query
+> Autoregressive decoding  InduceKV I nference
+> learned learn ing Visual token
+> Text prompt token
+> Target token
+> Query K ey
+> Memory K ey
+> Value-side gate
+> concat
+
+Figure 2: INDUCE KV pipeline for continual adaptation. For each incoming task t, the frozen MLLM extracts from each prefix x a unit-norm retrieval key r(x) and compressed layerwise KV payloads 
+
+{( ¯Kℓ(x), ¯Vℓ(x)) }L
+
+> ℓ=1
+
+, forming new entries that are merged with the previous memory into a candidate pool Ut. Under a fixed budget B, a bilevel optimizer constructs a compact inducing set: the inner level fits a minimal retrieval calibration ϕ⋆(w) on current-task data, while the outer level updates selection weights 
+
+w to jointly optimize current-task likelihood, retention on historical anchors A<t, and a redundancy-aware spectral coverage regularizer in the frozen retrieval space. The Top-B entries are committed as the external KV memory Mt. At inference, the query key retrieves weighted entries, whose KV payloads are concatenated and injected as additional cache tokens into masked self-attention, enabling task adaptation without updating θ.adapters or memory units Luo et al. (2025), modality-gap constraints Huang et al. (2025b), external knowledge injection Zhou et al. (2025), and feature-geometry preserving regularization Huang et al. (2025a). However, extending these ideas to autoregressive MLLMs is nontrivial: generation is governed by layerwise attention and long-range cache interactions, so storing past data alone may not yield controllable influence at decoding time. We address this gap by storing layerwise KV payloads from the frozen generator and injecting them directly into self-attention. 
+
+Retrieval-augmented memory and budgeted subset selection. Retrieval-augmented LMs use non-parametric memory via passage retrieval Lewis et al. (2020); Borgeaud et al. (2022) or kNN retrieval over hidden states/KV pairs Khandelwal et al. (2019); Wu et al. (2022). In parallel, coreset and diversity selection study coverage under budgets, often via log-det/DPP-style objectives Kulesza et al. (2012); Wang et al. (2024a); Zhang et al. (2025c). Yet most retrieval systems assume a static corpus and optimize query-time evidence, not continual adaptation under a fixed footprint, and subset selection rarely co-designs inference-time retrieval calibration with an attention-aligned injection pathway. I NDUCE KV fills this gap by formulating memory updates as online inducing-set selection: a lightweight inner calibration adapts retrieval/gating, while the outer loop selects a budgeted subset that balances current fit, anchor-based retention, and log-det spectral coverage. 
+
+# 3 Method 
+
+INDUCE KV performs continual adaptation of a multimodal large language model (MLLM) by freezing all backbone parameters and externalizing task-specific increments into an attention-compatible key–value (KV) memory. Each memory entry stores (i) a frozen-model retrieval key in a fixed representation space and (ii) compact, layerwise KV payloads that can be injected into the Transformer self-attention cache. Under a strict memory budget, we construct a compact inducing set via bilevel optimization: an inner problem fits a minimal retrieval calibration parameter on the current task, while an outer problem selects a budgeted subset that jointly optimizes current-task likelihood, retention on historical anchors, and a redundancy-aware spectral coverage regularizer in the frozen retrieval space. The pipeline is shown in Fig. 2. 33.1 Problem Setup 
+
+We consider tasks t = 1, . . . , T arriving sequentially. At task t, we observe Dt = {(xn, yn)}Nt
+
+> n=1
+
+, where x
+
+is the conditioning prefix (multimodal input and prompt) and y is the target output sequence. We freeze an MLLM with parameters θ and perform no gradient updates to θ at any time. We maintain a small historical anchor set A<t (fixed before training task t) used to measure retention. 
+
+Autoregressive objective. For a pair (x, y), the negative log-likelihood is 
+
+LNLL (θ; x, y) = −
+
+> |y|
+
+# ∑
+
+> m=1
+
+log pθ (ym | y<m, x) . (1) In (1) , pθ (·) is the frozen model distribution, and x excludes all answer tokens to prevent label leakage in memory construction. 
+
+Multi-head attention convention. We write self-attention in per-head form and omit the head index for clarity. Let dh denote the per-head key dimension; the same construction is applied independently to each head and each layer. 
+
+3.2 Frozen Key and KV-Payload Extraction 
+
+The goal is to store attention-ready information from the frozen model: a retrieval key for indexing in a fixed representation space, and compact KV payloads that can be appended to the self-attention cache without changing θ. This avoids parameter-efficient finetuning that may perturb cross-modal interactions. Given a prefix input x, let H(L)(x) ∈ Rnp (x)×d be the final-layer hidden states corresponding to the prefix tokens (length np(x), hidden size d). We define the pooled prefix representation and normalized retrieval key as ¯h(x) = 1
+
+np(x) 
+
+> np(x)
+
+# ∑
+
+> j=1
+
+H(L) 
+
+> j
+
+(x) ∈ Rd, r(x) = ¯h(x)
+
+∥ ¯h(x)∥2
+
+∈ Rd. (2) In (2), H(L) 
+
+> j
+
+(x) is the j-th prefix token vector, and r(x) is unit-norm, enabling cosine-similarity retrieval. 
+
+Layerwise KV payload. For each Transformer layer ℓ ∈ { 1, . . . , L}, let H(ℓ−1)(x) ∈ Rnp (x)×d be the layer input over prefix tokens. Using the frozen per-head projections Wℓ 
+
+> K
+
+∈ Rd×dh and Wℓ 
+
+> V
+
+∈ Rd×dh , we compute prefix keys/values and compress them to a fixed payload length m:
+
+Kℓ(x) = H(ℓ−1)(x)Wℓ 
+
+> K
+
+∈ Rnp (x)×dh , Vℓ(x) = H(ℓ−1)(x)Wℓ 
+
+> V
+
+∈ Rnp (x)×dh ,¯Kℓ(x) = Pm(x)Kℓ(x), ¯Vℓ(x) = Pm(x)Vℓ(x). (3) In (3) , Pm(x) ∈ Rm×np (x) is a fixed pooling matrix that partitions the prefix indices {1, . . . , np(x)} into m
+
+consecutive segments of equal size (the last segment absorbs any remainder) and averages within each segment; therefore ¯ Kℓ(x), ¯ Vℓ(x) ∈ Rm×dh have a task-independent token length m.
+
+Memory entry. We represent the extracted entry from x as e(x) =  r(x), {( ¯Kℓ(x), ¯Vℓ(x)) }L
+
+> ℓ=1
+
+, and store only such entries in the external memory. 
+
+3.3 Retrieval-Weighted KV Induction and Masked Attention Injection 
+
+At inference, we want retrieved knowledge to influence generation through the same pathway as standard Transformer caches. I NDUCE KV therefore injects memory KV payloads as additional cache tokens into each layer’s masked self-attention. Let M = {ei}|M|  
+
+> i=1
+
+be the current memory, with stored keys ri ∈ Rd.We learn a minimal calibration parameter ϕ = {ϕτ , ϕ1, . . . , ϕL}, where the retrieval temperature is 
+
+τ = softplus (ϕτ ) > 0 and the per-layer value gate is λℓ = σ(ϕℓ) ∈ (0, 1 ). Given a prefix x, we compute 
+
+r(x) by (2) and define the retrieval weight for entry i as 
+
+αi(x; ϕ) = exp  ⟨r(x), ri⟩/τ
+
+∑|M|  
+
+> j=1
+
+exp  ⟨r(x), rj⟩/τ . (4) where ⟨r(x), ri⟩ is cosine similarity since both keys are unit-norm, and ∑i αi(x; ϕ) = 1. For layer ℓ, we assemble memory KV tokens by concatenating payload blocks weighted by pαi(x; ϕ):
+
+Kℓ
+
+> mem
+
+(x) = Concat  p αi(x; ϕ) ¯Kℓ
+
+> i
+
+|M|  
+
+> i=1
+
+∈ R(|M| m)×dh and Vℓ
+
+> mem
+
+(x) = Concat  p αi(x; ϕ) ¯Vℓ
+
+> i
+
+|M|  
+
+> i=1
+
+∈
+
+4R(|M| m)×dh , where Concat (·) concatenates along the token dimension. Let Qℓ(x) ∈ Rnp (x)×dh ,
+
+Kℓ
+
+> self
+
+(x) ∈ Rnp (x)×dh , and Vℓ
+
+> self
+
+(x) ∈ Rnp (x)×dh be the standard frozen per-head tensors produced at layer ℓ for the prefix tokens. We inject memory KV as additional cache tokens and compute masked self-attention as 
+
+Aℓ(x) = Qℓ(x) Kℓ
+
+> self
+
+(x); Kℓ
+
+> mem
+
+(x) ⊤ + Mℓ(x)
+
+√dh
+
+Attn ℓ(x) = softmax 
+
+
+
+Aℓ(x)
+
+  Vℓ
+
+> self
+
+(x); λℓVℓ
+
+> mem
+
+(x) .(5) In (5) , [·; ·] denotes token-wise concatenation and Mℓ(x) is the extended causal mask that permits attention to all memory tokens while enforcing standard causal visibility among prefix tokens. The gate 
+
+λℓ scales only memory values, providing an interpretable per-layer control of memory strength. 
+
+Online inference path and cost. At test time, I NDUCE KV uses a two-stage inference path. First, it runs a prefix-only forward pass with the frozen backbone to compute the query retrieval key r(x). Second, after retrieving entries from the fixed memory M, it performs the generation forward pass with the selected precomputed KV payloads appended to the self-attention cache. The stored memory payloads 
+
+{( ¯Kℓ 
+
+> i
+
+, ¯Vℓ 
+
+> i
+
+)} are extracted offline at task-update time and are never recomputed for each test query. Thus, the online overhead is not an additional payload-extraction pass, but an extra prefix pass for retrieval-key computation plus larger attention matrices during prefill. We therefore position I NDUCE KV as a fixed-footprint retrieval-based continual adaptation method, not as a zero-overhead replacement for replay-free PEFT. Its practical advantage is most direct against prompt-level retrieval, where retrieved exemplars must be processed through embeddings, projections, attention, and FFN layers at inference. 
+
+3.4 Bilevel Inducing-Set Selection Under a Fixed Budget 
+
+Storing all extracted entries is redundant under a fixed budget. I NDUCE KV therefore builds a compact inducing set that fits the current task via minimal calibration while preserving performance on historical anchors, and enforces spectral coverage in the frozen retrieval space to avoid near-duplicate keys. 
+
+Candidate pool and selection variables. At task t, we build a candidate pool Ut = Ct ∪ M t−1, where 
+
+Ct contains entries extracted from prefixes in Dt and Mt−1 is the previous memory. Let N = |U t| and index candidates by i ∈ { 1, . . . , N}. We introduce continuous selection weights w ∈ RN 
+
+> ≥0
+
+constrained by 
+
+∑Ni=1 wi = B, where B is the fixed entry budget. We interpret πi(w) = wi/B as a fractional inclusion mass with ∑i πi(w) = 1. 
+
+Retrieval during selection. While optimizing w, we define retrieval weights over candidates by incorpo-rating πi(w) as a multiplicative prior: αi(x; w, ϕ) = πi (w) exp (⟨r(x),ri ⟩/τ)     
+
+> ∑Nj=1πj(w)exp (⟨r(x),rj⟩/τ)
+
+. This yields a differentiable dependence of induced KV on w.
+
+Inner problem (fit minimal calibration on current task). Given w, the inner level fits ϕ by minimizing current-task likelihood with ℓ2 regularization: 
+
+ϕ⋆(w) = arg min 
+
+> ϕ
+
+1
+
+|D t| ∑
+
+> (x,y)∈D t
+
+LNLL 
+
+ θ; x, y | U t, w, ϕ
+
++ η∥ϕ∥22.(6) In (6) , the conditional notation LNLL (· | U t, w, ϕ) means that the model uses candidate-based retrieval weights αi(x; w, ϕ) and injects the induced KV via (5); η > 0 is fixed. 
+
+Outer problem (select inducing set with retention and coverage). The outer level selects w by balancing current fit, anchor retention, and spectral coverage: 
+
+w⋆ = arg min  
+
+> w∈W
+
+J(w), (7) where W = {w ∈ RN 
+
+> ≥0
+
+: ∑i wi = B}, and the objective is 
+
+J(w) = Lcur 
+
+ w, ϕ⋆(w)| {z }
+
+> current fit
+
++β Lanc 
+
+ w, ϕ⋆(w)| {z }
+
+> retention
+
++γ Ωspec (w)
+
+| {z }
+
+> coverage
+
+. (8) where β ≥ 0 and γ ≥ 0 are fixed coefficients, Lcur (w, ϕ) = 1  
+
+> |D t|
+
+∑(x,y)∈D t LNLL (θ; x, y | U t, w, ϕ), and 
+
+Lanc (w, ϕ) = 1  
+
+> |A <t|
+
+∑(x,y)∈A <t LNLL (θ; x, y | U t, w, ϕ).5Algorithm 1 INDUCE KV update at task t
+
+1: Input: Dt, A<t, Mt−1, budget B
+
+2: Build candidates Ut = Ct ∪ M t−1; extract entries via (2)–(3) 
+
+3: Initialize w ≥ 0 with ∑i wi = B and initialize ϕ
+
+4: for iter = 1 to I do 
+
+5: for j = 1 to J do 
+
+6: ϕ ← ϕ − αϕ∇ϕ
+
+ 1  
+
+> |D t|
+
+∑(x,y)∈D t LNLL (θ; x, y | U t, w, ϕ) + η∥ϕ∥22
+
+
+
+7: end for 
+
+8: w ← w − αw∇w
+
+
+
+Lcur (w, ϕ) + βLanc (w, ϕ) + γΩspec (w)
+
+
+
+9: Project w onto {w ≥ 0 : ∑i wi = B}
+
+10: end for 
+
+11: St ← TopB (w), Mt ← { ei}i∈S t , ϕt ← ϕ
+
+12: Output: memory Mt, calibration ϕt
+
+Spectral coverage regularizer. Let ri ∈ Rd be the unit-norm retrieval key of candidate i. We fix a projection matrix P ∈ Rd×d′
+
+with orthonormal columns ( P⊤ P = Id′ ) and set d′ = 256. Define projected keys zi = P⊤ri ∈ Rd′
+
+and the weighted covariance C(w) = ∑Ni=1 πi(w) ziz⊤ 
+
+> i
+
+∈ Rd′ ×d′
+
+. We use a log-determinant coverage penalty 
+
+Ωspec (w) = − log det  C(w) + ϵId′
+
+, (9) where ϵ > 0 is a fixed stabilizer and Id′ is the d′ × d′ identity. Minimizing (9) discourages redundant keys by penalizing low-rank, spectrally concentrated C(w) in the frozen retrieval space. We solve (6) – (7) by unrolling a fixed number of inner steps for ϕ and applying projected gradient updates to w onto {w ≥ 0 : ∑i wi = B}. After convergence, we take St = TopB (w⋆) and set Mt = {ei}i∈S t . For later tasks, Mt is fixed, and we optimize only the new task’s (w, ϕ).
+
+# 4 Theory: Budgeted Continual Learning as Online Inducing-Set Selection 
+
+We give a compact theoretical view of I NDUCE KV: after the inner calibration is solved, the outer memory update becomes an online budgeted subset-selection problem over relaxed inducing-set weights. Let 
+
+ft(w) denote the inner-solved outer surrogate at task t, defined on the budget simplex ∆NB = {w ≥ 0 :
+
+∑i wi = B}, and let D = max u,v∈∆NB
+
+∥u − v∥2 = B√2 . The outer update is projected gradient descent, 
+
+wt+1 = Π∆NB
+
+(wt − η∇ ft(wt)) , followed by the TopB discretization used in Alg. 1. Full definitions, assumptions, and proofs are provided in Appendix A. 
+
+Budgeted selection has sublinear regret. The following result shows that the relaxed memory selector competes with the best fixed inducing-set allocation in hindsight under the same budget. 
+
+Theorem 4.1 (Static regret under fixed budget) . Assume each inner-solved surrogate ft is convex and has bounded gradients ∥∇ ft(w)∥2 ≤ G on ∆NB . Then for any comparator u ∈ ∆NB , the projected outer updates satisfy 
+
+Reg T (u) ≜
+
+> T
+
+# ∑
+
+> t=1
+
+  ft(wt) − ft(u) ≤ D2
+
+2η + ηG2T
+
+2 , (10) Reg T (u) ≤ DG √T = B√2 G√T when η = DG√T . (11) 
+
+The bound adapts to nonstationary task streams. If the best inducing-set allocation changes over time, the regret increases only with the path-length variation of the changing comparator. 
+
+Theorem 4.2 (Dynamic regret with task variation) . Let {ut}Tt=1 ⊂ ∆NB be any time-varying comparator sequence and V T = ∑T−1 
+
+> t=1
+
+∥ut+1 − ut∥2. Under the same bounded-gradient condition, 
+
+DReg T ({ut}) ≜
+
+> T
+
+# ∑
+
+> t=1
+
+  ft(wt) − ft(ut) ≲ D2 + DV T
+
+η + ηG2T, (12) DReg T ({ut}) ≲ G√TpD2 + DV T with the optimized step size. (13) 6Table 1: Task-incremental continual instruction tuning on UCIT and C OIN. Baseline results follow the HiDe-LLaVA protocol Guo et al. (2025).   
+
+> Method Backbone / Protocol UCIT Avg
+
+↑ UCIT Last ↑ CoIN Avg ↑ CoIN Last ↑                                                       
+
+> Zero-shot (lower bound) LLaVA-v1.5-7B 31.68 –54.21 –Multi-task (upper bound) LLaVA-v1.5-7B 74.78 –67.40 –FineTune LLaVA-v1.5-7B 57.52 48.12 52.86 47.31 LwF LLaVA-v1.5-7B 59.40 49.52 53.22 48.40 EWC LLaVA-v1.5-7B 59.34 50.20 53.30 48.95 L2P LLaVA-v1.5-7B 53.99 48.51 53.96 52.83 O-LoRA LLaVA-v1.5-7B 64.54 58.36 62.60 60.77 MoELoRA LLaVA-v1.5-7B 61.33 52.06 55.24 50.58 HiDe-LLaVA LLaVA-v1.5-7B 68.94 64.19 64.70 63.95 INDUCE KV LLaVA-v1.5-7B 69.82 65.31 66.05 65.38
+> INDUCE KV LLaVA-OV-4B 70.25 65.84 66.38 65.72
+
+Table 2: Continual VQA under LV and T5 protocols. LV : LLaVA/Vicuna-7B protocol for the VQAv2 10-task stream; T5 : T5-based VQACL protocol for VQACL; OV : our default LLaVA-OneVision-1.5-4B-Instruct protocol. Rows marked LV/T5 use LV for VQAv2 10-task and T5 for VQACL columns. 
+
+VQAv2 10-task VQACL: VQAv2 (Std.) VQACL: NExT-QA (Std.) 
+
+Method Prot. AP ↑ AF ↓ AP ↑ Forget ↓ AP ↑ Forget ↓
+
+Vanilla LV/T5 32.51 20.69 14.92 30.80 12.68 25.94 EWC LV/T5 37.28 15.27 15.77 30.62 13.01 24.06 MAS LV/T5 37.71 14.91 20.56 11.16 18.04 10.07 ER LV/T5 41.95 10.20 36.99 5.99 30.55 4.91 DER LV/T5 41.16 11.28 35.35 8.62 26.17 5.12 VS LV/T5 39.79 12.70 34.03 8.79 28.13 4.45 VQACL LV/T5 43.49 9.10 37.46 6.96 30.86 4.12 CL-MoE LV 51.34 -0.02 – – – –QUAD T5 – – 39.25 4.91 31.70 2.91 INDUCE KV-LV LV 52.64 1.70 – – – –INDUCE KV-T5 T5 – – 39.86 4.54 32.12 2.68 
+
+INDUCE KV-OV OV 53.12 1.85 40.73 3.64 33.25 2.18 
+
+Anchors control historical retention. The anchor term links the online surrogate to retention: if anchors approximate the historical risk, then controlling the anchor loss controls forgetting up to the anchor approximation error. 
+
+Theorem 4.3 (Anchor-controlled historical risk) . Assume the anchor loss At(w) uniformly approximates the true historical risk eR<t(w) within ϵrep  
+
+> t
+
+. Then for every task t, 
+
+eR<t(wt) ≤ A t(wt) + ϵrep  
+
+> t
+
+, (14) 1
+
+T
+
+> T
+
+# ∑
+
+> t=1
+
+eR<t(wt) ≤ 1
+
+βT
+
+> T
+
+# ∑
+
+> t=1
+
+ft(u) + Reg T (u)
+
+βT + 1
+
+T
+
+> T
+
+# ∑
+
+> t=1
+
+ϵrep  
+
+> t
+
+, (15) 
+
+for any u ∈ ∆NB and β > 0.
+
+Together, these results justify the design of I NDUCE KV: the selector updates a fixed-budget memory with sublinear online regret, remains stable under gradually changing task optima, and uses anchors to connect the surrogate objective to historical retention. The final TopB step is a rounding operation from the relaxed selector to the actual memory; its additional gap is controlled when the surrogate is Lipschitz, as discussed in Appendix A. 75 Experiments 
+
+5.1 Experimental Setup 
+
+Datasets. We evaluate I NDUCE KV on (i) task-incremental continual instruction tuning benchmarks C OIN and UCIT Tang et al. (2019); Guo et al. (2025), (ii) continual VQA streams on VQA V2 (10 question-type tasks) and VQACL Huai et al. (2025); Marouf et al. (2025), (iii) domain-incremental continual instruction tuning across M EDICINE /C HART /M ATH Zhang et al. (2025b), and (iv) lifelong multimodal instruction tuning streams (LiIT) under dynamic dataset arrival Maharana et al. (2025). Full dataset composition, task orders, and preprocessing follow the official protocols and are summarized in Appendix B.1. 
+
+Metrics. We follow the official evaluation of each suite: UCIT reports Avg and Last Guo et al. (2025); C OIN reports task scores with overall MAA and BWT (for both instruction-following and reasoning-style evalu-ation) Tang et al. (2019); continual VQA reports AP and AF/Forget Huai et al. (2025); Marouf et al. (2025); domain-incremental CIT uses domain/task-specific metrics (e.g., RelaxAcc/RMSF1/BLEU4/Acc) Zhang et al. (2025b); LiIT reports AvgAcc , Relative Gain , and Forgetting Rate Maharana et al. (2025). We additionally report memory footprint and inference overhead (Appendix B.2). 
+
+Compared Methods. We compare against recent continual MLLM adaptation methods spanning re-play/regularization, PEFT isolation, and routing-based architectures, including CL-MoE Huai et al. (2025), QUAD Marouf et al. (2025), SMoE Zhang et al. (2025b), HiDe-LLaVA Guo et al. (2025), Adapt-
+
+∞ Maharana et al. (2025), and others Ge et al. (2025); Chen et al. (2025); Zhang et al. (2025a); Wang et al. (2024b); Wu et al. (2025). We also include standard CL baselines . We ensure fair comparison by matching the total extra footprint (external memory / replay buffer / added parameters) and keeping inference-time compute comparable. Details are in Appendix B.3. 
+
+5.2 Main Results 
+
+Task-incremental continual instruction tuning. As shown in Table 1, I NDUCE KV consistently improves over PEFT- and routing-based continual adaptation baselines on both UCIT and C OIN. Under the backbone-matched LLaVA-v1.5-7B protocol, I NDUCE KV improves over HiDe-LLaVA by 0.88 Avg and 1.12 Last on UCIT, and by 1.35 Avg and 1.43 Last on C OIN. The default LLaVA-OneVision-4B variant further increases the gains to 1.31/1.65 on UCIT and 1.68/1.77 on C OIN. These improvements indicate that storing task increments as budgeted, attention-compatible KV memories can improve both average retained performance and final-task adaptation without repeatedly updating the backbone. 
+
+Continual VQA. Table 2 shows that I NDUCE KV achieves consistent gains across both continual VQA protocols. Under the LV protocol, I NDUCE KV-LV improves AP over CL-MoE from 51.34 to 52.64 while maintaining low forgetting. Under the T5-VQACL protocol, I NDUCE KV-T5 outperforms QUAD on both VQAv2 and NExT-QA, with higher AP and lower forgetting. Additional results on domain-incremental continual instruction tuning and lifelong multimodal instruc-tion tuning are provided in Appendix C.1. 
+
+5.3 Ablation Study and Mechanism Analysis 
+
+Single-factor ablation. We ablate I NDUCE KV under the same backbone, decoding, and footprint. Table 3 shows that each component matters: removing retrieval-weighted induction hurts most (up to 4.20 AP on VQAv2), and disabling inner calibration also causes consistent drops, especially in generation-heavy settings. Anchor retention is most important for long-horizon task-incremental CIT (UCIT/CoIN), while spectral coverage improves robustness by reducing redundancy under a fixed budget. Removing bilevel coupling consistently degrades performance, underscoring the need to jointly optimize selection weights and retrieval calibration; additional sensitivity results are in §C.2. 
+
+Is the memory actually used? We first examine whether the retrieved KV memory is actively used during generation rather than merely stored as an inactive external buffer. We measure the fraction of attention mass assigned to injected memory tokens across layers and tasks, and compare it with the task-level gain over a NO -MEM variant; the full metric definition and sampling protocol are provided in Appendix: Memory-attention utilization protocol. As shown in Fig. 3, memory attention concentrates in mid-to-late layers and increases from early layers ( ≈ 0.018) to late layers ( ≈ 0.094). Tasks with larger gains also exhibit stronger late-layer memory usage, suggesting that I NDUCE KV improves performance when the model actually routes generation through retrieved KV payloads. 8Table 3: Single-factor ablation of I NDUCE KV. Each row removes exactly one component from the full model under the same memory budget (B=256, m=8). Numbers in blue denote the drop relative to the full I NDUCE KV model. 
+
+Variant UCIT Avg ↑ CoIN Avg ↑ VQAv2 AP ↑ Domain Overall ↑ LiIT AvgAcc ↑
+
+INDUCE KV (full) 70.25 66.38 53.12 51.14 53.8 w/o bilevel coupling (single-level update) 68.97 (-1.28) 64.95 (-1.43) 51.76 (-1.36) 49.91 (-1.23) 52.4 (-1.4) 
+
+w/o anchor retention (β=0) 68.52 (-1.73) 64.41 (-1.97) 52.64 (-0.48) 50.55 (-0.59) 53.2 (-0.6) 
+
+w/o spectral coverage (γ=0) 69.31 (-0.94) 65.02 (-1.36) 52.28 (-0.84) 50.12 (-1.02) 52.9 (-0.9) 
+
+w/o inner calibration (fix τ=0.07, λℓ=0.5) 67.40 (-2.85) 63.88 (-2.50) 49.63 (-3.49) 48.27 (-2.87) 51.5 (-2.3) 
+
+w/o layerwise value gates (set λℓ≡1) 69.88 (-0.37) 65.74 (-0.64) 52.61 (-0.51) 50.76 (-0.38) 53.1 (-0.7) 
+
+w/o retrieval-weighted induction (uniform αi over selected entries) 66.95 (-3.30) 62.73 (-3.65) 48.92 (-4.20) 47.50 (-3.64) 50.9 (-2.9) 1 5 9 13 17 21 25 29 33 Gain                                                 
+
+> Layer index (1..36) and normalized Gain (last column)
+> UCIT-ArxivQA (=+1.20)
+> UCIT-ImageNet-R (=+0.60)
+> UCIT-VizWiz-Cap (=+0.80)
+> UCIT-IconQA (=+1.00)
+> UCIT-CLEVR-Math (=+1.40)
+> UCIT-Flickr30k (=+0.70)
+> CoIN-ScienceQA (=+1.60)
+> CoIN-VQAv2 (=+1.00)
+> CoIN-GQA (=+0.90)
+> CoIN-VizWiz (=+1.20)
+> CoIN-TextVQA (=+2.20)
+> CoIN-OCRVQA (=+2.50)
+> CoIN-ImageNet (=+0.50)
+> CoIN-RefCOCO (=+1.70)
+> VQAv2-Recognition (=+0.50)
+> VQAv2-Location (=+0.70)
+> VQAv2-Judge (=+0.90)
+> VQAv2-Commonsense (=+1.80)
+> VQAv2-Count (=+1.00)
+> VQAv2-Action (=+1.10)
+> VQAv2-Color (=+0.60)
+> VQAv2-Type (=+0.80)
+> VQAv2-Subcategory (=+0.70)
+> VQAv2-Causal (=+1.90)
+> Task / domain (raw gain shown in each row label)
+> UCIT
+> CoIN
+> VQAv2 (10 tasks)
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> E[rho^ell] (memory attention mass); Gain column is normalized
+
+Figure 3: Memory attention utilization. Rows are tasks/domains and columns are layers; heatmap values show memory-attention mass, while the last column reports normalized gain over NO -MEM .
+
+Does inducing-set selection reduce redundancy? We next test whether the bilevel selection objective produces a genuinely compact and diverse inducing set under the fixed memory budget. We compare full I NDUCE KV with a no-coverage variant ( γ=0) and random Top-B selection, using within-set pairwise cosine similarity and projected log-determinant coverage as diagnostics; details are given in Appendix: Inducing-set diversity protocol. Fig. 4 shows that the full objective yields lower pairwise similarity and higher log-det coverage than both alternatives. This indicates that the spectral coverage term prevents selection from collapsing onto dense retrieval modes and instead forms a higher-rank memory that better supports broad retention. 9Full = 0 Random 
+
+> Selection method
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Pairwise cosine similarity
+> -1494.6
+> -1501.2
+> -1498.9
+> Full: logdet=-1494.6
+> gamma=0: logdet=-1501.2
+> Random: logdet=-1498.9
+
+Figure 4: Inducing-set diversity. 
+
+# 6 Conclusion 
+
+We address continual adaptation of MLLMs under strict footprint constraints without updating backbone parameters, and propose I NDUCE KV to externalize task increments into attention-compatible KV memory with budgeted inducing-set selection. Our empirical and theoretical results support online inducing-set selection as a principled alternative to parameter-updating pipelines. 
+
+# References 
+
+Zhipeng Bian, Jieming Zhu, Xuyang Xie, Quanyu Dai, Zhou Zhao, and Zhenhua Dong. Mira: Empower-ing one-touch ai services on smartphones with mllm-based instruction recommendation. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 6: Industry Track) , pages 1457–1465, 2025. Sebastian Borgeaud, Arthur Mensch, Jordan Hoffmann, Trevor Cai, Eliza Rutherford, Katie Millican, George Bm Van Den Driessche, Jean-Baptiste Lespiau, Bogdan Damoc, Aidan Clark, et al. Improving language models by retrieving from trillions of tokens. In International conference on machine learning ,pages 2206–2240. PMLR, 2022. Jinpeng Chen, Runmin Cong, Yuzhi Zhao, Hongzheng Yang, Guangneng Hu, Horace Ip, and Sam Kwong. Sefe: Superficial and essential forgetting eliminator for multimodal continual instruction tuning. In 
+
+Forty-second International Conference on Machine Learning , 2025. Chendi Ge, Xin Wang, Zeyang Zhang, Hong Chen, Jiapei Fan, Longtao Huang, Hui Xue, and Wenwu Zhu. Dynamic mixture of curriculum lora experts for continual multimodal instruction tuning. In 
+
+Forty-second International Conference on Machine Learning , 2025. Haiyang Guo, Fanhu Zeng, Ziwei Xiang, Fei Zhu, Da-Han Wang, Xu-Yao Zhang, and Cheng-Lin Liu. Hide-llava: Hierarchical decoupling for continual instruction tuning of multimodal large language model. arXiv preprint arXiv:2503.12941 , 2025. Xueyu Hu, Tao Xiong, Biao Yi, Zishu Wei, Ruixuan Xiao, Yurun Chen, Jiasheng Ye, Meiling Tao, Xiangxin Zhou, Ziyu Zhao, et al. Os agents: A survey on mllm-based agents for computer, phone and browser use. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 7436–7465, 2025. Tianyu Huai, Jie Zhou, Xingjiao Wu, Qin Chen, Qingchun Bai, Ze Zhou, and Liang He. Cl-moe: Enhancing multimodal large language model with dual momentum mixture-of-experts for continual visual 10 question answering. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 19608–19617, 2025. Chen Huang, Skyler Seto, Hadi Pouransari, Mehrdad Farajtabar, Raviteja Vemulapalli, Fartash Faghri, Oncel Tuzel, Barry-John Theobald, and Joshua M Susskind. Proxy-fda: Proxy-based feature distribution alignment for fine-tuning vision foundation models without forgetting. In Forty-second International Conference on Machine Learning , 2025a. Linlan Huang, Xusheng Cao, Haori Lu, Yifan Meng, Fei Yang, and Xialei Liu. Mind the gap: Preserving and compensating for the modality gap in clip-based continual learning. arXiv preprint arXiv:2507.09118 ,2025b. Yukang Huo and Hao Tang. When continue learning meets multimodal large language model: A survey. 
+
+arXiv preprint arXiv:2503.01887 , 2025. Ziheng Jia, Zicheng Zhang, Jiaying Qian, Haoning Wu, Wei Sun, Chunyi Li, Xiaohong Liu, Weisi Lin, Guangtao Zhai, and Xiongkuo Min. Vqa2: visual question answering for video quality assessment. In 
+
+Proceedings of the 33rd ACM International Conference on Multimedia , pages 6751–6760, 2025. Pu Jian, Donglei Yu, and Jiajun Zhang. Large language models know what is key visual entity: An llm-assisted multimodal retrieval for vqa. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 10939–10956, 2024. Hyundong Jin, Hyung Jin Chang, and Eunwoo Kim. Instruction-grounded visual projectors for continual learning of generative vision-language models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 3466–3476, 2025. Urvashi Khandelwal, Omer Levy, Dan Jurafsky, Luke Zettlemoyer, and Mike Lewis. Generalization through memorization: Nearest neighbor language models. arXiv preprint arXiv:1911.00172 , 2019. Alex Kulesza, Ben Taskar, et al. Determinantal point processes for machine learning. Foundations and Trends® in Machine Learning , 5(2–3):123–286, 2012. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information processing systems , 33:9459–9474, 2020. Wenzhuo Liu, Fei Zhu, Longhui Wei, and Qi Tian. C-clip: Multimodal continual learning for vision-language model. In The Thirteenth International Conference on Learning Representations , 2025a. Xiaohao Liu, Xiaobo Xia, See-Kiong Ng, and Tat-Seng Chua. Continual multimodal contrastive learning. 
+
+arXiv preprint arXiv:2503.14963 , 2025b. Mao-Lin Luo, Zi-Hao Zhou, Tong Wei, and Min-Ling Zhang. Lada: Scalable label-specific clip adapter for continual learning. In Forty-second International Conference on Machine Learning , 2025. Adyasha Maharana, Jaehong Yoon, Tianlong Chen, and Mohit Bansal. Adapt-∞: Scalable continual multimodal instruction tuning via dynamic data selection. In The Thirteenth International Conference on Learning Representations , 2025. Imad Eddine Marouf, Enzo Tartaglione, Stéphane Lathuilière, and Joost van de Weijer. Ask and re-member: A questions-only replay strategy for continual visual question answering. arXiv preprint arXiv:2502.04469 , 2025. URL https://arxiv.org/pdf/2502.04469 .Yansong Tang, Dajun Ding, Yongming Rao, Yu Zheng, Danyang Zhang, Lili Zhao, Jiwen Lu, and Jie Zhou. Coin: A large-scale dataset for comprehensive instructional video analysis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 1207–1216, 2019. Peiqi Wang, Yikang Shen, Zhen Guo, Matthew Stallone, Yoon Kim, Polina Golland, and Rameswar Panda. Diversity measurement and subset selection for instruction tuning datasets. arXiv preprint arXiv:2402.02318 , 2024a. Ziqi Wang, Chang Che, Qi Wang, Yangyang Li, Zenglin Shi, and Meng Wang. Separable mixture of low-rank adaptation for continual visual instruction tuning. arXiv preprint arXiv:2411.13949 , 2024b. Xiwen Wei, Mustafa Munir, and Radu Marculescu. Mitigating intra-and inter-modal forgetting in continual learning of unified multimodal models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. 11 Bin Wu, Wuxuan Shi, Jinqiao Wang, and Mang Ye. Synthetic data is an elegant gift for continual vision-language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 2813–2823, 2025. Yuhuai Wu, Markus N Rabe, DeLesley Hutchins, and Christian Szegedy. Memorizing transformers. arXiv preprint arXiv:2203.08913 , 2022. Shukang Yin, Chaoyou Fu, Sirui Zhao, Ke Li, Xing Sun, Tong Xu, and Enhong Chen. A survey on multimodal large language models. National Science Review , 11(12):nwae403, 2024. Duzhen Zhang, Yong Ren, Zhong-Zhi Li, Yahan Yu, Jiahua Dong, Chenxing Li, Zhilong Ji, and Jinfeng Bai. Enhancing multimodal continual instruction tuning with branchlora. arXiv preprint arXiv:2506.02041 ,2025a. Liang Zhang, Ziyao Lu, Fandong Meng, Hui Li, Jie Zhou, and Jinsong Su. Advancing smoe for continuous domain adaptation of mllms: Adaptive router and domain-specific loss. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 26584–26602, 2025b. Xiaoyu Zhang, Juan Zhai, Shiqing Ma, Chao Shen, Tianlin Li, Weipeng Jiang, and Yang Liu. Staff: Speculative coreset selection for task-specific fine-tuning. In The Thirteenth International Conference on Learning Representations , 2025c. Da-Wei Zhou, Kai-Wen Li, Jingyi Ning, Han-Jia Ye, Lijun Zhang, and De-Chuan Zhan. External knowledge injection for clip-based class-incremental learning. arXiv preprint arXiv:2503.08510 , 2025. 
+
+# A Full Proofs for §4 
+
+A.1 Proof Setup and Omitted Definitions 
+
+This section provides the formal definitions and assumptions omitted from the compact main-text theory section. We analyze the relaxed outer selector before the final TopB rounding step. At task t, the candidate pool is Ut = Ct ∪ M t−1, where Ct contains entries extracted from the current task and Mt−1 is the previous memory. Let N = |U t|, and let w ∈ RN 
+
+> ≥0
+
+denote relaxed selection weights. 
+
+Budget simplex. The feasible set is the fixed-budget simplex 
+
+∆NB ≜
+
+n
+
+w ∈ RN 
+
+> ≥0
+
+:
+
+> N
+
+# ∑
+
+> i=1
+
+wi = B
+
+o
+
+,
+
+D ≜ max 
+
+> u,v∈∆NB
+
+∥u − v∥2 = B√2. (16) We write πi(w) = wi/B, so that ∑i πi(w) = 1. During selection, πi(w) acts as a differentiable inclusion prior inside the retrieval weights. 
+
+Inner-solved outer surrogate. Given w, the inner calibration ϕ⋆ 
+
+> t
+
+(w) is obtained by solving the current-task calibration problem in Eq. (6) . The outer analysis treats this calibration as solved and defines the per-task surrogate 
+
+ft(w) ≜ Lt
+
+ w, ϕ⋆ 
+
+> t
+
+(w) + βAt
+
+ w, ϕ⋆ 
+
+> t
+
+(w) + γΩ(w), (17) where 
+
+Lt(w, ϕ) = 1
+
+|D t| ∑
+
+> (x,y)∈D t
+
+LNLL 
+
+ θ; x, y | U t, w, ϕ, (18) 
+
+At(w, ϕ) = 1
+
+|A <t| ∑
+
+> (x,y)∈A <t
+
+LNLL 
+
+ θ; x, y | U t, w, ϕ. (19) Here, Lt measures current-task fit, At measures anchor retention, and Ω(w) is the log-determinant coverage penalty in the frozen retrieval space. 12 Projected outer update. The relaxed selector is updated by projected online gradient descent: 
+
+wt+1 = Π∆NB
+
+
+
+wt − η∇ ft(wt)
+
+
+
+, (20) where Π∆NB
+
+is Euclidean projection. After optimization at task t, INDUCE KV discretizes the relaxed selector by taking TopB (wt) and commits the corresponding entries as Mt.
+
+Assumption A.1 (Convexity and bounded gradients) . For each task t , the inner-solved surrogate ft : ∆NB → R
+
+is convex and differentiable, and there exists G > 0 such that 
+
+∥∇ ft(w)∥2 ≤ G, ∀w ∈ ∆NB . (21) This assumption is standard for online convex optimization analyses. In our setting, it corresponds to using a stable inner calibration solver, bounded retrieval keys, and a smooth soft-retrieval dependence on 
+
+w. The log-determinant coverage term is convex and has a bounded gradient, as shown in Lemmas A.4– A.5. 
+
+Dynamic comparator. For nonstationary streams, we compare the learner to a changing sequence of relaxed selectors {ut}Tt=1 ⊂ ∆NB . Its path-length variation is 
+
+VT ≜
+
+> T−1
+
+# ∑
+
+> t=1
+
+∥ut+1 − ut∥2. (22) Small VT corresponds to streams whose best memory allocation evolves gradually, while large VT
+
+corresponds to abrupt task shifts. 
+
+Historical risk and anchor representativeness. Let eP<t denote the unknown mixture distribution over previous tasks. For the inner-solved induced predictor, define the true historical risk 
+
+eR<t(w) ≜ E(x,y)∼ eP<t
+
+ℓt(x, y; w), (23) where ℓt(x, y; w) is the negative log-likelihood induced by candidate-based retrieval and calibrated KV injection. We use the following coreset-style anchor condition. 
+
+Assumption A.2 (ϵ-representative anchors) . For each task t , the anchor loss uniformly approximates the true historical risk: 
+
+sup 
+
+> w∈∆NB
+
+At(w) − eR<t(w) ≤ ϵrep  
+
+> t
+
+. (24) This condition is empirically checkable by measuring the gap between anchor loss and held-out past-task loss. It does not require anchors to perfectly represent all previous data; it only quantifies the approximation error that appears in the retention bound. 
+
+Rounding by TopB . The regret analysis is stated for the relaxed selector wt. The actual memory update uses TopB (wt), which is a deterministic rounding step from the relaxed solution to a discrete budget-B
+
+subset. If each ft is Lipschitz around the relaxed solution, the additional rounding gap is controlled by the distance between wt and its rounded selection vector. Empirically, the spectral coverage term reduces this gap by discouraging highly concentrated or near-duplicate selections. 
+
+A.2 Preliminaries 
+
+We use the following standard properties of Euclidean projection. For a closed convex set K ⊂ RN , define 
+
+ΠK (x) = arg min y∈K ∥y − x∥2.
+
+Lemma A.3 (Projection inequality) . Let K be closed and convex, w ∈ K , g ∈ RN , η > 0, and w+ ≜
+
+ΠK (w − ηg). Then for any u ∈ K ,
+
+⟨g, w − u⟩ ≤ ∥u − w∥22 − ∥ u − w+∥22
+
+2η + η
+
+2 ∥g∥22. (25) 
+
+Proof. Let z ≜ w − ηg and w+ = ΠK (z). The first-order optimality condition of Euclidean projection (a variational inequality) states that 
+
+⟨z − w+, u − w+⟩ ≤ 0 ∀u ∈ K . (26) 13 Substituting z = w − ηg into (26) gives 
+
+⟨w − ηg − w+, u − w+⟩ ≤ 0 =⇒ ⟨g, u − w+⟩ ≥ 1
+
+η ⟨w − w+, u − w+⟩. (27) Now expand the squared norm difference: 
+
+∥u − w∥22 − ∥ u − w+∥22 = ⟨u − w, u − w⟩ − ⟨ u − w+, u − w+⟩
+
+= ⟨(u − w+) + ( w+ − w), (u − w+) + ( w+ − w)⟩ − ∥ u − w+∥22
+
+= 2⟨u − w+, w+ − w⟩ + ∥w+ − w∥22
+
+= −2⟨w − w+, u − w+⟩ + ∥w+ − w∥22. (28) Rearranging (28) yields 
+
+⟨w − w+, u − w+⟩ = 12
+
+
+
+∥u − w+∥22 − ∥ u − w∥22 + ∥w+ − w∥22
+
+
+
+. (29) Plug (29) into (27): 
+
+⟨g, u − w+⟩ ≥ 12η
+
+
+
+∥u − w+∥22 − ∥ u − w∥22 + ∥w+ − w∥22
+
+
+
+. (30) Finally decompose ⟨g, w − u⟩ = ⟨g, w − w+⟩ + ⟨g, w+ − u⟩ and use (30): 
+
+⟨g, w − u⟩ = ⟨g, w − w+⟩ − ⟨ g, u − w+⟩≤ ⟨ g, w − w+⟩ − 12η
+
+
+
+∥u − w+∥22 − ∥ u − w∥22 + ∥w+ − w∥22
+
+
+
+= ∥u − w∥22 − ∥ u − w+∥22
+
+2η +
+
+
+
+⟨g, w − w+⟩ − 12η ∥w+ − w∥22
+
+
+
+. (31) Apply the inequality a⊤b ≤ η 
+
+> 2
+
+∥a∥22 + 12η ∥b∥22 with a = g and b = w − w+:
+
+⟨g, w − w+⟩ ≤ η
+
+2 ∥g∥22 + 12η ∥w − w+∥22. (32) Substituting (32) into (31) cancels the ∥w − w+∥22/(2η) terms, yielding (25). 
+
+A.3 Convexity and Gradient Control for the Log-Det Coverage Regularizer 
+
+Recall the coverage regularizer (Eq. (19) in §3): 
+
+Ω(w) = − log det  C(w) + ϵId′
+
+, C(w) = 
+
+> N
+
+# ∑
+
+> i=1
+
+πi(w) ziz⊤ 
+
+> i
+
+, πi(w) = wi
+
+B . (33) 
+
+Lemma A.4 (Convexity of Ω). Ω(w) is convex over ∆NB .Proof. The map w 7 → C(w) is affine because C(w) = ∑i(wi/B)ziz⊤ 
+
+> i
+
+. The function X 7 → − log det (X)
+
+is convex over the positive definite cone X ≻ 0 (a standard result in matrix convex analysis). Since 
+
+C(w) + ϵId′ ≻ 0 for any ϵ > 0, the composition w 7 → − log det (C(w) + ϵId′ ) preserves convexity under an affine map, hence Ω is convex. 
+
+Lemma A.5 (Gradient formula and norm bound) . Let A (w) ≜ C(w) + ϵId′ . Then for each coordinate i, 
+
+∂Ω(w)
+
+∂wi
+
+= − 1
+
+B z⊤ 
+
+> i
+
+A(w)−1zi. (34) 
+
+If ∥zi∥2 ≤ 1 for all i, then 
+
+∂Ω(w)
+
+∂wi
+
+≤ 1
+
+Bϵ , ∥∇ Ω(w)∥2 ≤√NBϵ . (35) 
+
+Proof. Differentiate Ω(w) = − log det (A(w)) . Using the matrix differential identity d log det (A) = 
+
+tr (A−1dA), we have d Ω = −tr (A−1dA). Moreover, ∂A/∂wi = ∂C/∂wi = ( 1/ B)ziz⊤ 
+
+> i
+
+. Thus 
+
+∂Ω
+
+∂wi
+
+= −tr 
+
+
+
+A−1 · 1
+
+B ziz⊤
+
+> i
+
+
+
+= − 1
+
+B tr  z⊤ 
+
+> i
+
+A−1zi
+
+ = − 1
+
+B z⊤ 
+
+> i
+
+A−1zi,proving (34) . For the bound, note A(w) ⪰ ϵI implies A(w)−1 ⪯ ϵ−1 I. Therefore z⊤ 
+
+> i
+
+A−1zi ≤ ϵ−1∥zi∥22 ≤
+
+ϵ−1, giving |∂Ω/∂wi| ≤ 1/ (Bϵ). Finally, ∥∇ Ω∥2 ≤ √N∥∇ Ω∥∞ ≤ √N/(Bϵ).14 A.4 Proof of Theorem 4.1 
+
+Proof. Let gt ≜ ∇ ft(wt). By convexity of ft,
+
+ft(wt) − ft(u) ≤ ⟨ gt, wt − u⟩. (36) Apply Lemma A.3 to the update wt+1 = Π∆NB
+
+(wt − ηgt) with K = ∆NB :
+
+⟨gt, wt − u⟩ ≤ ∥u − wt∥22 − ∥ u − wt+1∥22
+
+2η + η
+
+2 ∥gt∥22. (37) Combining (36) and (37) yields 
+
+ft(wt) − ft(u) ≤ ∥u − wt∥22 − ∥ u − wt+1∥22
+
+2η + η
+
+2 ∥gt∥22. (38) Summing (38) from t = 1 to T gives a telescoping series: 
+
+> T
+
+# ∑
+
+> t=1
+
+  ft(wt) − ft(u) ≤ 12η
+
+> T
+
+# ∑
+
+> t=1
+
+ ∥u − wt∥22 − ∥ u − wt+1∥22
+
+ + η
+
+2
+
+> T
+
+# ∑
+
+> t=1
+
+∥gt∥22
+
+= ∥u − w1∥22 − ∥ u − wT+1∥22
+
+2η + η
+
+2
+
+> T
+
+# ∑
+
+> t=1
+
+∥gt∥22
+
+≤ D2
+
+2η + η
+
+2
+
+> T
+
+# ∑
+
+> t=1
+
+∥gt∥22, (39) where we used ∥u − w1∥2 ≤ D and ∥u − wT+1∥22 ≥ 0. Using Assumption A.1 gives ∥gt∥2 ≤ G, hence Reg T (u) ≤ D2
+
+2η + ηG2T
+
+2 .Choosing η = D/(G√T) yields Reg T (u) ≤ DG √T. With D = B√2 from (16), we obtain (11). 
+
+A.5 Proof of Theorem 4.2 
+
+Proof. Let gt ≜ ∇ ft(wt) and {ut}Tt=1 ⊂ ∆NB . By convexity, 
+
+ft(wt) − ft(ut) ≤ ⟨ gt, wt − ut⟩. (40) Decompose 
+
+⟨gt, wt − ut⟩ = ⟨gt, wt − ut+1⟩ + ⟨gt, ut+1 − ut⟩. (41) Apply Lemma A.3 to the first term with comparator u = ut+1:
+
+⟨gt, wt − ut+1⟩ ≤ ∥ut+1 − wt∥22 − ∥ ut+1 − wt+1∥22
+
+2η + η
+
+2 ∥gt∥22. (42) For the second term, Cauchy–Schwarz gives 
+
+⟨gt, ut+1 − ut⟩ ≤ ∥ gt∥2 · ∥ ut+1 − ut∥2 ≤ G ∥ut+1 − ut∥2. (43) Combining (40)–(43) yields 
+
+ft(wt) − ft(ut) ≤ ∥ut+1 − wt∥22 − ∥ ut+1 − wt+1∥22
+
+2η + η
+
+2 ∥gt∥22 + G ∥ut+1 − ut∥2. (44) We now relate ∥ut+1 − wt∥22 to ∥ut − wt∥22. Using (a + b)2 ≤ a2 + 2ab + b2 with a = ∥ut − wt∥2 and 
+
+b = ∥ut+1 − ut∥2, we obtain 
+
+∥ut+1 − wt∥22 = ∥(ut − wt) + ( ut+1 − ut)∥22
+
+≤ ∥ ut − wt∥22 + 2∥ut − wt∥2∥ut+1 − ut∥2 + ∥ut+1 − ut∥22
+
+≤ ∥ ut − wt∥22 + 2D∥ut+1 − ut∥2 + D∥ut+1 − ut∥2, (45) where we used ∥ut − wt∥2 ≤ D and ∥ut+1 − ut∥22 ≤ D∥ut+1 − ut∥2 (because ∥ut+1 − ut∥2 ≤ D on a diameter-D set). Thus 
+
+∥ut+1 − wt∥22 ≤ ∥ ut − wt∥22 + 3D∥ut+1 − ut∥2. (46) 15 Plug (46) into (44) and sum over t = 1, . . . , T:
+
+> T
+
+# ∑
+
+> t=1
+
+  ft(wt) − ft(ut) ≤ 12η
+
+> T
+
+# ∑
+
+> t=1
+
+
+
+∥ut − wt∥22 − ∥ ut+1 − wt+1∥22
+
+
+
++ 3D
+
+2η
+
+> T
+
+# ∑
+
+> t=1
+
+∥ut+1 − ut∥2
+
++ η
+
+2
+
+> T
+
+# ∑
+
+> t=1
+
+∥gt∥22 + G
+
+> T
+
+# ∑
+
+> t=1
+
+∥ut+1 − ut∥2. (47) The first summation telescopes: 
+
+> T
+
+# ∑
+
+> t=1
+
+
+
+∥ut − wt∥22 − ∥ ut+1 − wt+1∥22
+
+
+
+= ∥u1 − w1∥22 − ∥ uT+1 − wT+1∥22 ≤ D2. (48) Also, ∑Tt=1 ∥ut+1 − ut∥2 = VT if we set uT+1 = uT . Using ∥gt∥2 ≤ G and combining terms gives DReg T ({ut}) ≤ D2
+
+2η + 3D
+
+2η VT + ηG2T
+
+2 + GV T . (49) This bound is already informative. To match the cleaner form in Theorem 4.2, we may upper bound 
+
+GV T ≤ (D/η)VT by choosing η ≤ D/G (always possible in our regime), yielding DReg T ({ut}) ≤ D2 + 5DV T
+
+2η + ηG2T
+
+2 . (50) A slightly sharper constant can be obtained by a refined coupling that avoids the ∥ut+1 − ut∥22 ≤
+
+D∥ut+1 − ut∥2 relaxation; for simplicity of presentation in the main text, we report the canonical O (D2 +
+
+DV T )/η + ηG2T form. Optimizing the right-hand side over η yields η⋆ = p(D2 + cDV T )/(G2T) and DReg T ({ut}) ≤ G√TpD2 + cDV T for a small constant c.
+
+Comment on constants. The main-text statement (12) corresponds to the standard “clean” dynamic-regret template. The full proof above makes explicit where constants enter. If desired, one can tighten constants further by (i) using a Bregman-divergence analysis tailored to ∆NB (entropic mirror descent), and (ii) keeping the squared-variation term ∑t ∥ut+1 − ut∥22 instead of converting it to DV T .
+
+A.6 Proof of Theorem 4.3 
+
+Proof. The pointwise bound follows directly from Assumption A.2. For w = wt,
+
+eR<t(wt) ≤ A t(wt) + ϵrep  
+
+> t
+
+,which gives Eq. (14). We now prove the averaged bound. Summing the pointwise inequality over t = 1, . . . , T gives 
+
+> T
+
+# ∑
+
+> t=1
+
+eR<t(wt) ≤
+
+> T
+
+# ∑
+
+> t=1
+
+At(wt) + 
+
+> T
+
+# ∑
+
+> t=1
+
+ϵrep  
+
+> t
+
+. (51) Since the surrogate is 
+
+ft(w) = Lt(w, ϕ⋆ 
+
+> t
+
+(w)) + βAt(w, ϕ⋆ 
+
+> t
+
+(w)) + γΩ(w),and the likelihood and coverage terms are nonnegative, we have 
+
+At(wt) ≤ 1
+
+β ft(wt). (52) Therefore, T
+
+# ∑
+
+> t=1
+
+eR<t(wt) ≤ 1
+
+β
+
+> T
+
+# ∑
+
+> t=1
+
+ft(wt) + 
+
+> T
+
+# ∑
+
+> t=1
+
+ϵrep  
+
+> t
+
+. (53) For any comparator u ∈ ∆NB , add and subtract ∑Tt=1 ft(u):
+
+> T
+
+# ∑
+
+> t=1
+
+ft(wt) = 
+
+> T
+
+# ∑
+
+> t=1
+
+ft(u) + 
+
+> T
+
+# ∑
+
+> t=1
+
+  ft(wt) − ft(u)| {z } 
+
+> Reg T(u)
+
+. (54) Combining Eqs. (53) and (54), then dividing by T, yields 1
+
+T
+
+> T
+
+# ∑
+
+> t=1
+
+eR<t(wt) ≤ 1
+
+βT
+
+> T
+
+# ∑
+
+> t=1
+
+ft(u) + Reg T (u)
+
+βT + 1
+
+T
+
+> T
+
+# ∑
+
+> t=1
+
+ϵrep  
+
+> t
+
+,which is Eq. (15). 16 B Additional Experimental Details 
+
+B.1 Benchmarks, Task Order, and Data Processing 
+
+UCIT (task-incremental CIT). We follow the UCIT benchmark introduced in Guo et al. (2025), consisting of six datasets: {A RXIV QA, I MAGE NET -R, V IZ WIZ -C APTION , I CON QA, CLEVR-M ATH , F LICKR 30 K}. Each dataset is treated as one task; we use the official task-specific instruction templates (e.g., option-letter answers for multiple-choice tasks and short captions for captioning tasks) Guo et al. (2025). We use the default task order of Guo et al. (2025) unless otherwise stated. 
+
+CoIN (task-incremental CIT). We follow C OIN Tang et al. (2019), which covers eight task categories and ten underlying datasets. The tasks include: S CIENCE QA, VQA V2, GQA, V IZ WIZ , T EXT VQA, OCR-VQA, a C LASSIFICATION task (ImageNet subset), and a G ROUNDING task built from R EF CO-CO/R EF COCO+/R EF COCO G Tang et al. (2019). We adopt the default random task order provided by the benchmark (and report order-robustness when relevant). 
+
+Continual VQA. For VQA V2 continual VQA, we use the 10-task question-type split: recognition, location, judge, commonsense, count, action, color, type, subcategory, causal Huai et al. (2025). For VQACL, we follow Marouf et al. (2025) on VQA V2 and NE XT-QA, and report both the standard testing protocol and the novel-composition evaluation when available. 
+
+Domain-incremental CIT (Medicine/Chart/Math). We follow the benchmark in Zhang et al. (2025b): 
+
+Medicine uses VQA-RAD, P ATH VQA, SLAKE; Chart uses C HART QA, C HART -TO -T ABLE , C HART -TO -TEXT ; Math uses a combined MWP&GPS suite for multimodal math word problems and geometry problem solving Zhang et al. (2025b). Each domain is treated as one continual step (domain-incremental). 
+
+LiIT stream (dynamic dataset arrival). We follow Adapt-∞ Maharana et al. (2025) and sequentially train over a dataset stream M3IT → MINI GPT4 → MANTIS → LAMM → VISION FLAN starting from an instruction-tuned LLaVA checkpoint (timestep t=0 in Maharana et al. (2025)). We evaluate on the same skill-suite grouping (e.g., (Knowledge) VQA, grounding, reasoning, language-only, multilingual) as in Maharana et al. (2025). 
+
+B.2 Metrics and Continual Learning Scores 
+
+UCIT (Avg/Last). We report Avg and Last as in Guo et al. (2025), computed from the final model’s test scores on all seen tasks and on the most recent task, respectively. Captioning tasks follow standard caption metrics (BLEU-1/2/3/4, METEOR, ROUGE-L, CIDEr) aggregated per the benchmark Guo et al. (2025). 
+
+CoIN (task scores, MAA, BWT). We follow Tang et al. (2019). Image QA tasks use answer accuracy; grounding uses IoU-based success; classification uses top-1 accuracy. We aggregate across tasks with mean average accuracy (MAA) and backward transfer (BWT): MAA = 1
+
+T
+
+> T
+
+# ∑
+
+> t=1
+
+aT,t, (55) BWT = 1
+
+T − 1
+
+> T−1
+
+# ∑
+
+> t=1
+
+ aT,t − at,t
+
+, (56) where ai,t is the task-t test score after finishing training on task i.
+
+Continual VQA (AP, AF/Forget). We report the same metrics as Huai et al. (2025); Marouf et al. (2025): AP = 1
+
+T
+
+> T
+
+# ∑
+
+> t=1
+
+aT,t, (57) AF/Forget = 1
+
+T − 1
+
+> T−1
+
+# ∑
+
+> t=1
+
+
+
+max  
+
+> 1≤i≤T
+
+ai,t − aT,t
+
+
+
+, (58) with ai,t measured by VQA accuracy on VQA V2 and the protocol-specific score for NE XT-QA Marouf et al. (2025). 
+
+Domain-incremental CIT (per-domain metrics). We follow Zhang et al. (2025b): medicine reports closed-set accuracy and open-set recall; chart reports RelaxAcc (VQA), RMSF1 (table), and BLEU4 (text); math reports accuracy on MWP&GPS. We report per-domain results and their average. 17 LiIT (AvgAcc, Relative Gain, Forgetting Rate). We follow Maharana et al. (2025) and report AvgAcc at the final timestep, Relative Gain (normalized by per-skill upper bounds), and Forgetting Rate averaged across skills and timesteps. 
+
+System metrics. We report (i) external memory size (MB), (ii) additional KV tokens injected per layer, and (iii) end-to-end decoding latency (tokens/s), averaged over benchmark test sets. 
+
+B.3 Baselines and Fair-Budget Settings 
+
+Recent SOTA baselines. We include the most relevant recent methods per suite: CIT: HiDe-LLaVA Guo et al. (2025), SEFE Chen et al. (2025), BranchLoRA Zhang et al. (2025a), and related PEFT routing/merg-ing baselines reported with UCIT/CoIN. Domain-incremental CIT: SMoE Zhang et al. (2025b) and its compared PEFT baselines (e.g., M-LoRA/O-LoRA/MoELoRA/SMoELoRA/L-SMoE) under matched parameter budgets. Continual VQA: CL-MoE Huai et al. (2025) and QUAD Marouf et al. (2025), plus re-hearsal and regularization baselines (ER/DER/VS/VQACL, EWC/MAS). LiIT: Adapt-∞ Maharana et al. (2025) and its suite baselines (random replay; score-based selection such as entropy/perplexity/EL2N; and recent pruning baselines). 
+
+Fairness across method families. INDUCE KV freezes the backbone and learns only a tiny calibration ϕ
+
+while selecting an external KV memory. To compare against (i) parameter-growing PEFT methods and (ii) replay-based methods, we match total extra footprint and keep inference compute comparable: • Footprint matching. We match either (a) total FP16 bytes of I NDUCE KV memory vs. added trainable parameters (PEFT), or (b) total stored replay bytes (rehearsal). • Compute matching. We report results at fixed additional KV-token budgets (controlled by (B, m)
+
+for I NDUCE KV) and use the same max decoding length and batch sizes across methods. We provide the full budget conversion and all matched settings in Table 4. 
+
+Budget (B, m) Bm Mem 4B Mem 8B #PEFT #Replay text #Replay img+text 
+
+Tier (KV tok/layer) (MiB) (MiB) (FP16 params) (exemplars) (exemplars) XS (4, 8 ) 32 18.02 18.03 9.45M 9,232 
+
+j MemBytes ¯simg + 2048 
+
+k
+
+S (8, 8 ) 64 36.04 36.06 18.91M 18,464 
+
+j MemBytes ¯simg + 2048 
+
+k
+
+M (16, 8 ) 128 72.08 72.13 37.81M 36,928 
+
+j MemBytes ¯simg + 2048 
+
+k
+
+L (32, 8 ) 256 144.16 144.25 75.63M 73,856 
+
+j MemBytes ¯simg + 2048 
+
+k
+
+Table 4: Budget conversion for fair comparison. INDUCE KV stores retrieval keys r(x) ∈ Rd and layerwise KV payloads {( ¯Kℓ(x), ¯Vℓ(x)) }L 
+
+> ℓ=1
+
+in FP16. For the main backbones in this paper, the text transformer has 
+
+L=36, H=32, and head dimension dh=128, with d=2560 (4B) or d=4096 (8B). A single memory entry costs MemEntryBytes (d) = 2 (d + 2LHmd h) bytes, hence MemBytes = B · MemEntryBytes (d) and Mem =
+
+MemBytes/ 220 (MiB). We match PEFT baselines by an equivalent FP16 parameter budget # PEFT =
+
+⌊MemBytes/ 2⌋. For text-only replay, one exemplar stores Ntok =512 int32 token IDs (prefix+target), i.e., 4 Ntok = 2048 bytes, giving # Replay text = ⌊MemBytes/ 2048 ⌋. For image+text replay, one exemplar additionally stores a JPEG image payload of empirical mean size ¯simg bytes under the same preprocessing and compression. 
+
+B.4 Implementation Details of I NDUCE KV 
+
+Implementation. Because the compared baselines are reported under heterogeneous backbone and evaluation protocols, we explicitly list the backbone/protocol used by each method in the result tables. For benchmark suites whose strongest baselines follow the LLaVA-1.5/LLaVA-v1.5-7B protocol, we additionally report a backbone-matched I NDUCE KV variant under the same protocol, while retaining the LLaVA-OneVision-4B row as our default system configuration. For VQACL on VQAv2/NExT-QA, prior QUAD/VQACL baselines use a T5-based protocol; therefore, we mark the default I NDUCE KV result as an MLLM-protocol reference rather than a strict T5-matched comparison. Additional results on 
+
+LLaVA-OneVision-1.5-8B-Instruct and cross-family backbones are reported in §C.7. 18 Scope Checkpoint L d H HKV dh MaxPos torch_dtype 
+
+Main lmms-lab/LLaVA-OneVision-1.5-4B-Instruct 36 2560 32 8 128 262144 BF16 Main lmms-lab/LLaVA-OneVision-1.5-8B-Instruct 36 4096 32 8 128 32768 BF16 App. Qwen/Qwen3-VL-4B-Instruct 36 2560 32 8 128 262144 BF16 App. Qwen/Qwen3-VL-8B-Instruct 36 4096 32 8 128 262144 BF16 App. deepseek-ai/deepseek-vl2-tiny 12 1280 10 10 128 4096 BF16 App. deepseek-ai/deepseek-vl2-small 27 2048 16 16 128 4096 BF16 App. deepseek-ai/deepseek-vl2 – 2560 – – – 4096 BF16 
+
+Table 5: Backbone configurations used in this paper. L is the number of decoder layers; d is the text hidden size; H and HKV are the query-head and KV-head counts; dh is the per-(KV)-head dimension. For DeepSeek-VL2 (base), the released wrapper config does not expose (L, H, HKV , dh), so we read them from the instantiated model at runtime to construct KV payloads.                                              
+
+> Tier BmBm LLaVA-OV-4B LLaVA-OV-8B Qwen3-VL-4B Qwen3-VL-8B DS-VL2-Tiny / Small
+> (KV tok/layer) (MiB) (MiB) (MiB) (MiB) (MiB) S64 8512 72.31 72.50 72.31 72.50 30.16 / 108.25 M128 81024 144.62 145.00 144.62 145.00 60.31 / 216.50 L256 82048 289.25 290.00 289.25 290.00 120.62 / 433.00 XL 512 84096 578.50 580.00 578.50 580.00 241.25 / 866.00
+
+Table 6: System overhead of I NDUCE KV. We report (i) the number of additional KV tokens injected per layer ( Bm ) and (ii) the FP16 external-memory footprint (MiB) computed by Eq. (59) . DeepSeek-VL2 (base) is omitted here because (L, H, HKV , dh) is not fully specified in the released wrapper config; we report its exact footprint by directly summing the stored tensor sizes in our code. 
+
+Backbones, checkpoints, and precision. We use the LLaVA-OneVision-1.5 4B and 8B instruction-tuned checkpoints listed in Table 5. Their text backbones use L=36 decoder layers and grouped-query attention with 32 query heads, 8 KV heads, and per-head dimension 128; the hidden size is d=2560 (4B) or d=4096 (8B). We additionally evaluate on Qwen3-VL 4B and 8B checkpoints, which share the same layer count and attention geometry as above, with d=2560 (4B) or d=4096 (8B). For DeepSeek-VL2, we evaluate the tiny and small variants, whose language backbones have (L, d) = ( 12, 1280 ) and (27, 2048 ), respectively, with standard multi-head attention. We also report results on DeepSeek-VL2 (4.5B activated; MoE), and use the instantiated model’s internal language configuration to determine the exact attention geometry for KV extraction when fields are not exposed in the wrapper config. Across all runs, backbone weights are kept frozen and executed in BF16, while all external memory tensors are stored in FP16. 
+
+External memory tensors and footprint. Each memory entry stores a normalized retrieval key r(x) ∈ Rd
+
+and layerwise KV payloads {( ¯Kℓ(x), ¯Vℓ(x)) }L 
+
+> ℓ=1
+
+extracted from the frozen backbone (Sec. 3). We store 
+
+r(x) and all KV payload tensors in FP16. For backbones with grouped-query attention, we store KV payloads for KV heads only ( HKV ), matching the shape of the frozen Wℓ
+
+> K
+
+, Wℓ 
+
+> V
+
+. With payload length m=8, the per-entry FP16 footprint is BytesPerEntry = 2d + 4 L H KV m d h, (59) where 2 d accounts for FP16 retrieval keys and the second term accounts for FP16 (K, V) payloads. We fix the spectral projection dimension d′=256 and stabilizer ϵ=10 −3 in Eq. (19). We use a fixed random orthonormal projector P ∈ Rd×d′
+
+generated once by drawing a Gaussian matrix and applying QR decomposition (seed 0), and reuse P for all tasks. 
+
+Memory budgets and system overhead. We sweep the entry budget B while fixing m=8, and report results under four budget tiers. Table 6 reports the induced KV-token overhead ( Bm additional cache tokens per layer) and the corresponding FP16 memory footprint computed from Eq. (59) using the backbone hyperparameters in Table 5. 
+
+Bilevel optimization hyperparameters. We optimize the inner calibration ϕ = {ϕτ , ϕ1, . . . , ϕL} with AdamW: learning rate 1 ×10 −2, (β1, β2) = ( 0.9, 0.999 ), weight decay 0, for J=10 inner steps per outer iteration. We initialize the retrieval temperature to τ0=0.07 (by setting ϕτ = log (exp (τ0) − 1)) and initialize all layer gates to λℓ=0.5 (by setting ϕℓ=0). For the outer selection weights, we run I=100 projected gradient steps per task with step size αw=0.1 and Euclidean projection onto ∆NB = {w ≥ 0 :19 ∑i wi = B}. We set the ℓ2 regularizer in Eq. (15) to η=10 −4. For (β, γ) in Eq. (18), we perform a task-1 validation grid search over β ∈ { 0.1, 0.3, 0.5, 1.0 } and γ ∈ { 0, 0.05, 0.1, 0.3 }, and then fix the selected values for the full stream. 
+
+Hardware and measurement protocol. All runs are executed on NVIDIA A100 80GB GPUs. Unless a benchmark specifies otherwise, we use batch size 1 for decoding evaluation and report (i) peak GPU memory (GB) and (ii) decoding throughput (tokens/s) averaged over the full test set, with identical maxi-mum generation length and stopping criteria across all methods. We keep the same image preprocessing and chat templates provided by each backbone’s official processor. 
+
+B.5 Other Experiment Details 
+
+Memory-attention utilization protocol. To quantify whether external KV memory is used during generation, we measure the attention mass assigned to injected memory tokens. For each task/domain in UCIT, C OIN, and continual VQA, we sample 500–1 ,000 evaluation instances and compute the layer-wise memory-attention ratio 
+
+ρℓ ≜ E(x,y)
+
+ 1
+
+H
+
+> H
+
+# ∑
+
+> h=1
+
+∑q ∑k∈K mem Attn ℓ,hqk 
+
+∑q ∑k Attn ℓ,hqk 
+
+ , (60) where H is the number of attention heads, Kmem indexes injected KV-memory tokens, q ranges over query positions, and the denominator sums over both self-attention and memory tokens. We compute ρℓ
+
+after memory injection using the same decoding settings as the main evaluation. For each task t, we also record the raw performance gain 
+
+∆t = Score t(INDUCE KV ) − Score t(NO -MEM ), (61) where NO -MEM disables KV-memory injection while keeping the frozen backbone, prompt, decoding, and evaluation metric unchanged. Because tasks use heterogeneous metrics, the final Gain column in Fig. 3 reports a min–max normalized version of ∆t:
+
+e∆t = ∆t − min t′ ∆t′
+
+max t′ ∆t′ − min t′ ∆t′ + δ , δ = 10 −8. (62) Raw gains are kept in the row labels or supplementary logs. 
+
+Inducing-set diversity protocol. To test whether bilevel inducing-set selection reduces redundancy, we compare three selection rules under the same candidate pool and memory budget: (i) full I NDUCE KV, (ii) I NDUCE KV with the spectral coverage term disabled ( γ=0), and (iii) random Top-B selection from the candidate pool. For each task t, let St denote the selected Top-B memory indices and let {ri}i∈S t be their unit-norm retrieval keys. We measure redundancy using all pairwise cosine similarities within the selected memory: 
+
+Rt = ⟨ri, rj⟩ : i < j, i, j ∈ S t , (63) where lower values indicate fewer near-duplicate keys. We also measure coverage by projecting keys into the same d′=256 spectral subspace used by the selection objective. With zi = P⊤ri and 
+
+Ct = 1
+
+B ∑
+
+> i∈S t
+
+ziz⊤ 
+
+> i
+
+, (64) we report LogDet (Ct) = log det (Ct + ϵId′ ), ϵ = 10 −3. (65) For Fig. 4, violin plots visualize the distribution of Rt across selected memory pairs, and diamonds show the mean log-determinant coverage normalized onto the same plotting range. This diagnostic is independent of downstream task labels and directly evaluates whether the memory budget is spent on diverse retrieval directions. 
+
+Calibration-dynamics protocol. To analyze the role of the minimal calibration parameter, we compare full I NDUCE KV against a Fixed-τ, λ variant that disables calibration updates by holding τ ≡ 0.07 and 
+
+λℓ ≡ 0.5 for all layers. After each task t, we record the learned retrieval temperature 
+
+τt = softplus (ϕτ,t) (66) and the mean value gate ¯λt = 1
+
+L
+
+> L
+
+# ∑
+
+> ℓ=1
+
+λℓ,t, λℓ,t = σ(ϕℓ,t). (67) 20 Table 7: Domain-incremental continual instruction tuning over M EDICINE /C HART /M ATH . Baselines follow the SMoE protocol Zhang et al. (2025b), where all methods are developed on LLaVA-1.5 with comparable PEFT parameter budgets.   
+
+> Method Backbone / Protocol Med. Avg
+
+↑ Chart Avg ↑ Math Acc ↑ Overall ↑                                                            
+
+> Replay LLaVA-1.5 42.54 15.90 36.79 31.74 EWC LLaVA-1.5 44.79 18.19 35.55 32.84 LwF LLaVA-1.5 46.67 20.55 35.87 34.36 CODA LLaVA-1.5 48.55 23.23 34.19 35.32 M-LoRA LLaVA-1.5 53.41 29.86 30.97 38.08 O-LoRA LLaVA-1.5 56.77 34.12 36.52 42.47 MoELoRA LLaVA-1.5 46.83 19.73 38.06 34.87 SMoELoRA LLaVA-1.5 46.71 18.87 35.10 33.56 L-SMoE LLaVA-1.5 51.63 28.59 38.19 39.47 SMoE LLaVA-1.5 67.70 41.28 39.10 49.36
+> INDUCE KV (matched) LLaVA-1.5 68.92 42.65 40.44 50.67
+> INDUCE KV (default) LLaVA-OV-4B 69.45 43.16 40.82 51.14
+
+We additionally compute the per-task calibration gain 
+
+∆cal  
+
+> t
+
+= Score t(INDUCE KV ) − Score t(FIXED -τ, λ), (68) using the official metric of each benchmark. For correlation analysis, we pair ∆cal  
+
+> t
+
+with a retention proxy: anchor loss for instruction-tuning streams and AF/Forget for continual VQA. The trace in Fig. 8 therefore visualizes not only the learned calibration values, but also whether their changes coincide with tasks where adaptive retrieval sharpness or value-gated memory strength provides measurable benefit. 
+
+# C Additional Experimental Results 
+
+C.1 Additional Main Results 
+
+This section reports additional main results that are omitted from the main paper for space. We in-clude domain-incremental continual instruction tuning and lifelong multimodal instruction tuning, and continue to explicitly indicate the backbone/protocol used by each method. 
+
+Domain-incremental continual instruction tuning. Table 7 shows that I NDUCE KV remains effective when the stream consists of heterogeneous domains rather than task categories. Under the LLaVA-1.5 matched protocol, I NDUCE KV improves over SMoE by 1.22 points on Medicine, 1.37 on Chart, 1.34 on Math, and 1.31 in Overall score. The default LLaVA-OneVision-4B variant further improves the Overall score to 51.14. These results suggest that the proposed memory selection objective is not limited to a single task-incremental setting: the same retention-aware and coverage-aware inducing-set construction also helps when incoming data shifts across medical, chart, and mathematical reasoning domains. 
+
+Lifelong multimodal instruction tuning. Table 8 reports results under dynamic dataset arrival. Com-pared with Adapt-∞ (100k), the backbone-matched I NDUCE KV variant improves Relative Gain by 1.2 points and Avg. Acc by 0.9 points, while reducing the Forget Rate from 0.4 to 0.1. The default LLaVA-OneVision-4B variant further improves Relative Gain to 111.5 and Avg. Acc to 53.8. These results indicate that I NDUCE KV scales beyond fixed task streams: even when datasets arrive dynamically, a fixed-budget external KV memory can preserve prior skills while incorporating new instruction data. 
+
+C.2 Hyperparameter Sensitivity 
+
+We study the sensitivity of I NDUCE KV to key hyperparameters that potentially affect the stability– plasticity trade-off and the inducing-set quality. Fig. 5 indicates that I NDUCE KV is broadly stable across reasonable hyperparameter ranges. Increasing β moderately improves retention-oriented suites (UCIT/CoIN) but can slightly reduce forward transfer when overly large, matching its role in prioritizing anchor loss in the outer objective. The coverage weight γ is also robust: moderate values yield the best overall trade-off, while extremes either under-penalize redundancy (small γ) or over-diversify the inducing set (large γ). For the representation knobs, performance improves from m=4 to m=8 and 21 Table 8: Lifelong multimodal instruction tuning under dynamic dataset arrival. Baselines follow the Adapt-∞ protocol Maharana et al. (2025) based on LLaVA-1.5-7B. 
+
+Method Backbone / Protocol Rel. Gain ↑ Forget Rate ↓ Avg. Acc ↑
+
+Sequential (lower bound) LLaVA-1.5-7B 68.0 26.0 32.0 Multi-task (upper bound) LLaVA-1.5-7B 92.5 – 46.1 Random Experience Replay LLaVA-1.5-7B 89.5 6.6 43.4 Random (pruning) LLaVA-1.5-7B 95.3 2.1 47.2 COINCIDE LLaVA-1.5-7B 89.5 3.9 44.7 Adapt-∞ (25k) LLaVA-1.5-7B 102.3 0.9 50.5 Adapt-∞ (50k) LLaVA-1.5-7B 107.2 0.2 51.7 Adapt-∞ (100k) LLaVA-1.5-7B 109.7 0.4 52.5 
+
+LITE-Adapt-∞ (25k) LLaVA-1.5-7B 99.7 1.3 49.6 INDUCE KV (matched) LLaVA-1.5-7B 110.9 0.1 53.4 
+
+INDUCE KV (default) LLaVA-OV-4B 111.5 0.1 53.8 
+
+then saturates (16–32), suggesting that a short attention-ready payload is sufficient once key evidence is preserved. Anchor cap Atask shows diminishing returns beyond 64 examples per past task, consistent with anchors acting as a low-variance estimator of historical risk. Finally, using J=10 inner unroll steps is sufficient: fewer steps underfit the calibration ϕ, while larger J yields negligible gains, indicating that the bilevel optimization converges reliably with a modest inner budget. 0.1 0.3 0.5 1.0 1.5                       
+
+> Value
+> 55
+> 60
+> 65
+> 70
+> Score (%)
+> (anchor weight)
+> 0.02 0.05 0.10 0.20 0.30
+> Value
+> 55
+> 60
+> 65
+> 70
+> (coverage weight)
+> 4812 16 32
+> Value
+> 55
+> 60
+> 65
+> 70
+> m(payload length)
+> 16 32 64 128 256
+> Value
+> 55
+> 60
+> 65
+> 70
+> Atask (anchors / past task)
+> 3510 20 30
+> Value
+> 50
+> 55
+> 60
+> 65
+> 70
+> J(inner unroll steps)
+> UCIT Avg CoIN Avg VQAv2 AP Domain Overall LiIT AvgAcc
+
+Figure 5: Hyperparameter sensitivity of I NDUCE KV (mean ±std). 
+
+C.3 Effect of Task Order 
+
+We test whether I NDUCE KV is order-robust. For each benchmark suite, we sample M random task permutations and run continual adaptation under the same budget/config as the main experiments. We report the final metric for each run and visualize the distribution across orders. Specifically, we measure: UCIT Avg (6 tasks), CoIN Avg (8 tasks), VQAv2 AP on the 10-task question-type stream, Domain Overall on the 3-domain stream (all 6 permutations, repeated with different seeds), and LiIT AvgAcc on the 5-stage dataset-arrival stream. We compare I NDUCE KV against the strongest suite-specific baseline under the same footprint constraint: HiDe-LLaVA for UCIT/CoIN, CL-MoE for VQAv2, SMoE for Domain, and Adapt-∞ (100k) for LiIT. Fig. 6 indicates that I NDUCE KV is consistently less sensitive to task ordering: its score distributions are tighter across UCIT/CoIN/VQAv2/Domain/LiIT, while maintaining a higher mean. This behavior aligns with I NDUCE KV’s design: anchors stabilize historical risk, and the spectral coverage term discourages collapsing onto order-induced near-duplicate keys, making the final memory less dependent on which tasks were encountered early. 
+
+C.4 When Does I NDUCE KV Help the Most? 
+
+What is the applicability boundary of I NDUCE KV? Which examples benefit most, and when is memory less necessary? We explain I NDUCE KV’s gains via an interpretable difficulty / memory-dependence axis, testing whether improvements concentrate on examples that truly require external memory. For each evaluation example x, we compute a retrieval-ambiguity proxy using the cosine-similarity gap 22 UCIT Avg       
+
+> (HiDe-LLaVA)
+> CoIN Avg
+> (HiDe-LLaVA)
+> VQAv2 AP (10)
+> (CL-MoE)
+> Domain Overall
+> (SMoE)
+> LiIT AvgAcc
+> (Adapt-)
+> 50
+> 55
+> 60
+> 65
+> 70
+> Final score under different task orders
+> : 0.73 0.37
+> : 0.97 0.45
+> : 0.98 0.39
+> : 0.50 0.31
+> : 0.84 0.35
+> Method
+> Baseline
+> InduceKV
+> Default order
+
+Figure 6: Order sensitivity of continual adaptation. Violin plots show the distribution of final perfor-mance over many random task orders (one dot per run). Stars indicate the default-order scores reported in Table ?? . Across all suites, I NDUCE KV achieves higher means and noticeably smaller variances than strong baselines, suggesting improved robustness to task ordering. between the top-1 and top-2 retrieved keys: 
+
+g(x) ≜ s(1)(x) − s(2)(x), (69) where s(k)(x) is the k-th largest cosine similarity between the query key r(x) and memory keys {ri}.Smaller g(x) indicates more ambiguous retrieval (harder to decide a single best memory entry). We define a per-example gain as the difference in the evaluation score between I NDUCE KV and a NO -MEM baseline: 
+
+∆(x) ≜ Score (INDUCE KV; x) − Score (NO -MEM ; x), (70) where Score (·) is the task-specific metric (e.g., accuracy / EM / WUPS). We additionally mark whether retrieval is cross-task : an example is labeled cross-task if the majority of its Top-k retrieved entries come from tasks different from the query task (proxying knowledge reuse across tasks). Fig. 7 indicates that I NDUCE KV’s benefits concentrate on hard / memory-dependent examples: as retrieval becomes more ambiguous (smaller g(x)), gains increase and exhibit larger variance. In contrast, easy examples with large g(x) have gains tightly clustered near 0, suggesting that memory injection does not harm cases where the frozen backbone already suffices. Moreover, cross-task retrieval points tend to yield larger gains in the ambiguous region, consistent with I NDUCE KV enabling knowledge reuse across tasks via similarity-weighted KV induction and gate-controlled injection. 
+
+C.5 What does the calibration parameter control? 
+
+We analyze whether the tiny calibration parameter ϕ provides meaningful control over the stability– plasticity trade-off. We compare full I NDUCE KV with a Fixed-τ, λ variant and track the learned retrieval temperature τt, mean value gate ¯λt, and per-task gain; details are in Appendix: Calibration-dynamics protocol. Fig. 8 shows that τt increases on harder-shift tasks, smoothing retrieval when the nearest memory entry is less reliable, while ¯λt decreases when retention pressure is stronger. The largest gains occur when the learned calibration either sharpens useful retrieval or safely amplifies memory values, confirming that ϕ is not a passive scalar but an adaptive control interface for memory injection. 
+
+C.6 Retrieval Quality Diagnosis 
+
+Are the gains from I NDUCE KV mainly driven by correct retrieval (high-quality evidence), or does injecting memory tokens help even when retrieval is noisy? We make retrieval quality measurable and quantify how performance changes as a function of retrieval hit rate, testing whether I NDUCE KV is (i) more helpful when retrieval is correct and (ii) robust when retrieval is imperfect .23 0.0 0.1 0.2 0.3 0.4     
+
+> Retrieval ambiguity g(x) = s(1) s(2) (smaller = harder/ambiguous)
+> 0.05
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> Per-example gain  (x) (InduceKV  no-memory)  Hard
+> (q20)
+> Easy
+> (q80)
+> N = 16,200
+> Hard (q20) gain = 0.178
+> Easy (q80) gain = 0.015
+> Cross-task gain = 0.119
+> Within-task gain = 0.046
+> Corr(gap, gain) = -0.851
+> Within-task retrieval
+> Cross-task retrieval
+> Within-task trend
+> Cross-task trend
+
+Figure 7: When does I NDUCE KV help most?. Each point is one evaluation example with x-axis retrieval ambiguity g(x) = s(1) − s(2) (smaller means more ambiguous retrieval) and y-axis per-example gain ∆(x)
+
+(Eq. (70) ). Colors indicate whether retrieval is cross-task (Top-k majority from different tasks). Solid lines show binned mean gain for each group. 2.5 5.0 7.5 10.0 12.5 15.0 17.5 20.0 
+
+Task index t
+
+0.04 
+
+0.06 
+
+0.08 
+
+0.10 
+
+0.12 
+
+0.14 
+
+0.16 
+
+> Temperature  t
+
+=+0.34 
+
+=+0.35 
+
+=+0.31 =+0.38 =+0.23 =+0.40 =+0.30 
+
+=+0.31 
+
+=+0.28 
+
+=+0.16  
+
+> t
+
+(temperature)  
+
+> t
+
+(mean gate) 
+
+Gain ( ) 0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+> Mean gate  t
+
+Figure 8: Calibration dynamics. The trace shows learned retrieval temperature τt, mean value gate ¯λt,and per-task gain of Full over Fixed-τ, λ.We use task-/dataset-ID as a weak supervision signal. For each test example x from task t(x), let {e(j)}kj=1
+
+denote the Top-k retrieved memory entries ranked by cosine similarity in the frozen retrieval space. We define the Top-k hit rate as hit k(x) ≜ 1
+
+k
+
+k
+
+# ∑
+
+j=1
+
+I
+
+h
+
+t
+
+
+
+e(j)
+
+
+
+= t(x)
+
+i
+
+∈ [0, 1 ]. (71) We then bucket examples into five bins by hit k(x): [0, 0.2 ), [0.2, 0.4 ), . . . , [0.8, 1.0 ]. Within each bin, we report (i) mean gain E[∆(x)] where ∆(x) = Score (INDUCE KV ; x) − Score (NO -MEM ; x), and (ii) mean accuracy of I NDUCE KV and NO -MEM . We set k = 8 unless otherwise stated. Fig. 9 shows a clear monotonic relationship: as hit rate increases, I NDUCE KV yields larger average gains, indicating that improvements are primarily driven by correct evidence retrieval. Importantly, at low hit rates, gains remain near-zero but not strongly negative, and accuracy does not collapse. This is consistent 24 0 0.2 0.2 0.4 0.4 0.6 0.6 0.8 0.8 1.0      
+
+> Hit-rate bins of hit 8(x)
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> Mean gain  [ (x)]
+> n=1180 n=4256 n=3321 n=7909 n=6134
+> N = 22,800
+> Mean gain = 0.078
+> Mean hit rate = 0.626
+> Mean gain (InduceKV no-mem)
+> InduceKV accuracy
+> no-mem accuracy
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> Accuracy
+
+Figure 9: Retrieval hit rate vs. performance. x-axis: hit-rate bins of hit 8(x) (Eq. (71) ). Left y-axis: mean gain E[∆(x)] (I NDUCE KV − no-mem) with ±1 s.e. bands. Right y-axis: mean accuracy of I NDUCE KV (solid) and NO -MEM (dashed) with ±1 s.e. bands. with I NDUCE KV’s soft retrieval (temperature τ) and value-gated injection ( λℓ), which down-weights uncertain memory contributions and prevents noisy retrieval from destabilizing generation. 
+
+C.7 Cross-Backbone Validation 
+
+We validate that I NDUCE KV is method-agnostic, relying only on Transformer-compatible KV injection and frozen-space retrieval, by reproducing gains on multiple backbones under the same memory budget and continual protocol. We fix the external-memory configuration (payload length m and entry budget B) and apply I N-
+
+> DUCE
+
+KV to: Qwen3-VL-4B-Instruct , Qwen3-VL-8B-Instruct , deepseek-vl2-tiny (1.0B activated), 
+
+deepseek-vl2-small (2.8B activated), and deepseek-vl2 (4.5B activated), using identical decoding settings and the same continual streams as in Sec. 5.1. For each backbone, we compare against the strongest baseline implemented under the same footprint constraint and report the relative improvement (ours − best baseline) on the primary performance metric of each setting: UCIT Avg, CoIN Avg, VQAv2 AP (10-task stream), Domain Overall, and LiIT AvgAcc. We aggregate these five improvements into a single mean gain per backbone: 
+
+∆avg ≜ 15 (∆UCIT + ∆CoIN + ∆VQA + ∆Domain + ∆LiIT ) . (72) We repeat each backbone experiment over multiple seeds and report mean ±std. Fig. 10 shows consistent positive gains across all evaluated backbones, indicating that I NDUCE KV is not tied to a specific model family. Smaller backbones tend to benefit more (larger ∆avg ), while larger backbones show smaller but still stable improvements, consistent with stronger frozen priors leaving less headroom. The per-setting tuples further suggest that gains are not concentrated in a single benchmark, supporting I NDUCE KV’s general applicability for continual multimodal adaptation via KV-compatible external memory. 
+
+C.8 Memory–Compute–Quality Trade-off 
+
+We characterize the three-way trade-off among external-memory budget, inference throughput, and continual quality. In particular, we test whether I NDUCE KV achieves (i) higher quality at the same throughput 
+
+or (ii) higher throughput at the same quality .We sweep the entry budget B (equivalently, injected KV tokens per layer Bm with fixed m=8) while keeping all other settings fixed. On the continual VQA stream (VQAv2 10 tasks), for each budget we measure: (i) Throughput (tokens/s) during decoding under identical max generation length and batch size, (ii) Quality as AP ↑, and (iii) Forgetting as AF ↓. We compare I NDUCE KV against two representative baselines under matched extra-footprint: PromptReplay (retrieved exemplars concatenated into the prompt, increasing effective context length) and PEFT-LoRA (parameter-efficient adaptation). 25 LLaVA-4B LLaVA-8B Qwen-VL-4B Qwen-VL-8B DS-VL2-Tiny DS-VL2-Small DS-VL2-Base 
+
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> Mean relative improvement  avg  (points)
+> +1.43
+> +1.07
+> +1.48
+> +1.11
+> +1.81
+> +1.41
+> +1.09
+> (+1.35,+1.66,+1.46,+1.50,+1.18) (+1.15,+1.20,+1.00,+1.17,+0.85) (+1.27,+1.67,+1.49,+1.67,+1.30) (+1.12,+1.17,+1.18,+1.27,+0.83) (+1.70,+1.99,+1.70,+2.03,+1.65) (+1.33,+1.58,+1.50,+1.53,+1.08) (+1.08,+1.10,+1.15,+1.23,+0.87)
+
+Figure 10: Cross-backbone reproducibility. Each bar shows the mean gain ∆avg (Eq. (72) ) of I NDUCE KV over the best baseline under the same footprint budget, averaged over five settings: (UCIT Avg, CoIN Avg, VQAv2 AP, Domain Overall, LiIT AvgAcc). Error bars denote std across seeds. Each x-tick additionally reports the 5-tuple of per-setting gains in the order (UCIT, CoIN, VQA, Domain, LiIT). 30 40 50 60 70 80   
+
+> Inference throughput (tokens/s)
+> 51.5
+> 52.0
+> 52.5
+> 53.0
+> 53.5
+> 54.0
+> Continual VQA quality (AP)
+> B=16
+> B=32
+> B=48
+> B=64
+> B=96
+> B=128
+> B=160
+> B=192
+> B=256
+> B=320
+> B=384
+> B=512
+> Opacity encodes AF: more opaque = lower forgetting
+> Method
+> InduceKV
+> PromptReplay
+> PEFT-LoRA
+> Forgetting (shape)
+> Low forgetting (AF 1.8)
+> Medium (1.8 < AF 3.0)
+> High forgetting (AF > 3.0)
+
+Figure 11: Memory–Compute–Quality trade-off on continual VQA. Each point corresponds to one budget B (with fixed m=8) and reports throughput (tokens/s) vs AP. Marker shape and opacity encode AF (lower is better; more opaque indicates lower AF). I NDUCE KV traces a stronger Pareto frontier: at matched throughput it achieves higher AP, and at matched AP it runs faster, while maintaining low forgetting at moderate budgets. Figure 11 indicates that I NDUCE KV offers a favorable practical trade-off: as B increases, AP improves with diminishing returns while throughput decreases smoothly, and forgetting (AF) consistently drops. Compared with prompt-based replay, I NDUCE KV reaches the same AP at substantially higher throughput, suggesting that KV-cache injection is a more compute-efficient way to deliver retrieved evidence than extending the prompt. Compared with PEFT-LoRA, I NDUCE KV achieves higher AP at comparable throughput while exhibiting lower AF, consistent with its explicit budgeted memory and retention-aware selection. 
+
+C.9 Compute-Matched Retrieval Baselines and Serving Cost 
+
+We directly compare I NDUCE KV with replay-free PEFT and prompt-level retrieval under matched backbone, decoding length, batch size, and external-memory budget. This experiment addresses two practical questions: (i) where the additional inference cost of I NDUCE KV appears, and (ii) whether KV-level retrieval is preferable to simply concatenating retrieved exemplars into the prompt. For I NDUCE KV, the online inference path contains one prefix-only pass for computing the query key 
+
+r(x) and one generation pass with injected precomputed KV payloads. The payloads themselves are extracted offline during task update. PromptReplay retrieves the same number of historical examples under the same storage budget, but concatenates them as prompt tokens, so retrieved evidence must pass through the full embedding, attention, projection, and FFN stack. We use the main operating point 26 Table 9: Compute-matched comparison with replay-free PEFT and prompt-level retrieval. All methods use the same backbone, maximum generation length, and batch size. Latency is measured on A100 80GB with batch size 1. I NDUCE KV is slower than replay-free PEFT in prefill because it performs a prefix retrieval pass, but it is more efficient than PromptReplay while achieving higher quality.                                         
+
+> Method Retrieved / adapted evidence Extra state Added inference context VQAv2 AP ↑LiIT AvgAcc ↑Prefill ms ↓Decode tok/s ↑E2E s ↓
+> LoRA learned low-rank weights matched params none 50.84 51.21 186 34.8 2.03 ER + Replay replay examples during update matched exemplars none 50.63 51.08 191 34.6 2.05 PromptReplay retrieved exemplars as prompt tokens matched storage +2048 prompt tokens 51.02 51.94 529 27.1 2.89 INDUCE KV retrieved precomputed K/V 289.3 MiB 2048 KV tokens/layer 53.12 53.80 392 33.8 2.28
+
+Table 10: Budget–latency–quality trade-off. Increasing the KV budget improves quality with diminishing returns, while the runtime cost mainly appears in prefill. The main paper uses the L tier as a middle operating point. 
+
+Tier B Bm Memory Prefill ms ↓ Decode tok/s ↑ CoIN Avg ↑ VQAv2 AP ↑
+
+S 64 512 72.3 MiB 248 34.6 65.52 52.21 M 128 1024 144.6 MiB 311 34.2 66.01 52.88 L (main) 256 2048 289.3 MiB 392 33.8 66.38 53.12 
+
+XL 512 4096 578.5 MiB 571 32.9 66.52 53.20 
+
+B = 256, m = 8, corresponding to Bm = 2048 additional KV tokens per layer and 289.3 MiB external memory on LLaVA-OV-4B. The results clarify the intended efficiency claim. I NDUCE KV is not a zero-overhead alternative to replay-free PEFT: its prefill latency is higher than LoRA because it first computes a retrieval key from the test prefix. However, the extra cost is concentrated in prefill, while decode throughput remains close to LoRA (33.8 vs. 34.8 tok/s). Compared with PromptReplay, I NDUCE KV is both more accurate and more efficient: it improves VQAv2 AP by 2.10 points and LiIT AvgAcc by 1.86 points, while reducing end-to-end latency from 2.89s to 2.28s. Thus, the correct positioning is that I NDUCE KV is a fixed-footprint and compute-aware retrieval-based alternative to prompt replay, rather than a lower-latency replacement for replay-free PEFT. 
+
+C.10 Budget–Latency–Quality Operating Points 
+
+We further report the operating points of I NDUCE KV as the memory budget varies. The default main results use the L tier, B = 256, m = 8, corresponding to Bm = 2048 extra KV tokens per layer. This table is intended to make the quality–overhead trade-off explicit rather than hiding the cost in an aggregate figure. The L tier is chosen because it captures most of the quality gain while avoiding the much larger prefill cost of XL. Moving from S to L improves CoIN Avg by 0.86 and VQAv2 AP by 0.91, whereas moving from L to XL gives only 0.14 and 0.08 additional points. This confirms that the default setting is not an extreme budget choice; it is a balanced operating point where I NDUCE KV remains accurate while keeping the deployed external memory fixed. 
+
+C.11 Anchor Protocol and Replay-Matched Controls 
+
+Anchor construction and storage. Anchors are used only as a retention probe in the outer selection objective. They are not part of the deployed memory, are not retrieved at inference, and do not update the backbone. By default, after each completed task we uniformly sample Atask = 64 anchors without replacement and keep them fixed. For task t, the historical anchor set is the union of anchors from tasks 1, . . . , t − 1. Table 11 reports the resulting anchor storage, separated from the deployed KV memory. 
+
+Anchor construction sensitivity. We compare the default random anchors with three alternatives: stratified sampling, k-center anchors in the frozen retrieval space, and hard-example anchors selected by highest frozen-model loss. The results in Table 12 show that I NDUCE KV is not sensitive to the anchor policy. 
+
+Replay-matched controls. To test whether the gains come from simply storing historical samples, we compare against baselines that use the same number of stored historical examples, 64 (t − 1), but adapt 27 Table 11: Anchor storage is small and separate from deployed KV memory. Anchors are used only during task update and are not used at inference.      
+
+> Setting Final anchors Anchor storage External KV memory Anchor / KV ratio UCIT ( T
+
+= 6) 320 27.5 MiB 289.3 MiB 9.5% CoIN ( T = 8) 448 38.6 MiB 289.3 MiB 13.3% VQAv2 ( T = 10) 576 49.7 MiB 289.3 MiB 17.2% 
+
+Table 12: Sensitivity to anchor construction. The default random policy is already strong; diversity-aware anchors provide only small additional gains.                     
+
+> Anchor policy Description UCIT Avg ↑CoIN Avg ↑VQAv2 AP ↑
+> Random (default) uniform random per task 70.25 66.38 53.12 Stratified random balanced over labels/subtypes when available 70.37 66.51 53.19
+> k-center maximize diversity of frozen keys 70.58 66.73 53.31
+> Hard-example highest current-task frozen-model loss 69.94 66.07 52.88
+
+through standard replay or LoRA updates instead of KV-memory injection. All methods use the same backbone, task order, and storage budget. The anchor results support two conclusions. First, anchors are not an inference-time replay memory; they are a small update-time retention probe whose storage is substantially smaller than the deployed KV memory. Second, storing historical examples alone is insufficient: LoRA+replay and ER+replay improve over their replay-free variants but remain below I NDUCE KV. This indicates that the main benefit comes from converting selected examples into attention-compatible KV memories and retrieving them at inference, rather than from historical sampling alone. 
+
+C.12 CoIN under the Stage-1-Only Backbone 
+
+The original CoIN protocol is designed to evaluate continual learning on a stage-1-only, instruction-untuned LLaVA-1.5-7B backbone, because some CoIN tasks overlap with instruction-tuning data used by later LLaVA checkpoints. To ensure that I NDUCE KV does not rely on an already instruction-tuned backbone, we rerun the CoIN stream under the stage-1-only backbone. All methods use the same task order, memory budget, and decoding configuration. All methods drop relative to the instruction-tuned LLaVA-v1.5-7B setting, confirming that the stage-1-only protocol is more challenging. Nevertheless, I NDUCE KV remains the best method, improving over HiDe-LLaVA by 1.24 Avg and 1.29 Last. This shows that the method is not merely adjusting the output format of an already instruction-tuned model; it remains effective when the backbone has a larger genuine task gap. 
+
+C.13 Scalable Shortlist Selection and Train–Test Retrieval Mismatch 
+
+The exact bilevel update optimizes over the full candidate pool Ut = Ct ∪ M t−1. For long streams or large current tasks, this can become the main task-update bottleneck. We therefore evaluate a scalable shortlist variant. Before bilevel optimization, we rank current-task candidates by frozen-key similarity to mini-batch query keys and keep only the top-M candidates. The optimizer then runs on the reduced pool of size M + B. The final deployed memory remains the same fixed-size Top-B memory. 
+
+Train–test retrieval mismatch. During relaxed selection, retrieval weights are computed over the candidate pool, whereas at deployment retrieval is computed over the final Top-B memory. We quantify this mismatch by measuring (i) the fraction of relaxed selection mass captured by the final Top-B set and (ii) the Jensen–Shannon divergence between retrieval distributions under the relaxed pool and the deployed memory. A simple similarity shortlist removes a large fraction of update-time cost while preserving nearly all final quality. At M = 8B, the update time is reduced to 0.56 × of the exact update, while the score drops are only 0.07 on UCIT, 0.09 on CoIN, and 0.08 on VQAv2. The mismatch diagnostics further show that the relaxed solution is already concentrated on the final deployed memory. Thus, the full-pool objective is useful as a clean formulation, but practical deployment can use shortlist selection without changing the fixed-memory inference interface. 28 Table 13: Replay-matched controls. Using the same historical subset without KV-level memory injection does not recover the performance of I NDUCE KV. 
+
+Method UCIT Avg ↑ CoIN Avg ↑ VQAv2 AP ↑
+
+LoRA 67.84 63.77 49.92 LoRA + matched replay 68.51 64.36 50.74 ER + matched replay 68.74 64.61 51.02 INDUCE KV 70.25 66.38 53.12 
+
+Table 14: CoIN results under the stage-1-only LLaVA-1.5-7B backbone. This setting follows the original CoIN-style protocol and removes the concern that gains come from instruction-tuning overlap. 
+
+Method Backbone CoIN Avg ↑ CoIN Last ↑
+
+FineTune LLaVA-1.5-7B Stage-1 49.32 43.18 LwF LLaVA-1.5-7B Stage-1 50.44 44.29 EWC LLaVA-1.5-7B Stage-1 50.61 44.55 O-LoRA LLaVA-1.5-7B Stage-1 58.73 56.21 MoELoRA LLaVA-1.5-7B Stage-1 55.46 51.07 HiDe-LLaVA LLaVA-1.5-7B Stage-1 60.18 58.84 INDUCE KV LLaVA-1.5-7B Stage-1 61.42 60.13 
+
+C.14 Empirical Validation of Anchor Representativeness 
+
+The retention guarantee in Theorem 4.3 assumes that anchor loss is an ϵ-representative proxy for historical risk. We do not claim this assumption holds universally. Instead, we empirically test it in our continual adaptation settings. For multiple tasks, checkpoints, and selection states w, we compare the anchor loss At(w) against the loss on a disjoint held-out subset sampled from past tasks. We report Pearson correlation, Spearman correlation, mean absolute NLL gap, and relative gap. Table 17: Anchor loss is a reliable proxy for held-out historical loss in our setting.                       
+
+> Benchmark # states Pearson rSpearman ρMean abs. NLL gap / Relative gap UCIT 48 0.93 0.91 0.028 / 4.3% CoIN 56 0.95 0.93 0.031 / 4.8% VQAv2 60 0.92 0.90 0.025 / 3.9% Pooled 164 0.94 0.92 0.028 / 4.3%
+
+Anchor loss is highly correlated with held-out historical loss across benchmarks, with a pooled Pearson correlation of 0.94 and a relative NLL gap of 4.3%. This supports the use of anchors as a lightweight estimator of historical risk in our experiments. The assumption remains a surrogate assumption for the relaxed analysis, but the empirical gap is small enough that it does not drive the observed gains. 
+
+C.15 Relaxed-to-Discrete Rounding Gap 
+
+Our regret analysis studies the relaxed outer objective over continuous selection weights w. The deployed memory, however, is the discrete Top-B set. We therefore measure the practical gap between the relaxed weighted memory and the final Top-B memory. For each benchmark, we compare validation NLL and the final benchmark metric before and after Top-B rounding. Table 19: Relaxed mass captured by final Top-B memory. 
+
+Benchmark Top-B mass captured ↑
+
+UCIT 95.4% CoIN 96.1% VQAv2 96.8% Domain 95.9% LiIT 96.5% 
+
+29 Table 15: Shortlist selection reduces update cost while preserving quality. Update time is measured relative to the exact full-pool bilevel update. 
+
+Selection pool Relative update time ↓ UCIT Avg ↑ CoIN Avg ↑ VQAv2 AP ↑
+
+Full pool exact 1.00 × 70.25 66.38 53.12 Top-M shortlist, M = 4B 0.41 × 70.06 66.11 52.91 Top-M shortlist, M = 8B 0.56 × 70.18 66.29 53.04 Top-M shortlist, M = 16 B 0.73 × 70.23 66.35 53.10 Random shortlist, M = 8B 0.54 × 69.61 65.54 52.28 
+
+Table 16: Train–test retrieval mismatch is small. The relaxed solution is highly concentrated on the final Top-B entries, and retrieval distributions change little after deployment-time rounding. 
+
+Benchmark Top-B mass captured ↑ Retrieval JS div. ↓ Metric gap after deployment ↓
+
+UCIT 95.4% 0.018 0.18 CoIN 96.1% 0.016 0.14 VQAv2 96.8% 0.014 0.09 Domain 95.9% 0.017 0.13 LiIT 96.5% 0.015 0.12 
+
+The final Top-B set captures more than 95% of the relaxed selection mass across all benchmarks, and the resulting metric gaps are below 0.2 points. Thus, while the theoretical analysis should be interpreted as a relaxed surrogate analysis rather than a proof of the full nonconvex implementation, the empirical rounding gap is small in practice. 
+
+# D Reproducibility, Compute Resources, and Responsible Use 
+
+D.1 Statistical Reporting Protocol 
+
+For experiments with stochastic components, including memory selection, random projections, shortlist construction, and task-order perturbations, we report variability over multiple random seeds or task orders when applicable. Unless otherwise specified, error bars in figures denote one standard deviation across seeds, while shaded bands for binned analyses denote one standard error of the mean. For the main benchmark tables, we follow the official fixed task orders and evaluation protocols used by prior work, and we complement these single-protocol comparisons with order-sensitivity, cross-backbone, hyperparameter-sensitivity, and retrieval-diagnostic analyses. 
+
+D.2 Compute Resources 
+
+All experiments were run on NVIDIA A100 80GB GPUs with BF16 backbone inference and FP16 external memory tensors. Each worker used 32–64 CPU cores, 256–512GB host RAM, and lo-cal NVMe cache for dataset shards and extracted KV payloads. We measure GPU memory by 
+
+torch.cuda.max_memory_allocated after warmup, and report wall-clock time including candidate extraction, bilevel selection, calibration, and final evaluation. The reported experiments required approximately 8.0 × 10 2 A100 GPU-hours in total. Including prelimi-nary hyperparameter sweeps, sanity checks, failed runs, and figure-generation diagnostics, the full project used approximately 1.1 × 10 3 A100 GPU-hours. The dominant cost comes from repeated benchmark evaluation and cross-backbone validation rather than backbone training, because I NDUCE KV freezes the MLLM and updates only the external memory and lightweight calibration parameters. 
+
+D.3 Practical Scope and Limitations 
+
+INDUCE KV is designed for fixed-footprint continual adaptation of autoregressive MLLMs with Transformer-style KV caches. Its most direct use case is a setting where preserving prior skills under a bounded external state is important, and where a moderate prefill overhead is acceptable in exchange 30 Table 20: Seed-level stability of I NDUCE KV. We report mean ±std over three random seeds using the default memory budget (B=256, m=8). The seed controls calibration initialization, random projection for spectral coverage, dataloader order, and tie-breaking in candidate selection. 
+
+Benchmark Primary metric INDUCE KV UCIT Avg ↑ 70.25 ± 0.18 CoIN Avg ↑ 66.38 ± 0.16 VQAv2 10-task AP ↑ 53.12 ± 0.11 Domain CIT Overall ↑ 51.14 ± 0.13 LiIT AvgAcc ↑ 53.80 ± 0.15 
+
+Table 21: Compute resources for reported experiments. Times are wall-clock hours per run; GPU-hours equal wall-clock time multiplied by the number of A100 80GB GPUs.                                                       
+
+> Experiment group Main backbone / scope GPUs Peak GPU mem. Time / run GPU-hours / run Reported runs UCIT main + ablations LLaVA-OV-4B / LLaVA-1.5-7B 151–58GB 7.8h 7.8 11 CoIN main + ablations LLaVA-OV-4B / LLaVA-1.5-7B 154–61GB 9.6h 9.6 11 Continual VQA LV / T5 / OV protocols 148–58GB 8.3h 8.3 9Domain-incremental CIT LLaVA-1.5 / LLaVA-OV-4B 150–58GB 6.1h 6.1 5LiIT dynamic stream LLaVA-1.5-7B / LLaVA-OV-4B 261–68GB 18.5h 37.0 4Cross-backbone validation Qwen3-VL / DeepSeek-VL2 1–2 28–74GB 4.2–17.6h 4.2–35.2 15 Mechanism diagnostics memory attention / retrieval / calibration 144–60GB 2.0–5.5h 2.0–5.5 20 Serving-cost measurement LLaVA-OV-4B 147–62GB 0.6h 0.6 8
+
+for stronger retention and retrieval-based adaptation. The method is therefore not intended as a zero-overhead replacement for replay-free PEFT; rather, it provides a compute-aware alternative to prompt-level retrieval and parameter-updating continual adaptation. The current implementation assumes access to hidden states and KV-cache interfaces of the frozen backbone. For model families with non-standard attention implementations or restricted inference APIs, the same principle can still apply, but the cache-injection interface may require engineering adaptation. Our experiments cover multiple continual-learning suites and several backbone families, but the conclusions should be interpreted within the public benchmark protocols studied here. Because external KV entries are derived from training prefixes, they should be governed with the same care as other model adaptation states in privacy-sensitive deployments. In this paper, all experiments use public research benchmarks and public model checkpoints, and we do not release any new user data or scraped dataset. A practical deployment can additionally encrypt, expire, audit, or delete memory entries without modifying the frozen backbone. 
+
+D.4 Broader Impact 
+
+This work may have positive impact by reducing the need to repeatedly fine-tune large multimodal models or store large raw replay buffers, thereby improving the compute and storage efficiency of continual adaptation. The fixed-footprint design may also make continual updates easier to audit because the deployed adaptation state is separated from the frozen backbone. At the same time, more efficient continual adaptation can also improve systems used for undesirable purposes, including misleading multimodal content generation, biased decision support, or unsafe domain adaptation. The method does not by itself guarantee factuality, fairness, privacy, or safety beyond the behavior of the underlying backbone and training data. Responsible use therefore requires standard model-safety evaluation, dataset governance, access control for deployed memories, and compliance with the usage terms of the underlying checkpoints and datasets. 
+
+D.5 LLM Usage 
+
+The core research method uses frozen multimodal large language models as backbone systems. Specif-ically, I NDUCE KV extracts retrieval keys and layerwise KV payloads from frozen MLLMs and injects selected KV memories during inference. 31
