@@ -25,3 +25,60 @@ subscriptions:
     stage: A
     diff_threshold_pct: 15
   keyword_recall_mode: or
+  intent_profiles:
+    - tag: llm-kv-cache
+      description: 我需要查找大模型领域KV Cache相关论文研究
+      enabled: true
+      paper_sources:
+        - arxiv
+      keywords:
+        - keyword: key-value cache
+          keyword_cn: 键值缓存
+          query: key-value cache for large language models
+        - keyword: transformer inference optimization
+          keyword_cn: Transformer推理优化
+          query: transformer inference optimization using key-value cache
+        - keyword: attention mechanism
+          keyword_cn: 注意力机制
+          query: attention mechanism key-value caching
+        - keyword: paged attention
+          keyword_cn: 分页注意力
+          query: paged attention for efficient KV cache management
+        - keyword: key-value cache compression
+          keyword_cn: 键值缓存压缩
+          query: compression techniques for key-value cache in transformers
+        - keyword: prefix caching
+          keyword_cn: 前缀缓存
+          query: prefix caching for transformer inference
+      intent_queries:
+        - query: Find research papers on KV cache optimization techniques for large language models
+          query_cn: 查找关于大型语言模型KV缓存优化技术的研究论文
+          enabled: true
+          source: manual
+          note: ''
+        - query: Retrieve papers about memory efficient key value cache management in transformer decoders
+          query_cn: 检索关于Transformer解码器中内存高效键值缓存管理的论文
+          enabled: true
+          source: manual
+          note: ''
+        - query: Search for methods to reduce KV cache memory footprint during autoregressive generation
+          query_cn: 搜索自回归生成期间减少KV缓存内存占用方法
+          enabled: true
+          source: manual
+          note: ''
+      updated_at: '2026-07-08T08:36:22.291Z'
+source_backends:
+  arxiv:
+    papers_table: arxiv_papers
+    use_vector_rpc: true
+    vector_rpc: match_arxiv_papers
+    vector_rpc_exact: match_arxiv_papers_exact
+    use_bm25_rpc: true
+    bm25_rpc: match_arxiv_papers_bm25
+    sync_table: arxiv_sync_status
+    sync_success_value: success
+    schema: public
+    kind: supabase
+    enabled: true
+    url: https://lyucdwgefyfbmaiopjbk.supabase.co
+    anon_key: sb_publishable_lX-oi64Uxyd7SIVv3_w2Uw_MTOojeKq
