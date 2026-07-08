@@ -1,0 +1,348 @@
+Title: DesireKV: Decoupling Sensitivity and Importance for Reasoning-Aware KV Cache Compression
+
+URL Source: https://ojs.aaai.org/index.php/AAAI/article/download/39187/43148
+
+Number of Pages: 9
+
+Markdown Content:
+# DesireKV: Decoupling Sensitivity and Importance for Reasoning-Aware KV Cache Compression 
+
+# Pengyu Cheng 2* , Jiacheng Wang 2* , Tianle Chen 2* , Bei Liu 1, Xiaofeng Hou 3, Jiacheng Liu 1† 
+
+> 1
+
+The Hong Kong University of Science and Technology, Hong Kong, China 
+
+> 2
+
+Xi’an Jiao Tong University, Xi’an, China 
+
+> 3
+
+Shanghai Jiao Tong University, Shanghai, China 
+
+{pengyucheng0423,jiacheng,tianlechen1030 }@stu.xjtu.edu.cn, {beiliu,jiachengliu }@ust.hk,xfhelen@sjtu.edu.cn 
+
+Abstract 
+
+Large language models performing chain-of-thought (CoT) reasoning generate extensive intermediate sequences that consume substantial memory through key-value (KV) cache storage. Unlike conventional text generation, reasoning se-quences exhibit unique characteristics, including repetitive logic patterns and low information density, making existing KV cache compression methods suboptimal. We propose De-sireKV, a novel compression framework that first constructs a two-dimensional coordinate system based on attention-derived importance and outlier-based quantization sensitiv-ity. It then applies a dedicated protection mechanism for to-kens critical to the reasoning process itself. Our approach makes differentiated compression decisions: retaining impor-tant and sensitive tokens, quantizing important but insensitive tokens, and evicting unimportant tokens. Through compre-hensive evaluation on reasoning benchmarks, we demonstrate that DesireKV achieves up to 2.93 × throughput improvement while maintaining nearly 99% of original reasoning accuracy. 
+
+# 1 Introduction 
+
+Large language models (LLMs) have recently achieved re-markable capabilities in complex reasoning tasks through chain-of-thought (CoT) generation (Wei et al. 2022; Cui et al. 2024). However, state-of-the-art reasoning models such as OpenAI o1 (Jaech et al. 2024), and DeepSeek-R1 (Guo et al. 2025) face a critical deployment bottleneck: their tendency to generate extremely long reasoning traces that can span 16K to 128K tokens, resulting in prohibitive memory consumption due to the quadratic growth of key-value (KV) cache during autoregressive generation. The memory challenge is particularly acute for reason-ing models because of their unique generation character-istics (Paliotta et al. 2025). Unlike conventional text gen-eration, where output length is relatively predictable and bounded, reasoning models deliberately produce verbose in-termediate steps to enhance logical accuracy (Yuan et al. 2024). For instance, when solving a mathematical competi-tion problem, DeepSeek-R1-Distill-Llama-8B may generate over 32K tokens of detailed reasoning, running a batch size 
+
+> *
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author Copyright © 2026, Association for the Advancement of Artificial Intelligence (www.aaai.org). All rights reserved. 
+
+Figure 1: DesireKV addresses the rapid growth of mem-ory consumption with reasoning length to achieve a supe-rior trade-off (Left) Memory consumption grows rapidly with reasoning length. (Right) DesireKV achieves a superior trade-off by attaining the highest throughput while preserv-ing nearly 99% of the original model’s accuracy. of 8 in this setting can consume roughly 48.3 GB of total memory (about 15.5 GB for model weights and 32.8 GB for the KV cache, as shown in Figure 1). Existing KV cache compression methods face significant limitations when applied to reasoning models, leading to three core challenges: 
+
+Challenge 1: Dynamic Importance Evolution. Unlike con-ventional generation tasks, where attention patterns are rel-atively stable, reasoning sequences exhibit dynamic impor-tance evolution in the reasoning process (Song et al. 2025). Tokens that appear unimportant during early reasoning steps may become critical anchors for later logical connections. Traditional eviction-based methods (Zhang et al. 2023; Li et al. 2024) that aggressively remove tokens based on cur-rent attention patterns risk disrupting future logical depen-dencies, leading to reasoning failures. 
+
+Challenge 2: Heterogeneous Quantization Sensitivity. 
+
+Reasoning sequences contain diverse token types with vastly different tolerance to precision reduction. Mathematical ex-pressions and logical operators are highly sensitive to quan-tization errors, while explanatory text shows remarkable ro-bustness. Uniform quantization approaches (Hooper et al. 2024; Liu et al. 2024b; Yue et al. 2024) fail to account for this heterogeneity, either applying excessive precision to ro-bust tokens (wasting memory) or introducing harmful noise to sensitive components. 
+
+Challenge 3: Real-time Compression Decisions. Reason-The Fortieth AAAI Conference on Artificial Intelligence (AAAI-26) 
+
+20518 ing generation requires making compression decisions dur-ing inference without knowledge of the complete sequence structure. Offline sensitivity analysis methods (Liu et al. 2024a; He et al. 2024) are impractical for reasoning scenar-ios where compression must adapt dynamically to the evolv-ing logical structure. To address these challenges, we propose DesireKV, a uni-fied framework that exploits the fundamental mismatch be-tween importance and sensitivity in reasoning sequences. Our approach operates on the key insight that a token’s con-textual importance and its numerical sensitivity to quantiza-tion are largely decoupled, enabling aggressive compression without performance loss. We leverage recently generated tokens as effective indicators of historical token importance through a periodic compression mechanism that uses recent tokens as a “selector window” to identify relevant historical context. Then, we develop a real-time sensitivity assessment method based on statistical outlier analysis of key activa-tions, focusing on keys due to their disproportionate impact on precision while applying uniform compression to val-ues. Finally, we apply a reasoning-aware protection mech-anism that safeguards tokens identified as critical for rea-soning transitions. Our framework implements a simple pe-riodic algorithm that makes dedicated allocation decisions, where important tokens are quantized based on their sensi-tivity profiles while unimportant tokens are evicted regard-less of sensitivity, enabling efficient online operation with minimal computational overhead. The main contributions of this work can be summarized as follows, • To the best of our knowledge, we are the first to identify and empirically validate the importance-sensitivity mis-match in KV cache compression for LRMs. • We propose DesireKV , a novel compression framework that operationalizes this mismatch. DesireKV incorpo-rates practical, online methods for assessing importance via an attention-based selector window and measuring sensitivity using real-time outlier analysis. • We introduce a dedicated protection mechanism for pre-serving tokens that are critical to the reasoning process, which complements our primary compression strategy. • We provide a comprehensive experimental evaluation demonstrating up to 2.93 × throughput improvement with minimal accuracy degradation. 
+
+# 2 Related Work 
+
+KV cache compression has gained significant attention re-cently due to its critical role in enabling efficient long-context inference. Eviction-based methods selectively re-move tokens based on importance criteria. H2O (Zhang et al. 2023) pioneered attention-based importance assess-ment through ”heavy-hitter” token identification. SnapKV (Li et al. 2024) selects clustered important KV positions per attention head, while Ada-KV (Feng et al. 2024) pro-poses adaptive budget allocation, CAKE (Qin et al. 2025) in-troduces cascading eviction with layer-specific preferences, and PyramidKV (Cai et al. 2024) implements pyramidal information funneling across layers. However, aggressive eviction can severely compromise reasoning abilities requir-ing long-range logical dependencies (Liu et al. 2025a). Quantization approaches preserve all tokens while re-ducing numerical precision. KVQuant (Hooper et al. 2024) enables contexts up to 10 million tokens through signifi-cant quantization, while KIVI (Liu et al. 2024b) introduced asymmetric quantization for keys and values. More sophisti-cated approaches recognize heterogeneous sensitivity: Intac-tKV (Liu et al. 2024a) identifies ”pivot tokens” requiring full precision, ZipCache (He et al. 2024) uses salient token iden-tification, AsymKV (Tao, Yu, and Zhou 2024) achieves 1-bit representations with layer-wise configurations, and MiKV (Yang et al. 2024) proposes mixed-precision quantization based on token importance. Recent work explores hybrid strategies combining mul-tiple techniques. DDKS (Yang et al. 2025) proposes a mixed-precision KV cache method that quantizes pruned tokens to low precision, mitigating performance degrada-tion while preserving output quality and compression ef-ficiency. GEAR (Kang et al. 2024) applies ultra-low pre-cision quantization with low-rank error approximation and sparse matrices for outlier correction. LeanKV (Zhang et al. 2024c) adaptively chooses between eviction and quantiza-tion based on token importance. Layer-aware approaches in-clude SimLayerKV (Zhang et al. 2024b), LayerKV (Xiong et al. 2024), and LORC (Zhang et al. 2024a), recognizing varying layer sensitivity patterns. Architectural innovations include DuoAttention (Xiao et al. 2024) with retrieval and streaming heads, and Eigen Attention (Saxena et al. 2024) performing attention in low-rank spaces. Context-aware methods address semantic structure under-standing. ChunkKV (Liu et al. 2025b) introduces semantic-preserving compression, FastKV (Jo et al. 2025) imple-ments token-selective propagation, SepLLM (Chen et al. 2024) compresses segments into separator tokens, and Shad-owKV (Sun et al. 2024) maintains shadow copies for high-throughput inference. Despite these advances, existing methods face funda-mental limitations. Most approaches apply uniform strate-gies across different reasoning patterns and lack principled frameworks for distinguishing between logical anchors, in-termediate calculations, and explanatory text. Additionally, many sophisticated approaches require offline sensitivity analysis (Ge et al. 2023), making them unsuitable for real-time reasoning scenarios where compression decisions must be made during generation. 
+
+# 3 Motivation 
+
+The efficacy of standard KV cache compression techniques is limited when applied to chain-of-thought reasoning. This is because reasoning sequences exhibit distinct characteris-tics that uniform eviction or quantization strategies fail to address. In this section, we motivate our work by identify-ing and analyzing three properties of these sequences. 
+
+## 3.1 Quantization Sensitivity Heterogeneity 
+
+A core limitation of many existing methods is the assump-tion that all tokens tolerate quantization similarly and use to-ken importance to design a quantization strategy (Liu et al. 20519 Figure 2: Relationship be-tween outlier scores and quantization sensitivity. 
+
+Figure 3: Scatter plot of importance vs. sensitivity scores for 10,000 tokens. Protection Strategy Perf. Mem. No compression 46.7% 0% Random protection (20%) 37.9% 57.4% Outlier-aware protection (20%) 44.6% 57.6% Table 1: Outlier-aware protective sampling results on AIME 2024 (Pass@1). Perf. means performance, Mem. means the fraction of memory reduced. 2024b). We posit that tokens within reasoning sequences have widely varying sensitivities to precision reduction. To validate its effectiveness, we sample 10,000 to-kens from the reasoning traces of DeepSeek-R1-Distill-Llama8B (Guo et al. 2025) and calculate the interquartile range (IQR) score to find the activation outliers (details can be found in Section 4.3). We compare this outlier score against the actual reconstruction error from quantization. As shown in Figure 2, the strong positive correlation confirms that this outlier score is an effective measure of a token’s quantization sensitivity. Next, we demonstrate that leveraging this sensitivity in-formation is critical for preserving model performance. We conduct a protective sampling experiment on the AIME 2024 benchmark, where we preserve 20% of tokens in full BF16 precision while quantizing the remaining 80% to 4-bit. As detailed in Table 1, protecting tokens with the highest outlier scores yields a performance of 44.6% Pass@1. This result significantly outperforms a random protection strategy (37.9%) and nearly recovers the original performance of the uncompressed model (46.7%), confirming that a sensitivity-aware approach is crucial. 
+
+## 3.2 Importance-Sensitivity Mismatch 
+
+Our key insight is that a token’s contextual importance and its quantization sensitivity are largely decoupled in reason-ing sequences. We validate this by computing both metrics for tokens across 50 sequences (the values are normalized between -1 and 1). As shown in Figure 3, the resulting dis-tribution shows a near-zero correlation ( R2 = 0 .018 ), con-firming their independence and revealing distinct token pop-ulations. This independence creates four distinct quadrants, based on high/low importance and sensitivity: Q1 (Low Im-portance, Low Sensitivity): Non-critical and robust tokens. 
+
+Q2 (High Importance, Low Sensitivity): Critical but robust Protection Strategy Perf. Mem. No compression 46.7% 0% Attention driven (20%) 42.9% 57.4% Reasoning-aware (20%) 44.2% 57.5% Table 2: Reasoning-aware protective sampling results on AIME 2024 (Pass@1). Perf. means performance, Mem. means the fraction of memory reduced. tokens. Q3 (High Importance, High Sensitivity): Critical and sensitive tokens. Q4 (Low Importance, High Sensitivity): 
+
+Non-critical but sensitive tokens. Crucially, a significant fraction of tokens (27.17%) fall into Q2, representing a previously unexploited op-portunity for aggressive compression that single-criterion methods miss. This importance-sensitivity mismatch di-rectly motivates DesireKV’s design: a dual-criteria pol-icy that evicts unimportant tokens, quantizes important-but-insensitive ones, and preserves important, sensitive tokens with high precision. 
+
+## 3.3 Reasoning-Specific Token Characteristics 
+
+Conventional compression methods typically rely on atten-tion scores as the sole indicator of a token’s utility. How-ever, we find this metric is insufficient for capturing the nu-ances of complex reasoning. Specifically, tokens generated with low confidence can signal a critical shift in the model’s reasoning trajectory (Liu et al. 2025c) and are thus highly important, even if their attention scores are low. To validate this hypothesis, we compare two protection strategies. The first is a standard attention-driven approach that preserves the 20% of tokens with the highest attention scores. The second is a hybrid method that also incorpo-rates reasoning-aware generation confidence, replacing the 10% of tokens with the lowest attention scores among the protected set with an equal number of low-confidence to-kens. The results in Table 2 show that the hybrid attention-confidence strategy (44.2% Pass@1) measurably improves upon the pure attention-driven approach (42.9%). This sub-stantiates that a more sophisticated, reasoning-aware im-portance metric is necessary to identify critical tokens that would otherwise be missed. 
+
+# 4 Methodology 
+
+Motivated by the unique characteristics of reasoning se-quences identified in Section 3, we designed DesireKV to address them directly (Figure 4). Our methodology is built upon the central insight of the importance-sensitivity mis-match . We first establish a two-dimensional decision space defined by these two axes. We then introduce a reasoning-aware protection mechanism, motivated by the need to pre-serve reasoning-specific tokens . The final compression deci-sion is a synthesis of these components. 
+
+## 4.1 Problem Formulation 
+
+Consider a reasoning model generating sequence x =
+
+{x1, x 2, . . . , x T } where xt represents the token at position 20520 Figure 4: Overall framework of DesireKV: (a) Calculation of importance and sensitivity scores. (b) Based on these scores, a classifier assigns each token to one of four quadrants (Q1-Q4 as in Figure 3). (c) Reasoning-aware protection rule first moves critical tokens to Q4; then, a quadrant-specific action is applied. 
+
+t. At generation step t, the model maintains a KV cache con-taining key and value vectors for all previous tokens across multiple layers: 
+
+Ct = {(K(l) 
+
+> i
+
+, V(l) 
+
+> i
+
+)}t−1,L i=1 ,l =1 (1) where K(l) 
+
+> i
+
+∈ Rdk and V(l) 
+
+> i
+
+∈ Rdv are the key and value vectors for token i at layer l ∈ { 1, 2, . . . , L }, with dk and dv
+
+being the key and value dimensions respectively. The memory consumption without compression grows quadratically with sequence length. At step t, the total mem-ory usage is: 
+
+M full  
+
+> t
+
+=
+
+> L
+
+X
+
+> l=1
+> t−1
+
+X
+
+> i=1
+
+(dk + dv ) × 16 bits (2) This rapid growth creates severe memory bottlenecks for reasoning models that generate tens of thousands of tokens. Our goal is to design a compression function F : Ct → C ′
+
+> t
+
+that operates periodically to reduce memory consumption while preserving reasoning accuracy. 
+
+## 4.2 Attention-based Importance Assessment 
+
+The importance assessment mechanism captures the dy-namic relevance of historical tokens for future reasoning steps. Our approach leverages the insight that recently gener-ated tokens in reasoning sequences serve as effective proxies for assessing the continued relevance of historical context. Our importance assessment approach follows the same se-lector window mechanism as RPC (Song et al. 2025). Ev-ery P tokens, we use the most recent R tokens as a selector window to evaluate the importance of the previous P to-kens. The selector window represents the current reasoning state and naturally attends to context that remains relevant for ongoing logical operations. This approach addresses the challenge of predicting future importance by using the im-mediate future (recent tokens) as an indicator. For token i at layer l and current generation step t, we compute the importance through multi-head attention aggre-gation. The computation involves examining how strongly the selector window tokens attend to the historical token across all attention heads: 
+
+Iraw  
+
+> i,l
+
+= 1
+
+R · H
+
+> R
+
+X
+
+> r=1
+> H
+
+X
+
+> h=1
+
+Attn (l) 
+
+> h
+
+(q(h)
+
+> t−r+1
+
+, k(l,h ) 
+
+> i
+
+) (3) In this formulation, R is the selector window size, H is the number of attention heads, q(h) 
+
+> t−r+1
+
+∈ Rdk /H is the query vector for head h at position t − r + 1 , and k(l,h ) 
+
+> i
+
+∈ Rdk /H 
+
+is the key vector for token i at layer l and head h.Then, a sliding window of size w is applied to smooth the semantic information, encouraging the contiguous aggrega-tion of semantically related tokens: 
+
+ˆIi,l = 12w + 1 
+
+> w
+
+X
+
+> t=−w
+
+Iraw  
+
+> t,l
+
+(4) The resulting ˆIi,l serves as an attention-based importance score that quantifies how much each historical token con-tributes to the current reasoning process. 20521 4.3 Outlier-based Sensitivity Measurement 
+
+To address the heterogeneous quantization sensitivity identi-fied in Section 3.1, we measure sensitivity based on statisti-cal outlier analysis of activation patterns within key vectors. The fundamental insight is that tokens with extreme acti-vation values (outliers) are more susceptible to quantization errors because quantization schemes typically optimize for typical values in the distribution (Frantar et al. 2022). Out-liers fall outside the optimal quantization range and suffer from larger approximation errors. For computational efficiency and statistical robustness, we employ a block-based analysis approach. Each key vec-tor is partitioned into fixed-size blocks, and outlier anal-ysis is performed independently within each block. This approach provides several advantages: it reduces computa-tional complexity by avoiding full-vector statistics, it pro-vides more stable estimates by working with smaller data samples, and it captures local activation patterns that might be obscured in global analysis. For key vector K(l) 
+
+> i
+
+∈ Rdk at token i and layer l, we create blocks of size g = 64 :
+
+K(l) 
+
+> i
+
+= [ K(l, 1)  
+
+> i
+
+, K(l, 2)  
+
+> i
+
+, . . . , K(l,B ) 
+
+> i
+
+] (5) where each block K(l,b ) 
+
+> i
+
+∈ Rg contains g consecutive ele-ments and B = ⌈dk/g ⌉ is the total number of blocks. Within each block, we perform Interquartile Range (IQR) based outlier detection, which is a robust statistical method that is less sensitive to extreme values than mean-based ap-proaches. For block b, we first sort the elements and compute the quartiles. The first quartile Q(b)1 is the 25th percentile, the third quartile Q(b)3 is the 75th percentile, and the interquar-tile range is IQR b = Q(b)3 − Q(b)1 . Elements are classified as outliers using the standard IQR criterion: 
+
+x ∈ O b ⇐⇒ x < Q (b)1 −1.5·IQR b or x > Q (b)3 +1 .5·IQR b
+
+(6) This criterion identifies values that fall more than 1.5 IQR units beyond the first or third quartiles, which statisti-cally corresponds to extreme values in the distribution. The sensitivity score for each block quantifies both the magni-tude and frequency of outliers. We compute the block mean 
+
+μb = 1
+
+> g
+
+Pgj=1 K(l,b ) 
+
+> i
+
+[j] and then measure the average devi-ation of outliers from this center: OutlierScore b =
+
+( 1
+
+> |O b|
+
+P 
+
+> x∈O b
+
+|x − μb| if |O b| > 00 if |O b| = 0 
+
+This metric captures both the presence of outliers and their magnitude, providing a comprehensive measure of quantization sensitivity. To obtain a token-level sensitivity score, we aggregate it across all blocks and layers. The layer-wise aggregation computes the average outlier score across all blocks in a layer: 
+
+Si,l = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+OutlierScore (i,l ) 
+
+> b
+
+(7) Finally, to ensure a consistent threshold across generation process, we normalize sensitivity scores as: 
+
+ˆSi,l = Si,l 
+
+max j Si,l 
+
+(8) where the maximum is computed over all tokens in the cur-rent compression window. 
+
+## 4.4 Reasoning-Aware Token Protection 
+
+After calculating importance ˆIi,l and sensitivity ˆSi,l , we ap-ply a separate, reasoning-aware protection mechanism. This is motivated by Section 3.3 certain tokens critical for the rea-soning process (e.g., at logical transitions) can be missed by attention scores alone. We use generation confidence as a proxy for identifying reasoning transitions. A sharp drop in confidence often sig-nals a point of uncertainty or a shift in logic, making the subsequent tokens crucial (Liu et al. 2025c). We compute the generation confidence for each token as: 
+
+pi = max  
+
+> v
+
+softmax (oi)[ v] (9) where oi is the logit vector for position i. If the confidence 
+
+pi−1 for the previous token falls below a threshold λ, we mark the current token i as a “protected” reasoning token. This ensures that the anchor of a new reasoning step is pre-served. A token i is added to the protected set P if pi−1 < λ .Then we set the tokens in P as high precision. Finally, we can apply a dedicated eviction and quantiza-tion strategy as shown in Figure 4. 
+
+# 5 Experiments 
+
+## 5.1 Experimental Setup 
+
+Models and Datasets We conduct our evaluation on two prominent open-source reasoning models: DeepSeek-R1-Distill-Qwen-7B and DeepSeek-R1-Distill-Llama-8B (Guo et al. 2025). For all experiments, we set the decoding tem-perature to 0.6, as recommended by the model authors, and a maximum generation length of 32,786 tokens. Our evaluation comprises three mathematical reasoning datasets: GSM8K (Cobbe et al. 2021), MATH (Hendrycks et al. 2021) (using the 500-sample test set), and AIME2024. We also include the general-purpose reasoning benchmark GPQA (Rein et al. 2024) (using the GPQA-Diamond subset) to assess broader capabilities. We report accuracy using the 
+
+pass@k metric, where a problem is considered solved if at least one of the k generated solutions is correct. We use 
+
+k = 1 for all datasets, except for GPQA on the Qwen model, where we set k = 2 to mitigate the noticeable performance drop across all methods. 
+
+Baselines Except for the full-precision model ( BF16 ), our baselines include three major families of KV cache com-pression techniques, enabling a comprehensive comparison: • Quantization-Only: We use KIVI (Liu et al. 2024b) with two configurations: aggressive 4-bit key/4-bit value quantization (K4V4 ) and a more conservative 8-bit key/4-bit value setup ( K8V4 ). 20522 DeepSeek-R1-Distill-Qwen-7B 
+
+Method GSM8K % Loss MATH % Loss AIME2024 % Loss GPQA % Loss Ave Bit Ave Loss (%) BF16 0.8915 — 0.9185 — 0.5417 — 0.4785 — 16 —K8V4 0.8811 1.2 0.9123 0.7 0.5333 1.5 0.4600 3.9 6.0 1.8 K4V4 0.8795 1.4 0.9031 1.7 0.5042 6.9 0.4558 4.7 4.3 3.7 RPC 0.8574 3.8 0.8885 3.3 0.4250 21.5 0.4431 7.4 4.0 9DDKS 0.8698 2.4 0.8925 2.8 0.4750 10.9 0.4407 7.9 5.9 6Ours 0.8797 1.3 0.9028 1.7 0.5343 1.3 0.4760 0.5 3.0 1.2 DeepSeek-R1-Distill-Llama-8B 
+
+Method GSM8K % Loss MATH % Loss AIME2024 % Loss GPQA % Loss Ave Bit Ave Loss (%) BF16 0.8836 — 0.8705 — 0.4667 — 0.4759 — 16 —K8V4 0.8762 0.8 0.8595 1.3 0.4583 1.8 0.4691 1.4 6.0 1.3 K4V4 0.8624 2.4 0.8505 2.3 0.3586 23.2 0.4141 13.0 4.0 10.2 RPC 0.8697 1.6 0.8425 3.2 0.4333 7.2 0.4015 15.6 4.0 6.9 DDKS 0.8561 3.1 0.8325 4.4 0.3375 27.7 0.4047 15.0 5.5 12.6 Ours 0.8811 0.3 0.8595 1.3 0.4625 0.9 0.4684 1.6 2.9 1.0 
+
+Table 3: Pass@1 comparison of different methods on GSM8K, MATH, AIME2024, and GPQA benchmarks for DeepSeek-R1-Distill-Qwen-7B and DeepSeek-R1-Distill-Llama-8B. The Loss means loss ratio compared to BF16 baseline. • Eviction-Only: We compare against RPC (Song et al. 2025), a state-of-the-art attention-based token eviction method for reasoning model. • Hybrid: We include DDKS (Yang et al. 2025), which combines eviction with quantization by compressing all the pruned tokens to a low precision. 
+
+Implementation Details We set the hyperparameters P
+
+and R according to the difficulty of each dataset, and align the parameters of RPC and KIVI accordingly. For DesireKV, we determine key thresholds via grid search to balance com-pression efficiency and reasoning performance. For DDKS, since there are no public implementations, we implement it by extending RPC and quantizing pruned tokens to 2 bits. Thus, all compression algorithms employ the same interval for dynamic optimization, enabling us to quantify the com-pressed bit volume at each compression step and directly compare their compression capabilities. Furthermore, we analyze the efficiency of each method by comparing mem-ory consumption under identical batch sizes and throughput rates under equivalent memory constraints. 
+
+## 5.2 Performance Evaluation 
+
+Table 3 presents our primary findings on the four rea-soning benchmarks. Compared to the full-precision base-line (BF16), our approach realizes highly efficient model compression with negligible performance degradation. In contrast to the RPC method, our method exhibits signif-icantly lower average loss, amounting to only 1.2% and 1.0% on DeepSeek-R1-Distill-Qwen-7B and DeepSeek-R1-Distill-Llama-8B, respectively. Compared to the quantiza-tion methods K8V4 and K4V4, our method not only main-tains a lower average bit width but also achieves perfor-Method GSM8K MATH AIME2024 GPQA DesireKV 0.8811 0.8595 0.4625 0.4684             
+
+> DesireKV-I 0.8700 0.8455 0.4375 0.4470 DesireKV-S 0.8614 0.8260 0.4292 0.4432 DesireKV-P 0.8756 0.8545 0.4583 0.4595
+
+Table 4: Ablation study of DesireKV’s components on DeepSeek-R1-Distill-Llama-8B. Disabling the importance (-I), sensitivity (-S), or protection (-P) mechanisms consis-tently degrades performance, validating their respective con-tributions. mance comparable to or even better than K8V4, thereby ef-fectively avoiding the severe performance degradation typ-ically associated with aggressive quantization. Against the eviction-only RPC method, DesireKV demonstrates sub-stantially better performance, mitigating the severe accu-racy drops RPC suffers on complex tasks like AIME2024 (e.g., 21.5% loss for RPC vs. 1.3% for Ours on Qwen-7B). This highlights the importance of retaining, rather than dis-carding, low-importance tokens via quantization. Further-more, in comparison with the hybrid method like DDKS, our method achieves superior performance while simultane-ously reducing memory footprint, underscoring the superi-ority of our dual importance-sensitivity criteria for making nuanced compression decisions. In summary, DesireKV achieves a compression ratio of over 5.5 × with negligible performance loss (0.3-1.7%), af-firming that our method effectively navigates the complex trade-offs in KV cache compression to set a new state-of-the-art for efficient and accurate long-context reasoning. 20523 (a) Peak Memory Usage Comparison 
+
+> (b) Throughput Performance Comparison
+
+Figure 5: Overall performance comparison: (a) illustrates the peak memory consumption of different methods with a fixed batch size of 8; (b) depicts the achievable throughput of each method under maximum memory capacity (96 GB), where the annotations above the data points represent the {batch size-throughput } pairs. 
+
+## 5.3 Efficiency Evaluation 
+
+We now evaluate the practical efficiency of DesireKV on an NVIDIA H20 GPU, using the DeepSeek-R1-Distill-Llama-8B model. Our analysis focuses on two critical deploy-ment metrics: peak memory footprint and inference through-put. We benchmark against representative baselines: the full-precision (BF16) model, the high-compression evic-tion method RPC, and the performant K8V4 quantization scheme. To provide a comprehensive assessment, we con-duct two controlled experiments: (1) measuring peak mem-ory usage under a fixed batch size, and (2) measuring maxi-mum achievable throughput under a fixed memory capacity. 
+
+Memory Optimization As illustrated in Figure 5(a), all methods exhibit a linear increase in peak memory with se-quence length. RPC achieves a 49.7% memory reduction rel-ative to the BF16 baseline at 32,768 tokens. DesireKV fur-ther improves upon this, achieving an additional 11.6% re-duction over RPC. This culminates in a total memory saving of 55% compared to the full-precision model, significantly alleviating the memory pressure of long-context reasoning. 
+
+Throughput Efficiency Figure 5(b) demonstrates the practical impact of memory savings on throughput. It is evi-dent that the K8V4 experimental group, suffering from in-adequate compression capability and the timing overhead induced by quantization, exhibits lower throughput than the RPC pruning method under similar batch sizes. While De-sireKV incurs slight computational overhead from its on-line analysis, its superior memory efficiency permits much larger batch sizes. This amortization of overhead results in substantial throughput gains. Under 96 GB memory con-straint, DesireKV achieves a remarkable 193.1% throughput improvement over the BF16 baseline and significantly out-performs all other compression methods, thereby enhancing operational efficiency. 
+
+## 5.4 Ablation Study 
+
+To dissect the contribution of each component in our frame-work, we conducted a series of ablation studies on the DeepSeek-R1-Distill-Llama-8B model. The variants are de-fined as follows: • DesireKV-I (Importance Ablation): We replace our attention-guided importance assessment from Section 4.2 with a random eviction strategy. • DesireKV-S (Sensitivity Ablation): We ignore our outlier-based sensitivity score from Section 4.3. Impor-tant tokens are randomly quantized to 4-bit or 8-bit. • DesireKV-P (Protection Ablation): We remove the reasoning-aware protection mechanism from Section 4.4. The results, presented in Table 4, demonstrate that re-moving any component degrades performance. The most pronounced performance drop is observed in DesireKV-S, where disabling sensitivity-aware quantization leads to sig-nificant accuracy loss. This finding validates our central hy-pothesis that protecting numerically sensitive tokens from aggressive quantization is more critical than identifying con-textual importance alone. The degradation in DesireKV-I confirms that our reasoning-aware importance metric is su-perior to random eviction. Finally, the performance drop in DesireKV-P shows the value of using generation confidence to identify and preserve critical reasoning transition points. Collectively, the study affirms that all components are inte-gral to DesireKV’s success, with the dual-criteria analysis of importance and sensitivity being the most crucial element. 
+
+# 6 Conclusion 
+
+We presented DesireKV, a novel KV cache compression framework that addresses the prohibitive memory consump-tion of large language models in complex reasoning tasks. Our approach leverages the key insight that importance and sensitivity are mismatched in reasoning sequences, enabling aggressive compression through strategic evic-tion and asymmetric quantization. Extensive experiments demonstrate that DesireKV achieves up to a 5.5 × memory reduction and a 2.93 × throughput improvement, while pre-serving nearly 99% of the original model’s reasoning accu-racy. Our findings set a new state-of-the-art in balancing per-formance and resource efficiency. 
+
+# Acknowledgments 
+
+We sincerely thank all the anonymous reviewers for their valuable comments and feedback. This work is supported by the National Natural Science Foundation of China No. 62441225. Jiacheng Liu is the corresponding author. 20524 References 
+
+Cai, Z.; Zhang, Y.; Gao, B.; Liu, Y.; Li, Y.; Liu, T.; Lu, K.; Xiong, W.; Dong, Y.; Hu, J.; et al. 2024. Pyramidkv: Dy-namic kv cache compression based on pyramidal informa-tion funneling. arXiv preprint arXiv:2406.02069 .Chen, G.; Shi, H.; Li, J.; Gao, Y.; Ren, X.; Chen, Y.; Jiang, X.; Li, Z.; Liu, W.; and Huang, C. 2024. Sepllm: Accelerate large language models by compressing one segment into one separator. arXiv preprint arXiv:2412.12094 .Cobbe, K.; Kosaraju, V.; Bavarian, M.; Chen, M.; Jun, H.; Kaiser, L.; Plappert, M.; Tworek, J.; Hilton, J.; Nakano, R.; et al. 2021. Training verifiers to solve math word problems. 
+
+arXiv preprint arXiv:2110.14168 .Cui, C.; Ma, Y.; Cao, X.; Ye, W.; Zhou, Y.; Liang, K.; Chen, J.; Lu, J.; Yang, Z.; Liao, K.-D.; et al. 2024. A survey on multimodal large language models for autonomous driving. In Proceedings of the IEEE/CVF Winter Conference on Ap-plications of Computer Vision .Feng, Y.; Lv, J.; Cao, Y.; Xie, X.; and Zhou, S. K. 2024. Ada-kv: Optimizing kv cache eviction by adaptive bud-get allocation for efficient llm inference. arXiv preprint arXiv:2407.11550 .Frantar, E.; Ashkboos, S.; Hoefler, T.; and Alistarh, D. 2022. Gptq: Accurate post-training quantization for generative pre-trained transformers. arXiv preprint arXiv:2210.17323 .Ge, S.; Zhang, Y.; Liu, L.; Zhang, M.; Han, J.; and Gao, J. 2023. Model tells you what to discard: Adaptive kv cache compression for llms. arXiv preprint arXiv:2310.01801 .Guo, D.; Yang, D.; Zhang, H.; Song, J.; Zhang, R.; Xu, R.; Zhu, Q.; Ma, S.; Wang, P.; Bi, X.; et al. 2025. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 .He, Y.; Zhang, L.; Wu, W.; Liu, J.; Zhou, H.; and Zhuang, B. 2024. ZipCache: Accurate and Efficient KV Cache Quan-tization with Salient Token Identification. arXiv preprint arXiv:2405.14256 .Hendrycks, D.; Burns, C.; Kadavath, S.; Arora, A.; Basart, S.; Tang, E.; Song, D.; and Steinhardt, J. 2021. Measuring mathematical problem solving with the math dataset. arXiv preprint arXiv:2103.03874 .Hooper, C.; Kim, S.; Mohammadzadeh, H.; Mahoney, M. W.; Shao, Y. S.; Keutzer, K.; and Gholami, A. 2024. Kvquant: Towards 10 million context length llm inference with kv cache quantization. arXiv preprint arXiv:2401.18079 .Jaech, A.; Kalai, A.; Lerer, A.; Richardson, A.; El-Kishky, A.; Low, A.; Helyar, A.; Madry, A.; Beutel, A.; Carney, A.; et al. 2024. Openai o1 system card. arXiv preprint arXiv:2412.16720 .Jo, D.; Song, J.; Kim, Y.; and Kim, J.-J. 2025. FastKV: KV Cache Compression for Fast Long-Context Process-ing with Token-Selective Propagation. arXiv preprint arXiv:2502.01068 .Kang, H.; Zhang, Q.; Kundu, S.; Jeong, G.; Liu, Z.; Krishna, T.; and Zhao, T. 2024. Gear: An efficient kv cache com-pression recipefor near-lossless generative inference of llm. 
+
+arXiv preprint arXiv:2403.05527 .Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024. Snapkv: Llm knows what you are looking for before generation. arXiv preprint arXiv:2404.14469 .Liu, R.; Bai, H.; Lin, H.; Li, Y.; Gao, H.; Xu, Z.; Hou, L.; Yao, J.; and Yuan, C. 2024a. IntactKV: Improving Large Language Model Quantization by Keeping Pivot Tokens In-tact. arXiv preprint arXiv:2403.01241 .Liu, X.; Tang, Z.; Chen, H.; Dong, P.; Li, Z.; Zhou, X.; Li, B.; Hu, X.; and Chu, X. 2025a. Can LLMs Maintain Fun-damental Abilities under KV Cache Compression? arXiv preprint arXiv:2502.01941 .Liu, X.; Tang, Z.; Dong, P.; Li, Z.; Liu, Y.; Li, B.; Hu, X.; and Chu, X. 2025b. Chunkkv: Semantic-preserving kv cache compression for efficient long-context llm inference. arXiv preprint arXiv:2502.00299 .Liu, Y.; Lu, J.; Chen, Z.; Qu, C.; Liu, J. K.; Liu, C.; Cai, Z.; Xia, Y.; Zhao, L.; Bian, J.; et al. 2025c. Adaptivestep: Auto-matically dividing reasoning step through model confidence. 
+
+arXiv preprint arXiv:2502.13943 .Liu, Z.; Yuan, J.; Jin, H.; Zhong, S.; Xu, Z.; Braverman, V.; Chen, B.; and Hu, X. 2024b. Kivi: A tuning-free asymmetric 2bit quantization for kv cache. arXiv preprint arXiv:2402.02750 .Paliotta, D.; Wang, J.; Pagliardini, M.; Li, K. Y.; Bick, A.; Kolter, J. Z.; Gu, A.; Fleuret, F.; and Dao, T. 2025. Thinking Slow, Fast: Scaling Inference Compute with Distilled Rea-soners. arXiv preprint arXiv:2502.20339 .Qin, Z.; Cao, Y.; Lin, M.; Hu, W.; Fan, S.; Cheng, K.; Lin, W.; and Li, J. 2025. Cake: Cascading and adaptive kv cache eviction with layer preferences. arXiv preprint arXiv:2503.12491 .Rein, D.; Hou, B. L.; Stickland, A. C.; Petty, J.; Pang, R. Y.; Dirani, J.; Michael, J.; and Bowman, S. R. 2024. Gpqa: A graduate-level google-proof q&a benchmark. In First Con-ference on Language Modeling .Saxena, U.; Saha, G.; Choudhary, S.; and Roy, K. 2024. Eigen Attention: Attention in Low-Rank Space for KV Cache Compression. arXiv preprint arXiv:2408.05646 .Song, J.; Jo, D.; Kim, Y.; and Kim, J.-J. 2025. Rea-soning Path Compression: Compressing Generation Tra-jectories for Efficient LLM Reasoning. arXiv preprint arXiv:2505.13866 .Sun, H.; Chang, L.-W.; Bao, W.; Zheng, S.; Zheng, N.; Liu, X.; Dong, H.; Chi, Y.; and Chen, B. 2024. ShadowKV: KV Cache in Shadows for High-Throughput Long-Context LLM Inference. arXiv preprint arXiv:2410.21465 .Tao, Q.; Yu, W.; and Zhou, J. 2024. Asymkv: Enabling 1-bit quantization of kv cache with layer-wise asymmetric quan-tization configurations. arXiv preprint arXiv:2410.13212 .Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.; Chi, E.; Le, Q. V.; Zhou, D.; et al. 2022. Chain-of-thought prompting elicits reasoning in large language models. In An-nual Conference on Neural Information Processing Systems (NeurIPS) .20525 Xiao, G.; Tang, J.; Zuo, J.; Guo, J.; Yang, S.; Tang, H.; Fu, Y.; and Han, S. 2024. Duoattention: Efficient long-context llm inference with retrieval and streaming heads. arXiv preprint arXiv:2410.10819 .Xiong, Y.; Wu, H.; Shao, C.; Wang, Z.; Zhang, R.; Guo, Y.; Zhao, J.; Zhang, K.; and Pan, Z. 2024. Layerkv: Optimiz-ing large language model serving with layer-wise kv cache management. arXiv preprint arXiv:2410.00428 .Yang, J. Y.; Kim, B.; Bae, J.; Kwon, B.; Park, G.; Yang, E.; Kwon, S. J.; and Lee, D. 2024. No token left behind: Reli-able kv cache compression via importance-aware mixed pre-cision quantization. arXiv preprint arXiv:2402.18096 .Yang, J. Y.; Kim, B.; Bae, J.; Park, G.; Kwon, B.; Yang, E.; Kwon, S. J.; and Lee, D. 2025. Don’t Discard, but Keep It Small: Context-Preserving KV Cache Compression with Importance-Aware Adaptive Precision. Yuan, J.; Liu, H.; Zhong, S.; Chuang, Y.-N.; Li, S.; Wang, G.; Le, D.; Jin, H.; Chaudhary, V.; Xu, Z.; et al. 2024. Kv cache compression, but what must we give in return? a com-prehensive benchmark of long context capable approaches. 
+
+arXiv preprint arXiv:2407.01527 .Yue, Y.; Yuan, Z.; Duanmu, H.; Zhou, S.; Wu, J.; and Nie, L. 2024. Wkvquant: Quantizing weight and key/value cache for large language models gains more. arXiv preprint arXiv:2402.12065 .Zhang, R.; Wang, K.; Liu, L.; Wang, S.; Cheng, H.; Zhang, C.; and Shen, Y. 2024a. LORC: Low-Rank Compression for LLMs KV Cache with a Progressive Compression Strategy. 
+
+arXiv preprint arXiv:2410.03111 .Zhang, X.; Du, C.; Du, C.; Pang, T.; Gao, W.; and Lin, M. 2024b. SimLayerKV: A Simple Framework for Layer-Level KV Cache Reduction. arXiv preprint arXiv:2410.13846 .Zhang, Y.; Hu, Y.; Zhao, R.; Lui, J.; and Chen, H. 2024c. Unifying kv cache compression for large language models with leankv. arXiv preprint arXiv:2412.03131 .Zhang, Z.; Sheng, Y.; Zhou, T.; Chen, T.; Zheng, L.; Cai, R.; Song, Z.; Tian, Y.; R´ e, C.; Barrett, C.; et al. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Process-ing Systems , 36: 34661–34710. 20526

@@ -1,0 +1,576 @@
+Title: Head-Aware KV Cache Compression for Efficient Visual Autoregressive Modeling
+
+URL Source: https://ojs.aaai.org/index.php/AAAI/article/download/39686/43647
+
+Number of Pages: 9
+
+Markdown Content:
+# Head-Aware KV Cache Compression for Efficient Visual Autoregressive Modeling 
+
+## Ziran Qin 1, Youru Lv 1, Mingbao Lin 2* , Hang Guo 3, Zeren Zhang 4, Danping Zou 1, Weiyao Lin 1∗ 
+
+> 1
+
+Shanghai Jiao Tong University, China  
+
+> 2
+
+Rakuten, Singapore  
+
+> 3
+
+Tsinghua University, China  
+
+> 4
+
+Peking University, China 
+
+{qinziran,mishall0914,dpzou,wylin }@sjtu.edu.cn, linmb001@outlook.com, cshguo@gmail.com, eric zhang@stu.pku.edu.cn 
+
+Abstract 
+
+Visual Autoregressive (VAR) models adopt a next-scale pre-diction paradigm, offering high-quality content generation with substantially fewer decoding steps. However, existing VAR models suffer from significant attention complexity and severe memory overhead due to the accumulation of key-value (KV) caches across scales. In this paper, we tackle this challenge by introducing KV cache compression into the next-scale generation paradigm. We begin with a crucial ob-servation: attention heads in VAR models can be divided into two functionally distinct categories: Contextual Heads focus on maintaining semantic consistency, while Structural Heads are responsible for preserving spatial coherence. This struc-tural divergence causes existing one-size-fits-all compression methods to perform poorly on VAR models. To address this, we propose HACK, a training-free Head-Aware KV cache Compression frameworK. HACK utilizes an offline classi-fication scheme to separate head types, enabling it to ap-ply pattern-specific compression strategies with asymmetric cache budgets for each category. By doing so, HACK ef-fectively constrains the average KV cache length within a fixed budget B, reducing the theoretical attention complexity from O(n4) to O(Bn 2). Extensive experiments on multiple VAR models across text-to-image and class-conditional tasks validate the effectiveness and generalizability of HACK. It achieves up to 70% KV cache compression without degrad-ing output quality, resulting in memory savings and faster in-ference. For example, HACK provides a 1.75 × memory re-duction and a 1.57 × speedup on Infinity-8B. 
+
+Code — https://github.com/Zr2223/HACK 
+
+## Introduction 
+
+Autoregressive (AR) models (He et al. 2024a; Sun et al. 2024; Li et al. 2024b) have demonstrated promising perfor-mance in visual generation, rivaling diffusion models (Ho, Jain, and Abbeel 2020; Podell et al. 2023; Peebles and Xie 2023; Esser et al. 2024; Chen et al. 2024b) in both qual-ity and flexibility. However, conventional AR models follow a “next-token” prediction paradigm, requiring long decod-ing steps that suffer from substantial inference latency. Re-cently, Visual AutoRegressive (VAR) modeling (Tian et al. 
+
+> *
+
+Corresponding authors. Copyright © 2026, Association for the Advancement of Artificial Intelligence (www.aaai.org). All rights reserved. Attention                                                                                               
+
+> Complexity
+> KV cache
+> (a) Vanilla VAR models (b) VAR models with HACK
+> Attention
+> Complexity
+> KV cache
+> All
+> heads
+> r1r2rK
+> ⋯Contextual
+> heads
+> Structural
+> heads
+> Average head
+> budget 𝐵
+> Faster speed and lower memory
+> ⋯
+> Length 𝑛 !
+> "+⋯+𝑛 #
+> "
+> ⋯
+> Length BS
+> Length BC
+> O(n)4
+> O(Bn)2
+> O(n)2
+> O(B)
+> nO(n)BO(Bn)
+> k=1
+> ∑
+> K
+> k
+> 242
+> O(n)4
+> O(Bn)2
+> Qk
+> Q
+> ~k
+> ,K^V^
+> K,V
+> B<<n2
+> O(n)4
+> O(Bn)2
+> O(n)2
+> O(B)
+> nO(n)BO(Bn)
+> k=1
+> ∑
+> K
+> k
+> 242
+> O(n)4
+> O(Bn)2
+> Qk
+> Q
+> ~k
+> ,K^V^
+> K,V
+> B<<n2
+> O(n)4
+> O(Bn)2
+> O(n)2
+> O(B)
+> nO(n)BO(Bn)
+> k=1
+> ∑
+> K
+> k
+> 242
+> O(n)4
+> O(Bn)2
+> Qk
+> Q
+> ~k
+> ,K^V^
+> K,V
+> B<<n2
+> O(n)4
+> O(Bn)2
+> O(n)2
+> O(B)
+> nO(n)BO(Bn)
+> k=1
+> ∑
+> K
+> k
+> 242
+> O(n)4
+> O(Bn)2
+> Qk
+> Q
+> ~k
+> ,K^V^
+> K,V
+> B<<n2
+
+Figure 1: (a) Vanilla VAR models cache all KV pairs across different scales. (b) HACK only preserves proper KV pairs selected by head-aware strategies, effectively hacking down both attention complexity and KV cache length. 2024; Han et al. 2024) has emerged, replacing the “next-token” prediction with a “next-scale” prediction paradigm. By enabling the parallel generation of multiple tokens within a single step, VAR models generate high-quality content in a multi-scale, coarse-to-fine manner within a few steps, ef-fectively balancing generation quality and efficiency. However, VAR models suffer from memory and com-putational bottlenecks during inference. As shown in Fig-ure 1(a), vanilla VAR indiscriminately caches all key-value (KV) pairs from all previous scales, leading to high attention complexity O(n4) and even greater KV cache accumulation than conventional AR models. This problem is severe for large-scale content. For example, generating 1024 × 1024 
+
+images with Infinity (Han et al. 2024) requires processing over 10k tokens across multiple scales, imposing substantial burdens on both attention computation and KV cache stor-age. This poses a major challenge for practical deployment. Inspired by the KV cache optimization in large lan-guage models (LLMs) (Achiam et al. 2023; Anthropic 2024; Dubey et al. 2024; Liu et al. 2024a), we address these chal-lenges in VAR by compressing unimportant KV pairs before its attention computation. However, existing LLMs-oriented KV compression methods (Zhang et al. 2024b; Li et al. 2024c; Qin et al. 2025; Wan et al. 2024b) fail to generalize to VAR models due to fundamental differences in their at-The Fortieth AAAI Conference on Artificial Intelligence (AAAI-26) 
+
+24982 Structural heads (Multi -diagonal pattern)     
+
+> Layer 9 Head 0
+> Across Samples
+> Layer 9 Head 29
+> Contextual heads (Vertical pattern)
+> Attention Score
+> Across Samples Across Scales Across Scales
+
+Figure 2: Attention Patterns of Contextual and Struc-tural Heads. Both Contextual and Structural heads exhibit consistent vertical and multi-diagonal patterns, respectively, across different samples and scales. tention mechanisms. In particular, we observe that attention heads in VAR (shown in Figure 2) fall into two categories with distinct attention patterns and functional roles. Contex-tual heads focus on a small set of key tokens to maintain global semantic consistency, forming vertical attention pat-terns. Structural heads attend to spatially adjacent tokens across scales through multi-diagonal attention patterns, pre-serving the geometric structure of contents. We further vali-date their functional roles by selectively masking each type during generation. In Figure 3, masking contextual heads causes the generated content to semantically diverge, while still maintaining structural integrity and high visual fidelity, whereas masking structural heads preserves the global con-tent direction but causes severe spatial distortions. Given the distinct attention characteristics and functional roles of them, existing one-size-fits-all compression strategies are ill-suited for VAR models. This calls for a head-aware KV cache compression approach considering the distinct prop-erties and sensitivities of contextual and structural heads. We propose HACK , a novel, training-free, head-aware KV cache compression framework for efficient VAR mod-els. HACK first exploits the inherent differences between contextual and structural heads through a robust offline clas-sification based on attention variance. Then, as shown in Figure 1(b), HACK allocates asymmetric KV budgets and applies pattern-specific compression strategies tailored to each head type. This reduces the attention complexity from 
+
+O(n4) to O(Bn 2), where B is the average cache length per head. Finally, HACK achieves substantial memory and la-tency reductions without degrading generation quality. To the best of our knowledge, HACK is the first study to ad-dress KV cache compression in VAR models. Our contributions include: (1) We provide an in-depth analysis that identifies and characterizes contextual and structural heads in VAR models, revealing their consistent functional roles and attention patterns, which offers cru-cial insights for optimizing these models. (2) We introduce HACK, a head-aware, training-free framework for VAR models that features asymmetric cache budget allocation and pattern-specific KV cache compression strategies suited for both contextual and structural heads. (3) We prove HACK’s efficacy on six different VAR models across multiple tasks, showing substantial memory and latency reductions while maintaining or even improving generation quality. (a)         
+
+> r1
+> (b) (c)
+> r2r3r4r5r6r7r8r9r10
+
+Figure 3: Impact of selective head masking (10% of total heads for each type). Compared with the original genera-tion (a), masking contextual heads (b) leads to semantic di-vergence while maintaining high visual fidelity; in contrast, masking structural heads (c) preserves global content direc-tion but results in severe structural degradation. 
+
+## Related Work 
+
+Autoregressive Visual Generation. AR models (Achiam et al. 2023; Anthropic 2024; Dubey et al. 2024; Liu et al. 2024a), originally successful in LLMs, have extended into the visual domain. Traditional visual AR approaches (He et al. 2024a; Sun et al. 2024; Li et al. 2024b) rely on next-token prediction, where images are first quantized into dis-crete tokens ( e.g. , VQVAE (Van Den Oord, Vinyals et al. 2017), VQGAN (Esser, Rombach, and Ommer 2021)) and then decoded autoregressively. While effective, they in-cur high computation and quantization errors, resulting in lower efficiency. Recent VAR models (Tian et al. 2024; Han et al. 2024; Tang et al. 2024; Chen et al. 2024a; Ren et al. 2024) adopt a next-scale prediction paradigm, enabling multi-scale parallel decoding that improves both quality and speed. They have shown strong performance across text-to-image (Han et al. 2024; Voronov et al. 2024), 3D con-tent (Chen et al. 2025; Gao et al. 2025), and unified vision-language tasks (Zhuang et al. 2025). However, their hierar-chical design leads to growing attention complexity and KV cache accumulation across scales, resulting in both memory and compute bottlenecks. We address these challenges via VAR-specific KV cache compression that reduces resource cost while preserving generation quality. 
+
+KV Cache Compression. Existing efforts mainly focus on quantization, eviction, and merging to alleviate KV cache overhead in LLMs. Quantization (Liu et al. 2024d; Yue et al. 2024; Kang et al. 2024; He et al. 2024b) reduces cache size by lowering bit precision. Eviction methods discard less crit-ical tokens based on attention metrics (Zhang et al. 2024b; Liu et al. 2024c; Oren et al. 2024; Ren and Zhu 2024; Li et al. 2024c), optimizing cache allocation under fixed bud-gets (Ge et al. 2023; Yang et al. 2024; Feng et al. 2024; Fu et al. 2024; Qin et al. 2025). Merging strategies (Zhang et al. 2024a; Liu et al. 2024b; Wan et al. 2024a,b) alleviate memory constraints by combining redundant KV pairs while preserving context. However, these methods fall short of VAR models, whose hierarchical attention demands careful preservation of structural and contextual dependencies. We introduce head-aware compression tailored to VAR’s hetero-geneous attention patterns, enabling substantial memory and compute reductions without degrading visual quality. 24983 Preliminaries 
+
+Visual AutoRegressive Modeling. VAR extends autore-gressive modeling from “next-token” to “next-scale” pre-diction. Given an image feature map f ∈ Rh×w×c,VAR quantizes it into K multi-scale token maps R =(r1, r2, . . . , rK ). Each map rk ∈ [V ]hk ×wk contains hk ×
+
+wk tokens and the resolutions {(hk, w k)}Kk=1 are predefined such that hkwk = a2( k−1) , where a > 1 is a constant scaling factor. The autoregressive likelihood is: 
+
+p(r1, r2, . . . , rK ) = 
+
+> K
+
+Y
+
+> k=1
+
+p(rk|r1, r2, . . . , rk−1), (1) where the generation of each scale k is conditioned on the tokens {r1, r2, . . . , rk−1} from all preceding scales, which serve as a contextual prefix. During inference, the entire con-tent can be synthesized coarse-to-fine in just K steps, with all tokens for each scale predicted in parallel. 
+
+KV Cache in VAR. Akin to AR models, VAR improves efficiency by caching KV pairs across generation steps. In a multi-head attention module, each head h has weight matri-ces W(h) 
+
+> Q
+
+, W(h) 
+
+> K
+
+, W(h) 
+
+> V
+
+∈ RD×Dh , projecting input tokens 
+
+Xk ∈ RNk ×D at step k into queries, keys, and values:                
+
+> Q(h)
+> k=XkW(h)
+> Q,K(h)
+> k=XkW(h)
+> K,V(h)
+> k=XkW(h)
+> V,(2)
+
+where Nk = hkwk denotes the number of tokens at scale k.The KV caches are updated independently per head:          
+
+> K(h)=Concat (K(h),K(h)
+> k),V(h)=Concat (V(h),V(h)
+> k),
+> (3)
+
+with the cache length at step k, denoted as Tk = Pki=1 wihi,growing cumulatively. Attention is then computed as:       
+
+> A(h)=Softmax (Q(h)K(h)T
+> ),O(h)=A(h)V(h).(4)
+
+While caching avoids redundant computations across scales, the accumulation of tokens leads to escalating mem-ory consumption. Also, the attention cost increases as the se-quence length grows, causing complexity of O(n4), where 
+
+n = ak−1. These dual challenges make efficient KV cache management a vital prerequisite for scalable inference. 
+
+KV Cache Compression for VAR. To address the above memory and attention compute challenges, we introduce a KV cache compression strategy for VAR models. Without compression, the total cache size can become prohibitively large. We quantify this as Btotal = TK ·H ·L, where TK is the total number of generated tokens, H and L are the number of attention heads and layers, respectively. Our strategy is to enforce a fixed per-head budget B. Whenever the cache length Tk exceeds B at any generation step k, compression is applied to the KV cache before the attention computation: 
+
+ˆK(h), ˆV(h) = f (K(h), V(h), B ), (5) where ˆK(h), ˆV(h) ∈ RB×Dh are the compressed KV pairs, and f (·) is any compression strategy. 
+
+Figure 4: Empirical analysis on VAR-d30. (Left) Compres-sion sensitivity of contextual vs. structural heads. (Right) Comparison of two scale-preserving strategies. Experiments are conducted on 8K ImageNet samples. 
+
+## Methodology 
+
+Motivation 
+
+To guide the design of KV compression for VAR models, we first conduct a series of empirical analyses using VAR-d30. Our observations are summarized as follows: 
+
+Observation 1: Stability of attention heads across sam-ples and scales. As shown in Figure 2, despite variations in input samples or generation scales, both contextual and structural heads consistently exhibit their respective vertical and multi-diagonal attention patterns. This consistency sug-gests that attention heads in VAR models play stable, func-tional roles that are intrinsic to the model and can thus be reliably classified. We provide more attention visualization results in the supplementary material .
+
+Observation 2: Divergent compression sensitivity across head types. The two head types show markedly different sensitivities to compression. Contextual heads, which fo-cus attention on key tokens to summarize global semantics, are resistant to pruning. In contrast, structural heads, which maintain geometric structure on each scale, are highly sen-sitive, as excessive compression can disrupt critical spatial information. As shown in Figure 4 (left), contextual heads maintain high image quality even with 90% compression ra-tio, while the performance of structural heads degrades sig-nificantly when compression exceeds 50%. This difference in compression sensitivity motivates our strategy of allocat-ing asymmetric budgets to use resources more effectively. 
+
+Observation 3: Initial and recent scales are more impor-tant in generation. Drawing inspiration from LLMs, where initial and recent tokens receive higher attention and are cru-cial for coherence (Xiao et al. 2023), we hypothesized that initial and recent scales play a similar role in VAR mod-els. To verify this, we compared two token preservation strategies: (1) retaining tokens only from the initial two and the most recent scales, versus (2) retaining an equal num-ber of tokens from intermediate scales. As shown in Fig-ure 4 (right), strategy (1) yields dramatically better genera-tion quality, with FID scores up to 10 × lower in early gener-ation steps. This confirms the greater importance of tokens from the initial and recent scales in VAR’s generation. 
+
+Offline Head Classification via Attention Variance 
+
+Motivated by the distinct and consistent functional behav-iors of contextual and structural heads, we propose an of-24984 Tk within budget B                                                    
+
+> ⋯⋯
+> ⋯⋯
+> Init scales
+> ⋯⋯
+> ⋯⋯
+> Select tokens across scales Other scales
+> Structural Head Compression Strategy fSContextual Head Compression Strategy fC
+> Before attention:
+> After compression:
+> Reduce overall
+> attention complexity
+> Attention
+> Computation
+> Sample Guide
+> []+
+> Compress
+> Multi -scale
+> tokens
+> Evicted
+> tokens
+> Budget
+> BC
+> Tkexceeds budget B
+> ⋰
+> Full KV Cache Pattern -Specific
+> Compression Strategies
+> Variance Matrix (𝝈 )Low
+> High
+> Structural
+> Heads
+> Sensitive to
+> compression
+> Layer l
+> Heads
+> Allocate
+> Length BS
+> Length BC
+> (a) Offline Head Classification
+> (b) Asymmetric Head Budget Allocation
+> (c) Pattern -Specific Compression Strategies
+> 1. Global rank
+> 2. Classify
+> 3. Reorder
+> 𝛼
+> Scale k
+> Length B
+> Scales <k
+> Budget
+> BS
+> Recent scale
+> More budget
+> Less budget
+> Allocate
+> Contextual
+> Structural Head
+> Layer
+> Contextual
+> Heads
+> Robust to
+> compression
+
+Figure 5: Overview of our proposed HACK framework. It consists of (a) offline head classification via attention variance, (b) asymmetric head budget allocation based on compression sensitivity, and (c) pattern-specific KV cache compression strategies. fline classification method (illustrated in Figure 5(a)) to dis-tinguish them before deployment. As we analyzed, contex-tual heads exhibit stable attention patterns across queries, se-lectively focusing on or disregarding semantic cues, thereby yielding low column-wise variance. In contrast, structural heads attend in a position-sensitive manner, dynamically shifting attention based on spatial configurations, which results in higher variance across queries. Therefore, we capture their divergent behaviors by measuring the atten-tion variance. Specifically, we analyze the attention matrix 
+
+A(l,h ) 
+
+> K
+
+∈ RNK ×TK at the final generation step K, which en-capsulates interactions from all prior scales. For each head 
+
+h in layer l, we compute the sum of column-wise variances: 
+
+σl,h =
+
+> TK
+
+X
+
+> j=1
+
+Var( A(l,h ) 
+
+> K
+
+[: , j ]) . (6) Averaging these values over a small validation set yields a variance matrix σ ∈ RL×H . We then globally rank all heads according to their variance scores. Notably, the resulting dis-tribution exhibits a long-tailed pattern, with a clear bound-ary separating low-variance and high-variance regions, cor-responding to contextual and structural heads, respectively. To assign head types, we define a global contextual head ra-tio α, which can be tuned based on the empirical variance distribution to suit different models. Following classification, we obtain per-layer index sets 
+
+HC and HS for contextual and structural heads, respectively, satisfying HC ∪ HS = {1, . . . , H } and HC ∩ HS = ∅.For clarity, we annotate head-specific variables with super-scripts (C) and (S); for instance, K(C) and V(C) denote the key and value states of contextual heads, while K(S) and 
+
+V(S) correspond to those of structural heads. To facilitate ef-ficient inference, we conceptually reorder the heads within each layer by grouping them according to type. 
+
+Asymmetric Head Budget Allocation 
+
+Given an average target budget B per head and the contex-tual head ratio 0 < α < 1, we allocate memory asymmetri-cally to contextual and structural heads: 
+
+B = αB C + (1 − α)BS , (7) where BC and BS denote the cache budget assigned to each contextual and structural head, respectively. In practice, we assign substantially smaller budgets to contextual heads ( i.e. ,
+
+BC ≪ BS ), preserving more capacity for structural heads due to their higher sensitivity to compression. It is worth not-ing that although α defines the global proportion of contex-tual heads, the actual contextual–structural head ratio varies across layers. This naturally induces a layer-adaptive com-pression effect, where cache budgets are allocated according to each layer’s specific head composition. When the cache length Tk for a head group exceeds its assigned budget at any step k, we invoke dedicated com-pression strategies prior to attention computation to limit the size of stored KV pairs. This ensures that memory and compute costs remain bounded before executing the atten-tion module. The compressed KV pairs are computed as: 
+
+ˆK(p), ˆV(p) = fp
+
+
+
+{K(h)|h ∈ Hp}, {V(h)|h ∈ Hp}, B p
+
+
+
+,
+
+(8) where p ∈ { C, S } and fp denotes the specific compression strategy for contextual or structural heads. 
+
+Pattern-Specific Compression Strategies 
+
+We design compression strategies, as shown in Figure 5(c), that are tailored to the distinct attention patterns of contex-tual and structural heads, enabling fine-grained and head-aware KV cache compression. 
+
+Importance Estimation via Efficient Subset Attention. 
+
+To make compression efficient, we propose to approxi-mate full attention behavior by observing a small subset of queries. For each head type p ∈ { C, S }, we uniformly sam-ple a small subset of queries ˜Q(p) 
+
+> k
+
+∈ RNobs ×Dh from full 24985 Q(p) 
+
+> k
+
+∈ RNk ×Dh and compute attention scores over uncom-pressed key matrix K(p) ∈ RTk ×Dh :
+
+˜A(p) 
+
+> k
+
+= Softmax ( ˜Q(p) 
+
+> k
+
+(K(p))T ). (9) These approximated scores act as a computationally cheap proxy for full attention, enabling token selection and compression for both contextual and structural heads with-out incurring the cost of full attention computation. 
+
+Contextual Head Compression Strategy fC . Contex-tual heads typically focus on a small number of semantically salient tokens, resulting in vertically concentrated attention patterns. Based on this property, we directly select KV pairs 
+
+{ ˆK(C), ˆV(C)} with the highest cumulative attention scores: 
+
+I(C) = TOPK 
+
+> Nobs
+
+X
+
+> i=1
+
+˜A(C) 
+
+> k
+
+[i, :] , B C
+
+!
+
+,
+
+ˆK(C) = K(C)[I(C), :] , ˆV(C) = V(C)[I(C), :] ,
+
+(10) where TOPK selects the indices of the top-K tokens with highest scores. To mitigate potential semantic loss from ag-gressive pruning at the final generation step, we apply a merging operation following LOOK-M (Wan et al. 2024b). Discarded KV tokens in the last generation step are softly integrated into their nearest retained counterparts through similarity-weighted averaging. Merging is performed only once at the final scale to balance efficiency and performance. 
+
+Structural Head Compression Strategy fS . Unlike con-textual heads, structural heads exhibit position- and scale-dependent patterns, making them sensitive to spatial struc-tures and positional continuity. To preserve structural co-herence, our scale-aware compression strategy prioritizes to-kens from the crucial initial and recent scales. Specifically, we retain Ninit tokens from initial generation stages and Nk
+
+tokens from the latest scale, using the remaining budget M
+
+to select intermediate-scale tokens with the highest cumula-tive attention scores via subset attention. The conserved KV caches { ˆK(S), ˆV(S)} in structural heads are given by:                               
+
+> I(S)=TOPK
+> Nobs X
+> i=1
+> ˜A(S)
+> k[i, :] , M
+> !
+> ,M=BS−Ninit −Nk,
+> ˆK(S)=Concat
+> 
+> K(S)[: Ninit ,:] ,K(S)[I(S),:] ,K(S)[−Nk:,:]
+> 
+> ,
+> ˆV(S)=Concat
+> 
+> V(S)[: Ninit ,:] ,V(S)[I(S),:] ,V(S)[−Nk:,:]
+> 
+> .
+> (11)
+
+This preserves long-range dependencies and recent local context, while adaptively selecting intermediate tokens to maintain spatial continuity with minimal redundancy. 
+
+Complexity Analysis 
+
+Compared to vanilla VAR, which incurs a total attention complexity of O(n4) due to cumulative KV cache growth (see supplementary material for derivation), HACK reduces this cost to O(Bn 2) by enforcing an average per-head cache budget B. At generation step k, the attention complexity is upper-bounded by Nk ·min( Tk, B ), where Nk is the number of tokens at step k and Tk is the cumulative cache length up to step k. Summing over all scales yields:        
+
+> KX
+> k=1
+> Nk·min( Tk, B )≤B
+> KX
+> k=1
+> a2( k−1) ∼ O (Bn 2).(12)
+
+The additional overhead in HACK arises from KV cache compression, triggered only when Tk > B . Let ks denote the first step where compression is applied. The main cost comes from subset attention, where Nobs ≪ Nk sampled queries estimate token importance:          
+
+> KX
+> k=ks
+> Nobs ·(B+Nk) = Nobs
+> KX
+> k=ks
+> (B+a2( k−1) )∼ O (Nobs n2).
+> (13)
+
+## Experimentation 
+
+Experiment Settings 
+
+Evaluation Models. We evaluate multiple next-scale gen-eration models across diverse generative tasks: Infinity-2B, Infinity-8B (Han et al. 2024) and Hart (Tang et al. 2024) for text-to-image generation; VAR-d30 (Tian et al. 2024) for class-conditional generation. 
+
+Evaluation Benchmarks and Metrics. For text-to-image generation, we adopt four benchmarks: GenEval (Ghosh, Hajishirzi, and Schmidt 2023) for assessing high-level se-mantic alignment; ImageReward (IR) (Xu et al. 2023), HPSv2.1 (HPS) (Wu et al. 2023), and MJHQ30k (evaluated using FID and CLIP) (Li et al. 2024a) for perceptual quality. For class-conditional generation, we report FID, Inception Score (IS), Precision, and Recall evaluated on ImageNet-1K (Deng et al. 2009) using 50 samples per class. 
+
+Baseline Methods. We compare against two categories of KV cache compression methods: (1) Eviction-based ,including StreamingLLM (Xiao et al. 2023) (position-based), and H2O (Zhang et al. 2024b), SnapKV (Li et al. 2024c), and CAKE (Qin et al. 2025) (attention-based); (2) 
+
+Merging-based , including LOOK-M (Wan et al. 2024b) and Meda (Wan et al. 2025), which merge evicted KV pairs. 
+
+Implementation Details. The compression ratio for eval-uation is defined by the average per-head budget B as ρ =1 − BTK . Additional HACK implementation details for dif-ferent models are provided in the supplementary material .
+
+Main Results 
+
+Text-to-Image Generation. Quantitative Results: Table 1 compares HACK with six baseline methods on Infinity (2B/8B) and Hart models at compression ratio ρ = 70% .Compared to baseline methods, which suffer performance degradation in perceptual quality, HACK achieves loss-less performance across all evaluation metrics and models, demonstrating strong effectiveness and generalizability. No-tably, HACK even surpasses the full KV cache in some cases, underscoring significant redundancy in both attention computation and KV cache in vanilla next-scale generation. 
+
+Influence of Compression Ratios: Figure 6 shows HACK’s qualitative results at varying compression ratios on Infinity-2B/8B. While baselines struggle to maintain perceptual 24986 Method GenEval ↑ HPS ↑ IR ↑ FID ↓ CLIP ↑
+
+Infinity-2B 0.68 30.49 0.946 10.34 27.52 +Streaming 0.68 29.76 0.901 11.20 27.54 +H2O 0.68 29.60 0.910 10.68 27.57 +SnapKV 0.68 29.60 0.904 10.60 27.56 +LOOK-M 0.67 28.73 0.864 11.14 27.59 +CAKE 0.68 29.46 0.906 10.59 27.56 +MEDA 0.67 28.70 0.867 11.14 27.59 +HACK 0.68 30.18 0.933 10.56 27.62 
+
+Infinity-8B 0.81 30.99 1.049 8.75 28.73 +Streaming 0.81 30.52 1.016 8.98 29.05 +H2O 0.81 30.53 1.020 9.04 29.02 +SnapKV 0.81 30.21 1.015 9.45 29.06 +LOOK-M 0.81 29.99 0.994 10.84 29.04 +CAKE 0.81 30.04 1.002 9.80 29.05 +MEDA 0.79 29.57 0.954 11.56 29.01 +HACK 0.82 30.69 1.043 8.62 29.08 
+
+Hart 0.50 28.75 0.658 10.70 27.69 +Streaming 0.48 25.57 0.458 11.16 27.38 +H2O 0.48 25.69 0.475 11.13 27.32 +SnapKV 0.47 25.62 0.469 11.33 27.33 +LOOK-M 0.37 20.83 0.140 25.64 25.85 +CAKE 0.46 25.89 0.458 12.88 27.21 +MEDA 0.36 20.57 0.117 28.37 25.71 +HACK 0.50 28.36 0.658 8.58 27.76 
+
+Table 1: Quantitative comparison of text-to-image genera-tion on different models with compression ratio ρ = 70% .
+
+Figure 6: Performance comparison of different compression methods across varying compression ratios measured by Im-ageReward and HPSv2.1 on Infinity-2B and Infinity-8B. quality, resulting in substantial performance drops at ex-treme compression levels ( ρ > 70% ), HACK consistently preserves robust image quality. 
+
+Qualitative Results: We further present qualitative ex-amples from HACK on Infinity-8B in Figure 7. HACK ef-fectively maintains pixel-level fidelity, scene layout, ob-+ HACK 
+
+> 𝝆 = 𝟗𝟎%
+> + HACK
+> 𝝆 = 𝟕𝟎%  Infinity -8B
+
+Figure 7: Qualitative results of text-to-image generation by HACK on Infinity-8B. HACK can preserve visual fidelity even under an extreme compression ratio. + H2O 
+
+> 𝝆 = 𝟕𝟎%
+> + SnapKV
+> 𝝆 = 𝟕𝟎%
+> + LOOK -M
+> 𝝆 = 𝟕𝟎%
+> + HACK
+> 𝝆 = 𝟑𝟎%
+> + HACK
+> 𝝆 = 𝟓𝟎%
+> + HACK
+> 𝝆 = 𝟕𝟎%
+> Original
+
+Figure 8: Qualitative va of class-conditional image genera-tion on VAR-d30. 
+
+Method ρ FID ↓ IS ↑ Precision ↑ Recall ↑
+
+VAR-d30 0% 1.96 302.23 0.81 0.60 +Streaming 30% 2.04 297.09 0.80 0.61 +H2O 30% 2.10 295.01 0.81 0.60 +SnapKV 30% 2.13 294.85 0.81 0.60 +LOOK-M 30% 3.32 255.36 0.76 0.61 +HACK 30% 1.97 299.98 0.81 0.61 +Streaming 50% 2.36 281.30 0.79 0.61 +H2O 50% 3.04 262.68 0.77 0.62 +SnapKV 50% 3.09 261.63 0.77 0.62 +LOOK-M 50% 6.89 203.47 0.70 0.62 +HACK 50% 2.06 293.60 0.80 0.61 +Streaming 70% 4.84 228.43 0.74 0.62 +H2O 70% 8.81 182.84 0.68 0.62 +SnapKV 70% 7.31 196.62 0.70 0.62 +LOOK-M 70% 18.88 116.70 0.58 0.63 +HACK 70% 2.78 268.69 0.78 0.62 
+
+Table 2: Quantitative comparison of class-conditional image generation on VAR-d30 using the ImageNet dataset. ject structure, and semantic coherence with original outputs. Even at extreme compression ( ρ = 90% ), generated images remain visually faithful, confirming HACK’s resilience. 
+
+Class-Conditional Image Generation. Quantitative Re-sults: HACK exhibits exceptional performance in class-conditional generation tasks, low resolution of which causes sensitivity to compression. In Table 2, baseline methods ex-perience great performance deterioration ( e.g. , LOOK-M’s 24987 Model Memory Com. O Latency Speedup Infinity-2B 28.96GB – 3.85s 1.00× +HACK ( 70% ) 14.64GB 0.16s 2.61s 1.48× Infinity-8B 60.42GB – 8.14s 1.00× +HACK ( 70% ) 34.44GB 0.44s 5.17s 1.57× Hart 35.47GB – 2.43s 1.00× +HACK ( 70% ) 23.82GB 0.15s 1.38s 1.76× 
+
+Table 3: Efficiency analysis on Infinity and Hart models, evaluated on NVIDIA A100 GPUs with a batch size of 1. FID score increases by 18.88 at 70% compression). In con-trast, HACK consistently demonstrates superior robustness and outperforms all baselines across different compression ratios, aligning with results from text-to-image generation. 
+
+Qualitative Results: The qualitative results in Figure 8 align with our quantitative findings. Images generated by baselines exhibit severe distortions, whereas HACK main-tains high visual fidelity, highlighting our effectiveness. 
+
+Efficiency Analysis 
+
+We evaluate HACK’s efficiency by comparing memory con-sumption and inference latency on Infinity and Hart mod-els under standard attention implementations. Table 3 sum-marizes the results, including additional compression over-head (denoted as Com. O) introduced by HACK. Compared to vanilla VAR models, which suffer from intensive atten-tion computations and cumulative KV cache memory us-age, HACK significantly reduces both computational cost and KV cache length, resulting in substantial improvements (e.g. , a 1.75 × memory reduction and 1.57 × speedup on Infinity-8B). Crucially, HACK incurs negligible compres-sion overhead (around 6 − 8% ) compared to overall latency. HACK supports efficient scaling to higher resolutions. As shown in Figure 9, the latency of full attention grows expo-nentially with increasing resolution, while HACK constrains this growth to be nearly linear, achieving a remarkable 5.8×
+
+speedup at 1024 ×1024 resolution ( ρ = 90% ). HACK is also compatible with frameworks like FlashAttention (Dao 2023), yielding further memory savings and speedups. 
+
+Ablation Study 
+
+Impact of Key Components. Table 4 shows that both asym-metric budget allocation and pattern-specific compression are crucial to HACK’s effectiveness. Removing either re-duces performance, while combining both yields the best results, highlighting their complementary roles. 
+
+Ablation Study on Compression Strategies. Table 5 highlights the importance of pattern-specific compression. Removing merging in fC or deprioritizing key scales in fS
+
+reduces performance, while swapping strategies performs worst, confirming the need for head-type-specific designs. The full method performs best across all metrics. 
+
+Impact of Query Subset Selection. Table 6 evaluates sampling strategies for efficient subset attention in impor-tance estimation. We compare four query selection meth-ods with a fixed subset size ( Nobs = 32 ): Random sam-Full (GFLOPs: 914.05 )HACK (50%) (GFLOPs: 715.56 )HACK (70%) (GFLOPs: 592.60 )HACK (90%) (GFLOPs: 440.27 )
+
+Figure 9: Efficiency Profiling of average latency on attention module for different scales.                               
+
+> Asym. Pattern Infinity-2B VAR-d30 Budget Comp. IR ↑HPS ↑FID ↓IS ↑
+> ✗✗0.910 29.60 3.04 262.68
+> ✓✗0.914 29.58 2.17 288.18
+> ✗✓0.923 30.08 2.19 289.24
+> ✓✓0.933 30.18 2.06 293.60
+
+Table 4: Component ablation of HACK on Infinity-2B ( ρ =70% ) and VAR-d30 ( ρ = 50% ).                               
+
+> Strategy Infinity-2B VAR-d30 IR ↑HPS ↑FID ↓IS ↑
+> fCw/o merge 0.931 30.11 2.09 291.79
+> fSw/o init+rec. scales 0.908 29.79 2.17 287.73
+> fC↔fS(Swapped) 0.859 28.63 2.69 271.04 Full fC+fS0.933 30.18 2.06 293.60
+
+Table 5: Compression strategy ablation on Infinity-2B ( ρ =70% ) and VAR-d30 ( ρ = 50% ).                
+
+> Model Random Init Recent Uniform Full Infinity-2B 0.927 0.923 0.927 0.933 0.944 Infinity-8B 1.038 1.028 1.027 1.043 1.045
+
+Table 6: Query-subset selection strategy ablation on Infinity models evaluated by ImageReward ( ↑) with ρ = 70% .pling, Initial-N (first N tokens), Recent-N (most recent N
+
+tokens), and our uniform sampling. Among them, uniform sampling achieves the closest performance to full attention, offering an effective trade-off between efficiency and gener-ation quality, thereby justifying its use in our framework. 
+
+## Conclusion 
+
+We propose HACK, a training-free KV cache compres-sion framework for VAR models. By distinguishing between contextual and structural attention heads, HACK allocates asymmetric cache budgets and applies tailored compression strategies, achieving high compression, reduced KV cache size, and faster inference while maintaining generation qual-ity. Extensive experiments confirm its effectiveness. 24988 Acknowledgements 
+
+The paper is supported in part by the National Natural Sci-ence Foundation of China (No. U21B2013 , 62325109), and in part by the Shanghai ’The Belt and Road’ Young Scholar Exchange Grant (24510742000). 
+
+## References 
+
+Achiam, J.; Adler, S.; Agarwal, S.; Ahmad, L.; Akkaya, I.; Aleman, F. L.; Almeida, D.; Altenschmidt, J.; Altman, S.; Anadkat, S.; et al. 2023. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 .Anthropic. 2024. The Claude 3 Model Family: Opus, Son-net, Haiku. Chen, H.; Su, H.; Sun, P.; and Zhu, J. 2024a. Toward Guidance-Free AR Visual Generation via Condition Con-trastive Alignment. arXiv preprint arXiv:2410.09347 .Chen, J.; Ge, C.; Xie, E.; Wu, Y.; Yao, L.; Ren, X.; Wang, Z.; Luo, P.; Lu, H.; and Li, Z. 2024b. Pixart-σ: Weak-to-strong training of diffusion transformer for 4k text-to-image generation. In European Conference on Computer Vision ,74–91. Chen, Y.; Lan, Y.; Zhou, S.; Wang, T.; and Pan, X. 2025. SAR3D: Autoregressive 3D Object Generation and Under-standing via Multi-scale 3D VQVAE. In CVPR .Dao, T. 2023. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 .Deng, J.; Dong, W.; Socher, R.; Li, L.-J.; Li, K.; and Fei-Fei, L. 2009. Imagenet: A large-scale hierarchical image database. In IEEE conference on computer vision and pat-tern recognition , 248–255. Dubey, A.; Jauhri, A.; Pandey, A.; Kadian, A.; Al-Dahle, A.; Letman, A.; Mathur, A.; Schelten, A.; Yang, A.; Fan, A.; et al. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 .Esser, P.; Kulal, S.; Blattmann, A.; Entezari, R.; M¨ uller, J.; Saini, H.; Levi, Y.; Lorenz, D.; Sauer, A.; Boesel, F.; et al. 2024. Scaling rectified flow transformers for high-resolution image synthesis. In Forty-first international conference on machine learning .Esser, P.; Rombach, R.; and Ommer, B. 2021. Taming trans-formers for high-resolution image synthesis. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 12873–12883. Feng, Y.; Lv, J.; Cao, Y.; Xie, X.; and Zhou, S. K. 2024. Ada-kv: Optimizing kv cache eviction by adaptive bud-get allocation for efficient llm inference. arXiv preprint arXiv:2407.11550 .Fu, Y.; Cai, Z.; Asi, A.; Xiong, W.; Dong, Y.; and Xiao, W. 2024. Not all heads matter: A head-level KV cache compres-sion method with integrated retrieval and reasoning. arXiv preprint arXiv:2410.19258 .Gao, J.; Liu, W.; Sun, W.; Wang, S.; Song, X.; Shang, T.; Chen, S.; Li, H.; Yang, X.; Yan, Y.; et al. 2025. MARS: Mesh AutoRegressive Model for 3D Shape Detailization. arXiv preprint arXiv:2502.11390 .Ge, S.; Zhang, Y.; Liu, L.; Zhang, M.; Han, J.; and Gao, J. 2023. Model tells you what to discard: Adaptive kv cache compression for llms. arXiv preprint arXiv:2310.01801 .Ghosh, D.; Hajishirzi, H.; and Schmidt, L. 2023. Geneval: An object-focused framework for evaluating text-to-image alignment. Advances in Neural Information Processing Sys-tems , 52132–52152. Han, J.; Liu, J.; Jiang, Y.; Yan, B.; Zhang, Y.; Yuan, Z.; Peng, B.; and Liu, X. 2024. Infinity: Scaling bitwise autoregres-sive modeling for high-resolution image synthesis. arXiv preprint arXiv:2412.04431 .He, W.; Fu, S.; Liu, M.; Wang, X.; Xiao, W.; Shu, F.; Wang, Y.; Zhang, L.; Yu, Z.; Li, H.; et al. 2024a. Mars: Mixture of auto-regressive models for fine-grained text-to-image syn-thesis. arXiv preprint arXiv:2407.07614 .He, Y.; Zhang, L.; Wu, W.; Liu, J.; Zhou, H.; and Zhuang, B. 2024b. ZipCache: Accurate and Efficient KV Cache Quan-tization with Salient Token Identification. arXiv preprint arXiv:2405.14256 .Ho, J.; Jain, A.; and Abbeel, P. 2020. Denoising diffusion probabilistic models. In Advances in neural information processing systems , 6840–6851. Kang, H.; Zhang, Q.; Kundu, S.; Jeong, G.; Liu, Z.; Krishna, T.; and Zhao, T. 2024. Gear: An efficient kv cache com-pression recipefor near-lossless generative inference of llm. 
+
+arXiv preprint arXiv:2403.05527 .Li, D.; Kamko, A.; Akhgari, E.; Sabet, A.; Xu, L.; and Doshi, S. 2024a. Playground v2. 5: Three insights to-wards enhancing aesthetic quality in text-to-image genera-tion. arXiv preprint arXiv:2402.17245 .Li, T.; Tian, Y.; Li, H.; Deng, M.; and He, K. 2024b. Au-toregressive image generation without vector quantization. 
+
+Advances in Neural Information Processing Systems , 37: 56424–56445. Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024c. Snapkv: Llm knows what you are looking for before generation. arXiv preprint arXiv:2404.14469 .Liu, A.; Feng, B.; Xue, B.; Wang, B.; Wu, B.; Lu, C.; Zhao, C.; Deng, C.; Zhang, C.; Ruan, C.; et al. 2024a. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 .Liu, A.; Liu, J.; Pan, Z.; He, Y.; Haffari, G.; and Zhuang, B. 2024b. MiniCache: KV Cache Compression in Depth Dimension for Large Language Models. arXiv preprint arXiv:2405.14366 .Liu, Z.; Desai, A.; Liao, F.; Wang, W.; Xie, V.; Xu, Z.; Kyrillidis, A.; and Shrivastava, A. 2024c. Scissorhands: Ex-ploiting the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Infor-mation Processing Systems , 36. Liu, Z.; Yuan, J.; Jin, H.; Zhong, S.; Xu, Z.; Braverman, V.; Chen, B.; and Hu, X. 2024d. Kivi: A tuning-free asymmetric 2bit quantization for kv cache. arXiv preprint arXiv:2402.02750 .Oren, M.; Hassid, M.; Adi, Y.; and Schwartz, R. 2024. Transformers are multi-state rnns. arXiv preprint arXiv:2401.06104 .24989 Peebles, W.; and Xie, S. 2023. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF inter-national conference on computer vision , 4195–4205. Podell, D.; English, Z.; Lacey, K.; Blattmann, A.; Dockhorn, T.; M¨ uller, J.; Penna, J.; and Rombach, R. 2023. Sdxl: Im-proving latent diffusion models for high-resolution image synthesis. arXiv preprint arXiv:2307.01952 .Qin, Z.; Cao, Y.; Lin, M.; Hu, W.; Fan, S.; Cheng, K.; Lin, W.; and Li, J. 2025. Cake: Cascading and adaptive kv cache eviction with layer preferences. arXiv preprint arXiv:2503.12491 .Ren, S.; Yu, Y.; Ruiz, N.; Wang, F.; Yuille, A.; and Xie, C. 2024. M-VAR: Decoupled Scale-wise Autoregressive Mod-eling for High-Quality Image Generation. arXiv preprint arXiv:2411.10433 .Ren, S.; and Zhu, K. Q. 2024. On the efficacy of eviction policy for key-value constrained generative language model inference. arXiv preprint arXiv:2402.06262 .Sun, P.; Jiang, Y.; Chen, S.; Zhang, S.; Peng, B.; Luo, P.; and Yuan, Z. 2024. Autoregressive model beats diffu-sion: Llama for scalable image generation. arXiv preprint arXiv:2406.06525 .Tang, H.; Wu, Y.; Yang, S.; Xie, E.; Chen, J.; Chen, J.; Zhang, Z.; Cai, H.; Lu, Y.; and Han, S. 2024. Hart: Ef-ficient visual generation with hybrid autoregressive trans-former. arXiv preprint arXiv:2410.10812 .Tian, K.; Jiang, Y.; Yuan, Z.; Peng, B.; and Wang, L. 2024. Visual autoregressive modeling: Scalable image generation via next-scale prediction. Advances in neural information processing systems , 37: 84839–84865. Van Den Oord, A.; Vinyals, O.; et al. 2017. Neural dis-crete representation learning. Advances in neural informa-tion processing systems , 30. Voronov, A.; Kuznedelev, D.; Khoroshikh, M.; Khrulkov, V.; and Baranchuk, D. 2024. Switti: Designing Scale-Wise Transformers for Text-to-Image Synthesis. Wan, Z.; Shen, H.; Wang, X.; Liu, C.; Mai, Z.; and Zhang, M. 2025. Meda: Dynamic kv cache allocation for effi-cient multimodal long-context inference. arXiv preprint arXiv:2502.17599 .Wan, Z.; Wu, X.; Zhang, Y.; Xin, Y.; Tao, C.; Zhu, Z.; Wang, X.; Luo, S.; Xiong, J.; and Zhang, M. 2024a. D2O: Dynamic Discriminative Operations for Efficient Genera-tive Inference of Large Language Models. arXiv preprint arXiv:2406.13035 .Wan, Z.; Wu, Z.; Liu, C.; Huang, J.; Zhu, Z.; Jin, P.; Wang, L.; and Yuan, L. 2024b. Look-m: Look-once optimization in kv cache for efficient multimodal long-context inference. 
+
+arXiv preprint arXiv:2406.18139 .Wu, X.; Hao, Y.; Sun, K.; Chen, Y.; Zhu, F.; Zhao, R.; and Li, H. 2023. Human preference score v2: A solid benchmark for evaluating human preferences of text-to-image synthesis. 
+
+arXiv preprint arXiv:2306.09341 .Xiao, G.; Tian, Y.; Chen, B.; Han, S.; and Lewis, M. 2023. Efficient streaming language models with attention sinks. 
+
+arXiv preprint arXiv:2309.17453 .Xu, J.; Liu, X.; Wu, Y.; Tong, Y.; Li, Q.; Ding, M.; Tang, J.; and Dong, Y. 2023. Imagereward: Learning and evaluating human preferences for text-to-image generation. Advances in Neural Information Processing Systems , 15903–15935. Yang, D.; Han, X.; Gao, Y.; Hu, Y.; Zhang, S.; and Zhao, H. 2024. PyramidInfer: Pyramid KV Cache Compres-sion for High-throughput LLM Inference. arXiv preprint arXiv:2405.12532 .Yue, Y.; Yuan, Z.; Duanmu, H.; Zhou, S.; Wu, J.; and Nie, L. 2024. Wkvquant: Quantizing weight and key/value cache for large language models gains more. arXiv preprint arXiv:2402.12065 .Zhang, Y.; Du, Y.; Luo, G.; Zhong, Y.; Zhang, Z.; Liu, S.; and Ji, R. 2024a. Cam: Cache merging for memory-efficient llms inference. In Forty-first International Conference on Machine Learning .Zhang, Z.; Sheng, Y.; Zhou, T.; Chen, T.; Zheng, L.; Cai, R.; Song, Z.; Tian, Y.; R´ e, C.; Barrett, C.; et al. 2024b. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Process-ing Systems , 36. Zhuang, X.; Xie, Y.; Deng, Y.; Yang, D.; Liang, L.; Ru, J.; Yin, Y.; and Zou, Y. 2025. Vargpt-v1. 1: Improve vi-sual autoregressive large unified model via iterative instruc-tion tuning and reinforcement learning. arXiv preprint arXiv:2504.02949 .24990

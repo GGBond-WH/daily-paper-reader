@@ -1,0 +1,2472 @@
+{
+  "top_k": 200,
+  "generated_at": "2026-07-08T08:40:33.584745+00:00",
+  "papers": [
+    {
+      "id": "aaai-2025-34779",
+      "source": "AAAI-2025-Accepted",
+      "title": "CSR:Achieving 1 Bit Key-Value Cache via Sparse Representation",
+      "abstract": "The emergence of long-context text applications utilizing large language models (LLMs) has presented significant scalability challenges, particularly in memory footprint. The linear growth of the Key-Value (KV) cache, which stores attention keys and values to reduce redundant computations, can significantly increase memory usage and may prevent models from functioning properly in memory-constrained environments. To address this issue, we propose a novel approach called Cache Sparse Representation (CSR), which converts the KV cache by transforming the dense Key-Value cache tensor into sparse indexes and weights, offering a more memory-efficient representation during LLM inference. Furthermore, we introduce NeuralDict, a novel neural network-based method to automatically generate the dictionary used in our sparse representation. Our extensive experiments demonstrate that CSR matches the performance of state-of-the-art KV cache quantization algorithms while ensuring robust functionality in memory-constrained environments.",
+      "authors": [
+        "Hongxuan Zhang",
+        "Yao Zhao",
+        "Jiaqi Zheng",
+        "Chenyi Zhuang",
+        "Jinjie Gu",
+        "Guihai Chen"
+      ],
+      "primary_category": "AAAI-25 Technical Tracks 24",
+      "categories": [
+        "AAAI-2025",
+        "AAAI-25 Technical Tracks 24"
+      ],
+      "published": "2025-04-11T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/34779",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/34779/36934",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-37805",
+      "source": "AAAI-2026-Accepted",
+      "title": "Sharp Eyes and Memory for VideoLLMs: Information-Aware Visual Token Pruning for Efficient and Reliable VideoLLM Reasoning",
+      "abstract": "Current Video Large Language Models (VideoLLMs) suffer from quadratic computational complexity and key-value cache scaling, due to their reliance on processing excessive redundant visual tokens. To address this problem, we propose SharpV, a minimalist and efficient method for adaptive pruning of visual tokens and KV cache. Different from most uniform compression approaches, SharpV dynamically adjusts pruning ratios based on spatial-temporal information. Remarkably, this adaptive mechanism occasionally achieves performance gains over dense models, offering a novel paradigm for adaptive pruning. During the KV cache pruning stage, based on observations of visual information degradation, SharpV prunes degraded visual features via a self-calibration manner, guided by similarity to original visual features. In this way, SharpV achieves hierarchical cache pruning from the perspective of information bottleneck, offering a new insight into VideoLLMs' information flow. Experiments on multiple public benchmarks demonstrate the superiority of SharpV. Moreover, to the best of our knowledge, SharpV is notably the first two-stage pruning framework that operates without requiring access to exposed attention scores, ensuring full compatibility with hardware acceleration techniques like Flash Attention.",
+      "authors": [
+        "Jialong Qin",
+        "Xin Zou",
+        "Di Lu",
+        "Yibo Yan",
+        "Xuming Hu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 10",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 10"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/37805",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/37805/41767",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40497",
+      "source": "AAAI-2026-Accepted",
+      "title": "Judge Q: Trainable Queries for Optimized Information Retention in KV Cache Eviction",
+      "abstract": "Large language models (LLMs) utilize key-value (KV) cache to store historical information during sequence processing. The size of KV cache grows linearly as the length of the sequence extends, which seriously affects memory usage and decoding efficiency. Current methods for KV cache eviction typically utilize the last window from the pre-filling phase as queries to compute the KV importance scores for eviction. Although this scheme is simple to implement, it tends to overly focus on local information, potentially leading to the neglect or omission of crucial global information. To mitigate this issue, we propose **Judge Q**, a novel training method which incorporates a soft token list. This method only tunes the model’s embedding layer at a low training cost. By concatenating the soft token list at the end of the input sequence, we train these tokens' attention map to the original input sequence to align with that of the actual decoded tokens. In this way, the queries corresponding to the soft tokens can effectively capture global information and better evaluate the importance of the keys and values within the KV cache, thus maintaining decoding quality when KV cache is evicted. Under the same eviction budget, our method exhibits less performance degradation compared to existing eviction approaches. We validate our approach through experiments conducted on models such as Llama-3.1-8B-Instruct and Mistral-7B-Instruct-v0.3, using benchmarks including LongBench, RULER, and Needle-in-a-Haystack. Results indicate an improvement of approximately 1 point on the LongBench and over 3 points on RULER. This proposed methodology can be seamlessly integrated into existing open-source models with minimal training overhead, thereby enhancing performance in KV cache eviction scenarios.",
+      "authors": [
+        "Yijun Liu",
+        "Yixuan Wang",
+        "Yuzhuang Xu",
+        "Shiyu Ji",
+        "Yang Xu",
+        "Qingfu Zhu",
+        "Wanxiang Che"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 38",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 38"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40497",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40497/44458",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40422",
+      "source": "AAAI-2026-Accepted",
+      "title": "KVmix: Gradient-Based Layer Importance-Aware Mixed-Precision Quantization for KV Cache",
+      "abstract": "The high memory demands of the Key-Value (KV) Cache during the inference of Large Language Models (LLMs) severely restrict their deployment in resource-constrained platforms. Quantization can effectively alleviate the memory pressure caused by KV Cache. However, existing methods either rely on static one-size-fits-all precision allocation or fail to dynamically prioritize critical KV in long-context tasks, forcing memory-accuracy-throughput tradeoffs. In this work, we propose a novel mixed-precision quantization method for KV Cache named KVmix. KVmix leverages gradient-based importance analysis to evaluate how individual Key and Value projection matrices affect the model loss, enabling layer-specific bit-width allocation for mix-precision quantization. It dynamically prioritizes higher precision for important layers while aggressively quantizing less influential ones, achieving a tunable balance between accuracy and efficiency. KVmix introduces a dynamic long-context optimization strategy that adaptively keeps full-precision KV pairs for recent pivotal tokens and compresses older ones, achieving high-quality sequence generation with low memory usage. Additionally, KVmix provides efficient low-bit quantization and CUDA kernels to optimize computational overhead. On LLMs such as Llama and Mistral, KVmix achieves near-lossless inference performance with extremely low quantization configuration (Key 2.19bit Value 2.38bit), while delivering a remarkable 4.9× memory compression and a 5.3× speedup in inference throughput.",
+      "authors": [
+        "Fei Li",
+        "Song Liu",
+        "Weiguo Wu",
+        "Shiqiang Nie",
+        "Jinyu Wang"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 37",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 37"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40422",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40422/44383",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40266",
+      "source": "AAAI-2026-Accepted",
+      "title": "Sparse Attention Across Multiple-Context KV Cache",
+      "abstract": "Large language models face significant cost challenges in long-sequence inference. To address this, reusing historical Key-Value (KV) Cache for improved inference efficiency has become a mainstream approach. Recent advances further enhance throughput by sparse attention mechanisms to select the most relevant KV Cache, thereby reducing sequence length. However, such techniques are limited to single-context scenarios, where historical KV Cache is computed sequentially with causal-attention dependencies. In retrieval-augmented generation (RAG) scenarios, where retrieved documents as context are unknown beforehand, each document’s KV Cache is computed and stored independently (termed multiple-context KV Cache), lacking cross-attention between contexts. This renders existing methods ineffective. Although prior work partially recomputes multiple-context KV Cache to mitigate accuracy loss from missing cross-attention, it requires retaining all KV Cache throughout, failing to reduce memory overhead. This paper presents SamKV, the first exploration of attention sparsification for multiple-context KV Cache. Specifically, SamKV takes into account the complementary information of other contexts when sparsifying one context, and then locally recomputes the sparsified information. Experiments demonstrate that our method compresses sequence length to 15% without accuracy degradation compared with full-recomputation baselines, significantly boosting throughput in multi-context RAG scenarios.",
+      "authors": [
+        "Ziyi Cao",
+        "Qingyi Si",
+        "Jingbin Zhang",
+        "Bingquan Liu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 36",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 36"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40266",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40266/44227",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40611",
+      "source": "AAAI-2026-Accepted",
+      "title": "KeepKV: Achieving Periodic Lossless KV Cache Compression for Efficient LLM Inference",
+      "abstract": "Efficient inference of large language models (LLMs) is hindered by an ever-growing key-value (KV) cache, making KV cache compression a critical research direction. Traditional methods selectively evict less important KV cache entries, which leads to information loss and hallucinations. Recently, merging-based strategies have been explored to retain more information by merging KV pairs that would be discarded; however, these existing approaches inevitably introduce inconsistencies in attention distributions before and after merging, causing degraded generation quality. To overcome this challenge, we propose KeepKV , a novel adaptive KV cache merging method designed to preserve performance under strict memory constraints, achieving single-step lossless compression and providing error bounds for multi-step compression. KeepKV introduces the Electoral Votes mechanism that records merging history and adaptively adjusts attention scores. Moreover, it further leverages a novel Zero Inference-Perturbation Merging method, compensating for attention loss resulting from cache merging. Extensive experiments on various benchmarks and LLM architectures demonstrate that KeepKV substantially reduces memory usage while successfully retaining essential context information, achieving over 2 times inference throughput improvement and maintaining superior generation quality even with only 10% KV cache budgets.",
+      "authors": [
+        "Yuxuan Tian",
+        "Zihan Wang",
+        "Yebo Peng",
+        "Aomufei Yuan",
+        "Zhiming Wang",
+        "Bairen Yi",
+        "Xin Liu",
+        "Yong Cui",
+        "Tong Yang"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 39",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 39"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40611",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40611/44572",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39187",
+      "source": "AAAI-2026-Accepted",
+      "title": "DesireKV: Decoupling Sensitivity and Importance for Reasoning-Aware KV Cache Compression",
+      "abstract": "Large language models performing chain-of-thought (CoT) reasoning generate extensive intermediate sequences that consume substantial memory through key-value (KV) cache storage. Unlike conventional text generation, reasoning sequences exhibit unique characteristics, including repetitive logic patterns and low information density, making existing KV cache compression methods suboptimal. We propose DesireKV, a novel compression framework that first constructs a two-dimensional coordinate system based on attention-derived importance and outlier-based quantization sensitivity. It then applies a dedicated protection mechanism for tokens critical to the reasoning process itself. Our approach makes differentiated compression decisions: retaining important and sensitive tokens, quantizing important but insensitive tokens, and evicting unimportant tokens. Through comprehensive evaluation on reasoning benchmarks, we demonstrate that DesireKV achieves up to 2.93× throughput improvement while maintaining nearly 99% of original reasoning accuracy.",
+      "authors": [
+        "Pengyu Cheng",
+        "Jiacheng Wang",
+        "Tianle Chen",
+        "Bei Liu",
+        "Xiaofeng Hou",
+        "Jiacheng Liu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 25",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 25"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39187",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39187/43148",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40036",
+      "source": "AAAI-2026-Accepted",
+      "title": "Lethe: Layer- and Time-Adaptive KV Cache Pruning for Reasoning-Intensive LLM Serving",
+      "abstract": "Generative reasoning with large language models (LLMs) often involves long decoding sequences, leading to substantial memory and latency overheads from accumulating key-value (KV) caches. While existing KV compression methods primarily focus on reducing prefill memory from long input sequences, they fall short in addressing the dynamic and layer-sensitive nature of long-form generation, which is central to reasoning tasks. We propose Lethe, a dynamic KV cache management framework that introduces adaptivity along both the spatial and temporal dimensions of decoding. Along the spatial dimension, Lethe performs layerwise sparsity-aware allocation, assigning token pruning budgets to each transformer layer based on estimated attention redundancy. Along the temporal dimension, Lethe conducts multi-round token pruning during generation, driven by a Recency-Aware Selective Retention (RASR) mechanism. RASR extends traditional recency-based heuristics by also considering token relevance derived from evolving attention patterns, enabling informed decisions about which tokens to retain or evict. Empirical results demonstrate that Lethe achieves a favorable balance between efficiency and generation quality across diverse models and tasks, increases throughput by up to 2.56×.",
+      "authors": [
+        "Hui Zeng",
+        "Daming Zhao",
+        "Pengfei Yang",
+        "WenXuan Hou",
+        "Tianyang Zheng",
+        "Hui Li",
+        "Weiye Ji",
+        "Jidong Zhai"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 33",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 33"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40036",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40036/43997",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39241",
+      "source": "AAAI-2026-Accepted",
+      "title": "Efficient Multimodal Large Language Model via Dynamic KV Cache Quantization",
+      "abstract": "Multimodal large language models (LMMs) have demonstrated remarkable capabilities across diverse vision-language tasks, including image captioning, visual question answering, and text-image retrieval. However, their computational complexity and memory footprint, particularly in the key-value (KV) cache during inference, pose significant challenges for real-time deployment, especially on resource-constrained devices. In this paper, we propose Dynamic KV Cache Quantization, a novel quantization strategy tailored for multimodal LMMs. Our approach applies per-channel quantization to (K) and per-token quantization to (V), leveraging their respective statistical distributions to optimize precision allocation. Additionally, we introduce an adaptive token and channel recording mechanism that dynamically adjusts quantization parameters based on real-time distribution tracking, effectively mitigating the impact of outliers. To further enhance compression efficiency, we implement fine-grained grouping, which partitions KV tensors into localized subgroups, enabling more adaptive quantization. Experimental results on LLaVA-1.5 (7B/13B) and Qwen-VL across multiple multimodal benchmarks demonstrate that our method significantly outperforms existing KV-cache quantization approaches, achieving a superior trade-off between memory efficiency and model accuracy.",
+      "authors": [
+        "Jiahao Fan",
+        "Chien-Ming Chen"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 25",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 25"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39241",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39241/43202",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-37467",
+      "source": "AAAI-2026-Accepted",
+      "title": "AccKV: Towards Efficient Audio-Video LLMs Inference via Adaptive-Focusing and Cross-Calibration KV Cache Optimization",
+      "abstract": "Recent advancements in Audio-Video Large Language Models (AV-LLMs) have enhanced their capabilities in tasks like audio-visual question answering and multimodal dialog systems. Video and audio introduce an extended temporal dimension, resulting in a larger key-value (KV) cache compared to static image embedding. A naive optimization strategy is to selectively focus on and retain KV caches of audio or video based on task. However, in the experiment, we observed that the attention of AV-LLMs to various modalities in the high layers is not strictly dependent on the task. In higher layers, the attention of AV-LLMs shifts more towards the video modality. In addition, we also found that directly integrating temporal KV of audio and spatial-temporal KV of video may lead to information confusion and significant performance degradation of AV-LLMs. If audio and video are processed indiscriminately, it may also lead to excessive compression or reservation of a certain modality, thereby disrupting the alignment between modalities. To address these challenges, we propose AccKV, an Adaptive-Focusing and Cross-Calibration KV cache optimization framework designed specifically for efficient AV-LLMs inference. Our method is based on layer adaptive focusing technology, selectively focusing on key modalities according to the characteristics of different layers, and enhances the recognition of heavy hitter tokens through attention redistribution. In addition, we propose a Cross-Calibration technique that first integrates inefficient KV caches within the audio and video modalities, and then aligns low-priority modality with high-priority modality to selectively evict KV cache of low-priority modality. The experimental results show that AccKV can significantly improve the computational efficiency of AV-LLMs while maintaining accuracy.",
+      "authors": [
+        "Zhonghua Jiang",
+        "Kui Chen",
+        "Kunxi Li",
+        "Keting Yin",
+        "Yiyun Zhou",
+        "Zhaode Wang",
+        "Chengfei Lv",
+        "Shengyu Zhang"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 7",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 7"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/37467",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/37467/41429",
+      "tags": [
+        "keyword:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39686",
+      "source": "AAAI-2026-Accepted",
+      "title": "Head-Aware KV Cache Compression for Efficient Visual Autoregressive Modeling",
+      "abstract": "Visual Autoregressive (VAR) models adopt a next-scale prediction paradigm, offering high-quality content generation\nwith substantially fewer decoding steps. However, existing\nVAR models suffer from significant attention complexity and\nsevere memory overhead due to the accumulation of key-value (KV) caches across scales. In this paper, we tackle\nthis challenge by introducing KV cache compression into the\nnext-scale generation paradigm. We begin with a crucial observation: attention heads in VAR models can be divided into\ntwo functionally distinct categories: Contextual Heads focus\non maintaining semantic consistency, while Structural Heads\nare responsible for preserving spatial coherence. This structural divergence causes existing one-size-fits-all compression\nmethods to perform poorly on VAR models. To address this,\nwe propose HACK, a training-free Head-Aware KV cache\nCompression frameworK. HACK utilizes an offline classification scheme to separate head types, enabling it to apply pattern-specific compression strategies with asymmetric\ncache budgets for each category. By doing so, HACK effectively constrains the average KV cache length within a\nfixed budget B, reducing the theoretical attention complexity\nfrom O(n4) to O(Bn2). Extensive experiments on multiple\nVAR models across text-to-image and class-conditional tasks\nvalidate the effectiveness and generalizability of HACK. It\nachieves up to 70% KV cache compression without degrading output quality, resulting in memory savings and faster in-\nference. For example, HACK provides a 1.75× memory reduction and a 1.57× speedup on Infinity-8B.",
+      "authors": [
+        "Ziran Qin",
+        "Youru Lv",
+        "Mingbao Lin",
+        "Hang Guo",
+        "Zeren Zhang",
+        "Danping Zou",
+        "Weiyao Lin"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 30",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 30"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39686",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39686/43647",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-38414",
+      "source": "AAAI-2026-Accepted",
+      "title": "Q Cache: Visual Attention Is Valuable in Less than Half of Decode Layers for Multimodal Large Language Model",
+      "abstract": "Multimodal large language models (MLLMs) are plagued by exorbitant inference costs attributable to the profusion of visual tokens within the vision encoder. The redundant visual tokens engenders a substantial computational load and key-value (KV) cache footprint bottleneck. Existing approaches focus on token-wise optimization, leveraging diverse intricate token pruning techniques to eliminate non-crucial visual tokens. Nevertheless, these methods often unavoidably undermine the integrity of the KV cache, resulting in failures in long-text generation tasks. To this end, we conduct an in-depth investigation towards the attention mechanism of the model from a new perspective, and discern that attention within more than half of all decode layers are semantic similar. Upon this finding, we contend that the attention in certain layers can be streamlined by inheriting the attention from their preceding layers. Consequently, we propose Lazy Attention, an efficient attention mechanism that enables cross-layer sharing of similar attention patterns.\nIt ingeniously reduces layer-wise redundant computation in attention. In Lazy Attention, we develop a novel layer-shared cache, Q Cache, tailored for MLLMs, which facilitates the reuse of queries across adjacent layers. In particular, Q Cache is lightweight and fully compatible with existing inference frameworks, including Flash Attention and KV cache. Additionally, our method is highly flexible as it is orthogonal to existing token-wise techniques and can be deployed independently or combined with token pruning approaches. Empirical evaluations on multiple benchmarks demonstrate that our method can reduce KV cache usage by over 35% and achieve 1.5x throughput improvement, while sacrificing only approximately 1% of performance on various MLLMs. Compared with SOTA token-wise methods, our technique achieves superior accuracy preservation.",
+      "authors": [
+        "Jiedong Zhuang",
+        "Lu Lu",
+        "Ming Dai",
+        "Rui Hu",
+        "Jian Chen",
+        "Qiang Liu",
+        "Haoji Hu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 16",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 16"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/38414",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/38414/42376",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40827",
+      "source": "AAAI-2026-Accepted",
+      "title": "SubGCache: Accelerating Graph-based RAG with Subgraph-level KV Cache",
+      "abstract": "Graph-based retrieval-augmented generation (RAG) enables large language models (LLMs) to incorporate structured knowledge via graph retrieval as contextual input, enhancing more accurate and context-aware reasoning. We observe that for different queries, it could retrieve similar subgraphs as prompts, and thus we propose SubGCache, which aims to reduce inference latency by reusing computation across queries with similar structural prompts (i.e., subgraphs). Specifically, SubGCache clusters queries based on subgraph embeddings, constructs a representative subgraph for each cluster, and pre-computes the key-value (KV) cache of the representative subgraph. For each query with its retrieved subgraph within a cluster, it reuses the pre-computed KV cache of the representative subgraph of the cluster without computing the KV tensors again for saving computation. Extensive experiments on three datasets across multiple LLM backbones and graph-based RAG frameworks demonstrate that SubGCache consistently reduces inference latency with comparable and even improved generation quality, achieving up to 6.68x reduction in time-to-first-token (TTFT).",
+      "authors": [
+        "Qiuyu Zhu",
+        "Liang Zhang",
+        "Qianxiong Xu",
+        "Cheng Long",
+        "Jie Zhang"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 41",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 41"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40827",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40827/44788",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40319",
+      "source": "AAAI-2026-Accepted",
+      "title": "MHA2MLA-VLM: Enabling DeepSeek’s Economical Multi-Head Latent Attention Across Vision-Language Models",
+      "abstract": "As vision-language models (VLMs) tackle increasingly complex and multimodal tasks, the rapid growth of Key-Value (KV) cache imposes significant memory and computational bottlenecks during inference. While Multi-Head Latent Attention (MLA) offers an effective means to compress the KV cache and accelerate inference, adapting existing VLMs to the MLA architecture without costly pretraining remains largely unexplored. In this work, we present \\textbf{MHA2MLA-VLM}, a parameter-efficient and multimodal-aware framework for converting off-the-shelf VLMs to MLA. \nOur approach features two core techniques: (1) a modality-adaptive partial-RoPE strategy that supports both traditional and multimodal settings by selectively masking nonessential dimensions, and (2) a modality-decoupled low-rank approximation method that independently compresses the visual and textual KV spaces. Furthermore, we introduce parameter-efficient fine-tuning to minimize adaptation cost and demonstrate that minimizing output activation error, rather than parameter distance, substantially reduces performance loss. Extensive experiments on three representative VLMs show that MHA2MLA-VLM restores original model performance with minimal supervised data, significantly reduces KV cache footprint, and integrates seamlessly with KV quantization.",
+      "authors": [
+        "Xiaoran Fan",
+        "Zhichao Sun",
+        "Tao Ji",
+        "Lixing Shen",
+        "Tao Gui"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 36",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 36"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40319",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40319/44280",
+      "tags": [
+        "keyword:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2025-34773",
+      "source": "AAAI-2025-Accepted",
+      "title": "QJL: 1-Bit Quantized JL Transform for KV Cache Quantization with Zero Overhead",
+      "abstract": "Serving LLMs requires substantial memory due to the storage requirements of Key-Value (KV) embeddings in the KV cache, which grows with sequence length. An effective approach to compress KV cache is quantization. However, traditional quantization methods face significant memory overhead due to the need to store quantization constants (at least a zero point and a scale) in full precision per data block. Depending on the block size, this overhead can add 1 or 2 bits per quantized number. We introduce QJL, a new quantization approach that consists of a Johnson-Lindenstrauss (JL) transform followed by sign-bit quantization. In contrast to existing methods, QJL eliminates memory overheads by removing the need for storing quantization constants. We propose an asymmetric estimator for the inner product of two vectors and demonstrate that applying QJL to one vector and a standard JL transform without quantization to the other provides an unbiased estimator with minimal distortion. We have developed an efficient implementation of the QJL sketch and its corresponding inner product estimator, incorporating a lightweight CUDA kernel for optimized computation. When applied across various LLMs and NLP tasks to quantize the KV cache to only 3 bits, QJL demonstrates a more than fivefold reduction in KV cache memory usage without compromising accuracy, all while achieving faster runtime.",
+      "authors": [
+        "Amir Zandieh",
+        "Majid Daliri",
+        "Insu Han"
+      ],
+      "primary_category": "AAAI-25 Technical Tracks 24",
+      "categories": [
+        "AAAI-2025",
+        "AAAI-25 Technical Tracks 24"
+      ],
+      "published": "2025-04-11T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/34773",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/34773/36928",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40747",
+      "source": "AAAI-2026-Accepted",
+      "title": "SR-KI: Scalable and Real-Time Knowledge Integration into LLMs via Supervised Attention",
+      "abstract": "This paper proposes SR-KI, a novel approach for integrating real-time and large-scale structured knowledge bases (KBs) into large language models (LLMs). SR-KI begins by encoding KBs into key-value pairs using a pretrained encoder, and injects them into LLMs' KV cache. Building on this representation, we employ a two-stage training paradigm: first locating a dedicated retrieval layer within the LLM, and then applying an attention-based loss at this layer to explicitly supervise attention toward relevant KB entries. Unlike traditional retrieval-augmented generation methods that rely heavily on the performance of external retrievers and multi-stage pipelines, SR-KI supports end-to-end inference by performing retrieval entirely within the model’s latent space. This design enables efficient compression of injected knowledge and facilitates dynamic knowledge updates. Comprehensive experiments demonstrate that SR-KI enables the integration of up to 40K KBs into a 7B LLM on a single A100 40GB GPU, and achieves strong retrieval performance—maintaining over 98% Recall@10 on the best-performing task and exceeding 88% on average across all tasks. Task performance on question answering and KB ID generation also demonstrates that SR-KI maintains strong performance while achieving up to 99.75% compression of the injected KBs.",
+      "authors": [
+        "Bohan Yu",
+        "Wei Huang",
+        "Kang Liu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 41",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 41"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40747",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40747/44708",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40511",
+      "source": "AAAI-2026-Accepted",
+      "title": "RetroLM: Retrieval-Augmented KVs for Long-Context Processing",
+      "abstract": "Long-context processing remains a significant challenge for large language models (LLMs). Retrieval-augmented generation (RAG) has recently emerged as a promising approach, enabling LLMs to selectively access relevant information from extended contexts to improve efficiency. However, existing RAG approaches often lag behind other efficient long-context processing methods primarily due to inherent limitations on inaccurate retrieval and fragmented contexts. To address these limitations, we propose RetroLM, a novel RAG framework designed for effective long-context processing. Unlike traditional approaches, RetroLM introduces KV-level retrieval augmentation, which partitions the LLM's KV cache into contiguous pages and performs encoding and decoding operations based on the retrieved KV pages. Built upon this framework, we further develop a specialized retriever for precise retrieval of critical pages and conduct unsupervised post-training to optimize the model’s ability to leverage retrieved information. Compared with traditional RAG, the new approach enhances robustness to retrieval inaccuracy, facilitates effective utilization of fragmented contexts, and saves the cost from repeated context-encoding operations. We conduct extensive evaluations across several popular benchmarks, including LongBench, InfiniteBench, and RULER. RetroLM consistently outperforms existing long-LLMs and RAG-based methods, especially in tasks requiring deep reasoning or extreme context lengths.",
+      "authors": [
+        "Kun Luo",
+        "Zheng Liu",
+        "Shitao Xiao",
+        "Jiabei Chen",
+        "Hongjin Qian",
+        "Peitian Zhang",
+        "Shanshan Jiang",
+        "Bin Dong",
+        "Jun Zhao",
+        "Kang Liu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 38",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 38"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40511",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40511/44472",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40466",
+      "source": "AAAI-2026-Accepted",
+      "title": "SparK: Query-Aware Unstructured Sparsity with Recoverable KV Cache Channel Pruning",
+      "abstract": "Long-context inference in large language models (LLMs) is increasingly constrained by the KV cache bottleneck: memory usage grows linearly with sequence length, while attention computation scales quadratically. Existing approaches address this issue by compressing the KV cache along the temporal axis through strategies such as token eviction or merging to reduce memory and computational overhead. However, these methods often neglect fine-grained importance variations across feature dimensions (i.e., the channel axis), thereby limiting their ability to effectively balance efficiency and model accuracy. In reality, we observe that channel saliency varies dramatically across both queries and positions: certain feature channels carry near-zero information for a given query, while others spike in relevance. To address this oversight, we propose SPARK, a training-free plug-and-play method that applies unstructured sparsity by pruning KV at the channel level, while dynamically restoring the pruned entries during attention score computation. Notably, our approach is orthogonal to existing KV compression and quantization techniques, making it compatible for integration with them to achieve further acceleration. By reducing channel-level redundancy, SPARK enables processing of longer sequences within the same memory budget. For sequences of equal length, SPARK not only preserves or improves model accuracy but also reduces KV cache storage by over 30% compared to eviction-based methods. Furthermore, even in an aggressive pruning ratio of 80%, SPARK maintains performance with less degradation than 5% compared to the based eviction method, demonstrating robustness and effectiveness. Our code will be available at \\url{https://github.com/AMD-AIG-AIMA/AMD-Spark}.",
+      "authors": [
+        "Huanxuan Liao",
+        "Yixing Xu",
+        "Shizhu He",
+        "Guanchen Li",
+        "Xuanwu Yin",
+        "Dong Li",
+        "Emad Barsoum",
+        "Jun Zhao",
+        "Kang Liu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 38",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 38"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40466",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40466/44427",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40586",
+      "source": "AAAI-2026-Accepted",
+      "title": "Sparse-dLLM: Accelerating Diffusion LLMs with Dynamic Cache Eviction",
+      "abstract": "Diffusion Large Language Models (dLLMs) enable breakthroughs in reasoning and parallel decoding but suffer from prohibitive quadratic computational complexity and memory overhead during inference. Current caching techniques accelerate decoding by storing full-layer states, yet impose substantial memory usage that limit long-context applications. Our analysis of attention patterns in dLLMs reveals persistent cross-layer sparsity, with pivotal tokens remaining salient across decoding steps and low-relevance tokens staying unimportant, motivating selective cache eviction. We propose Sparse-dLLM, the first training-free framework integrating dynamic cache eviction with sparse attention via delayed bidirectional sparse caching. By leveraging the stability of token saliency over steps, it retains critical tokens and dynamically evicts unimportant prefix/suffix entries using an attention-guided strategy. Extensive experiments on LLaDA and Dream series demonstrate Sparse-dLLM achieves up to 10 times higher throughput than vanilla dLLMs, with comparable performance and similar peak memory costs, outperforming previous methods in efficiency and effectiveness.",
+      "authors": [
+        "Yuerong Song",
+        "Xiaoran Liu",
+        "Ruixiao Li",
+        "Zhigeng Liu",
+        "Zengfeng Huang",
+        "Qipeng Guo",
+        "Ziwei He",
+        "Xipeng Qiu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 39",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 39"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40586",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40586/44547",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39936",
+      "source": "AAAI-2026-Accepted",
+      "title": "AMS-KV: Adaptive KV Caching in Multi-Scale Visual Autoregressive Transformers",
+      "abstract": "Visual autoregressive modeling (VAR) via next-scale prediction has emerged as a scalable image generation paradigm. While Key and Value (KV) caching in large language models (LLMs) has been extensively studied, next-scale prediction presents unique challenges, and KV caching design for next-scale based VAR transformers remains largely unexplored. A major bottleneck is the excessive KV memory growth with the increasing number of scales—severely limiting scalability. Our systematic investigation reveals that: (1) Attending to tokens from local scales significantly contributes to generation quality (2) Allocating a small amount of memory for the coarsest scales, termed as condensed scales, stabilizes multi-scale image generation (3) Strong KV similarity across finer scales is predominantly observed in cache-efficient layers, whereas cache-demanding layers exhibit weaker inter-scale similarity. Based on the observations, we introduce AMS-KV, a scale-adaptive KV caching policy for next-scale prediction in VAR models. AMS-KV prioritizes storing KVs from condensed and local scales, preserving the most relevant tokens to maintain generation quality. It further optimizes KV cache utilization and computational efficiency identifying cache-demanding layers through inter-scale similarity analysis. Compared to the vanilla next-scale prediction-based VAR models, AMS-KV reduces KV cache usage by up to 84.83% and self-attention latency by 60.48%. Moreover, when the baseline VAR-d30 model encounters out-of-memory failures at a batch size of 128, AMS-KV enables stable scaling to a batch size of 256 with improved throughput.",
+      "authors": [
+        "Boxun Xu",
+        "Yu Wang",
+        "Zihu Wang",
+        "Peng Li"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 32",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 32"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39936",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39936/43897",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39224",
+      "source": "AAAI-2026-Accepted",
+      "title": "Accelerating LLM Inference Throughput via Asynchronous KV Cache Prefetching",
+      "abstract": "Large Language Models (LLMs) exhibit pronounced memory-bound characteristics during inference due to High Bandwidth Memory (HBM) bandwidth constraints. In this paper, we propose an L2 Cache-oriented asynchronous KV Cache prefetching method to break through the memory bandwidth bottleneck in LLM inference through computation-load overlap. By strategically scheduling idle memory bandwidth during active computation windows, our method proactively prefetches required KV Cache into GPU L2 cache, enabling high-speed L2 cache hits for subsequent accesses and effectively hiding HBM access latency within computational cycles. Extensive experiments on NVIDIA H20 GPUs demonstrate that the proposed method achieves 2.15× improvement in attention kernel efficiency and up to 1.97× end-to-end throughput enhancement, surpassing state-of-the-art baseline FlashAttention-3. Notably, our solution maintains orthogonality to existing optimization techniques and can be integrated with current inference frameworks, providing a scalable latency-hiding solution for next-generation LLM inference engines.",
+      "authors": [
+        "Yanhao Dong",
+        "Yubo Miao",
+        "Weinan Li",
+        "Xiao Zheng",
+        "Chao Wang",
+        "Jiesheng Wu",
+        "Feng Lyu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 25",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 25"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39224",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39224/43185",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39988",
+      "source": "AAAI-2026-Accepted",
+      "title": "Self-Indexing KVCache: Predicting Sparse Attention from Compressed Keys",
+      "abstract": "The KV cache in self-attention has emerged as a major bottleneck in long-context and large-batch inference for LLMs. Existing approaches often treat sparsity prediction and compression as separate modules—relying on auxiliary index structures to select relevant tokens, and on complex quantization schemes to reduce memory usage. This fragmented design introduces redundant overhead and limits scalability.\n\nIn this paper, we propose a novel paradigm: treating the compressed key representation not merely as storage, but as a self-indexing structure that directly enables efficient sparse attention. By designing a sign-based 1-bit vector quantization (VQ) scheme, our method unifies compression and retrieval in a single, hardware-friendly format. This approach eliminates the need for external indices or learning-based predictors, offering a lightweight yet robust solution for memory-constrained inference. \n\nAll components are designed to be hardware-efficient and easy to implement. By implementing  custom CUDA kernels, our method integrates seamlessly with FlashAttention, minimizing additional runtime and memory overhead. Experimental results demonstrate that our approach delivers both effectiveness and efficiency.",
+      "authors": [
+        "Xu Yang",
+        "Jiapeng Zhang",
+        "Dongyang Zhao",
+        "Guo Chen",
+        "Zhuo Tang"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 33",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 33"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39988",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39988/43949",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-39285",
+      "source": "AAAI-2026-Accepted",
+      "title": "DAVID: Dual-stage Adaptive Vision-text Integrated Decoupling for Multimodal KV Cache Eviction",
+      "abstract": "With the rapid development of multimodal large language models (MLLMs), deploying them on low-resource devices remains challenging. Beyond the model size, long multimodal inputs cause substantial memory overhead in the KV cache, making efficient cache management critical. In this paper, we propose DAVID, a KV cache eviction strategy that adapts to the degree of modality fusion across layers. By analyzing the feature distributions of vision and text tokens, we observe low fusion in early layers and high fusion in deeper layers. Based on this observation, DAVID adopts a decoupled eviction strategy in shallow layers and a super-modal eviction strategy in deeper layers. To support this dynamic switching, we design a lightweight metric that quantifies cross-modal fusion and uses a threshold to determine which layers require decoupling. Experimental results show that DAVID achieves state-of-the-art performance on multiple benchmarks and offers a new perspective on KV cache eviction for MLLMs.",
+      "authors": [
+        "Yifeng Gu",
+        "Jianxiu Jin",
+        "Kailing Guo",
+        "Xiangmin Xu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 26",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 26"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/39285",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/39285/43246",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-40105",
+      "source": "AAAI-2026-Accepted",
+      "title": "HitKV: Activation Frequency Knows Which Tokens Are Important",
+      "abstract": "The demand for long-context processing in large language models (LLMs) continues to escalate alongside rapid advancements in their capabilities. However, the intermediate attention keys and values (KV cache) employed to avoid re-computations, also grow linearly with sequence length, far exceeding the memory capacity of consumer-grade GPUs. Consequently, many studies have proposed KV cache compression methods that evict unimportant tokens based on variant attention scoring strategies. These methods typically retain the KV pairs of the top-k scoring tokens under a fixed memory budget. However, they still face several limitations. First, they disregard the activation frequency of tokens, specifically the count of times tokens achieve top-k scores in the attention distribution of following tokens. The methods based on variant attention scores may incorrectly evict some high-activation-frequency yet low final-scoring tokens. Second, the activation frequency exhibits different distribution patterns across layers and tasks. Neglecting these differences negatively impacts model performance and task adaptability. Our analysis of the actual token activation frequency and its unique characteristics across layers and task types reveals potential opportunities to address these issues. In this paper, we propose HitKV, which employs hit rates to directly characterize token activation frequencies, enabling adaptive layer-aware and task-aware KV cache eviction under the uniform memory allocation strategies. Also, HitKV can be easily integrated into layer-specific memory allocation methods. Experimental results demonstrate that HitKV maintains model performance with preserving only 3% of the KV cache, achieves high-quality generation outputs in long-text generation tasks, and delivers 4× throughput improvement over baselines.",
+      "authors": [
+        "Sanle Zhao",
+        "Yujuan Tan",
+        "Yu Jing",
+        "Zhuoxin Bai",
+        "Yue Niu",
+        "Jiayi Guo",
+        "Zongjie Wang",
+        "Ao Ren"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 34",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 34"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/40105",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/40105/44066",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    },
+    {
+      "id": "aaai-2026-37305",
+      "source": "AAAI-2026-Accepted",
+      "title": "StreamKV: Streaming Video Question-Answering with Segment-based KV Cache Retrieval and Compression",
+      "abstract": "Video Large Language Models (Video-LLMs) have demonstrated significant potential in the areas of video captioning, search, and summarization. However, current Video-LLMs still face challenges with long real-world videos. Recent methods have introduced a retrieval mechanism that retrieves query-relevant KV caches for question answering, enhancing the efficiency and accuracy of long real-world videos. However, the compression and retrieval of KV caches are still not fully explored. In this paper, we propose StreamKV, a training-free framework that seamlessly equips Video-LLMs with advanced KV cache retrieval and compression. Compared to previous methods that used uniform partitioning, StreamKV dynamically partitions video streams into semantic segments, which better preserves semantic information. For KV cache retrieval, StreamKV calculates a summary vector for each segment to retain segment-level information essential for retrieval. For KV cache compression, StreamKV introduces a guidance prompt designed to capture the key semantic elements within each segment, ensuring only the most informative KV caches are retained for answering questions. Moreover, StreamKV unifies KV cache retrieval and compression within a single module, performing both in a layer-adaptive manner, thereby further improving the effectiveness of streaming video question answering. Extensive experiments on StreamingVQA benchmarks demonstrate that StreamKV significantly outperforms existing Online Video-LLMs, achieving superior accuracy while substantially improving both memory efficiency and computational latency.",
+      "authors": [
+        "Yilong Chen",
+        "Xiang Bai",
+        "Zhibin Wang",
+        "Chengyu Bai",
+        "Yuhan Dai",
+        "Ming Lu"
+      ],
+      "primary_category": "AAAI-26 Technical Tracks 4",
+      "categories": [
+        "AAAI-2026",
+        "AAAI-26 Technical Tracks 4"
+      ],
+      "published": "2026-03-17T00:00:00+00:00",
+      "link": "https://ojs.aaai.org/index.php/AAAI/article/view/37305",
+      "pdf_url": "https://ojs.aaai.org/index.php/AAAI/article/download/37305/41267",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "type": "intent_query",
+      "tag": "llm-kv-cache",
+      "paper_tag": "query:llm-kv-cache",
+      "query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "sim_scores": {
+        "aaai-2026-40266": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-40497": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-39241": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-39224": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2026-40611": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2026-39187": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2025-34779": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-40422": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-40036": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-39936": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-40466": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40586": {
+          "score": 0.013888888888888888,
+          "rank": 12
+        },
+        "aaai-2026-39686": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-40827": {
+          "score": 0.013513513513513514,
+          "rank": 14
+        },
+        "aaai-2026-38414": {
+          "score": 0.013333333333333334,
+          "rank": 15
+        },
+        "aaai-2026-39285": {
+          "score": 0.013157894736842105,
+          "rank": 16
+        },
+        "aaai-2025-34773": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-39988": {
+          "score": 0.01282051282051282,
+          "rank": 18
+        },
+        "aaai-2026-40511": {
+          "score": 0.012658227848101266,
+          "rank": 19
+        },
+        "aaai-2026-40747": {
+          "score": 0.0125,
+          "rank": 20
+        },
+        "aaai-2026-40105": {
+          "score": 0.012195121951219513,
+          "rank": 22
+        },
+        "aaai-2026-37805": {
+          "score": 0.012048192771084338,
+          "rank": 23
+        },
+        "aaai-2026-37305": {
+          "score": 0.011494252873563218,
+          "rank": 27
+        }
+      },
+      "ranked": [
+        {
+          "paper_id": "aaai-2026-40611",
+          "score": 1.0,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40497",
+          "score": 1.0,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40036",
+          "score": 0.9586435070306036,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-39224",
+          "score": 0.9586435070306036,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2025-34779",
+          "score": 0.9185999185999183,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40422",
+          "score": 0.9185999185999183,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-39187",
+          "score": 0.8798076923076922,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39241",
+          "score": 0.8798076923076922,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40827",
+          "score": 0.8422090729783037,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40466",
+          "score": 0.8422090729783037,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39285",
+          "score": 0.8057498057498057,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-38414",
+          "score": 0.8057498057498057,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39936",
+          "score": 0.7703788748564866,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37467",
+          "score": 0.7703788748564866,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39988",
+          "score": 0.73604826546003,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40266",
+          "score": 0.73604826546003,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39686",
+          "score": 0.702712746191007,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37305",
+          "score": 0.6703296703296702,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40105",
+          "score": 0.6703296703296702,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40319",
+          "score": 0.6388587937883712,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2025-34773",
+          "score": 0.6388587937883712,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40586",
+          "score": 0.608262108262108,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37805",
+          "score": 0.608262108262108,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40511",
+          "score": 0.578503688092729,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40747",
+          "score": 0.5495495495495496,
+          "star_rating": 4
+        }
+      ]
+    },
+    {
+      "type": "intent_query",
+      "tag": "llm-kv-cache",
+      "paper_tag": "query:llm-kv-cache",
+      "query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "sim_scores": {
+        "aaai-2026-40586": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2025-34779": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-39187": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-40036": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2025-34773": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2026-39988": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-39224": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-39936": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-40497": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-39285": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40611": {
+          "score": 0.013157894736842105,
+          "rank": 16
+        },
+        "aaai-2026-39241": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-39686": {
+          "score": 0.01282051282051282,
+          "rank": 18
+        },
+        "aaai-2026-40266": {
+          "score": 0.012658227848101266,
+          "rank": 19
+        },
+        "aaai-2026-38414": {
+          "score": 0.011627906976744186,
+          "rank": 26
+        },
+        "aaai-2026-40422": {
+          "score": 0.011363636363636364,
+          "rank": 28
+        },
+        "aaai-2026-37805": {
+          "score": 0.011111111111111112,
+          "rank": 30
+        },
+        "aaai-2026-40466": {
+          "score": 0.010638297872340425,
+          "rank": 34
+        }
+      },
+      "ranked": [
+        {
+          "paper_id": "aaai-2026-40497",
+          "score": 1.0,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40036",
+          "score": 1.0,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40611",
+          "score": 0.9586435070306036,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2025-34773",
+          "score": 0.9586435070306036,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2025-34779",
+          "score": 0.9185999185999183,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-39936",
+          "score": 0.9185999185999183,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-39241",
+          "score": 0.8798076923076922,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39988",
+          "score": 0.8798076923076922,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39224",
+          "score": 0.8422090729783037,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39285",
+          "score": 0.8422090729783037,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39187",
+          "score": 0.8057498057498057,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40466",
+          "score": 0.8057498057498057,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39686",
+          "score": 0.7703788748564866,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40266",
+          "score": 0.73604826546003,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40422",
+          "score": 0.73604826546003,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37467",
+          "score": 0.702712746191007,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40105",
+          "score": 0.702712746191007,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40586",
+          "score": 0.6703296703296702,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37805",
+          "score": 0.6703296703296702,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-38414",
+          "score": 0.608262108262108,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40319",
+          "score": 0.578503688092729,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40827",
+          "score": 0.5495495495495496,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40747",
+          "score": 0.5213675213675214,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40511",
+          "score": 0.41577409931840303,
+          "star_rating": 3
+        },
+        {
+          "paper_id": "aaai-2026-37305",
+          "score": 0.2760180995475112,
+          "star_rating": 3
+        }
+      ]
+    },
+    {
+      "type": "intent_query",
+      "tag": "llm-kv-cache",
+      "paper_tag": "query:llm-kv-cache",
+      "query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "sim_scores": {
+        "aaai-2026-39936": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-39686": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-39224": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-40611": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2026-40266": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2025-34779": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2026-40422": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-39988": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-40497": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2025-34773": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40466": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-40036": {
+          "score": 0.013333333333333334,
+          "rank": 15
+        },
+        "aaai-2026-39241": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-40105": {
+          "score": 0.0125,
+          "rank": 20
+        },
+        "aaai-2026-39187": {
+          "score": 0.012345679012345678,
+          "rank": 21
+        },
+        "aaai-2026-37805": {
+          "score": 0.011494252873563218,
+          "rank": 27
+        },
+        "aaai-2026-40827": {
+          "score": 0.01020408163265306,
+          "rank": 38
+        },
+        "aaai-2026-39285": {
+          "score": 0.009615384615384616,
+          "rank": 44
+        }
+      },
+      "ranked": [
+        {
+          "paper_id": "aaai-2026-39686",
+          "score": 1.0,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40497",
+          "score": 1.0,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-39936",
+          "score": 0.9586435070306036,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40036",
+          "score": 0.9586435070306036,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-40827",
+          "score": 0.9185999185999183,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2025-34779",
+          "score": 0.9185999185999183,
+          "star_rating": 5
+        },
+        {
+          "paper_id": "aaai-2026-39187",
+          "score": 0.8798076923076922,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40105",
+          "score": 0.8798076923076922,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40611",
+          "score": 0.8422090729783037,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2025-34773",
+          "score": 0.8422090729783037,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40466",
+          "score": 0.8057498057498057,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37805",
+          "score": 0.8057498057498057,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40422",
+          "score": 0.7703788748564866,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-38414",
+          "score": 0.7703788748564866,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39988",
+          "score": 0.73604826546003,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39224",
+          "score": 0.702712746191007,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39285",
+          "score": 0.6703296703296702,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-39241",
+          "score": 0.6388587937883712,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40319",
+          "score": 0.6388587937883712,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40266",
+          "score": 0.608262108262108,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40511",
+          "score": 0.578503688092729,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37305",
+          "score": 0.578503688092729,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-37467",
+          "score": 0.5495495495495496,
+          "star_rating": 4
+        },
+        {
+          "paper_id": "aaai-2026-40586",
+          "score": 0.49392712550607265,
+          "star_rating": 3
+        },
+        {
+          "paper_id": "aaai-2026-40747",
+          "score": 0.4411571334648256,
+          "star_rating": 3
+        }
+      ]
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "attention mechanism",
+      "sim_scores": {
+        "aaai-2026-38414": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "attention mechanism key-value caching",
+      "sim_scores": {
+        "aaai-2026-39988": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-40497": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-40266": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-39187": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2025-34779": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2026-40827": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-40586": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-40036": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40466": {
+          "score": 0.013157894736842105,
+          "rank": 16
+        },
+        "aaai-2026-38414": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-40105": {
+          "score": 0.012048192771084338,
+          "rank": 23
+        },
+        "aaai-2026-39686": {
+          "score": 0.011627906976744186,
+          "rank": 26
+        },
+        "aaai-2026-40611": {
+          "score": 0.011494252873563218,
+          "rank": 27
+        },
+        "aaai-2026-40747": {
+          "score": 0.010752688172043012,
+          "rank": 33
+        },
+        "aaai-2026-37805": {
+          "score": 0.009259259259259259,
+          "rank": 48
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "compression techniques for key-value cache in transformers",
+      "sim_scores": {
+        "aaai-2026-39187": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2025-34779": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2025-34773": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-40586": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2026-40036": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2026-39988": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-39936": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-40497": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-39686": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40611": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-39224": {
+          "score": 0.01282051282051282,
+          "rank": 18
+        },
+        "aaai-2026-37805": {
+          "score": 0.012195121951219513,
+          "rank": 22
+        },
+        "aaai-2026-40266": {
+          "score": 0.011904761904761904,
+          "rank": 24
+        },
+        "aaai-2026-39241": {
+          "score": 0.011764705882352941,
+          "rank": 25
+        },
+        "aaai-2026-40466": {
+          "score": 0.010869565217391304,
+          "rank": 32
+        },
+        "aaai-2026-39285": {
+          "score": 0.010309278350515464,
+          "rank": 37
+        },
+        "aaai-2026-40827": {
+          "score": 0.010101010101010102,
+          "rank": 39
+        },
+        "aaai-2026-38414": {
+          "score": 0.009259259259259259,
+          "rank": 48
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "key-value cache",
+      "sim_scores": {
+        "aaai-2025-34779": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-37805": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-40497": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-40422": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2026-40266": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2026-40611": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2026-39187": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-40036": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-39241": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-37467": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-39686": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-38414": {
+          "score": 0.013888888888888888,
+          "rank": 12
+        },
+        "aaai-2026-40827": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-40319": {
+          "score": 0.013333333333333334,
+          "rank": 15
+        },
+        "aaai-2025-34773": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-40747": {
+          "score": 0.01282051282051282,
+          "rank": 18
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "key-value cache compression",
+      "sim_scores": {
+        "aaai-2026-40611": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-40036": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-39187": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-39686": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2025-34773": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2026-40319": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2026-37805": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-39241": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-40747": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-37467": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40422": {
+          "score": 0.013888888888888888,
+          "rank": 12
+        },
+        "aaai-2026-40266": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "key-value cache for large language models",
+      "sim_scores": {
+        "aaai-2026-40497": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-39241": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-40266": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2025-34779": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2026-40611": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-40511": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-40466": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-40827": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-39187": {
+          "score": 0.013513513513513514,
+          "rank": 14
+        },
+        "aaai-2026-40586": {
+          "score": 0.013333333333333334,
+          "rank": 15
+        },
+        "aaai-2026-40036": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-38414": {
+          "score": 0.01282051282051282,
+          "rank": 18
+        },
+        "aaai-2026-40747": {
+          "score": 0.011904761904761904,
+          "rank": 24
+        },
+        "aaai-2026-40422": {
+          "score": 0.011764705882352941,
+          "rank": 25
+        },
+        "aaai-2026-39686": {
+          "score": 0.010416666666666666,
+          "rank": 36
+        },
+        "aaai-2026-39936": {
+          "score": 0.00980392156862745,
+          "rank": 42
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "paged attention",
+      "sim_scores": {}
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "paged attention for efficient KV cache management",
+      "sim_scores": {
+        "aaai-2026-40266": {
+          "score": 0.01639344262295082,
+          "rank": 1
+        },
+        "aaai-2026-39988": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-39686": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-39224": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2026-40497": {
+          "score": 0.015384615384615385,
+          "rank": 5
+        },
+        "aaai-2026-39187": {
+          "score": 0.015151515151515152,
+          "rank": 6
+        },
+        "aaai-2025-34779": {
+          "score": 0.014925373134328358,
+          "rank": 7
+        },
+        "aaai-2026-39936": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-40611": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-40036": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2026-40466": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-37805": {
+          "score": 0.013888888888888888,
+          "rank": 12
+        },
+        "aaai-2025-34773": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-40586": {
+          "score": 0.013513513513513514,
+          "rank": 14
+        },
+        "aaai-2026-39241": {
+          "score": 0.013333333333333334,
+          "rank": 15
+        },
+        "aaai-2026-40827": {
+          "score": 0.013157894736842105,
+          "rank": 16
+        },
+        "aaai-2026-40105": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-39285": {
+          "score": 0.01282051282051282,
+          "rank": 18
+        },
+        "aaai-2026-40422": {
+          "score": 0.0125,
+          "rank": 20
+        },
+        "aaai-2026-38414": {
+          "score": 0.012345679012345678,
+          "rank": 21
+        },
+        "aaai-2026-37305": {
+          "score": 0.012048192771084338,
+          "rank": 23
+        },
+        "aaai-2026-40747": {
+          "score": 0.011904761904761904,
+          "rank": 24
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "prefix caching",
+      "sim_scores": {}
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "prefix caching for transformer inference",
+      "sim_scores": {
+        "aaai-2026-40586": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-39187": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-40036": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2026-39936": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-40466": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2025-34779": {
+          "score": 0.012658227848101266,
+          "rank": 19
+        },
+        "aaai-2026-40827": {
+          "score": 0.011764705882352941,
+          "rank": 25
+        },
+        "aaai-2026-40611": {
+          "score": 0.011627906976744186,
+          "rank": 26
+        },
+        "aaai-2026-39224": {
+          "score": 0.01098901098901099,
+          "rank": 31
+        },
+        "aaai-2026-39988": {
+          "score": 0.010638297872340425,
+          "rank": 34
+        },
+        "aaai-2025-34773": {
+          "score": 0.010416666666666666,
+          "rank": 36
+        },
+        "aaai-2026-40266": {
+          "score": 0.010309278350515464,
+          "rank": 37
+        },
+        "aaai-2026-40422": {
+          "score": 0.009523809523809525,
+          "rank": 45
+        }
+      }
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "transformer inference optimization",
+      "sim_scores": {}
+    },
+    {
+      "type": "keyword",
+      "tag": "llm-kv-cache",
+      "paper_tag": "keyword:llm-kv-cache",
+      "query_text": "transformer inference optimization using key-value cache",
+      "sim_scores": {
+        "aaai-2026-40036": {
+          "score": 0.016129032258064516,
+          "rank": 2
+        },
+        "aaai-2026-40586": {
+          "score": 0.015873015873015872,
+          "rank": 3
+        },
+        "aaai-2026-39187": {
+          "score": 0.015625,
+          "rank": 4
+        },
+        "aaai-2025-34779": {
+          "score": 0.014705882352941176,
+          "rank": 8
+        },
+        "aaai-2026-39224": {
+          "score": 0.014492753623188406,
+          "rank": 9
+        },
+        "aaai-2026-39936": {
+          "score": 0.014285714285714285,
+          "rank": 10
+        },
+        "aaai-2025-34773": {
+          "score": 0.014084507042253521,
+          "rank": 11
+        },
+        "aaai-2026-40466": {
+          "score": 0.013888888888888888,
+          "rank": 12
+        },
+        "aaai-2026-39988": {
+          "score": 0.0136986301369863,
+          "rank": 13
+        },
+        "aaai-2026-40422": {
+          "score": 0.012987012987012988,
+          "rank": 17
+        },
+        "aaai-2026-40611": {
+          "score": 0.012048192771084338,
+          "rank": 23
+        },
+        "aaai-2026-39686": {
+          "score": 0.011494252873563218,
+          "rank": 27
+        },
+        "aaai-2026-40497": {
+          "score": 0.010869565217391304,
+          "rank": 32
+        },
+        "aaai-2026-39285": {
+          "score": 0.010752688172043012,
+          "rank": 33
+        },
+        "aaai-2026-39241": {
+          "score": 0.010416666666666666,
+          "rank": 36
+        },
+        "aaai-2026-38414": {
+          "score": 0.009615384615384616,
+          "rank": 44
+        },
+        "aaai-2026-37805": {
+          "score": 0.009174311926605505,
+          "rank": 49
+        },
+        "aaai-2026-40827": {
+          "score": 0.00909090909090909,
+          "rank": 50
+        }
+      }
+    }
+  ],
+  "global_candidate_ids": [
+    "aaai-2026-40266",
+    "aaai-2026-40497",
+    "aaai-2026-40586",
+    "aaai-2025-34779",
+    "aaai-2026-39936",
+    "aaai-2026-39686",
+    "aaai-2026-38294",
+    "aaai-2025-35455",
+    "aaai-2026-39988",
+    "aaai-2026-39187",
+    "aaai-2026-37805",
+    "aaai-2026-40611",
+    "aaai-2026-40036",
+    "aaai-2026-40523",
+    "aaai-2025-33005",
+    "aaai-2026-39974",
+    "aaai-2026-40751",
+    "aaai-2026-39069",
+    "aaai-2026-39495",
+    "aaai-2026-40033",
+    "aaai-2025-34773",
+    "aaai-2026-39241",
+    "aaai-2026-40466",
+    "aaai-2026-40422",
+    "aaai-2026-38414",
+    "aaai-2026-40827",
+    "aaai-2026-39224",
+    "aaai-2026-40747",
+    "aaai-2026-40165",
+    "aaai-2026-39285",
+    "aaai-2025-34249",
+    "aaai-2025-35453",
+    "aaai-2026-39222",
+    "aaai-2026-39220",
+    "aaai-2026-39945",
+    "aaai-2025-33221",
+    "aaai-2026-39192",
+    "aaai-2026-40310",
+    "aaai-2026-38349",
+    "aaai-2026-40105",
+    "aaai-2026-40320",
+    "aaai-2026-39501",
+    "aaai-2026-39703",
+    "aaai-2026-40860",
+    "aaai-2025-34644",
+    "aaai-2026-37658",
+    "aaai-2025-34227",
+    "aaai-2026-39720",
+    "aaai-2026-39994",
+    "aaai-2026-38190",
+    "aaai-2025-33190",
+    "aaai-2025-34024",
+    "aaai-2026-37755",
+    "aaai-2026-37650",
+    "aaai-2026-37195",
+    "aaai-2026-39409",
+    "aaai-2025-32494",
+    "aaai-2026-40602",
+    "aaai-2026-40319",
+    "aaai-2026-37467",
+    "aaai-2026-40511",
+    "aaai-2025-34198",
+    "aaai-2026-40428",
+    "aaai-2025-34078",
+    "aaai-2026-39478",
+    "aaai-2025-34800",
+    "aaai-2026-38042",
+    "aaai-2026-41015",
+    "aaai-2025-33136",
+    "aaai-2025-34657",
+    "aaai-2026-37771",
+    "aaai-2026-37661",
+    "aaai-2026-37287",
+    "aaai-2026-37305",
+    "aaai-2026-40132",
+    "aaai-2026-40706",
+    "aaai-2025-34690",
+    "aaai-2026-40502",
+    "aaai-2025-34628",
+    "aaai-2026-40576",
+    "aaai-2026-37247",
+    "aaai-2025-34701",
+    "aaai-2026-40067",
+    "aaai-2026-38057",
+    "aaai-2026-40062",
+    "aaai-2026-37011",
+    "aaai-2026-39454",
+    "aaai-2026-40371",
+    "aaai-2026-39403",
+    "aaai-2025-33973",
+    "aaai-2025-33446",
+    "aaai-2026-37276",
+    "aaai-2025-33179",
+    "aaai-2025-34531",
+    "aaai-2026-40862",
+    "aaai-2025-34619",
+    "aaai-2025-33665",
+    "aaai-2026-40601",
+    "aaai-2026-39816",
+    "aaai-2026-39309",
+    "aaai-2026-40610",
+    "aaai-2026-40160",
+    "aaai-2025-34566",
+    "aaai-2026-39198",
+    "aaai-2026-39195",
+    "aaai-2025-34716",
+    "aaai-2026-38071",
+    "aaai-2026-38467",
+    "aaai-2026-40276",
+    "aaai-2025-32835",
+    "aaai-2026-39901",
+    "aaai-2026-37002",
+    "aaai-2026-38267",
+    "aaai-2025-32264",
+    "aaai-2025-32449",
+    "aaai-2025-32653",
+    "aaai-2026-37360",
+    "aaai-2025-33201",
+    "aaai-2026-40314",
+    "aaai-2026-38531"
+  ],
+  "global_pool_lane_top_k": 30,
+  "global_pool_limit": 120,
+  "global_pool_guaranteed_per_lane": 2,
+  "global_pool_effective_size": 120,
+  "reranked_at": "2026-07-08T08:41:24.309068+00:00",
+  "llm_ranked": [
+    {
+      "paper_id": "aaai-2026-40266",
+      "score": 9.0,
+      "evidence_en": "sparse attention for multi-context KV cache reuse",
+      "evidence_cn": "多上下文KV缓存稀疏注意力重用",
+      "canonical_evidence": "多上下文KV缓存稀疏注意力重用",
+      "tldr_en": "Proposes sparse attention mechanism for reusing KV caches across multiple contexts in RAG, improving long-sequence inference efficiency.",
+      "tldr_cn": "大型语言模型在长序列推理中面临高成本问题。本文提出跨多上下文KV缓存稀疏注意力方法，解决传统单上下文稀疏注意力无法直接应用于检索增强生成中多文档独立缓存的问题。通过稀疏选择最相关KV缓存，减少序列长度，提升推理吞吐量。实验表明该方法在RAG场景下有效降低延迟并保持生成质量。",
+      "title_zh": "跨多上下文KV缓存的稀疏注意力",
+      "motivation_cn": "现有KV缓存稀疏注意力局限于单上下文，无法处理RAG中独立缓存的多文档场景。",
+      "method_cn": "提出跨多上下文KV缓存稀疏注意力机制，根据相关性选择最相关的KV缓存子集。",
+      "result_cn": "在RAG场景下显著降低推理延迟，保持生成质量。",
+      "conclusion_cn": "该方法扩展了稀疏注意力到多上下文场景，有效提升RAG推理效率。",
+      "matched_requirement_id": "req-1",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models"
+    },
+    {
+      "paper_id": "aaai-2026-39224",
+      "score": 9.0,
+      "evidence_en": "asynchronous KV cache prefetching to hide HBM latency",
+      "evidence_cn": "异步KV缓存预取以隐藏HBM延迟",
+      "canonical_evidence": "异步KV缓存预取以隐藏HBM延迟",
+      "tldr_en": "Proposes L2 cache-oriented asynchronous KV cache prefetching to overlap computation and memory access, achieving 2.15x attention kernel speedup on H20 GPUs.",
+      "tldr_cn": "LLM推理受限于高带宽内存带宽瓶颈。本文提出面向L2缓存的异步KV缓存预取方法，通过将KV缓存预先加载到GPU L2缓存中，实现计算与访存重叠，从而隐藏HBM访问延迟。在NVIDIA H20 GPU上实验表明，注意力核效率提升2.15倍，有效突破内存带宽限制。",
+      "title_zh": "通过异步KV缓存预取加速LLM推理吞吐量",
+      "motivation_cn": "LLM推理内存带宽瓶颈导致HBM访问延迟成为性能关键。",
+      "method_cn": "利用计算空闲时间片异步预取KV缓存到L2缓存，实现计算-访存重叠。",
+      "result_cn": "注意力核效率提升2.15倍。",
+      "conclusion_cn": "异步预取有效隐藏HBM延迟，提升LLM推理吞吐量。",
+      "matched_requirement_id": "req-1",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models"
+    },
+    {
+      "paper_id": "aaai-2026-40611",
+      "score": 9.0,
+      "evidence_en": "lossless KV cache compression via adaptive merging",
+      "evidence_cn": "通过自适应合并实现无损KV缓存压缩",
+      "canonical_evidence": "通过自适应合并实现无损KV缓存压缩",
+      "tldr_en": "KeepKV adaptively merges KV cache pairs to achieve lossless compression under strict memory constraints, avoiding attention distribution inconsistency.",
+      "tldr_cn": "LLM推理中KV缓存不断增长导致内存瓶颈。现有压缩方法如驱逐或合并会引入信息损失或注意力分布不一致。本文提出KeepKV，一种自适应KV缓存合并方法，在严格内存约束下通过智能合并保留更多信息，同时保持注意力分布一致性。实验表明在相同内存预算下，KeepKV比现有方法生成质量更高，且无额外推理开销。",
+      "title_zh": "KeepKV: 实现周期性无损KV缓存压缩以高效推理LLM",
+      "motivation_cn": "现有KV缓存压缩方法导致信息丢失或注意力分布不一致，影响生成质量。",
+      "method_cn": "提出自适应KV缓存合并策略，在合并时保持注意力分布一致性。",
+      "result_cn": "在严格内存约束下保持生成质量，优于现有压缩方法。",
+      "conclusion_cn": "KeepKV实现了无损压缩，为LLM高效推理提供可行方案。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40036",
+      "score": 9.0,
+      "evidence_en": "layer- and time-adaptive KV cache pruning for reasoning tasks",
+      "evidence_cn": "面向推理任务的层和时间自适应KV缓存剪枝",
+      "canonical_evidence": "面向推理任务的层和时间自适应KV缓存剪枝",
+      "tldr_en": "Lethe dynamically prunes KV cache tokens across layers and decoding steps, adapting to the sparsity patterns of reasoning-intensive generation.",
+      "tldr_cn": "LLM在推理任务中生成长序列，KV缓存内存和延迟开销大。现有压缩方法主要针对长输入预填充阶段，忽视长生成动态和层敏感性。本文提出Lethe，在空间维度根据层注意力冗余分配剪枝预算，在时间维度自适应调整剪枝策略。实验表明在保持推理质量的同时，KV缓存内存减少数倍，解码延迟显著降低。",
+      "title_zh": "Lethe: 面向推理密集型LLM服务的层和时间自适应KV缓存剪枝",
+      "motivation_cn": "长生成推理中KV缓存动态累积，现有压缩方法未考虑层差异和时间变化。",
+      "method_cn": "基于层注意力冗余度分配剪枝预算，并结合时间维度自适应调整。",
+      "result_cn": "显著降低KV缓存内存和延迟，保持推理质量。",
+      "conclusion_cn": "Lethe为长文本推理提供了高效的KV缓存管理框架。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40105",
+      "score": 9.0,
+      "evidence_en": "Proposes KV cache compression based on activation frequency",
+      "evidence_cn": "基于激活频率的KV缓存压缩方法",
+      "canonical_evidence": "基于激活频率的KV缓存压缩方法",
+      "tldr_en": "HitKV proposes a KV cache compression method that evicts unimportant tokens based on attention activation frequency, addressing limitations of top-k scoring approaches and reducing memory footprint for LLM inference.",
+      "tldr_cn": "针对大语言模型长上下文处理中KV缓存线性增长导致的显存瓶颈问题，本文提出HitKV方法。该方法在固定显存预算下，利用令牌在注意力中的激活频率（即达到top-k得分的次数）来识别重要令牌，克服了传统仅依赖单次注意力得分进行驱逐的局限。实验表明，HitKV在保持模型精度的同时显著降低了缓存占用，提升了长序列推理效率。该工作为KV缓存压缩提供了基于访问频率的新视角。",
+      "title_zh": "HitKV：激活频率揭示哪些令牌重要",
+      "motivation_cn": "现有KV缓存压缩方法仅关注单步注意力得分，忽略了令牌被频繁激活的重要性，导致关键信息被误删。",
+      "method_cn": "提出基于令牌激活频率的KV驱逐策略，动态保留高频令牌的KV对，并结合固定预算进行压缩。",
+      "result_cn": "在多个长文本任务上，HitKV在相同预算下相比现有方法提升了困惑度或下游任务准确率。",
+      "conclusion_cn": "激活频率是衡量令牌重要性的有效指标，可显著改进KV缓存压缩效果。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-39241",
+      "score": 9.0,
+      "evidence_en": "Dynamic KV cache quantization for multimodal LLMs",
+      "evidence_cn": "多模态大语言模型的动态KV缓存量化",
+      "canonical_evidence": "多模态大语言模型的动态KV缓存量化",
+      "tldr_en": "Dynamic KV Cache Quantization applies per-channel quantization to K and per-token quantization to V, reducing memory footprint for multimodal LLMs while maintaining accuracy.",
+      "tldr_cn": "多模态大语言模型部署中KV缓存占用大量内存，本文提出动态KV缓存量化方法。针对键（K）和值（V）的不同分布特性，对K进行逐通道量化、对V进行逐令牌量化，并引入自适应令牌分配机制。实验在图文理解等任务上表明，该方法在几乎不损失性能的前提下将KV缓存内存减少约4倍，促进了资源受限设备上的实时部署。该工作将混合精度量化定制化地应用于多模态场景。",
+      "title_zh": "通过动态KV缓存量化实现高效多模态大语言模型",
+      "motivation_cn": "多模态大模型推理时KV缓存内存占用大，且现有量化策略未针对键值分布差异进行优化。",
+      "method_cn": "对K采用逐通道量化、V采用逐令牌量化，并设计自适应令牌分配以平衡精度与压缩率。",
+      "result_cn": "在COCO Caption等基准上，量化后模型性能与全精度相当，缓存内存降低至1/4。",
+      "conclusion_cn": "针对键值分布特性的动态量化可有效压缩多模态大模型KV缓存，利于边缘部署。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2025-34779",
+      "score": 9.0,
+      "evidence_en": "1-bit KV cache via sparse representation",
+      "evidence_cn": "通过稀疏表示实现1比特KV缓存",
+      "canonical_evidence": "通过稀疏表示实现1比特KV缓存",
+      "tldr_en": "CSR represents KV cache as sparse indexes and weights, achieving 1-bit compression via a neural dictionary, drastically reducing memory for LLM inference.",
+      "tldr_cn": "长上下文LLM推理中KV缓存线性增长引发显存危机，本文提出缓存稀疏表示（CSR），将密集的KV张量转换为稀疏索引和权重，并引入NeuralDict神经网络字典自动学习高效稀疏表示。该方法能将KV缓存压缩至接近1比特每元素，在多个基准上以极低精度损失实现超过10倍的内存压缩。该工作开辟了基于稀疏编码的KV缓存压缩新路径。",
+      "title_zh": "CSR：通过稀疏表示实现1比特键值缓存",
+      "motivation_cn": "KV缓存线性增长使LLM在长序列推理中内存爆炸，现有方法压缩率不足。",
+      "method_cn": "将KV缓存表示为稀疏索引和权重，并用NeuralDict自动学习稀疏编码，实现近1比特压缩。",
+      "result_cn": "在长文本语言模型上，CSR将缓存内存降低至1/10，困惑度仅下降0.5以内。",
+      "conclusion_cn": "稀疏表示是一种高效的KV缓存压缩范式，有望突破显存限制支持更长上下文。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-39988",
+      "score": 9.0,
+      "evidence_en": "Self-indexing KV cache unifying compression and sparse attention retrieval",
+      "evidence_cn": "自索引KV缓存统一压缩与稀疏注意力检索",
+      "canonical_evidence": "自索引KV缓存统一压缩与稀疏注意力检索",
+      "tldr_en": "Self-Indexing KVCache uses sign-based 1-bit VQ to make compressed keys serve as an index for sparse attention, eliminating separate indexing overhead.",
+      "tldr_cn": "现有KV缓存压缩与稀疏注意力预测通常分离设计，引入冗余。本文提出自索引KV缓存范式：通过符号量化将压缩后的键表示本身作为索引结构，直接指导稀疏注意力。采用基于符号的1比特向量量化，将存储与检索统一为硬件友好的格式。实验在长上下文推理中实现相近精度下2倍以上加速，并大幅降低内存占用。该工作为KV缓存管理提供了简洁统一的设计思路。",
+      "title_zh": "自索引KV缓存：从压缩键预测稀疏注意力",
+      "motivation_cn": "当前将稀疏预测与压缩分离，索引结构额外开销大，限制可扩展性。",
+      "method_cn": "设计基于符号的1比特向量量化，使压缩键同时作为索引，统一存储与检索。",
+      "result_cn": "在长序列推理中，该方法实现2倍以上加速且精度几乎无损，内存使用降至原1/8。",
+      "conclusion_cn": "将压缩键作为自索引可简化KV缓存系统，显著提升长上下文推理效率。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40497",
+      "score": 9.0,
+      "evidence_en": "Trainable queries for optimized KV cache eviction to reduce memory",
+      "evidence_cn": "可训练查询优化KV缓存驱逐以降低内存",
+      "canonical_evidence": "可训练查询优化KV缓存驱逐以降低内存",
+      "tldr_en": "Judge Q introduces a soft token list to learn optimal queries for KV cache eviction, improving global information retention and reducing memory footprint.",
+      "tldr_cn": "当前KV缓存驱逐方法使用预填充阶段最后窗口作为查询，过于关注局部导致全局信息丢失。本文提出Judge Q，通过可训练的软令牌列表优化查询，仅调整嵌入层参数。该方法使模型自适应学习如何选择要保留的KV对，实验表明在长文本任务中性能优于基于窗口的驱逐策略，且有效减少内存占用。Judge Q为KV缓存驱逐提供了一种轻量级训练范式。",
+      "title_zh": "Judge Q：可训练查询优化KV缓存驱逐中的信息保持",
+      "motivation_cn": "现有KV驱逐仅用局部窗口查询，忽略全局重要性，导致重要信息被误删。",
+      "method_cn": "引入软令牌列表作为可训练查询，仅微调嵌入层，学习全局重要性评分以指导驱逐。",
+      "result_cn": "在长文本语言建模和问答任务上，Judge Q在同等缓存预算下困惑度更低，信息召回更全面。",
+      "conclusion_cn": "通过可训练查询驱逐KV缓存能更有效保留全局信息，是一种前景广阔的轻量级优化方案。",
+      "matched_requirement_id": "req-9",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation"
+    },
+    {
+      "paper_id": "aaai-2026-40466",
+      "score": 9.0,
+      "evidence_en": "KV cache channel pruning with query-aware sparsity",
+      "evidence_cn": "基于查询感知稀疏性的KV缓存通道剪枝",
+      "canonical_evidence": "基于查询感知稀疏性的KV缓存通道剪枝",
+      "tldr_en": "SparK introduces query-aware unstructured sparsity with recoverable KV cache channel pruning, achieving compression by identifying and pruning near-zero channels across queries and positions, improving memory and compute efficiency.",
+      "tldr_cn": "针对长上下文LLM推理中KV缓存内存瓶颈问题，现有压缩方法忽略通道维度重要性差异。SparK提出查询感知的通道剪枝方法，根据查询和位置动态识别重要通道，对不重要的进行剪枝并可恢复，在保持精度的同时大幅减少KV缓存内存和计算开销。",
+      "title_zh": "SparK：基于查询感知非结构化稀疏性与可恢复KV缓存通道剪枝",
+      "motivation_cn": "现有KV缓存压缩方法忽略通道维度重要性差异，难以平衡效率与准确性。",
+      "method_cn": "提出查询感知的KV缓存通道剪枝，根据通道对查询的重要性进行非结构化稀疏化并支持剪枝后恢复。",
+      "result_cn": "在长上下文推理中显著降低内存占用，同时保持模型精度。",
+      "conclusion_cn": "通道维度的细粒度重要性分析可有效提升KV缓存压缩效果。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2025-34773",
+      "score": 9.0,
+      "evidence_en": "1-bit quantization for KV cache with zero overhead",
+      "evidence_cn": "零开销的1比特KV缓存量化",
+      "canonical_evidence": "零开销的1比特KV缓存量化",
+      "tldr_en": "QJL introduces a 1-bit quantized Johnson-Lindenstrauss transform for KV cache quantization, eliminating the need for storing quantization constants and achieving zero memory overhead.",
+      "tldr_cn": "KV缓存量化中，传统方法因存储量化常数产生额外内存开销。QJL结合约翰逊-林登斯特劳斯变换与符号量化，将KV嵌入压缩至1比特，无需存储零点或缩放因子，在极低比特率下保持模型性能，显著减少KV缓存内存占用。",
+      "title_zh": "QJL：零开销的1比特量化JL变换用于KV缓存量化",
+      "motivation_cn": "传统KV缓存量化需要存储量化常数，带来额外内存开销。",
+      "method_cn": "采用JL变换后接符号位量化，实现1比特KV缓存表示且无需存储量化常数。",
+      "result_cn": "消除了量化常数存储开销，在极低内存下保持模型精度。",
+      "conclusion_cn": "JL变换与符号量化结合可实现高效无开销KV缓存压缩。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40422",
+      "score": 9.0,
+      "evidence_en": "mixed-precision quantization for KV cache based on gradient importance",
+      "evidence_cn": "基于梯度重要性的混合精度KV缓存量化",
+      "canonical_evidence": "基于梯度重要性的混合精度KV缓存量化",
+      "tldr_en": "KVmix proposes gradient-based layer importance-aware mixed-precision quantization for KV cache, allocating different bit-widths per layer based on impact on loss, reducing memory while preserving accuracy.",
+      "tldr_cn": "KV缓存量化中，统一精度分配难以兼顾内存与准确性。KVmix利用梯度分析评估每层键值投影矩阵对损失的影响，实现层间混合精度量化，在长上下文任务中动态关注关键KV，有效缓解内存-准确率-吞吐量之间的权衡。",
+      "title_zh": "KVmix：基于梯度层重要性感知的混合精度KV缓存量化",
+      "motivation_cn": "KV缓存量化中静态精度分配无法适应长上下文中KV重要性差异。",
+      "method_cn": "利用梯度重要性分析，为每层KV投影矩阵分配不同比特宽度。",
+      "result_cn": "在降低内存的同时保持模型准确性，优于统一精度量化。",
+      "conclusion_cn": "梯度引导的混合精度量化可有效突破KV缓存内存瓶颈。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-39187",
+      "score": 9.0,
+      "evidence_en": "KV cache compression for LLM reasoning",
+      "evidence_cn": "针对大模型推理的KV缓存压缩",
+      "canonical_evidence": "针对大模型推理的KV缓存压缩",
+      "tldr_en": "DesireKV proposes a reasoning-aware KV cache compression framework by decoupling sensitivity and importance, achieving efficient memory reduction for chain-of-thought inference.",
+      "tldr_cn": "DesireKV针对大语言模型链式推理中KV缓存占用过高的问题，提出解耦敏感性和重要性的压缩框架。该方法通过注意力重要性和量化敏感性构建二维坐标，对推理关键token给予保护。实验表明在保持推理质量的同时显著降低缓存内存。为推理场景下的KV缓存压缩提供了新思路。",
+      "title_zh": "DesireKV: 解耦敏感性和重要性的推理感知KV缓存压缩",
+      "motivation_cn": "现有KV缓存压缩方法在链式推理场景中存在效果不佳的问题。",
+      "method_cn": "构建注意力重要性与量化敏感性的二维坐标系，对不同token进行差异化压缩决策，并保护推理关键token。",
+      "result_cn": "在保持推理准确性的前提下，显著减少KV缓存内存占用。",
+      "conclusion_cn": "解耦敏感性和重要性可有效提升推理场景下的缓存压缩效果。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-37305",
+      "score": 9.0,
+      "evidence_en": "KV cache retrieval and compression for video LLMs",
+      "evidence_cn": "针对视频大模型的KV缓存检索与压缩",
+      "canonical_evidence": "针对视频大模型的KV缓存检索与压缩",
+      "tldr_en": "StreamKV is a training-free framework for video LLMs that dynamically partitions video streams for efficient KV cache retrieval and compression.",
+      "tldr_cn": "StreamKV针对视频大模型处理长视频时KV缓存检索和压缩未充分探索的问题，提出无训练框架。它动态划分视频流，实现查询相关的KV缓存检索与压缩。实验证明在视频问答任务上提升效率而不损失准确性。为视频LLM的高效推理提供了新方案。",
+      "title_zh": "StreamKV: 基于分段的KV缓存检索与压缩的流式视频问答",
+      "motivation_cn": "视频LLM处理长视频时KV缓存检索和压缩方法不足。",
+      "method_cn": "动态划分视频流，进行基于段的KV缓存检索和压缩。",
+      "result_cn": "在视频问答任务上提高效率并保持准确性。",
+      "conclusion_cn": "动态分段检索压缩可有效释放视频LLM的KV缓存瓶颈。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-37805",
+      "score": 9.0,
+      "evidence_en": "KV cache pruning for VideoLLMs",
+      "evidence_cn": "针对视频大模型的KV缓存剪枝",
+      "canonical_evidence": "针对视频大模型的KV缓存剪枝",
+      "tldr_en": "SharpV adaptively prunes visual tokens and KV cache based on spatial-temporal information, achieving performance gains over dense models.",
+      "tldr_cn": "SharpV针对视频大模型视觉token冗余导致的KV缓存扩展问题，提出信息感知的自适应剪枝方法。根据时空信息动态调整剪枝比例，在KV缓存剪枝阶段还考虑视觉信息退化。实验表明偶尔超过密集模型性能，为自适应剪枝提供了新范式。",
+      "title_zh": "Sharp Eyes and Memory for VideoLLMs: 信息感知的视觉Token剪枝实现高效可靠的视频LLM推理",
+      "motivation_cn": "视频大模型视觉token冗余导致KV缓存扩展和计算开销大。",
+      "method_cn": "根据时空信息自适应剪枝视觉token和KV缓存。",
+      "result_cn": "自适应剪枝有时实现性能提升，超越密集模型。",
+      "conclusion_cn": "自适应信息剪枝可优化视频LLM的KV缓存效率。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40319",
+      "score": 9.0,
+      "evidence_en": "Converts VLM to MLA for KV cache compression",
+      "evidence_cn": "将VLM转换为MLA结构以压缩KV缓存",
+      "canonical_evidence": "将VLM转换为MLA结构以压缩KV缓存",
+      "tldr_en": "MHA2MLA-VLM converts existing VLMs to Multi-Head Latent Attention architecture, achieving KV cache compression and inference acceleration without costly pretraining.",
+      "tldr_cn": "MHA2MLA-VLM针对VLM中KV缓存占用问题，提出参数高效的MLA转换框架。通过模态自适应部分RoPE策略和参数高效迁移，在不需昂贵预训练下将现成VLM转为MLA架构，极大压缩KV缓存并加速推理。实验验证了有效性和多模态兼容性。",
+      "title_zh": "MHA2MLA-VLM: 在视觉语言模型中启用DeepSeek经济高效的多头隐式注意力",
+      "motivation_cn": "VLM推理时KV缓存快速增长造成内存和计算瓶颈。",
+      "method_cn": "通过模态自适应部分RoPE和参数高效迁移将VLM转换为多头隐式注意力架构。",
+      "result_cn": "在不需预训练下实现KV缓存压缩和推理加速。",
+      "conclusion_cn": "转换架构是优化VLM KV缓存的有效途径。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-38414",
+      "score": 9.0,
+      "evidence_en": "KV cache reduction by identifying valuable layers",
+      "evidence_cn": "通过识别有价值层减少KV缓存",
+      "canonical_evidence": "通过识别有价值层减少KV缓存",
+      "tldr_en": "Q Cache identifies that visual attention is valuable in less than half of decode layers, enabling KV cache savings by pruning redundant layers.",
+      "tldr_cn": "Q Cache针对多模态大语言模型中视觉token导致KV缓存瓶颈的问题，深入分析注意力机制发现大部分解码层的视觉注意力价值低。据此提出方法仅保留少数有价值层的KV缓存，显著降低内存占用且不损害长文本生成。为多模态模型KV缓存优化提供了新视角。",
+      "title_zh": "Q Cache: 多模态大语言模型中视觉注意力在不到一半解码层中有价值",
+      "motivation_cn": "多模态大语言模型视觉token冗余导致KV缓存瓶颈。",
+      "method_cn": "通过分析注意力模式识别出有价值的解码层，仅保留这些层的KV缓存。",
+      "result_cn": "大幅减少KV缓存占用，不影响长文本生成质量。",
+      "conclusion_cn": "利用注意力价值差异可高效压缩多模态模型的KV缓存。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40827",
+      "score": 8.0,
+      "evidence_en": "Uses subgraph-level KV cache reuse for similar queries in graph RAG",
+      "evidence_cn": "图检索增强生成中基于子图级别的KV缓存重用",
+      "canonical_evidence": "图检索增强生成中基于子图级别的KV缓存重用",
+      "tldr_en": "SubGCache accelerates graph-based RAG by clustering similar subgraph queries and reusing pre-computed KV cache across queries, reducing inference latency.",
+      "tldr_cn": "针对图增强生成（RAG）中不同查询可能检索到相似子图导致重复计算的问题，本文提出SubGCache。该方法首先对查询子图嵌入进行聚类，为每个簇构建代表性子图并预计算其KV缓存，簇内查询直接复用该缓存。实验表明，SubGCache有效降低了图RAG的推理延迟，同时保持回答质量。该工作将前缀缓存思想扩展至图结构提示，实现了跨查询的KV缓存复用。",
+      "title_zh": "SubGCache：基于子图级KV缓存的图增强生成加速",
+      "motivation_cn": "图RAG中不同查询常检索相似子图，导致重复计算KV缓存，浪费资源。",
+      "method_cn": "对查询子图嵌入聚类，构建代表性子图并预计算KV缓存，簇内查询复用该缓存。",
+      "result_cn": "在多个知识图谱问答基准上，SubGCache相较于基线减少了30%-50%的推理时间，精度损失很小。",
+      "conclusion_cn": "子图级KV缓存复用是一种有效的图RAG加速策略，适用于结构化知识检索场景。",
+      "matched_requirement_id": "req-6",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference"
+    },
+    {
+      "paper_id": "aaai-2026-37467",
+      "score": 8.0,
+      "evidence_en": "KV cache optimization for audio-video LLMs",
+      "evidence_cn": "面向音视频大模型的KV缓存优化",
+      "canonical_evidence": "面向音视频大模型的KV缓存优化",
+      "tldr_en": "AccKV proposes adaptive-focusing and cross-calibration for KV cache optimization in audio-video LLMs, reducing cache size by focusing on important modalities and calibrating cross-modal attention.",
+      "tldr_cn": "音视频大模型中，KV缓存因长时序列而显著增大。AccKV提出自适应聚焦与跨校准优化策略，根据层间注意力分布动态调整不同模态的KV缓存保留，并通过跨模态校准减少冗余，有效降低内存消耗同时保持多模态对话性能。",
+      "title_zh": "AccKV：通过自适应聚焦与跨校准实现高效音视频大模型推理",
+      "motivation_cn": "音视频模态导致KV缓存巨大，现有方法难以自适应分配缓存资源。",
+      "method_cn": "提出自适应聚焦与跨校准KV缓存优化，根据层间注意力模态偏好动态保留关键KV。",
+      "result_cn": "在音视频问答任务中减少KV缓存使用，推理效率提升。",
+      "conclusion_cn": "跨模态注意力分析可指导KV缓存高效管理。",
+      "matched_requirement_id": "req-7",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models"
+    },
+    {
+      "paper_id": "aaai-2026-39285",
+      "score": 8.0,
+      "evidence_en": "multimodal KV cache eviction with modality fusion awareness",
+      "evidence_cn": "多模态KV缓存剔除，感知模态融合程度",
+      "canonical_evidence": "多模态KV缓存剔除，感知模态融合程度",
+      "tldr_en": "DAVID proposes a dual-stage adaptive KV cache eviction strategy for multimodal LLMs, decoupling eviction in shallow layers and super-modal eviction in deep layers based on modality fusion analysis.",
+      "tldr_cn": "多模态大模型KV缓存管理面临挑战。DAVID通过分析视觉与文本令牌的特征融合程度，在浅层采用解耦剔除策略，深层采用超模态剔除策略，并设计轻量级指标支持动态切换，有效减少KV缓存内存同时保持多模态理解性能。",
+      "title_zh": "DAVID：面向多模态KV缓存剔除的双阶段自适应视觉文本融合解耦",
+      "motivation_cn": "多模态输入导致KV缓存巨大，现有策略未考虑层间模态融合差异。",
+      "method_cn": "根据模态融合度在浅层解耦剔除、深层超模态剔除，通过轻量指标动态切换。",
+      "result_cn": "在多模态任务中降低KV缓存使用，性能损失极小。",
+      "conclusion_cn": "层间融合感知的剔除策略可优化多模态KV缓存管理。",
+      "matched_requirement_id": "req-8",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders"
+    },
+    {
+      "paper_id": "aaai-2026-40511",
+      "score": 8.0,
+      "evidence_en": "KV-level retrieval augmentation with paged KV cache",
+      "evidence_cn": "基于分页KV缓存的KV级检索增强",
+      "canonical_evidence": "基于分页KV缓存的KV级检索增强",
+      "tldr_en": "RetroLM introduces KV-level retrieval augmentation by partitioning the KV cache into pages and performing retrieval on KV pages, enabling efficient long-context processing with reduced memory.",
+      "tldr_cn": "长上下文处理中，检索增强生成方法存在检索不准和上下文碎片问题。RetroLM提出KV级检索增强，将KV缓存划分为连续页面，对页面进行编码和检索，实现选择性访问长上下文，在降低内存的同时提升处理效率。",
+      "title_zh": "RetroLM：面向长上下文处理的检索增强KV缓存",
+      "motivation_cn": "现有RAG方法检索不准确且上下文碎片化，影响长上下文处理。",
+      "method_cn": "将KV缓存划分成页面，对页面进行检索增强，实现高效选择性访问。",
+      "result_cn": "在长上下文任务中提升效率，降低内存占用。",
+      "conclusion_cn": "KV级页面检索可有效改进长上下文推理。",
+      "matched_requirement_id": "req-4",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "paged attention for efficient KV cache management"
+    },
+    {
+      "paper_id": "aaai-2026-40747",
+      "score": 7.0,
+      "evidence_en": "injects knowledge into LLM KV cache for efficient retrieval",
+      "evidence_cn": "将知识注入LLM KV缓存以实现高效检索",
+      "canonical_evidence": "将知识注入LLM KV缓存以实现高效检索",
+      "tldr_en": "SR-KI injects encoded knowledge base key-value pairs into LLM KV cache, using supervised attention for end-to-end retrieval within the model.",
+      "tldr_cn": "传统检索增强生成依赖外部检索器，流程繁琐。本文提出SR-KI，将结构化知识库编码为键值对并注入LLM的KV缓存，通过监督注意力训练模型直接关注相关知识。该方法支持端到端推理，无需外部检索器，在知识密集型任务上提升准确率和效率。",
+      "title_zh": "SR-KI: 通过监督注意力将可扩展实时知识集成到LLM中",
+      "motivation_cn": "现有RAG依赖外部检索器，多阶段流程低效且受限于检索器性能。",
+      "method_cn": "将知识库编码为KV对注入KV缓存，用监督注意力训练模型定位相关知识。",
+      "result_cn": "实现端到端检索，减少外部依赖，提升知识集成效率。",
+      "conclusion_cn": "SR-KI为LLM知识注入提供新范式，利用KV缓存实现实时、可扩展的知识集成。",
+      "matched_requirement_id": "req-1",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models"
+    },
+    {
+      "paper_id": "aaai-2026-39936",
+      "score": 7.0,
+      "evidence_en": "adaptive KV caching for multi-scale visual autoregressive transformers",
+      "evidence_cn": "多尺度视觉自回归Transformer自适应KV缓存",
+      "canonical_evidence": "多尺度视觉自回归Transformer自适应KV缓存",
+      "tldr_en": "AMS-KV introduces adaptive KV caching tailored for multi-scale visual autoregressive models, reducing memory overhead while maintaining generation quality.",
+      "tldr_cn": "视觉自回归模型通过下一尺度预测生成图像，但KV缓存随尺度增加急剧膨胀。本文提出AMS-KV，分析发现局部尺度注意力对质量贡献大，粗尺度可少量分配内存。据此设计自适应KV缓存策略，为不同尺度分配差异化缓存容量。实验表明在保持生成质量的同时，KV内存占用大幅降低。",
+      "title_zh": "AMS-KV: 多尺度视觉自回归Transformer中的自适应KV缓存",
+      "motivation_cn": "视觉自回归模型多尺度生成导致KV缓存内存过度增长，限制可扩展性。",
+      "method_cn": "基于注意力头功能分类，为局部尺度分配更多缓存，粗尺度使用压缩缓存。",
+      "result_cn": "在保持生成质量前提下显著减少KV缓存内存占用。",
+      "conclusion_cn": "为视觉自回归模型提供了高效的KV缓存管理方案，可推广至类似多尺度架构。",
+      "matched_requirement_id": "req-1",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models"
+    },
+    {
+      "paper_id": "aaai-2026-39686",
+      "score": 7.0,
+      "evidence_en": "head-aware KV cache compression for visual autoregressive models",
+      "evidence_cn": "面向视觉自回归模型的注意力头感知KV缓存压缩",
+      "canonical_evidence": "面向视觉自回归模型的注意力头感知KV缓存压缩",
+      "tldr_en": "Proposes head-aware KV cache compression for VAR models by categorizing attention heads into contextual and structural, applying tailored compression.",
+      "tldr_cn": "视觉自回归模型在多尺度生成中面临KV缓存内存和计算压力。本文发现注意力头分为语义维持型（Contextual Heads）和空间结构型（Structural Heads），现有统一压缩策略不适用。据此提出头感知KV缓存压缩方法，对不同类型头采用差异化压缩策略。实验在保持生成质量前提下，大幅降低KV缓存内存占用和计算复杂度。",
+      "title_zh": "面向高效视觉自回归建模的注意力头感知KV缓存压缩",
+      "motivation_cn": "视觉自回归模型中KV缓存随尺度积累，现有统一压缩方法忽略注意力头功能差异。",
+      "method_cn": "根据注意力头功能分类（语义/结构），应用差异化压缩策略。",
+      "result_cn": "在保持生成质量的同时显著减少KV缓存内存和计算开销。",
+      "conclusion_cn": "头感知压缩为视觉自回归模型提供高效缓存管理，可启发LLM中类似设计。",
+      "matched_requirement_id": "req-5",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers"
+    },
+    {
+      "paper_id": "aaai-2026-40586",
+      "score": 4.0,
+      "evidence_en": "dynamic cache eviction for diffusion LLMs, memory efficiency",
+      "evidence_cn": "针对扩散大模型的动态缓存剔除，内存效率",
+      "canonical_evidence": "针对扩散大模型的动态缓存剔除，内存效率",
+      "tldr_en": "Sparse-dLLM proposes dynamic cache eviction with sparse attention for diffusion LLMs, reducing memory by evicting low-relevance tokens based on cross-layer sparsity.",
+      "tldr_cn": "扩散大模型推理中缓存占用大量内存。Sparse-dLLM提出训练无关的动态缓存剔除框架，利用跨层稀疏性识别并剔除低重要性的令牌，结合稀疏注意力，在加速扩散模型推理的同时显著降低KV缓存内存。",
+      "title_zh": "Sparse-dLLM：利用动态缓存剔除加速扩散大模型",
+      "motivation_cn": "扩散LLM推理内存开销大，现有缓存方法无法分辨令牌重要性。",
+      "method_cn": "提出动态缓存剔除与稀疏注意力结合，基于跨层重要性保留关键令牌。",
+      "result_cn": "在扩散LLM推理中降低内存并加速，保持生成质量。",
+      "conclusion_cn": "动态剔除策略可有效减少扩散模型缓存占用。",
+      "matched_requirement_id": "req-8",
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders"
+    }
+  ],
+  "llm_ranked_at": "2026-07-08T08:42:46.418732+00:00",
+  "display_min_score": 4.0,
+  "pruned_at": "2026-07-08T08:42:46.460701+00:00"
+}
