@@ -1,0 +1,252 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-09T21:23:17.179643+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 4,
+    "deep_cap": 6,
+    "deep_selected": 4,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2607.02805v1",
+      "source": "arxiv",
+      "title": "Training Hybrid Block Diffusion Language Models with Partial Bidirectionality",
+      "abstract": "High-throughput long-context generation is one of the central challenges for large language models. Generation is typically memory-bandwidth-bound rather than compute-bound: each decoding step must stream the accumulated key/value (KV) cache from memory, so bandwidth demand grows with context length while only one token is emitted. Two parallel approaches have therefore emerged: reducing memory access with efficient attention variants and linear-time mixers such as Mamba, or increasing parallel computation by generating blocks of tokens at once. However, technical challenges arise when combining these two ideas. Earlier hybrid diffusion models such as DiffuMamba use bidirectional Mamba mixing, including a reverse-direction scan relative to causal generation. This reverse scan needs to scan the entire sequence, so its states are not prefix-only and cannot be precisely reused as a cache even when diffusion is performed block by block. We propose a BDLM Mamba--attention hybrid that addresses this challenge by restricting the reverse Mamba scan to the active denoising block, which enables exact caching across blocks. In an 87M-parameter DCLM sweep, BDLM Mamba-H achieves the best C4-en validation perplexity compared to BDLM attention and full-sequence baselines. At 350M parameters, it remains competitive with BDLM attention. For long-context inference, BDLM Mamba-H reaches 19.7x the throughput of full-sequence DiffuMamba-H at 65K tokens and 3.7x the throughput of BDLM attention at 262K, showing that Mamba hybrids are a potential long-context diffusion architecture.",
+      "authors": [
+        "Pranshu Chaturvedi",
+        "Parth Shroff",
+        "Tarun Suresh",
+        "Hangoo Kang",
+        "Kaiyue Wen"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.CL"
+      ],
+      "published": "2026-07-02T22:37:43+00:00",
+      "link": "https://arxiv.org/pdf/2607.02805v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "directly addresses KV cache memory bandwidth bottleneck in autoregressive generation",
+      "llm_evidence_cn": "直接应对自回归生成中的KV缓存内存带宽瓶颈",
+      "llm_evidence": "直接应对自回归生成中的KV缓存内存带宽瓶颈",
+      "canonical_evidence": "直接应对自回归生成中的KV缓存内存带宽瓶颈",
+      "llm_tldr_en": "Proposes a hybrid block diffusion language model that generates multiple tokens at once, reducing KV cache memory access and bandwidth demand during long-context generation.",
+      "llm_tldr_cn": "针对长上下文生成中KV缓存内存带宽瓶颈，提出混合块扩散语言模型，通过一次生成多个token来减少KV缓存访问次数。该方法结合了高效注意力变体和块生成，实验表明在保持质量的同时显著降低延迟。该工作为缓解KV缓存带宽压力提供了新范式。",
+      "llm_tldr": "针对长上下文生成中KV缓存内存带宽瓶颈，提出混合块扩散语言模型，通过一次生成多个token来减少KV缓存访问次数。该方法结合了高效注意力变体和块生成，实验表明在保持质量的同时显著降低延迟。该工作为缓解KV缓存带宽压力提供了新范式。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.06601v1",
+      "source": "arxiv",
+      "title": "TriRoute: Unified Learned Routing for Joint Adaptive Attention, Experts, and KV-Cache Allocation",
+      "abstract": "Conditional computation can decouple language model quality from per-token inference cost, yet leading techniques act on a single axis in isolation: Mixture-of-Experts (MoE) sparsifies the FFN, Mixture-of-Depths (MoD) skips whole transformer blocks, and KV-cache quantization compresses attention memory. We argue these three decisions (attention resolution, expert selection, and cache bit-width) are strongly coupled and should be made jointly: a token rare enough to warrant full attention may also need high-precision caching regardless of which expert processes it. We introduce TriRoute, a single lightweight controller shared across all three axes that, for every token at every layer, emits a coordinated policy: (i) an attention mode (skip/local/full), (ii) a sparse set of FFN experts (with a null expert recovering MoD), and (iii) a KV-cache bit-width. The controller trains end-to-end via a heterogeneous relaxation (Gumbel-Softmax with straight-through estimation for categorical decisions and load-balanced top-k gating for experts) under a Lagrangian budget constraint that turns the average compute and memory cost into a controllable knob. We identify a cross-axis routing-collapse cascade in naive joint training, where collapse on one axis propagates to the others, and address it with per-axis normalization and a coupling-aware balancing loss. On decoder-only models from 160M to 1.3B parameters at compute-optimal token counts, TriRoute Pareto-dominates the best independent MoD+MoE+KV-quantization combination at matched inference FLOPs and memory, while better preserving tail-case robustness on rare entities, code, and arithmetic that pure perplexity optimization erodes. Post-hoc analysis reveals interpretable structure: the controller allocates full attention and high-precision cache to sentence-initial positions, rare subwords, and named entities, while cheaply routing function words.",
+      "authors": [
+        "Andrii Balashov",
+        "Olena Ponomarova"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-07-07T00:12:46+00:00",
+      "link": "https://arxiv.org/pdf/2607.06601v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "joint KV-cache allocation and quantization",
+      "llm_evidence_cn": "联合KV缓存分配与量化",
+      "llm_evidence": "联合KV缓存分配与量化",
+      "canonical_evidence": "联合KV缓存分配与量化",
+      "llm_tldr_en": "TriRoute jointly optimizes attention, expert, and KV-cache allocation via a learned controller, improving inference efficiency.",
+      "llm_tldr_cn": "针对Transformer推理中注意力、专家选择和KV缓存位宽三者孤立优化的问题，提出TriRoute，一个轻量级学习控制器，在每个token每层联合决策这三个维度。实验表明，联合策略比独立优化显著降低计算和内存开销，同时保持模型质量，为条件计算提供了统一解决方案。",
+      "llm_tldr": "针对Transformer推理中注意力、专家选择和KV缓存位宽三者孤立优化的问题，提出TriRoute，一个轻量级学习控制器，在每个token每层联合决策这三个维度。实验表明，联合策略比独立优化显著降低计算和内存开销，同时保持模型质量，为条件计算提供了统一解决方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.06827v1",
+      "source": "arxiv",
+      "title": "Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs",
+      "abstract": "Speech large language models (Speech LLMs) typically encode speech into sequences far longer than text, creating a major efficiency bottleneck during autoregressive decoding. A common remedy is to compress the speech sequence at the adapter level to remove temporal redundancy before it enters the LLM; however, such early downsampling risks discarding fine-grained information that cannot be recovered. We propose SpeechKV, which applies a learned pooling to the KV cache of speech tokens inside the LLM. This design allows the LLM to fuse speech and text internally while directly accelerating decoding. Trained on 71K hours of speech data, SpeechKV compresses the speech to approximately text-level granularity yet maintains performance on par with or even slightly better than the uncompressed baseline, with relative gains of 6.6% on out-of-domain entity recognition and 2.3% on OpenASR, while delivering at least 1.49 times decoding speedup that scales with audio length.",
+      "authors": [
+        "Ke-Han Lu",
+        "Keqi Deng",
+        "Ruchao Fan",
+        "Rui Zhao",
+        "Jinyu Li"
+      ],
+      "primary_category": "eess.AS",
+      "categories": [
+        "eess.AS",
+        "cs.SD"
+      ],
+      "published": "2026-07-07T21:45:04+00:00",
+      "link": "https://arxiv.org/pdf/2607.06827v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV cache compression for speech LLMs",
+      "llm_evidence_cn": "语音大语言模型的KV缓存压缩",
+      "llm_evidence": "语音大语言模型的KV缓存压缩",
+      "canonical_evidence": "语音大语言模型的KV缓存压缩",
+      "llm_tldr_en": "Proposes SpeechKV, which applies learned pooling to the KV cache of speech tokens inside the LLM to compress speech sequences to text-level granularity, accelerating decoding while maintaining performance.",
+      "llm_tldr_cn": "语音大语言模型因语音序列远长于文本，导致自回归解码效率低下。本文提出SpeechKV方法，直接在LLM内部对语音token的KV缓存应用可学习的池化操作，将语音压缩至接近文本长度，从而在不丢失细粒度信息的前提下大幅加速解码。基于71K小时语音数据的训练结果表明，SpeechKV在保持性能的同时将语音压缩至文本级粒度，有效地解决了语音LLM的推理效率瓶颈。",
+      "llm_tldr": "语音大语言模型因语音序列远长于文本，导致自回归解码效率低下。本文提出SpeechKV方法，直接在LLM内部对语音token的KV缓存应用可学习的池化操作，将语音压缩至接近文本长度，从而在不丢失细粒度信息的前提下大幅加速解码。基于71K小时语音数据的训练结果表明，SpeechKV在保持性能的同时将语音压缩至文本级粒度，有效地解决了语音LLM的推理效率瓶颈。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.07144v1",
+      "source": "arxiv",
+      "title": "Fractal KV-Cache Archives: Lossless Symbolic Storage with In-Place Retrieval for Long-Context LLM Inference",
+      "abstract": "The key-value (KV) cache dominates the memory cost of long-context autoregressive inference, and a growing body of work compresses it through quantization, eviction, or offloading. We study a complementary question: once a position's KV state has been quantized to codebook indices, how should the resulting symbol stream be stored, and can the storage layer do more than store? A family of contractive iterated-map codes that serialize a symbol sequence into a sequence of low-dimensional real vectors is revisited, and it is shown that they form a natural archive format for a quantized KV cache with the following features. The method provides exactly the access pattern a growing cache requires. It is lossless, it runs in linear time, and supports O(1) random access and O(1) amortized append. A controlled study of the quantizer feeding this archive is conducted on GPT-2 with 1024-token contexts. Keeping a small exact window (4 attention sinks + 32 recent tokens) and archiving the rest, per-head residual vector quantization reduces the archived cache by 36-54x relative to an fp16 cache at a perplexity cost of 11-15%, and we quantify a sharp key/value asymmetry -- quantizing keys is roughly 4x more damaging than quantizing values, consistent with prior low-bit KV work -- and use it to allocate bits in a hybrid scheme. Finally, we show the archive is simultaneously a search index: approximate substring queries execute directly on the stored vectors, and matched context is decoded from the matched vector without ever materializing the surrounding text. We release all code; every number reproduces from a single command on a laptop CPU.",
+      "authors": [
+        "Vladimir Gusev"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-08T08:37:49+00:00",
+      "link": "https://arxiv.org/pdf/2607.07144v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "lossless storage and retrieval for KV cache",
+      "llm_evidence_cn": "KV缓存的无损存储与检索",
+      "llm_evidence": "KV缓存的无损存储与检索",
+      "canonical_evidence": "KV缓存的无损存储与检索",
+      "llm_tldr_en": "Fractal KV-Cache Archives uses contractive iterated-map codes to losslessly store quantized KV cache as symbolic sequences, enabling efficient in-place retrieval for long-context inference.",
+      "llm_tldr_cn": "长上下文LLM推理中，KV缓存内存占主导。本文探索量化后KV缓存符号流的存储问题，提出使用收缩迭代映射编码将符号序列序列化为低维实向量，形成无损、可原地检索的档案格式。该方法提供缓存增长所需的精确访问模式，且运行高效，为KV缓存存储层设计了新方案。",
+      "llm_tldr": "长上下文LLM推理中，KV缓存内存占主导。本文探索量化后KV缓存符号流的存储问题，提出使用收缩迭代映射编码将符号序列序列化为低维实向量，形成无损、可原地检索的档案格式。该方法提供缓存增长所需的精确访问模式，且运行高效，为KV缓存存储层设计了新方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.02980v1",
+      "source": "arxiv",
+      "title": "Hierarchical Sparse Attention Done Right: Toward Infinite Context Modeling",
+      "abstract": "Scaling modern large language models (LLMs) to long contexts is limited by the quadratic computation cost, and poor length extrapolation of dense attention. Chunk-wise sparse attention offers a promising alternative, but all existing methods fall short of full attention because of their inaccurate chunk selection. We propose Hierarchical Landmark Sparse (HiLS) Attention, a chunk-wise sparse attention mechanism that learns chunk selection end-to-end under the language-modeling (LM) loss. HiLS factorizes attention hierarchically: each query performs attention independently with each retrieved chunk to extract chunk-specific information, and the resulting outputs are fused according to chunk retrieval scores. By incorporating retrieval scores into the forward attention computation, HiLS optimizes them directly with the LM loss, enabling end-to-end retrieval learning and native sparse training. Experimental results show that HiLS-Attention achieves performance comparable to, and in some cases better than, full attention at in-domain context lengths. Meanwhile, HiLS-Attention extrapolates more than $64\\times$ the training context length with 90% retrieval accuracy, far beyond full attention. Moreover, existing full-attention models can be converted to HiLS-Attention with lightweight continued pretraining, preserving in-domain performance while acquiring ultra-long-context extrapolation. Together with its sparse KV access and computation, HiLS-Attention breaks the usual efficiency-performance trade-off, enabling long-context LLMs that are both more efficient and more effective on general long-context tasks than their full-attention counterparts.",
+      "authors": [
+        "Xiang Hu",
+        "Xinyu Wei",
+        "Hao Gu",
+        "Minshen Zhang",
+        "Tian Liang",
+        "Huayang Li",
+        "Lei Zhu",
+        "Yan Wang",
+        "Sirui Han",
+        "Yushi Bai",
+        "Kewei Tu",
+        "Haitao Mi",
+        "Leo Liang"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI"
+      ],
+      "published": "2026-07-03T05:39:00+00:00",
+      "link": "https://arxiv.org/pdf/2607.02980v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "chunk-wise sparse attention reduces KV cache memory footprint",
+      "llm_evidence_cn": "分块稀疏注意力减少KV缓存内存占用",
+      "llm_evidence": "分块稀疏注意力减少KV缓存内存占用",
+      "canonical_evidence": "分块稀疏注意力减少KV缓存内存占用",
+      "llm_tldr_en": "This paper proposes Hierarchical Landmark Sparse (HiLS) Attention, a chunk-wise sparse attention that learns chunk selection end-to-end, reducing computational and memory costs while maintaining accuracy comparable to full attention.",
+      "llm_tldr_cn": "本文提出分层地标稀疏注意力（HiLS），一种学习端到端分块选择的稀疏注意力机制，通过层次化分解使每个查询独立与检索到的块进行注意力计算，从而降低计算和内存成本。在长上下文任务上的实验表明，HiLS在保持与全注意力相当性能的同时，显著减少了存储键值对所需的缓存大小。这为无限上下文建模提供了实用方案。",
+      "llm_tldr": "本文提出分层地标稀疏注意力（HiLS），一种学习端到端分块选择的稀疏注意力机制，通过层次化分解使每个查询独立与检索到的块进行注意力计算，从而降低计算和内存成本。在长上下文任务上的实验表明，HiLS在保持与全注意力相当性能的同时，显著减少了存储键值对所需的缓存大小。这为无限上下文建模提供了实用方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2607.07706v1",
+      "source": "arxiv",
+      "title": "The Key to Going Linear: Analysis-Driven Transformer Linearization",
+      "abstract": "The quadratic cost of causal self-attention severely bottlenecks long-context transformer inference. While numerous post hoc linearization pipelines exist, it is difficult to identify which components preserve model quality. This work isolates the effect of state update design in a strict frozen-backbone regime. We show that softmax relies on key-dependent, rank-1 orthogonal projections, elucidating why delta-style networks outperform purely gated accumulation. We identify a potential source of approximation errors and introduce structural interventions, specifically sink tokens, short convolutions, and fixed-budget cache routing, which reduces the remaining gap. We scale this linearization approach across LLaMA and Qwen models up to 32B parameters, outperforming prior post hoc baselines on MMLU and matching the long-context retrieval of complex adaptive-caching frameworks.",
+      "authors": [
+        "Anna Kuzina",
+        "Paul N. Whatmough",
+        "Babak Ehteshami Bejnordi"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-08T17:59:09+00:00",
+      "link": "https://arxiv.org/pdf/2607.07706v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "fixed-budget cache routing for transformer inference optimization",
+      "llm_evidence_cn": "固定预算缓存路由用于Transformer推理优化",
+      "llm_evidence": "固定预算缓存路由用于Transformer推理优化",
+      "canonical_evidence": "固定预算缓存路由用于Transformer推理优化",
+      "llm_tldr_en": "This paper analyzes why softmax attention is hard to linearize and introduces structural interventions including sink tokens, short convolutions, and fixed-budget cache routing to reduce the gap, scaling to 32B parameter LLMs.",
+      "llm_tldr_cn": "该论文分析了softmax注意力难以线性化的原因，并提出了结构性的干预措施，包括sink tokens、短卷积和固定预算缓存路由，以缩小线性模型与softmax模型之间的差距。在LLaMA和Qwen模型上扩展到32B参数，实验表明这些干预措施有效提升了线性模型的性能。这项工作为长上下文Transformer推理优化提供了新思路。",
+      "llm_tldr": "该论文分析了softmax注意力难以线性化的原因，并提出了结构性的干预措施，包括sink tokens、短卷积和固定预算缓存路由，以缩小线性模型与softmax模型之间的差距。在LLaMA和Qwen模型上扩展到32B参数，实验表明这些干预措施有效提升了线性模型的性能。这项工作为长上下文Transformer推理优化提供了新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

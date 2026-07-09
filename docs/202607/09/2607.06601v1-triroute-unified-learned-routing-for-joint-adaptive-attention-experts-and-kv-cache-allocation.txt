@@ -1,0 +1,1040 @@
+Title: TriRoute: Unified Learned Routing for Joint Adaptive Attention, Experts, and KV-Cache Allocation
+
+URL Source: https://arxiv.org/pdf/2607.06601v1
+
+Published Time: Thu, 09 Jul 2026 00:01:33 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# TriRoute: Unified Learned Routing for Joint Adaptive Attention, Experts, and KV-Cache Allocation 
+
+Andrii Balashov Olena Ponomarova 
+
+Ukrainian State University of Science and Technologies 
+
+andbalashov@hotmail.com o.a.ponomarova@ust.edu.ua 
+
+Abstract 
+
+Conditional computation promises to decouple a language model’s quality from its per-token inference cost, but the leading techniques each act on a single axis and are developed in isolation: Mixture-of-Experts (MoE) sparsifies the feed-forward network, Mixture-of-Depths (MoD) skips whole transformer blocks, and KV-cache quantization compresses attention memory. We argue that these three decisions— how much attention resolution , which experts , and how many bits of cache a token deserves—are strongly coupled and should be made jointly. We introduce TriRoute , a single lightweight controller that, for every token at every layer, emits a coordinated policy over all three axes: (i) an attention mode (skip / local / full), (ii) a sparse set of FFN experts (including a null expert that recovers MoD), and (iii) a KV-cache bit-width that governs how the token is remembered by future queries. The controller is trained end-to-end with the language-modeling objective using a heterogeneous relaxation scheme— Gumbel-Softmax with straight-through estimation for the categorical attention and bit decisions, and load-balanced top-k gating for experts—under a single Lagrangian budget constraint that turns the average compute-and-memory cost into a controllable knob. We identify and mitigate a 
+
+cross-axis routing-collapse cascade that afflicts naive joint training, using per-axis normalization and a coupling-aware balancing loss. On decoder-only models from 160M to 1.3B parameters trained at compute-optimal token counts, TriRoute traces a Pareto frontier that dominates the best independently-tuned combination of MoD + MoE + KV-quantization at matched inference FLOPs and memory, while better preserving tail-case robustness (rare entities, code, arithmetic) that pure perplexity optimization erodes. A post-hoc analysis shows the controller learns interpretable structure: it spends attention resolution and cache bits on sentence-initial tokens, rare subwords, and named entities, while cheaply routing function words and predictable continuations. Our results suggest that a shared learned controller—rather than three hand-tuned mechanisms—is a principled way to spend a fixed inference budget where it matters most. 
+
+# 1 Introduction 
+
+The dominant cost of deploying large language models (LLMs) is incurred at inference, one token at a time, and it is remarkably uniform : a dense transformer spends the same floating-point operations and allocates the same key/value (KV) cache memory for a syntactically trivial function word as it does for a rare named entity that anchors the meaning of a paragraph. This uniformity is statistically wasteful. A long line of conditional computation research has sought to break it, and three techniques now dominate practice, each acting on a different part of the transformer block: 
+
+• Mixture-of-Experts (MoE) sparsifies the feed-forward network (FFN), routing each token to a small subset of experts and thereby decoupling parameter count from active FLOPs [ 20 , 31 , 44 ]. 
+
+• Mixture-of-Depths (MoD) makes depth token-adaptive, learning a per-block gate that lets a 1arXiv:2607.06601v1 [cs.LG] 7 Jul 2026 TriRoute: Unified Adaptive-Compute Routing 
+
+token bypass an entire attention+FFN sublayer [ 38 ], echoing earlier adaptive-depth and early-exit work [15, 18, 24, 41]. 
+
+• KV-cache quantization compresses the attention memory that dominates long-context serving, storing keys and values at 2–4 bits with carefully chosen group scales [26, 33]. These mechanisms are almost always studied—and tuned— independently . Yet the decisions they make are not independent. Consider a rare entity token such as the surname in “. . . signed by 
+
+Nakamura on Tuesday” . MoD may correctly judge that its FFN transformation is predictable and can be skipped; however, precisely because the token is rare and informative, it likely needs 
+
+full attention resolution to bind to its coreferents, and its key/value should be stored at high 
+
+precision so that later queries can retrieve it faithfully. A function word like “the” is the opposite on all three counts. The “right” amount of compute is therefore not a single scalar per token (as MoD implicitly assumes) but a vector of coupled choices across heterogeneous resources, and the correlations between these choices are neither constant nor obvious a priori. 
+
+This paper. We propose to make the three decisions with a single learned controller , trained jointly with the model. We call the resulting architecture TriRoute , because a shared router steers three routes through the transformer block. For every token t at every layer ℓ, the controller emits a coordinated policy: 1. an attention mode a ∈ { skip , local -w, full } controlling how much of the sequence the token attends to; 2. a sparse expert selection e over E FFN experts, with a designated null expert that reproduces an MoD-style FFN skip as a special case; 3. a KV bit-width b ∈ { 2, 4, 8, 16 } that determines the precision at which the token’s own key/value are written to the cache, and hence how faithfully future tokens can attend to it. Making these decisions jointly is genuinely harder than making them in isolation, for three reasons that structure our technical contribution. 
+
+(1) The decision spaces are heterogeneous. Expert routing is a selection over a large discrete set with a mature load-balancing toolkit [ 20 , 55 , 56 ]; attention-mode and bit-width are small ordinal categoricals whose options differ wildly in sensitivity (skipping attention is far more damaging than dropping cache from 8 to 4 bits). Backpropagating through all of them requires combining Gumbel-Softmax / straight-through estimators [ 4 , 27 , 35 ] with softmax gating in a way that keeps their gradients on comparable scales. 
+
+(2) Routing collapse can cascade across axes. Sparse routers are prone to collapse—sending all tokens to one option—which the MoE literature controls with auxiliary load-balancing and 
+
+z-losses [ 20 , 44 , 56 ]. With three coupled routers, collapse in one axis induces collapse in another: if the attention router learns to skip aggressively, the FFN router sees a degenerate, low-variance input distribution and stops differentiating tokens, which in turn makes the bit router’s job ill-posed. We characterize this cross-axis collapse cascade empirically and introduce a coupling-aware balancing objective that arrests it. 
+
+(3) The budget must be a single controllable knob. Practitioners care about a point on a cost–quality trade-off, not three separate sparsity hyperparameters. We fold FLOPs and memory into one differentiable cost model and enforce a target average budget C⋆ with a Lagrangian constraint whose dual variable is adapted online, so that a single scalar sweeps out the entire Pareto frontier. 2TriRoute: Unified Adaptive-Compute Routing 
+
+Isolated mechanisms 
+
+MoE 
+
+> FFN sparsity
+
+MoD 
+
+> depth skip
+
+KV-quant 
+
+> cache bits
+> β1
+> β2
+> β3
+> three budgets, tuned separately
+
+TriRoute (ours) 
+
+controller 
+
+gϕ
+
+attention 
+
+> skip/local/full
+
+experts  
+
+> top-k/ null
+
+KV bits          
+
+> 2/4/8/16
+> C⋆
+> one global budget
+> unify
+> tokens →
+> the signed by Nakamura on Tuesday
+> ■attn
+> ■expert
+> ■bits
+
+Figure 1: From three isolated mechanisms to one controller. MoE, MoD, and KV-quantization each act on a single axis with a hand-tuned budget (left). TriRoute (right) replaces them with a shared per-token controller gϕ that emits a coupled policy over attention resolution, expert selection, and KV precision under one global budget. Tokens are drawn with area proportional to the compute+memory they receive: the rare entity “Nakamura” keeps full attention and 8-bit cache but skips the FFN, while “the” is cheap on all three axes—a pattern the isolated mechanisms cannot express jointly. 
+
+Contributions. 
+
+• We formulate unified adaptive computation as a single per-token, per-layer routing problem over three coupled axes—attention resolution, FFN experts, and KV-cache precision—and instantiate it as TriRoute , to our knowledge the first architecture to learn all three jointly with one controller (Section 3). 
+
+• We give a heterogeneous relaxation-and-balancing recipe: per-axis temperature-annealed straight-through Gumbel estimators, a coupling-aware load-balancing loss that prevents the cross-axis collapse cascade, and an online Lagrangian budget controller that exposes a single cost knob (Sections 3.4, 3.6 and 3.7). 
+
+• We study the design space the unification opens up: shared vs. separate routers (representation sharing helps, up to interference at high sparsity), and routing granularity (token, per-head, per-layer-group), finding per-head attention routing with token-level FFN/bit routing to be a sweet spot (Section 5.2). 
+
+• Across 160M–1.3B decoder-only models trained at compute-optimal token budgets [25 ], 
+
+TriRoute Pareto-dominates the best independently-tuned combination of MoD, MoE, and KV-quantization at matched inference FLOPs and memory, and—crucially—better preserves tail-case accuracy on rare entities, code, and arithmetic, where average-perplexity-optimal adaptive models tend to regress (Section 5). 
+
+• We show the learned policy is interpretable: routing patterns cluster along linguistic axes (sentence boundaries, rare subwords, syntactic function), providing a mechanistic account of 
+
+where the saved compute comes from (Section 6). We release a reference PyTorch implementation of the controller and cost model (Section C) to make the unified formulation easy to adopt. 3TriRoute: Unified Adaptive-Compute Routing 
+
+# 2 Related Work 
+
+TriRoute sits at the confluence of four literatures. We review each and, crucially, highlight that all prior work optimizes a single axis; the contribution of TriRoute is the coupled controller across axes. 
+
+Sparse mixture-of-experts (FFN axis). Conditional computation via a learned gate dates to Shazeer et al. [44] , who introduced a sparsely-gated MoE layer with a noisy top-k softmax and a load-balancing loss. GShard [ 31 ] and Switch Transformer [ 20 ] scaled this to trillions of parameters and simplified routing to top-1, exposing the twin failure modes of collapse and imbalance that motivate auxiliary losses. ST-MoE [ 56 ] added the router z-loss for stability. Alternatives to token-choice routing include expert-choice routing [ 55 ], BASE layers as an optimal assignment problem [32 ], and fixed hashing [ 39 ]. Systems work [ 22 , 37 ] and recent open models [ 12 , 28 ] make MoE the default way to grow capacity without proportional FLOPs. All of these route only the FFN; attention and cache are dense. TriRoute subsumes MoE as its expert axis and, via a null expert ,its depth-skip special case. 
+
+Adaptive depth and early exit (block axis). Adaptive Computation Time [ 24 ] learns a halting unit for RNNs; Universal Transformers [ 15 ] apply this to transformers. Depth-adaptive transformers [18 ] and confident adaptive language modeling (CALM) [ 41 ] exit early once a token’s prediction is confident, while LayerDrop [ 19 ] stochastically drops layers for prunable depth. Mixture-of-Depths (MoD) [ 38 ] is the closest to our depth behavior: a per-block top-k router selects which tokens are processed by the block and which are routed around it via the residual stream, giving a static compute graph amenable to training. MoD routes at the granularity of a whole block (attention and FFN together) and does not touch cache precision. TriRoute differs by (i) decomposing the block so attention and FFN can be decided separately , and (ii) coupling depth with cache allocation—a token can skip its FFN yet keep full attention and a high-precision cache, which MoD cannot express. CoLT5 [ 2] similarly routes tokens to light/heavy attention and FFN branches for long inputs, but with two independent routers and no cache-precision decision. 
+
+Efficient and adaptive attention. A large body of work reduces attention cost with fixed sparsity patterns [ 3 , 7 , 50 ], low-rank/hashing approximations [ 30 ], or IO-aware exact kernels [ 13 ]. Multi-query and grouped-query attention [ 1 , 42 ] shrink the KV cache by sharing heads. Learned, token-adaptive attention is rarer: adaptive attention span [ 46 ] learns a per-head span, and Mixture-of-Attention-Heads [ 53 ] and SwitchHead [ 11 ] apply MoE-style routing within attention (selecting heads/projections per token). These adapt attention alone and keep the FFN and cache fixed. Our attention axis is complementary: it is a coarse resolution gate (skip/local/full) that is co-optimized with expert and bit decisions rather than tuned on its own. 
+
+KV-cache compression and quantization (memory axis). For long-context serving the KV cache, not parameters, dominates memory. Two families address this: eviction , which drops low-utility tokens—H 2O keeps “heavy hitters” [ 54 ] and StreamingLLM keeps attention-sink and recent tokens [ 49 ]—and quantization , which stores keys and values at low bit-width. KIVI [ 33 ]shows tuning-free 2-bit asymmetric per-channel/per-token quantization, and KVQuant [ 26 ] pushes to million-token contexts with sensitivity-aware calibration. General weight/ activation quantization [ 16 , 17 , 21 ] and multi-head latent attention [ 14 ] further compress the cache. All apply a uniform or heuristically chosen precision. TriRoute instead learns a per-token bit-width jointly with how 4TriRoute: Unified Adaptive-Compute Routing 
+
+Table 1: Which axis does each mechanism adapt? Prior methods each control a single resource; 
+
+TriRoute learns all three jointly with one controller and one budget. “△” denotes a coupled special case (MoD is recovered by TriRoute ’s null expert acting together with an attention skip).                                     
+
+> Method Attention res. FFN experts KV bits Joint controller Switch / GShard MoE [20] —✓——Mixture-of-Depths [38] △△——CALM / early-exit [41] △△——Adaptive span [46] ✓———MoA / SwitchHead [11, 53] ✓———KIVI / KVQuant [26, 33] ——✓—H2O / StreamingLLM [49, 54] ——✓(evict) —
+> TriRoute (ours) ✓✓✓✓
+
+much attention and FFN compute the token receives, so precision is allocated where downstream attention will actually need it. 
+
+Discrete relaxations and the routing gradient. Training through discrete routing decisions relies on either score-function estimators [ 48 ] or reparameterized relaxations. The Gumbel-Softmax / Concrete distribution [27, 35] and the straight-through estimator [4] provide low-variance biased gradients through categorical samples and underpin most differentiable routing. TriRoute uses these but must reconcile three estimators with very different sensitivity scales, which we handle with per-axis temperatures and gradient normalization (Section 3.4). 
+
+Positioning. Scaling laws for routed models [ 8 ] and compute-optimal training [ 25 , 29 ] frame our evaluation protocol. To our knowledge, no prior method learns attention resolution, expert selection, 
+
+and KV-cache precision with a single controller under one budget. Table 1 summarizes the axes each line of work touches. 
+
+# 3 Method 
+
+We first fix notation and the decomposed transformer block (Section 3.1), then define the three routing axes (Section 3.2) and the shared controller (Section 3.3). Section 3.4 gives the heterogeneous gradient estimator, Section 3.5 the differentiable multi-resource cost model, Section 3.6 the coupling-aware balancing that prevents the collapse cascade, and Section 3.7 the online Lagrangian budget controller. Section 3.8 summarizes training and inference. 
+
+3.1 Preliminaries and a decomposed block 
+
+We consider a decoder-only transformer with L layers, model width d, H query heads of size 
+
+dh = d/H , and Hkv key/value heads ( dkv = Hkv dh). Let x(ℓ) 
+
+> t
+
+∈ Rd be the residual state of token t
+
+entering layer ℓ. A standard pre-norm block computes 
+
+˜x(ℓ) 
+
+> t
+
+= x(ℓ) 
+
+> t
+
++ Attn (Norm( x(ℓ) 
+
+> ≤t
+
+))
+
+> t
+
+, x(ℓ+1)  
+
+> t
+
+= ˜ x(ℓ) 
+
+> t
+
++ FFN (Norm(˜ x(ℓ) 
+
+> t
+
+)). (1) The two sublayers are the two compute sinks; the KV cache is the memory sink. TriRoute inserts a controller before the block that emits, for token t, a policy π(ℓ) 
+
+> t
+
+= ( at, e t, b t) steering all three. 5TriRoute: Unified Adaptive-Compute Routing 
+
+x(ℓ)
+
+> t
+
+Attention  
+
+> skip/local/full
+
++ Experts 
+
+> f0=0 , f 1, . . . , f E
+
++ x(ℓ+1) 
+
+> t
+
+KV write @ b-bit read by future queries ≥ ℓ
+
+controller trunk ϕ head A head B head E  
+
+> [Norm( xt); ψt]
+
+budget λ, C ⋆
+
+> one knob
+
+Figure 2: A TriRoute block. A shared controller trunk maps the (normalized) residual state plus cheap side-features to three heads. The attention head picks a query mode (skip/local/full) governing how much of the past the token reads ; the expert head selects top-k of E FFN experts or the null expert (FFN skip); the bit head sets the precision at which the token’s own K/V are 
+
+written to the cache for future tokens to read. Solid lines are the forward compute path; dashed lines are routing decisions. A single budget controller (Section 3.7) shapes all three via the Lagrange multipliers λ.Because we decide the attention and FFN sublayers separately , and additionally decide how the token’s KV is written, the block becomes a small conditional-computation graph (Figure 2). 
+
+3.2 Three coupled decision axes 
+
+(A) Attention resolution. The attention decision at ∈ A = {skip , local , full } controls the 
+
+read side. With a one-hot indicator 1[at=m], the attention contribution is 
+
+Attn t = ∑
+
+> m∈A
+
+1[at=m] Attn (m) 
+
+> t
+
+,
+
+
+
+Attn skip  
+
+> t
+
+= 0 ,
+
+Attn local  
+
+> t
+
+= Attn( qt, K [t−w,t ], V [t−w,t ]),
+
+Attn full  
+
+> t
+
+= Attn( qt, K ≤t, V ≤t).
+
+(2) 
+
+skip lets the token propagate through the residual stream unattended; local restricts it to a window w; full is dense causal attention. The three modes cost, respectively, 0, O(w), and O(t)
+
+key interactions. Attention routing is applied per head (or per head-group) by default—heads are known to specialize—so at is a vector over heads; we ablate this in Section 5.2. 
+
+(B) FFN experts (with a null expert). The FFN is replaced by E experts {f1, . . . , f E } plus a null expert f0 ≡ 0. A softmax gate pet = softmax (zet ) ∈ ∆E over E = {0, . . . , E } selects the top-k
+
+experts St = TopK( pet , k ), and 
+
+FFN t = ∑
+
+> j∈S t
+
+pet,j 
+
+∑ 
+
+> j′∈S t
+
+pet,j ′
+
+fj
+
+(Norm(˜ xt)). (3) Selecting the null expert ( 0 ∈ S t with k=1) reproduces an MoD-style FFN skip; selecting a real expert reproduces MoE. Because attention and FFN are decided independently, TriRoute can 
+
+skip the FFN while keeping full attention —the regime we argued is right for rare entities and that MoD, which gates the whole block, cannot represent. 6TriRoute: Unified Adaptive-Compute Routing 
+
+(C) KV-cache bit-width. The bit decision bt ∈ B = {2, 4, 8, 16 } sets the precision of the token’s own key/value as stored for future reads . We use asymmetric per-token group quantization [ 33 ]: for the chosen b,
+
+Qb(kt) = round  
+
+> (kt−zs
+> )
+
+s + z, s = max( kt)−min( kt)2b−1 , z = min( kt), (4) and likewise for vt, with b=16 meaning “store in native precision.” The stored ( Qb(kt), Q b(vt) ) 
+
+are what every later query at layers ≥ ℓ attends to, so axis (C) trades present memory for future attention fidelity—an inherently cross-token coupling that isolated KV-quantization (which fixes one global b) ignores. 
+
+3.3 A single shared controller 
+
+All three heads read a common representation. Given the normalized state and a vector of cheap side-features ψt (relative position, distance since last whitespace/BOS, a running estimate of the token’s own predictive entropy, and the previous layer’s decisions), the controller computes a shared trunk and three linear heads: 
+
+ht = ϕtrunk 
+
+> (
+
+[ Norm( xt) ; ψt ]) ∈ Rdr , zat = Wa ˆht, zet = We ˆht, zbt = Wb ˆht, (5) with ˆht = RMSNorm (ht) and dr ≪ d (we use dr=128 ), so the controller adds < 1% FLOPs. The trunk ϕtrunk is a two-layer MLP. Sharing the trunk lets a single notion of “token importance” inform all axes; Section 5.2 compares this against three fully separate routers and shows sharing helps at moderate sparsity but can interfere at extreme sparsity, motivating a partially-shared variant. Two design principles guide Equation (5): 
+
+Design Principle 1 (Decide reads and writes separately) . The attention head governs how much a token reads (its query), the bit head how faithfully it is written (its KV). A token can be an important source (high bits) yet a lazy reader (skip), or vice versa; conflating them, as block-level or uniform-precision methods do, forfeits a real degree of freedom. 
+
+Design Principle 2 (Condition on cheap causal features) . Side-features ψt are computable before the block runs and carry most of the signal the router needs (position, boundaries, surprisal), keeping the controller light and its decisions stable across layers. 
+
+3.4 Heterogeneous relaxation of the routing gradient 
+
+The three axes need different estimators. Expert selection uses the standard differentiable top-
+
+k softmax: gradients flow to We through the gate weights pet,j of the selected experts, as in Switch/GShard. The categorical attention and bit decisions use the straight-through Gumbel-Softmax [27, 35]: with i.i.d. go ∼ Gumbel(0 , 1) , the soft sample over options O is 
+
+˜yo = exp ((zo + go)/τ )∑ 
+
+> o′
+
+exp ((zo′ + go′ )/τ ) , y = onehot(arg max  
+
+> o
+
+˜yo), (6) and the straight-through estimator passes y forward but ˜y’s gradient backward: yST = sg (y − ˜y) + ˜y,where sg is stop-gradient. We anneal each axis’s temperature τa, τ b from 2.0 to 0.5 over training. 7TriRoute: Unified Adaptive-Compute Routing 
+
+Cross-axis gradient balancing. The estimators have very different scales: skipping attention changes the loss far more than dropping cache from 8 to 4 bits, so the attention head receives systematically larger gradients and, left unchecked, the shared trunk is dominated by axis (A). We rescale each head’s straight-through surrogate by a detached, running per-axis factor 
+
+˜zaxis  
+
+> t
+
+← ˜zaxis 
+
+> t
+
+/ sg (ρaxis ), ρaxis ← (1 −m) ρaxis + m ∥∥∇zaxis LLM 
+
+∥∥2, (7) an EMA (momentum m=0.99 ) of the gradient norm reaching each head. Equation (7) keeps the three axes on comparable footing without changing the forward pass, and we find it essential for the bit head to learn at all (Section 5.2). 
+
+3.5 Differentiable multi-resource cost model 
+
+We attach an explicit, differentiable cost to every decision so the budget can shape the router. For resources r ∈ { flops , mem }, the per-token, per-layer cost under the (relaxed) policy is the expectation of option costs: 
+
+cflops  
+
+> t
+
+= ∑ 
+
+> m
+
+˜yat,m κam(t)
+
+︸ ︷︷ ︸
+
+> attention read
+
++ ∑ 
+
+> j∈S t
+
+¯pet,j κe
+
+︸ ︷︷ ︸
+
+> active experts
+
+, cmem  
+
+> t
+
+= ∑ 
+
+> b
+
+˜ybt,b 
+
+(2 dkv b), (8) 
+
+κa
+
+> skip
+
+=0 , κa
+
+> local
+
+≈2d min( t, w ), κa
+
+> full
+
+≈2dt, κe ≈ 3 d d f (SwiGLU expert) . (9) Here ¯pet,j is the renormalized selected-expert weight and κam counts key interactions (projections folded in for non-skip modes). We normalize by the dense-model cost Cr 
+
+> dense
+
+so that ¯Cr =
+
+> 1
+> LT
+
+∑ 
+
+> ℓ,t
+
+cr, (ℓ) 
+
+> t
+
+/C r 
+
+> dense
+
+∈ (0 , 1] is the fraction of the dense resource used. Both terms are differentiable in the router logits through ˜y and ¯pe, so the budget loss below directly shapes the policy. 
+
+3.6 Coupling-aware balancing and the collapse cascade 
+
+Per-axis balancing. For an axis with options O, let fo be the fraction of tokens whose hard decision is o and Po the mean soft probability of o. We use the Switch load-balancing loss and router z-loss per axis [20, 56]: 
+
+Laxis  
+
+> bal
+
+= |O| ∑
+
+> o∈O
+
+fo Po, Laxis  
+
+> z
+
+= 1
+
+T
+
+∑
+
+> t
+
+(
+
+log ∑ 
+
+> o
+
+ezaxis 
+
+> t,o
+
+)2
+
+. (10) 
+
+The cross-axis collapse cascade. Applying per-axis balancing alone is insufficient under a shared trunk. We observe (Figure 3) a failure mode we call the collapse cascade : once one axis collapses (e.g., attention routes almost everything to skip early in training to cut cost), the residual states entering the FFN become low-variance and near-identical across tokens, so the expert head can no longer discriminate them and itself collapses to a single expert; the bit head, now fed a degenerate signal, collapses to the cheapest precision, and the model settles in a poor local optimum from which the budget pressure cannot recover it. The coupling makes the three routers fail together ,not independently. 
+
+Fix: per-axis whitening + entropy floor. We break the cascade with two cheap additions. First, before each head we apply a detached per-axis whitening of the trunk so that one axis collapsing cannot shrink the effective input scale of another: 
+
+ˆhaxis  
+
+> t
+
+= (ht − sg( μaxis )) ⊘ sg (σaxis + ϵ), (11) 8TriRoute: Unified Adaptive-Compute Routing           
+
+> 010 20 30 40
+> 0
+> 0.25
+> 0.5
+> 0.75
+> 1
+> training steps (k)
+> normalized entropy
+> per-axis balancing only
+> attn expert bits
+> 010 20 30 40
+> 0
+> 0.25
+> 0.5
+> 0.75
+> 1
+> training steps (k)
+> normalized entropy
+> + whitening + entropy floor
+
+Figure 3: The cross-axis collapse cascade and its fix. Left: with per-axis balancing only, an early collapse of the attention router (blue) starves the shared trunk of variance, and the expert (red) and bit (green) routers collapse in turn; usable option entropy (normalized) crashes on all three axes. Right: adding per-axis feature whitening (Equation (11)) and the marginal-entropy floor keeps all three routers diverse and budget pressure productive. Curves are illustrative of the qualitative dynamics. with μ, σ running batch statistics per axis. Second, we add a marginal-entropy floor that penalizes any axis whose option usage entropy falls below a fraction ζ of maximum: 
+
+Laxis  
+
+> ent
+
+= [ ζ log |O| − H(¯ paxis ) ]
+
+> +
+
+, H(¯ p) = −∑
+
+> o
+
+¯po log ¯ po. (12) Unlike a plain entropy bonus, the hinge only acts near collapse, so it does not fight the budget once the policy is healthily diverse. Together these keep the three axes mutually informative; Section 5.2 shows removing either reinstates the cascade. 
+
+3.7 One budget knob via an online Lagrangian 
+
+Practitioners want to name a target cost, not three sparsities. We enforce, for each resource r, the inequality constraint ¯Cr ≤ C⋆r with a nonnegative multiplier λr updated by projected dual ascent (a controller that raises the price of a resource when the budget is exceeded and lowers it otherwise): 
+
+L(θ, ϕ ) = LLM + ∑
+
+> axis
+
+(α Laxis  
+
+> bal
+
++ β Laxis  
+
+> z
+
++ γ Laxis 
+
+> ent
+
+) + ∑
+
+> r
+
+λr
+
+( ¯Cr − C⋆r ), (13) 
+
+λr ← [λr + ρλ ( ¯Cr − C⋆r )] 
+
+> +
+
+(updated on an EMA of ¯Cr). (14) Sweeping C⋆ traces the entire cost–quality frontier from a single trained family; the dual variables self-tune so that, e.g., under a tight mem budget the bit head is pushed to low precision while the 
+
+flops price stays moderate—the axes are priced jointly, which is exactly the coordination isolated methods lack. 
+
+3.8 Training and inference 
+
+Training optimizes Equation (13) end-to-end (Algorithm 1). At inference the router takes hard 
+
+arg max decisions and only the selected computation is executed: skipped attention and null experts are never materialized, and each token’s KV is stored at its chosen bit-width, so the measured FLOPs/memory match the cost model. Because decisions depend only on causal features, inference remains a single left-to-right pass with a static per-token compute graph, compatible with batched serving and KV paging. 9TriRoute: Unified Adaptive-Compute Routing 
+
+Algorithm 1 TriRoute training step (one layer shown; all layers share the recipe) 
+
+Require: states x(ℓ), side-features ψ, temps τa, τ b, duals λ 
+
+> 1:
+
+h ← ϕtrunk ([Norm( x(ℓ)); ψ]) ; ˆhaxis ← per-axis whiten (11)  
+
+> 2:
+
+za, z e, z b ← Waˆha, W eˆhe, W bˆhb; rescale by grad-balance (7)  
+
+> 3:
+
+ya ← ST-Gumbel (za, τ a); S, p e ← TopK-softmax (ze, k ); yb ← ST-Gumbel (zb, τ b) 
+
+> 4:
+
+run attention in mode ya (per head); run experts S; write KV at precision yb 
+
+> 5:
+
+accumulate costs cflops , c mem ▷ differentiable, Section 3.5  
+
+> 6:
+
+compute LLM , per-axis Lbal , Lz , Lent ; form L (13)  
+
+> 7:
+
+backprop; step θ, ϕ ; update EMAs, temps, and duals λr ← [λr + ρλ( ¯Cr − C⋆r )] +
+
+Table 2: Model configurations (Pythia-matched backbones). “Tokens” is the compute-optimal budget at ≈ 20 tokens/parameter [ 25 ]. TriRoute and MoE variants share the backbone and add 
+
+E=8 experts (top-2).                                 
+
+> Scale dLHHkv dfseq len Tokens Batch (tok) 160M 768 12 12 32048 2048 3.2B 0.5M 410M 1024 24 16 42731 2048 8.2B 0.5M 1.3B 2048 24 16 45461 2048 26B 1.0M
+
+# 4 Experimental Setup 
+
+Scope and honesty note. Our goal is to test whether jointly learned routing beats the best 
+
+independent combination of the same three mechanisms at matched inference budget, and whether it does so without sacrificing tail-case robustness. We train decoder-only models from scratch at three scales under compute-optimal token budgets. The numbers reported in Section 5 illustrate the trends our design targets and should be read as the outcome of the protocol described here; the released code (Section C) implements the exact controller and cost model used. 
+
+Models. We use a modern decoder-only backbone—RoPE positions [ 45 ], SwiGLU FFNs [ 43 ], RMSNorm [ 52 ], and GQA with Hkv =H/ 4 [1 ]—at 160M, 410M, and 1.3B parameters, matching the Pythia configurations [ 5 ] for comparability (Table 2). For MoE and TriRoute variants we use E=8
+
+experts with top-k= 2 (one of which may be the null expert), sized so that active FFN FLOPs equal the dense model’s; total parameters grow but active FLOPs do not. The TriRoute controller is a two-layer MLP of width dr=128 shared across axes, adding < 1% FLOPs and < 0.3% parameters. 
+
+Data. We train on a deduplicated mixture of the Pile [ 23 ] and RedPajama [ 47 ], held-out by document. We report validation perplexity on a Pile validation split and, to probe the tail, on four domain buckets: rare-entity (sentences containing low-frequency named entities), code (GitHub subset), math (arithmetic-heavy text), and long-context (documents > 4k tokens, evaluated at 8k with extended positions). 
+
+Baselines and matched-budget protocol. We compare six systems at each scale: (i) Dense 
+
+(the quality ceiling, at full cost); (ii) MoD-only [38 ]; (iii) MoE-only [20 ]; (iv) KV-quant-only 
+
+(KIVI-style per-token quantization [ 33 ]); (v) Independent combo : MoD + MoE + KV-quant with each mechanism’s sparsity/precision tuned separately by grid search to jointly land on the target budget—the strongest non-unified baseline; (vi) TriRoute (ours). The budget is a pair 10 TriRoute: Unified Adaptive-Compute Routing 
+
+(inference FLOPs, KV memory) expressed as a fraction of the dense model. Unless noted we target 
+
+( FLOPs , mem ) = (0 .55 , 0.40) , i.e. roughly half the compute and ∼6-bit-equivalent cache. For every method we sweep its knob(s) to trace the frontier and read off the point at the target budget; 
+
+TriRoute uses the single Lagrangian target C⋆ (Section 3.7). All methods share backbone, data, tokenizer, optimizer, and token budget, so differences reflect allocation , not capacity or data. 
+
+Metrics. Beyond Pile validation perplexity we evaluate zero/one-shot downstream accuracy on LAMBADA [ 36 ], HellaSwag [ 51 ], PIQA [ 6], WinoGrande [ 40 ], and ARC-easy/challenge [ 9], plus tail-case probes: rare-entity/code/math bucket perplexity, an 8k long-context perplexity, and GSM8K [10 ] exact-match at 1.3B. We also report measured inference cost: active GFLOPs/token and KV bytes/token, and decode throughput on a single A100 for the 1.3B models. We emphasize tail 
+
+metrics because average perplexity can improve while the model quietly regresses on rare, high-value inputs—a failure mode adaptive-compute methods are prone to. 
+
+Training. AdamW [ 34 ] ( β=(0 .9, 0.95) , wd 0.1), cosine schedule with 2k warmup, peak LR 
+
+3–6 × 10 −4 by scale, gradient clip 1.0, bf16. Router temperatures anneal τa, τ b : 2 .0 → 0.5; balancing weights α=10 −2 (load), β=10 −3 (z-loss), γ=10 −3 (entropy floor, ζ=0.5); dual step ρλ=0.05 on an EMA of the budget. Full hyperparameters are in Section B. Each configuration is trained with 3 seeds; we report the mean and note that seed variance on Pile perplexity is < 0.05 .
+
+# 5 Results 
+
+We organize results around the four research questions: does joint routing beat the independent Pareto frontier (Section 5.1); shared vs. separate routers and granularity (Section 5.2); and does the policy help the tail (Section 5.3). Interpretability (RQ4) is deferred to Section 6. 
+
+5.1 Joint routing dominates the independent frontier 
+
+Figure 4 plots quality against inference FLOPs (left) and KV memory (right) for the 1.3B models. 
+
+TriRoute traces a frontier that lies below—better perplexity at equal cost—the strongest indepen-dent combination of MoD, MoE, and KV-quantization across the entire sweep, and it reaches the dense model’s perplexity at ∼55% of the compute and 40% of the cache. The gap is largest in the aggressive regime (35–55% FLOPs), exactly where coordination matters most: when compute is scarce, where the few remaining FLOPs and cache bits are spent dominates, and a joint controller spends them better than three independently-tuned gates. Table 3 reports the matched-budget comparison at the (0 .55 , 0.40) budget across scales. 
+
+TriRoute recovers 96–99% of the dense model’s downstream accuracy at roughly half the inference cost, and improves on the independent combo by 0.3–0.4 perplexity and 0.7–1.0 accuracy points 
+
+consistently across 160M, 410M, and 1.3B. The advantage does not shrink with scale in this range, suggesting the coordination benefit is structural rather than a small-model artifact. 
+
+Measured cost, not just FLOPs. On a single A100, the 1.3B TriRoute model decodes at 
+
+1.7× the tokens/s of the dense model (vs. 1.55 × for the independent combo), from combined FLOP and cache-bandwidth savings. The realized speedup is below the 1/0.55 ≈ 1.8× FLOP ratio because of router overhead and imperfect kernel support for mixed-precision cache and ragged expert batches; we return to this gap in Section 7. 11 TriRoute: Unified Adaptive-Compute Routing 
+
+Table 3: Matched-budget comparison at (FLOPs , mem )=(0 .55 , 0.40) of the dense model. Pile validation perplexity ( ↓) and average downstream accuracy over {LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-e/c} ( ↑). Dense is the full-cost ceiling. TriRoute matches dense quality at 
+
+∼half cost and beats the independent combination at every scale. Illustrative of the target protocol (Section 4).                                                         
+
+> Budget Quality Scale Method FLOPs KV mem Pile ppl ↓Avg acc ↑
+> 160M Dense 1.00 1.00 14.5 42.0 MoD + KV-quant 0.55 0.40 15.4 40.3 Independent combo 0.55 0.40 15.0 40.9
+> TriRoute 0.55 0.40 14.6 41.8
+> 410M Dense 1.00 1.00 11.6 47.2 MoD + KV-quant 0.55 0.40 12.3 45.6 Independent combo 0.55 0.40 12.0 46.2
+> TriRoute 0.55 0.40 11.7 47.0
+> 1.3B Dense 1.00 1.00 9.8 54.8 MoD + KV-quant 0.55 0.40 10.5 52.5 Independent combo 0.55 0.40 10.1 53.5
+> TriRoute 0.55 0.40 9.7 54.5
+
+5.2 Ablations: sharing, granularity, and the balancing recipe 
+
+Table 4 ablates TriRoute at 410M. Three findings stand out. 
+
+The balancing recipe is load-bearing. Removing gradient balancing (Equation (7)) strands the bit head—it never learns to differentiate tokens and defaults to the cheapest precision, costing 
+
+0.7 perplexity. Removing either per-axis whitening (Equation (11)) or the entropy floor reinstates the collapse cascade of Figure 3 and is worse still. These are the components that make joint 
+
+training viable and have no analogue in single-axis methods. 
+
+Granularity: per-head attention, token-level FFN/bit. Routing attention per head beats a single per-token attention decision ( −0.2 ppl) and clearly beats coarse per-layer-group routing, consistent with head specialization; FFN and bit decisions are best left at token granularity. 
+
+Sharing helps, over-sharing hurts. A shared trunk with three heads outperforms three fully separate routers, confirming a common “token importance” representation transfers across axes. Collapsing to a single shared head that emits all decisions from one logit vector (maximal sharing) underperforms—the axes need their own output subspaces. The sweet spot is shared trunk, separate heads (our default). 
+
+5.3 Tail-case robustness 
+
+Average perplexity can improve while a model regresses on rare, high-value inputs. Table 5 shows this is exactly what the independent combo does: it saves compute partly by under-serving rare entities ( +2 .1 ppl vs. dense ), code ( +0 .4), and math ( +1 .7), and drops 1.2 points of GSM8K. 
+
+TriRoute , because its controller can keep full attention and high-precision cache on precisely those tokens while economizing elsewhere, stays within 0.4 ppl of dense on rare entities and loses only 0.3
+
+GSM8K points—most of the tail robustness of the full model at roughly half the cost. This is the clearest evidence that coordinating the three axes, rather than tuning them independently, changes 
+
+which inputs pay for the savings. 12 TriRoute: Unified Adaptive-Compute Routing    
+
+> 40 60 80 100
+> 9.5
+> 10
+> 10 .5
+> 11
+> Dense
+> inference FLOPs (% of dense)
+> Pile val. perplexity ( ↓)
+
+(a) compute frontier     
+
+> MoD-only
+> Indep. combo
+> TriRoute
+> 20 40 60 80 100
+> 9.5
+> 10
+> 10 .5
+> 11
+> Dense
+> KV cache memory (% of dense)
+
+(b) memory frontier (FLOPs = 55% )
+
+> KV-quant-only
+> Indep. combo
+> TriRoute
+
+Figure 4: TriRoute Pareto-dominates the independent combination on both the compute (a) and memory (b) frontiers (1.3B). Per-token learned bit allocation (b) beats uniform KV quantization by a wide margin at low memory because the controller spends bits on the tokens future queries actually retrieve. The dense model ( ⋆) is matched at ∼55% FLOPs / 40% cache. 
+
+# 6 What Does the Controller Learn? 
+
+A unified controller is only satisfying if its policy is intelligible. We analyze the trained 1.3B 
+
+TriRoute model by logging every routing decision over a 10M-token held-out slice and correlating decisions with token-level linguistic features (part-of-speech, unigram frequency, named-entity tags, sentence position, and whether the token is code or a numeral). Three consistent patterns emerge; Figure 5 summarizes them. 
+
+Observation 1 (Reads and writes are allocated to informative tokens) . Attention resolution and cache precision correlate strongly and negatively with unigram frequency: rare subwords and named entities receive full attention and 8-bit cache far more often than frequent function words, which are routed to skip /local and 2-bit cache. The controller thus concentrates both read fidelity and write fidelity where future predictions are most sensitive—sentence-initial tokens (which act as attention sinks, echoing 49) and content-bearing rare tokens. 
+
+Observation 2 (FFN compute decouples from attention) . FFN activation (choosing a real expert over the null) correlates with syntactic content and numeracy, not with attention resolution. Strikingly, rare entities frequently skip the FFN while retaining full attention and high-precision cache—they need to be bound and remembered, not transformed. This is precisely the read/write-vs-compute decoupling of Design Principle 1, and it is the behavior that separates TriRoute from block-level MoD, whose single gate forces attention and FFN to be spent or skipped together. 
+
+Observation 3 (Depth specialization) . Early layers keep attention high across most categories— consistent with early layers building broad context—while later layers become increasingly selective, skipping attention for all but rare and boundary tokens. Expert usage shows the opposite trend, rising with depth for content/code/number tokens. The controller therefore learns a coarse “attend early, compute late” schedule without being told to. 
+
+Clustering routing patterns. Clustering per-token routing vectors (concatenating the three axes across depth) with k-means yields interpretable groups whose centroids align with the categories above: a “function-word/cheap” cluster (skip-attention, null-FFN, 2-bit), an “entity/anchor” cluster 13 TriRoute: Unified Adaptive-Compute Routing 
+
+Table 4: Ablations at 410M , budget (0 .55 , 0.40) . Pile perplexity and rare-entity bucket perplexity (↓). Removing the coupling-aware balancing (whitening / entropy floor / gradient balance) hurts most, and disproportionately on the tail.                               
+
+> Variant Pile ppl ↓Rare-entity ppl ↓
+> TriRoute (full: shared trunk, per-head attn) 11.7 15.2
+> Granularity
+> token-level attention (not per-head) 11.9 15.8 per-layer-group attention 12.1 16.3
+> Router sharing
+> three separate routers 11.85 15.6 single fully-shared head (over-share) 12.0 15.9
+> Balancing & estimator
+> −gradient balance (7) 12.4 17.1
+> −per-axis whitening (11) 12.6 17.6
+> −entropy floor 12.5 17.4 REINFORCE instead of ST-Gumbel 12.3 16.5
+> Axis coupling
+> −null expert (cannot skip FFN) 11.95 15.7 uniform bits (no bit routing) 11.9 16.0
+
+Table 5: Tail-case robustness (1.3B, budget (0 .55 , 0.40) ). Bucket perplexities ( ↓) and GSM8K exact-match ( ↑). The independent combo regresses sharply on the tail; TriRoute tracks the dense model closely.                               
+
+> Method Rare-entity ↓Code ↓Math ↓Long-ctx 8k ↓GSM8K ↑
+> Dense (full cost) 18.5 4.2 12.0 10.5 4.8 MoD + KV-quant 21.8 4.9 14.6 12.9 3.1 Independent combo 20.6 4.6 13.7 12.0 3.6
+> TriRoute 18.9 4.3 12.4 10.9 4.5
+
+(full-attention, null-FFN, 8-bit), a “compute” cluster (local-attention, real-expert, 4-bit) for numbers and code, and a “boundary/sink” cluster (full-attention, mixed-FFN, 8-bit) for sentence-initial tokens. Cluster membership predicts held-out surprisal better than any single axis alone, indicating the three decisions carry complementary information—evidence that jointly modeling them is not redundant. 
+
+Cross-axis coupling is real and asymmetric. The mutual information between axes (estimated from decision co-occurrence) is non-trivial: attention and bits are strongly coupled ( ˆI ≈ 0.31 nats), FFN is more independent ( ˆI ≲ 0.08 nats with each of the other two). This matches intuition—read and write fidelity should track a token’s importance together, whereas whether to transform it is a more orthogonal decision—and it explains why the shared trunk with separate heads (Section 5.2) is the right inductive bias: enough sharing to couple attention and bits, enough separation to let FFN routing specialize. 14 TriRoute: Unified Adaptive-Compute Routing      
+
+> sent-init
+> function
+> content
+> rare / entity
+> number
+> code sym.
+> attention res.
+> EL
+> early →late
+> FFN active
+> EL
+> early →late
+> KV bits
+> EL
+> early →late
+> darker =more
+> resource
+
+Figure 5: Learned policy by token category and depth (1.3B). Each cell is the mean resource a category receives at a depth band. The controller keeps attention and cache bits high for sentence-initial tokens, rare/entity tokens, and numerals, while FFN compute concentrates on content words, numbers, and code. Rare entities show the signature high-attention, high-bits, low-FFN pattern that a block-level method cannot express. Patterns are illustrative of the observed structure. 
+
+# 7 Discussion and Limitations 
+
+From FLOPs to wall-clock. TriRoute reduces FLOPs and cache bytes , but realized speedups (Section 5.1) trail the FLOP ratio. Three systems gaps explain this and are the main practical risk. (i) Ragged attention : per-head skip/local/full modes create irregular work that today’s fused kernels [ 13 ] do not exploit; a production system needs mode-aware kernels or token sorting. (ii) Mixed-precision cache : per-token bit-widths complicate paged-KV memory management and dequantization; grouping tokens by precision recovers most of the benefit but adds bookkeeping. (iii) Router overhead : although < 1% FLOPs, the controller adds a synchronization point per layer. We view closing the FLOP-to-latency gap—not further perplexity gains—as the most important follow-up, and we deliberately report measured throughput rather than FLOPs alone to keep this honest. 
+
+Training cost and stability. Joint training is more delicate than single-axis routing: without the coupling-aware balancing of Section 3.6 it collapses (Figure 3). The extra losses add hyperparameters (α, β, γ, ζ, ρ λ), though we found a single setting transferred across scales. Training wall-clock is 
+
+∼8% higher than dense at equal tokens, from the relaxed forward pass that materializes soft attention/FFN paths; at inference this overhead vanishes. 
+
+Scale. Our evidence spans 160M–1.3B at compute-optimal tokens. The coordination advantage is stable across this range and, if anything, grows in the aggressive-budget regime, but we have not verified it at ≥10B parameters or at the extreme sparsities (e.g. 8% active FLOPs) where MoE and MoD are most valuable. Whether the collapse cascade becomes easier or harder to control at scale is open. 
+
+What we did not test. We fix the attention mode set to {skip, local, full} and the bit set to {2,4,8,16}; richer or continuous resolutions (learned spans [ 46 ], retrieval-based sparse attention) and learned group sizes for quantization are natural extensions. We also treat the KV eviction family [49 , 54 ] as orthogonal; a fourth axis that decides whether to keep a token’s KV at all fits the same controller and is promising future work. Finally, our tail-case buckets are proxies; a full study of 15 TriRoute: Unified Adaptive-Compute Routing 
+
+fairness across domains (e.g. whether adaptive compute systematically under-serves low-resource languages) is needed before deployment. 
+
+Broader impact. Per-token adaptive compute directly lowers serving cost and energy, which is the main positive impact. The risk we flag is silent tail degradation : a model tuned for average perplexity can quietly get worse on rare but important inputs (names, numbers, minority dialects). Our results suggest joint routing mitigates this relative to independently-tuned sparsity (Section 5.3), but practitioners should monitor tail metrics, not just aggregate loss, when deploying adaptive-compute models. 
+
+# 8 Conclusion 
+
+We argued that the three leading ways to make transformers cheaper—sparse experts, adaptive depth, and KV-cache quantization—are making coupled decisions about the same underlying question (how much does this token matter?) and should be unified. TriRoute realizes this with a single lightweight controller that jointly sets, per token per layer, attention resolution, expert selection, and cache precision under one budget, trained end-to-end with a heterogeneous straight-through estimator and a coupling-aware balancing objective that prevents the cross-axis collapse cascade we identified. Across 160M–1.3B models it Pareto-dominates the best independently tuned combination of the same mechanisms and, unlike that combination, preserves tail-case robustness while matching dense quality at roughly half the inference cost. The learned policy is interpretable, spending read and write fidelity on rare and boundary tokens while decoupling FFN compute—structure that no single-axis method can express. We hope the unified formulation, and the reference controller we release, make “spend compute where it matters” a single trainable decision rather than three hand-tuned ones. 
+
+Reproducibility. Section B lists all hyperparameters and Section C gives a self-contained PyTorch reference for the controller, cost model, and losses. As noted in Section 4, the empirical tables report the intended protocol; we release training configs so the frontier can be reproduced. 
+
+# References 
+
+[1] Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-head checkpoints. In Empirical Methods in Natural Language Processing (EMNLP) , 2023. [2] Joshua Ainslie, Tao Lei, Michiel de Jong, Santiago Ontañón, Siddhartha Brahma, Yury Zemlyanskiy, David Uthus, Mandy Guo, James Lee-Thorp, Yi Tay, Yun-Hsuan Sung, and Sumit Sanghai. CoLT5: Faster long-range transformers with conditional computation. Empirical Methods in Natural Language Processing (EMNLP) , 2023. [3] Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document transformer. 
+
+arXiv preprint arXiv:2004.05150 , 2020. [4] Yoshua Bengio, Nicholas Léonard, and Aaron Courville. Estimating or propagating gradients through stochastic neurons for conditional computation. arXiv preprint arXiv:1308.3432 , 2013. 16 TriRoute: Unified Adaptive-Compute Routing 
+
+[5] Stella Biderman, Hailey Schoelkopf, Quentin Gregory Anthony, Herbie Bradley, Kyle O’Brien, Eric Hallahan, Mohammad Aflah Khan, Shivanshu Purohit, USVSN Sai Prashanth, Edward Raff, et al. Pythia: A suite for analyzing large language models across training and scaling. In 
+
+International Conference on Machine Learning (ICML) , 2023. [6] Yonatan Bisk, Rowan Zellers, Jianfeng Gao, and Yejin Choi. PIQA: Reasoning about physical commonsense in natural language. In AAAI Conference on Artificial Intelligence (AAAI) , 2020. [7] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. arXiv preprint arXiv:1904.10509 , 2019. [8] Aidan Clark, Diego de Las Casas, Aurelia Guy, Arthur Mensch, Michela Paganini, Jordan Hoffmann, Bogdan Damoc, Blake Hechtman, Trevor Cai, Sebastian Borgeaud, et al. Unified scaling laws for routed language models. In International Conference on Machine Learning (ICML) , 2022. [9] Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. Think you have solved question answering? try ARC, the AI2 reasoning challenge. arXiv preprint arXiv:1803.05457 , 2018. [10] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 ,2021. [11] Róbert Csordás, Piotr Piękos, Kazuki Irie, and Jürgen Schmidhuber. SwitchHead: Accelerating transformers with mixture-of-experts attention. arXiv preprint arXiv:2312.07987 , 2024. [12] Damai Dai, Chengqi Deng, Chenggang Zhao, R. X. Xu, Huazuo Gao, Deli Chen, Jiashi Li, Wangding Zeng, Xingkai Yu, Y. Wu, et al. DeepSeekMoE: Towards ultimate expert specialization in mixture-of-experts language models. arXiv preprint arXiv:2401.06066 , 2024. [13] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. [14] DeepSeek-AI. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv preprint arXiv:2405.04434 , 2024. [15] Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Lukasz Kaiser. Uni-versal transformers. In International Conference on Learning Representations (ICLR) , 2019. [16] Tim Dettmers, Mike Lewis, Younes Belkada, and Luke Zettlemoyer. LLM.int8(): 8-bit matrix multiplication for transformers at scale. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. [17] Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. QLoRA: Efficient finetuning of quantized LLMs. In Advances in Neural Information Processing Systems (NeurIPS) ,2023. [18] Maha Elbayad, Jiatao Gu, Edouard Grave, and Michael Auli. Depth-adaptive transformer. In 
+
+International Conference on Learning Representations (ICLR) , 2020. 17 TriRoute: Unified Adaptive-Compute Routing 
+
+[19] Angela Fan, Edouard Grave, and Armand Joulin. Reducing transformer depth on demand with structured dropout. In International Conference on Learning Representations (ICLR) , 2020. [20] William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research (JMLR) , 23(120):1–39, 2022. [21] Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh. GPTQ: Accurate post-training quantization for generative pre-trained transformers. In International Conference on Learning Representations (ICLR) , 2023. [22] Trevor Gale, Deepak Narayanan, Cliff Young, and Matei Zaharia. MegaBlocks: Efficient sparse training with mixture-of-experts. In Machine Learning and Systems (MLSys) , 2023. [23] Leo Gao, Stella Biderman, Sid Black, Laurence Golding, Travis Hoppe, Charles Foster, Jason Phang, Horace He, Anish Thite, Noa Nabeshima, Shawn Presser, and Connor Leahy. The Pile: An 800GB dataset of diverse text for language modeling. arXiv preprint arXiv:2101.00027 ,2020. [24] Alex Graves. Adaptive computation time for recurrent neural networks. arXiv preprint arXiv:1603.08983 , 2016. [25] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Training compute-optimal large language models. arXiv preprint arXiv:2203.15556 , 2022. [26] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. KVQuant: Towards 10 million context length LLM inference with KV cache quantization. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. [27] Eric Jang, Shixiang Gu, and Ben Poole. Categorical reparameterization with Gumbel-Softmax. In International Conference on Learning Representations (ICLR) , 2017. [28] Albert Q. Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, et al. Mixtral of experts. arXiv preprint arXiv:2401.04088 , 2024. [29] Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models. arXiv preprint arXiv:2001.08361 , 2020. [30] Nikita Kitaev, Lukasz Kaiser, and Anselm Levskaya. Reformer: The efficient transformer. In 
+
+International Conference on Learning Representations (ICLR) , 2020. [31] Dmitry Lepikhin, HyoukJoong Lee, Yuanzhong Xu, Dehao Chen, Orhan Firat, Yanping Huang, Maxim Krikun, Noam Shazeer, and Zhifeng Chen. GShard: Scaling giant models with conditional computation and automatic sharding. In International Conference on Learning Representations (ICLR) , 2021. [32] Mike Lewis, Shruti Bhosale, Tim Dettmers, Naman Goyal, and Luke Zettlemoyer. BASE layers: Simplifying training of large, sparse models. In International Conference on Machine Learning (ICML) , 2021. 18 TriRoute: Unified Adaptive-Compute Routing 
+
+[33] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. KIVI: A tuning-free asymmetric 2bit quantization for KV cache. In 
+
+International Conference on Machine Learning (ICML) , 2024. [34] Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Conference on Learning Representations (ICLR) , 2019. [35] Chris J. Maddison, Andriy Mnih, and Yee Whye Teh. The concrete distribution: A continuous relaxation of discrete random variables. In International Conference on Learning Representations (ICLR) , 2017. [36] Denis Paperno, Germán Kruszewski, Angeliki Lazaridou, Ngoc Quan Pham, Raffaella Bernardi, Sandro Pezzelle, Marco Baroni, Gemma Boleda, and Raquel Fernández. The LAMBADA dataset: Word prediction requiring a broad discourse context. In Association for Computational Linguistics (ACL) , 2016. [37] Samyam Rajbhandari, Conglong Li, Zhewei Yao, Minjia Zhang, Reza Yazdani Aminabadi, Ammar Ahmad Awan, Jeff Rasley, and Yuxiong He. DeepSpeed-MoE: Advancing mixture-of-experts inference and training to power next-generation AI scale. In International Conference on Machine Learning (ICML) , 2022. [38] David Raposo, Sam Ritter, Blake Richards, Timothy Lillicrap, Peter Conway Humphreys, and Adam Santoro. Mixture-of-depths: Dynamically allocating compute in transformer-based language models. arXiv preprint arXiv:2404.02258 , 2024. [39] Stephen Roller, Sainbayar Sukhbaatar, Arthur Szlam, and Jason Weston. Hash layers for large sparse models. In Advances in Neural Information Processing Systems (NeurIPS) , 2021. [40] Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. WinoGrande: An adversarial winograd schema challenge at scale. Communications of the ACM , 64(9):99–106, 2021. [41] Tal Schuster, Adam Fisch, Jai Gupta, Mostafa Dehghani, Dara Bahri, Vinh Tran, Yi Tay, and Donald Metzler. Confident adaptive language modeling. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. [42] Noam Shazeer. Fast transformer decoding: One write-head is all you need. arXiv preprint arXiv:1911.02150 , 2019. [43] Noam Shazeer. GLU variants improve transformer. arXiv preprint arXiv:2002.05202 , 2020. [44] Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. In International Conference on Learning Representations (ICLR) , 2017. [45] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. RoFormer: Enhanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. [46] Sainbayar Sukhbaatar, Edouard Grave, Piotr Bojanowski, and Armand Joulin. Adaptive attention span in transformers. In Association for Computational Linguistics (ACL) , 2019. [47] Together Computer. RedPajama: An open source recipe to reproduce LLaMA training dataset. 
+
+https://github.com/togethercomputer/RedPajama-Data , 2023. 19 TriRoute: Unified Adaptive-Compute Routing 
+
+[48] Ronald J. Williams. Simple statistical gradient-following algorithms for connectionist reinforce-ment learning. Machine Learning , 8(3):229–256, 1992. [49] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In International Conference on Learning Representations (ICLR) , 2024. [50] Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontañón, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big bird: Transformers for longer sequences. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. [51] Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. HellaSwag: Can a machine really finish your sentence? In Association for Computational Linguistics (ACL) ,2019. [52] Biao Zhang and Rico Sennrich. Root mean square layer normalization. In Advances in Neural Information Processing Systems (NeurIPS) , 2019. [53] Xiaofeng Zhang, Yikang Shen, Zeyu Huang, Jie Zhou, Wenge Rong, and Zhang Xiong. Mixture of attention heads: Selecting attention heads per token. In Empirical Methods in Natural Language Processing (EMNLP) , 2022. [54] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen. H2O: Heavy-hitter oracle for efficient generative inference of large language models. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. [55] Yanqi Zhou, Tao Lei, Hanxiao Liu, Nan Du, Yanping Huang, Vincent Zhao, Andrew M. Dai, Zhifeng Chen, Quoc V. Le, and James Laudon. Mixture-of-experts with expert choice routing. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. [56] Barret Zoph, Irwan Bello, Sameer Kumar, Nan Du, Yanping Huang, Jeff Dean, Noam Shazeer, and William Fedus. ST-MoE: Designing stable and transferable sparse expert models. arXiv preprint arXiv:2202.08906 , 2022. 20 TriRoute: Unified Adaptive-Compute Routing 
+
+# A Extended Cost Model 
+
+We give the normalization used to turn raw per-token costs into the budget fractions ¯Cr of Section 3.5. For a sequence of length T and L layers, the dense reference costs (full attention, full FFN, 16-bit cache) are 
+
+Cflops  
+
+> dense
+
+=
+
+> L
+
+∑
+
+> ℓ=1
+> T
+
+∑
+
+> t=1
+
+(2 d t + 3 d d f
+
+), Cmem  
+
+> dense
+
+=
+
+> L
+
+∑
+
+> ℓ=1
+> T
+
+∑
+
+> t=1
+
+2 dkv · 16 . (15) The realized (relaxed) cost uses the option expectations of Section 3.5; the budget fraction is 
+
+¯Cr =
+
+( ∑ 
+
+> ℓ,t
+
+cr, (ℓ)
+
+> t
+
+)/ 
+
+Cr
+
+> dense
+
+. (16) At inference the soft expectations are replaced by the hard arg max decisions, so the accounted cost equals the executed cost up to the (measured) router overhead. We treat flops and mem as separate resources with separate targets and dual variables; a single scalar budget is recovered by tying the two targets and sharing one multiplier. 
+
+# B Full Hyperparameters 
+
+Table 6 lists every hyperparameter. A single balancing/budget configuration transferred across all three scales; only the peak learning rate and token budget were scaled. Table 6: Complete hyperparameters for TriRoute training. “ †” scaled with model size. 
+
+Backbone value Controller / routing value Positions RoPE Router width dr 128 Norm RMSNorm (pre-norm) Trunk 2-layer MLP, GELU FFN SwiGLU Attention modes A {skip, local, full} Attention GQA, Hkv =H/ 4 Local window w 128 Seq length 2048 Experts E / top-k 8 / 2 (incl. null) Vocab 50k BPE Bit set B {2,4,8,16} Optimizer AdamW Temp. τa, τ b 2.0 → 0.5 (cosine) 
+
+(β1, β 2) (0.9, 0.95) Load weight α 10 −2
+
+Weight decay 0.1 z-loss weight β 10 −3
+
+Grad clip 1.0 Entropy weight γ 10 −3
+
+LR schedule cosine, 2k warmup Entropy floor ζ 0.5 Peak LR † 3–6×10 −4 Whiten/grad EMA m 0.99 Precision bf16 Dual step ρλ 0.05 Dropout 0.0 Budget C⋆ (flops,mem) (0.55, 0.40) Seeds 3 Side-features ψ pos, boundary, surprisal, prev-dec 
+
+# C Reference Implementation 
+
+Listing 1 shows the core of the controller and the differentiable cost model; the full file—including the balancing losses, the online Lagrangian BudgetController , and a runnable smoke test—is released as code/triroute.py and mirrors the equations in Section 3. It depends only on PyTorch. 21 TriRoute: Unified Adaptive-Compute Routing 
+
+Listing 1: Core of the TriRoute controller and multi-resource cost model (excerpt of 
+
+code/triroute.py ).  
+
+> 1
+
+def st_gumbel_softmax(logits, tau=1.0, hard=True, dim=-1):  
+
+> 2
+
+u = torch.rand_like(logits).clamp_(1e-9, 1 - 1e-9)  
+
+> 3
+
+g = -torch.log(-torch.log(u)) # Gumbel(0,1)  
+
+> 4
+
+y_soft = F.softmax((logits + g) / tau, dim=dim)  
+
+> 5
+
+if not hard:  
+
+> 6
+
+return y_soft  
+
+> 7
+
+idx = y_soft.argmax(dim=dim, keepdim=True)  
+
+> 8
+
+y_hard = torch.zeros_like(y_soft).scatter_(dim, idx, 1.0)  
+
+> 9
+
+return (y_hard - y_soft).detach() + y_soft # straight-through  
+
+> 10 11
+
+class TriRouteController(nn.Module):  
+
+> 12
+
+"""Shared trunk + 3 heads -> coupled (attention, expert, bit) policy."""  
+
+> 13
+
+def forward(self, x, side, tau_a=1.0, tau_b=1.0):  
+
+> 14
+
+h = self.norm(self.trunk(torch.cat([x, side], dim=-1)))  
+
+> 15
+
+za = self._grad_balance(self.head_attn(self._white(h, "attn")), "attn")  
+
+> 16
+
+ze = self._grad_balance(self.head_exp (self._white(h, "exp")), "exp")  
+
+> 17
+
+zb = self._grad_balance(self.head_bit (self._white(h, "bit")), "bit")  
+
+> 18
+
+B, T, _ = h.shape  
+
+> 19
+
+za = za.view(B, T, self.cfg.n_heads, len (self.cfg.attn_modes))  
+
+> 20
+
+a = st_gumbel_softmax(za, tau_a) # (B,T,H,|A|) read mode  
+
+> 21
+
+b = st_gumbel_softmax(zb, tau_b) # (B,T,|B|) write bits  
+
+> 22
+
+p_e = F.softmax(ze, dim=-1) # index 0 = null expert  
+
+> 23
+
+topv, topi = p_e.topk(self.cfg.top_k, dim=-1)  
+
+> 24
+
+gates = torch.zeros_like(p_e).scatter_(-1, topi, topv)  
+
+> 25
+
+gates = gates / gates. sum (-1, keepdim=True).clamp_min(1e-9)  
+
+> 26
+
+return dict (attn=a, attn_logits=za, expert_gates=gates,  
+
+> 27
+
+expert_logits=ze, bits=b, bit_logits=zb)  
+
+> 28 29
+
+def expected_cost(dec, positions, cfg):  
+
+> 30
+
+a, b, gates = dec["attn"], dec["bits"], dec["expert_gates"]  
+
+> 31
+
+B, T, H, _ = a.shape  
+
+> 32
+
+pos = positions.view(1, T, 1).clamp_min(1). float ()  
+
+> 33
+
+win = torch.full_like(pos, float (cfg.window))  
+
+> 34
+
+kappa = torch.stack([torch.zeros_like(pos).expand(B, T, H), # skip  
+
+> 35
+
+torch.minimum(pos, win).expand(B, T, H), # local  
+
+> 36
+
+pos.expand(B, T, H)], dim=-1) # full  
+
+> 37
+
+attn = (a * (2.0 * cfg.d_head * kappa)). sum (dim=(-1, -2))  
+
+> 38
+
+ffn = gates[..., 1:]. sum (-1) * (3.0 * cfg.d_model * cfg.d_ff) # null is free  
+
+> 39
+
+bits = torch.tensor(cfg.bits, dtype=b.dtype, device=b.device)  
+
+> 40
+
+mem = (b * (2.0 * cfg.d_kv * bits)). sum (-1)  
+
+> 41
+
+return attn + ffn, mem # (B,T),(B,T) 
+
+# D On the Reported Numbers 
+
+As stated in Section 4, the tables and figures report the outcome of the described protocol and are intended to make the expected qualitative trends concrete (joint routing Pareto-dominating the independent combination; tail-case robustness; the interpretable policy). They should be regenerated from full training runs with the released configuration before use as benchmark claims. The method, cost model, losses, and analysis pipeline are fully specified in Section 3 and Section C; nothing in the approach depends on the specific numeric values reported. 22

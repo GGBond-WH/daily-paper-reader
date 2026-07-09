@@ -1,0 +1,285 @@
+Title: Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs
+
+URL Source: https://arxiv.org/pdf/2607.06827v1
+
+Published Time: Thu, 09 Jul 2026 00:13:22 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs 
+
+Ke-Han Lu 12 ∗, Keqi Deng 1†, Ruchao Fan 1, Rui Zhao 1, Jinyu Li 1
+
+> 1
+
+Microsoft, USA 
+
+> 2
+
+National Taiwan University, Taiwan d12942024@ntu.edu.tw, keqideng@microsoft.com 
+
+Abstract —Speech large language models (Speech LLMs) typi-cally encode speech into sequences far longer than text, creating a major efficiency bottleneck during autoregressive decoding. A common remedy is to compress the speech sequence at the adapter level to remove temporal redundancy before it enters the LLM; however, such early downsampling risks discarding fine-grained information that cannot be recovered. We propose 
+
+SpeechKV , which applies a learned pooling to the KV cache of speech tokens inside the LLM. This design allows the LLM to fuse speech and text internally while directly accelerating decoding. Trained on 71K hours of speech data, SpeechKV 
+
+compresses the speech to approximately text-level granularity yet maintains performance on par with or even slightly better than the uncompressed baseline, with relative gains of 6.6% on out-of-domain entity recognition and 2.3% on OpenASR, while delivering at least 1.49 times decoding speedup that scales with audio length. 
+
+Index Terms —Speech LLM, KV cache compression, automatic speech recognition 
+
+I. I NTRODUCTION 
+
+Large language models (LLMs) have demonstrated remark-able capabilities across a wide range of natural language processing tasks [1]–[4]. Building on this success, researchers have extended these models to speech modalities, giving rise to a growing family of Speech LLMs [5]–[20]. A typical Speech LLM consists of three components: a pre-trained speech encoder, a modality adapter, and a large language model backbone. The speech encoder maps input speech into a sequence of acoustic frames. The modality adapter projects these frames into the LLM’s input space, and the LLM then processes speech embeddings alongside text embeddings to enable multimodal understanding. A key challenge in Speech LLMs is the length of speech sequences. For example, in English ASR, a single text token typically corresponds to approximately 300 ms of speech, yet common speech encoders emit one frame every 80 ms, yield-ing roughly 4 × more sequence length for the same semantic information. This poses a substantial efficiency bottleneck during autoregressive generation, where the model must attend to all preceding positions at each decoding step, resulting in increased latency and memory consumption that scale with sequence length. A straightforward approach is to downsample speech se-quences at the adapter level into more compact representations 
+
+> ∗Work done while Ke-Han Lu was an intern at Microsoft.
+> †Corresponding author.
+
+[7], [15]–[17], [19]–[21]. However, such early compression may risk losing information and fails to exploit the represen-tational capacity of the LLM itself. This creates a trade-off between efficiency and recognition performance. In this work, we aim at resolving this trade-off by defer-ring speech compression into the LLM itself. Recent LLM research has shown that Transformer layers often produce redundant key-value representations [22], [23]. In our prelimi-nary experiments, we also observe that Speech LLMs naturally merge nearby speech information in their early layers and operate on near-duplicate representations in the deeper layers (see Section V-B). Based on this observation, we propose 
+
+SpeechKV , which applies a learned pooling operation to merge the speech key-value sequences at an intermediate LLM layer as illustrated in Figure 1. This allows the LLM layer to learn which speech features to preserve and how to fuse speech with text through the attention mechanism. We evaluate SpeechKV on a Speech LLM with Qwen3-1.7B backbone trained on 71K hours of ASR data. Interestingly, when compressing the KV sequences close to text granularity, SpeechKV stays on par with the uncompressed baseline and even slightly surpasses it, with relative gains of 6.6% on out-of-domain entity recognition and 2.3% on the OpenASR benchmark [24], while achieving at least 1.49 × decoding speedup with vLLM [25]. Further analysis of the attention patterns shows that, with SpeechKV, the LLM’s deeper layers allocate more focused attention rather than spreading attention across redundant keys. This suggests that SpeechKV not only accelerates decoding but also provides a beneficial regulariza-tion for the speech-text alignment. Our contributions are summarized as follows:  
+
+> •
+
+We propose SpeechKV, a method that applies learned pooling to compress the speech KV cache at an inter-mediate Speech LLM layer.  
+
+> •
+
+We demonstrate compressing speech to text-level gran-ularity maintains the performance of the uncompressed baseline while achieving 1.49 to 2× decoding speedup.  
+
+> •
+
+We empirically show that adjacent speech representations become increasingly redundant across Speech LLM lay-ers, providing the motivation for deferring compression into the LLM rather than applying it at the adapter level. arXiv:2607.06827v1 [eess.AS] 7 Jul 2026 After   
+
+> compression
+> Speech Encoder
+> Adapter
+> LLM Layer
+> LLM Layer
+> Attention
+> Query
+> Key Value
+> LORA
+> LORA
+> SpeechKV Compression Speech LLM Architecture Compressed Attention Map
+> Query
+> Key
+> Query
+> Key
+> Speech
+> Text
+> Pooling R times
+
+Fig. 1: Overview of our approach. Left: the Speech LLM follows the encoder–adapter–LLM paradigm. We apply the KV cache compression in deeper layers of the LLM. Middle: from layer l0 onward, the learned pooling compresses each window of speech keys and values into a single representation, while text positions remain unchanged. Right: In both training and decoding stage, the full-resolution queries attend to a shorter sequence of keys. II. R ELATED WORK 
+
+A. Speech LLMs and Speech Sequence Compression 
+
+Motivated by the advancements in text-centric large lan-guage models (LLMs), researchers have actively explored extending these architectures to process audio and spoken language, giving rise to a rapidly growing family of Speech LLMs. These models typically adopt an encoder–adapter– LLM paradigm, which enables the LLM to directly handle speech inputs. Within this framework, the central challenge is effectively bridging the modality and length discrepancy between continuous speech and discrete text. The full encoder output can be simply retained via a linear projector or convolution layers [6], [9], [15], but the resulting long speech sequences drastically increase computational cost during LLM decoding. To address this, most existing works perform pre-LLM compression through specialized adapters that reduce the sequence length before it enters the LLM. Rep-resentative approaches include CTC-based boundary merging or blank filtering [7], [19], [26]–[28], CIF-based [29] dynamic accumulation of acoustic features [16], [28], and Q-Formers that extract a fixed number of speech representations [5], [7], [17], [28], [30], [31]. The LLM then processes these down-sampled speech prompts along with the text sequence. While effective, these approaches introduce a bottleneck that risks an unrecoverable loss of information in the subsequent LLM layers. This motivates an alternative direction that compresses the speech KV cache inside the LLM itself, where attention layers can still access full-resolution queries and residual streams. 
+
+B. KV Cache Compression in LLMs 
+
+The linearly growing KV cache is a well-known memory and latency bottleneck for long-context LLM inference [32]. Several studies have explored training-free approaches that manage the KV cache during the inference stage. For exam-ple, eviction-based methods retain only a subset of cached tokens based on attention statistics or recency [22], [33], [34], while other approaches utilize low-bit quantization of cached states [35] to reduce per-token memory cost. However, these training-free methods inevitably suffer from a train-test mismatch, since the model has never been exposed to truncated or evicted cache patterns during training. Trainable approaches instead learn the compression jointly with the model, for example by merging or summarizing context into a shorter KV cache on the fly [18], [36]–[38]. Yet it remains underexplored how a Speech LLM internally processes speech sequences across layers and whether this behavior can inform a simpler compression strategy. In this work, we analyze layer-wise attention behavior and use the findings to guide speech KV cache compression. III. M ETHOD 
+
+A. Speech Language Model 
+
+Our baseline model follows the encoder–adapter–LLM paradigm illustrated in Figure 1. A speech encoder fenc 
+
+converts the input speech x into frame-level acoustic features: 
+
+Z = fenc (x) ∈ RT ×de , (1) where T is the number of frames and de is the encoder hidden dimension. A 2-layer MLP adapter projects these frames into the LLM embedding space without temporal downsampling: 
+
+A = fadp (Z) ∈ RT ×d. (2) Together with the text embeddings E ∈ RN ×d, the concate-nated sequence [A; E] is fed into a decoder-only LLM with L layers as the input and trained with next-token prediction to generate M -token outputs: 
+
+L = −
+
+> M
+
+X
+
+> t=1
+
+log p(yt | A, E, y <t ). (3) Since the speech sequence is typically much longer than the text portion ( T ≫ N + M ), the speech KV cache dominates per-step attention cost during autoregressive decoding, forming the primary inference bottleneck. 
+
+B. SpeechKV 
+
+As illustrated in Figure 1, we propose to compress the speech KV sequences inside the LLM to accelerate decoding. Starting from layer l0, we apply a learned pooling operator 
+
+PR that compresses the speech keys and values into a shorter sequence with compression ratio R.Specifically, the operator PR applies only on the T speech positions and leaves the text positions unchanged. It par-titions the speech sequences into non-overlapping uniform windows of size R. Within each window, a learned linear gate 
+
+g : Rdh → R produces a scalar logit from each key vector 
+
+kj ∈ Rdh , and a softmax normalizes these logits into per-position weights: 
+
+αj = exp  g(kj )PRj′=1 exp  g(kj′ ) , ˆk =
+
+> R
+
+X
+
+> j=1
+
+αj kj , ˆv =
+
+> R
+
+X
+
+> j=1
+
+αj vj .
+
+(4) The gate is initialized to zero so that the model starts from uni-form averaging and gradually learns to emphasize informative positions within each window. At each LLM layer l ≥ l0, the full-resolution queries attend over the compressed KV sequence: 
+
+Attention (l) = softmax Q(l) ˆK(l)⊤
+
+√dh
+
+!
+
+ˆV(l), (5) where ˆK(l) = PR(K(l)) and ˆV(l) = PR(V(l)). The attention mask is correspondingly adjusted so that each query attends only to its preceding positions, preserving causality over the compressed sequence, as illustrated in Figure 1(Right). We intentionally keep the compression operation simple and lightweight, relying on the LLM’s own attention mechanism to effectively process the compressed sequences with negligible overhead. 
+
+C. Training and Inference 
+
+During training, SpeechKV is applied on-the-fly within the forward pass of each target layer and jointly optimized with next-token-prediction loss, ensuring no train-test mismatch. In the inference stage, the compression is performed once during prefill, and the compressed KV is stored in the cache, yielding an R-fold reduction in speech KV cache size at each decoding step. This directly translates to a smaller memory footprint and faster decoding speed. TABLE I: Training data composition (71K hours total).                           
+
+> Dataset Hours Utts (K)
+> Multilingual LibriSpeech (en) [39] 44,659.7 10,808.0 GigaSpeech [40] 13,714.4 11,659.8 SPGISpeech [41] 4,996.6 1,965.3 LibriSpeech [42] 1,920.0 560.8 LibriHeavy [43] 1,852.2 469.4 Common Voice 15 [44] 1,688.3 1,069.7 VoxPopuli [45] 1,045.2 365.0 TED-LIUM 3 [46] 907.6 536.5 Earnings-22 [47] 287.2 104.0 AMI [48] 156.3 217.0 FLEURS [49] 15.0 5.2
+> Total 71,242.5 27,760.8
+
+IV. E XPERIMENT SETUP 
+
+A. Model 
+
+The backbone language model is Qwen3-1.7B [3], compris-ing 28 Transformer decoder layers. The speech encoder is ini-tialized from a pretrained encoder-decoder ASR model which consists of 3 convolution layers followed by 24 conformer blocks [51], producing speech frames at an 80 ms frame rate. In the uncompressed MLP Baseline , a 2-layer MLP projects the encoder output directly into the LLM input embedding space without temporal downsampling. For compressed settings, we uniformly merge every R
+
+consecutive frames into a single speech position, so that each resulting position corresponds to 80 R ms of speech. We compare compression strategies at two levels. At the adapter level, we study two variants: (1) Concat-MLP concatenates R
+
+adjacent frames along the feature dimension and projects the result through a 2-layer MLP; (2) Window Q-Former [30] employs a 2-layer Transformer cross-attention module to at-tend over R adjacent frames and produce one merged speech embedding. At the LLM level, we keep the uncompressed 2-layer MLP as the adapter and instead perform compression inside the LLM. Based on the empirical observation from Section V-B, we use l0 = 5 as default setting. This allows the first 4 layers to process the full-resolution speech sequence. (3) SpeechKV 
+
+compresses only the key and value projections from layer l0
+
+onward, uniformly merging every R consecutive speech KV vectors into one while preserving full-resolution queries and the residual stream. We additionally propose (4) HS Compres-sion (hidden-state compression), an alternative in-LLM design that applies the same learned pooling to the entire hidden state at layer l0, thereby shortening all subsequent layers including queries. Comparing (3) and (4) directly isolates the benefit of preserving full-resolution queries in SpeechKV. 
+
+B. Training 
+
+We use a combined 71K hours of open-sourced ASR data, as detailed in Table I. During training, the speech encoder, the adapter module, and LoRA [52] with rank 32 are trainable, while the remaining LLM weights are frozen, yielding approx-imately 480M trainable parameters out of 2.2B in the entire TABLE II: Comparison of compression methods at R=4 × and R=8 ×. Our in-LLM methods (HS Compression, SpeechKV) apply l0 = 5 . We report entity error rate (EER) for entity recognition and word error rate (WER) for ASR task, respectively.                                                                                                                                                                                                       
+
+> Method In-houseER ↓In-houseASR ↓OpenASR ↓
+> AVG Banking Medical AVG Dict. Fin.Call Brod. VoiceM. AVG AMI Earn22 Giga LS-c LS-o SPGi Vox
+> Open-sourced Models
+> Whisper-L-v3 [50] 8.41 9.43 7.38 4.91 3.40 6.83 4.58 4.82 7.95 15.95 11.29 10.02 2.01 3.91 2.94 9.54 Phi4-mm [9] 11.36 13.27 9.45 4.89 3.13 6.21 3.88 6.33 6.60 11.69 10.16 9.78 1.68 3.83 3.13 5.91 MLP (Baseline) 14.41 16.67 12.14 5.78 3.59 7.58 4.26 7.67 6.12 10.59 8.59 9.44 1.83 4.03 2.02 6.36
+> R= 4
+> Concat-MLP 15.84 17.76 13.91 6.29 4.66 7.45 5.14 7.91 6.07 9.65 8.71 9.55 1.86 4.09 2.08 6.52 Window Q-Former 14.70 17.32 12.07 6.23 4.91 7.39 4.98 7.65 6.02 9.28 8.93 9.54 1.85 4.07 2.04 6.43 HS Compression 15.22 17.54 12.91 5.79 3.62 7.15 4.67 7.73 6.06 9.53 8.85 9.54 1.85 4.10 2.08 6.44 SpeechKV 13.46 15.30 11.62 5.71 3.83 7.09 4.52 7.42 5.98 9.68 8.60 9.37 1.79 4.05 2.03 6.36
+> R= 8
+> Concat-MLP 17.52 20.94 14.11 6.63 4.08 7.63 6.17 8.63 6.43 10.24 9.27 9.95 2.00 4.43 2.22 6.92 Window Q-Former 16.41 18.80 14.01 6.50 4.34 7.59 5.08 8.98 6.64 12.02 9.20 9.96 1.91 4.48 2.20 6.72 HS Compression 16.98 19.46 14.49 6.22 4.06 7.57 4.77 8.47 6.31 9.80 9.34 9.85 1.94 4.33 2.23 6.66 SpeechKV 14.91 17.00 12.82 5.95 3.95 7.27 4.45 8.14 6.05 9.37 8.84 9.59 1.86 4.12 2.13 6.45
+
+model. The model is optimized with the AdamW optimizer using a peak learning rate of 2 × 10 −5, linear warmup over the first 100 steps, and a warmup-decay schedule. Training is conducted with DeepSpeed ZeRO Stage 1. The effective batch size is approximately 200K tokens including speech and text tokens, and each model is trained for 10,000 steps, covering the full training set approximately once. Each training run takes about 1 day on 8 H100 GPUs. 
+
+C. Evaluation 
+
+We evaluate SpeechKV on three test suites that cap-ture different aspects of recognition quality. (1) Ope-nASR 1 [24] comprises seven publicly available benchmarks (AMI [48], Earnings-22 [47], GigaSpeech [40], LibriSpeech clean/other [42], SPGISpeech [41], and VoxPopuli [45]), that serve as an in-domain ASR evaluation. (2) In-house ASR 
+
+consists of four proprietary test sets spanning dictation, fi-nancial calls, broadcast news, and voicemail. These sets are out-of-domain with respect to the training data to test the model’s generalization ability and robustness. (3) In-house Entity Recognition (ER) includes two entity-dense test sets from banking and medical domains. We report entity error rate (EER), defined as 1 − Entity Recall, which measures the proportion of entities not correctly recognized. An entity is considered correct only if all of its constituent words are transcribed without error. V. R ESULTS 
+
+A. Main Results 
+
+Table II compares the proposed SpeechKV against adapter-level approaches (Concat-MLP, Window Q-Former) and our alternative in-LLM method (HS Compression) at two com-pression ratios. Adapter-level methods compress the speech embeddings before they enter the LLM, while in-LLM meth-ods apply compression at intermediate LLM representations. 
+
+> 1Leaderboard version accessed May 20, 2026.
+
+We also include two open-sourced models, Whisper [50] and Phi4-mm [9], as external references. Since these models were trained on millions of hours of web-scale speech, they are not directly comparable with our 71K-hour setup. Overall, our proposed SpeechKV consistently performs best among the compression strategies and maintains baseline performance across most evaluation metrics and compression ratios. When comparing methods at R=4 , which aligns the granu-larity of speech with text tokens, all methods achieve slightly better performance on OpenASR. This suggests that the inten-sive 71K hours of in-domain training data allow the encoder and LLM to jointly learn to compensate the compression. However, on the out-of-domain test set, performance becomes more sensitive to compression. Concat-MLP and Window Q-Former show degradation on both ER and ASR, while HS Compression maintains competitive ASR performance but suf-fers clear ER degradation. This reflects the loss of information from compressing entire speech sequences that requires fine-grained discrimination. In contrast, SpeechKV stays on par with the uncompressed baseline across most evaluation suites, and even surpasses it, with relative gains of 6.6%, 1.2%, and 2.3% on In-house ER, In-house ASR, and OpenASR, respectively. We conjecture that this behavior arises from two com-plementary effects. First, because each layer retains access to complete audio information, the model can progressively adjust to a shorter KV cache with minimal information loss. Second, the compressed granularity aligns with the text-level token rate that the LLM is pretrained to process. Together, these effects act as a structural regularization that encourages more focused speech–text alignment, which explains why SpeechKV maintains or slightly improves the baseline rather than merely approximating it. The R=8 results further corroborate this hypothesis. At this aggressive ratio, the performance gap between methods widens considerably: all competing methods degrade by at least 8% relative on In-house metrics, with some exceeding 20%. In 1 4 7 10 13 16 19 22 25 28 
+
+> Layer
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> Local Similarity
+> MLP (Baseline)
+> SpeechKV(R=4)
+> SpeechKV(R=8)
+
+Fig. 2: Layer-wise local similarity (cosine similarity between adjacent speech positions) for the uncompressed baseline and the KV-Compressed models. TABLE III: Ablation results of layer ablation for HS Com-pression and SpeechKV from different starting layer l0. The results present the average score for each testing set.                                                           
+
+> Method l0In-houseER In-houseASR OpenASR
+> MLP (Baseline) –14.41 5.78 6.12
+> R= 4 ×
+> HS Compression 315.69 6.38 6.19 HS Compression 515.22 5.79 6.06 HS Compression 715.39 5.86 6.03
+> SpeechKV 314.33 5.87 6.12 SpeechKV 513.46 5.71 5.98 SpeechKV 713.56 6.23 5.93
+> R= 8 ×
+> HS Compression 317.78 6.80 6.63 HS Compression 516.98 6.22 6.31 HS Compression 718.12 6.60 6.30
+> SpeechKV 316.70 7.06 6.53 SpeechKV 514.91 5.95 6.05
+> SpeechKV 715.25 6.49 6.08
+
+contrast, SpeechKV degrades gracefully, within 3.5% relative degradation on In-house ER and 2.9% on In-house ASR, while still matching the baseline on OpenASR. The widening gap confirms our design advantage, demonstrating that SpeechKV is a promising direction for building efficient speech LLMs without sacrificing recognition quality. 
+
+B. Layer-wise Analysis and Ablation Studies 
+
+As a preliminary analysis, we measure local similarity before any compression training. As shown in Figure 2, the baseline’s local similarity rises steeply through the first four layers, indicating that the model is actively aggregating local acoustic features into contextualized representations. Around layer 5 the curve transitions into a plateau regime, suggesting that local aggregation has largely completed and temporal redundancy has naturally emerged. Based on this observation, we select layer 5 as the compression starting point for our main experiments in Section V-A. We further compare the baseline model with SpeechKV after training. As shown in Figure 2, at R=4 the local 50 100 150 200 250 300      
+
+> Layer 4
+> 50 100 150 200 250 300
+> Key position
+> Layer 27
+
+(a) Baseline 50 100 150 200 250 300      
+
+> Layer 4
+> 50 100 150 200 250 300
+> Key position
+> Layer 27
+
+(b) SpeechKV ( R=4 )
+
+Fig. 3: Attention maps of the Baseline and SpeechKV ( R = 4 )at an early layer (4) and a deep layer (27) on an ASR example. Each row shows the attention scores from a generated token over the KV cache positions. The region between red dashed lines indicates speech key positions. similarity closely follows the baseline’s natural rising trend, suggesting that the compression aligns with the aggregation the model would perform on its own, which may explain why 
+
+R=4 matches the uncompressed baseline. Although learned pooling is a simple compression operator, the similarity pattern confirms that it does not substantially alter the LLM’s internal behavior at this ratio. At R=8 , however, the similarity is ele-vated across all layers, indicating that the model must restruc-ture its representations to accommodate the more aggressive compression, consistent with the slight quality degradation observed in out-of-domain metrics in Table II. Table III reports the ablation results for different starting layers l0. On OpenASR, layers 5 and 7 yield comparable WER, indicating that the representation is already sufficiently aggregated by layer 5 and remains stable thereafter. However, the more challenging In-house benchmark reveals a clear opti-mum at layer 5, with both earlier ( l0=3 ) and later ( l0=7 ) entry points suffering notable degradation in EER and WER. This result may reflect the intrinsic layer-wise behavior of Qwen3-1.7B observed in Figure 2. Starting at layer 3 compresses representations before local similarity has converged, while layer 7 may have already begun to specialize for high-level processing. Extending this analysis to further understand the layer-wise dynamics within speech LLMs poses an interesting direction for future work. C. Attention Analysis 
+
+Figure 3 visualizes the attention maps from the generated ASR tokens to the key cache at an early layer (4) and a deep layer (27) for both baseline and SpeechKV. Each row corresponds to a generated token, and brighter values indicate stronger attention weights. The diagonal band reflects strong speech-text alignment where each text token primarily attends to the speech region it transcribes. In the baseline (Fig. 3a), attention at the early layer is diffuse, suggesting that the model is still aggregating local acoustic features and has not yet formed explicit speech-text correlations. By layer 27, a clear monotonic pattern emerges where each text token attends to its corresponding speech span, indicating that a Speech LLM naturally develops speech-text alignment as it progresses through the network. However, because adjacent key positions are highly similar at deep layers (see Section V-B), attention weight is spread across these near-duplicate positions rather than concentrated on the most informative ones. With SpeechKV (Fig. 3b), the behaviour differs at both depths. At the early layer, a monotonic alignment already appears even though compression has not yet been applied at this layer. A possible explanation is that, when deep-layer key sequences are shortened during training, the model adapts by consolidating acoustic information earlier in the network, resulting in speech-text correspondence that emerges at shal-lower layers. At the deep layer, the compressed key sequences produce sharper, more concentrated attention peaks compared to the baseline, as redundant positions have been merged and each remaining key carries more distinctive information. This is consistent with the improved recognition accuracy discussed in Section V-A. Taken together, these observations suggest that training with SpeechKV reshapes the internal representations across layers. The early layers take on a greater role in establishing cross-modal correspondence, while the deeper layers operate more efficiently over a compact, de-duplicated key representation that focuses attention on the most informative positions. 
+
+D. Decoding Speed 
+
+At inference time, SpeechKV directly reduces the KV cache memory by 2.8× and 4× at R=4 and R=8 , respectively, and the shorter key sequences also reduce the attention computa-tion at each decoding step. Figure 4 reports the end-to-end decoding speedup measured on an A100 80 GB GPU with vLLM [25] across different audio lengths and compression ratios. The speedup scales with audio length because the speech KV cache occupies a larger fraction of the total attention cost for longer inputs. At R=4 , the per-step speedup grows from 1.49 × for 30-second utterances to 2.02 × for 10-minute audio. Doubling the compression to R=8 , however, yields only a modest additional gain, as the feed-forward layers and text KV cache, which are unaffected by SpeechKV, become the bottleneck once the speech KV cache is sufficiently small. 30s Audio 5min Audio 10min Audio   
+
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> 2.0
+> 2.2
+> Decoding speedup (×)
+> 1.00x 1.00x 1.00x
+> 1.49x
+> 1.88x
+> 2.02x
+> 1.62x
+> 1.87x
+> 2.03x
+> Baseline
+> 4x
+> 8x
+
+Fig. 4: End-to-end decoding speedup at each decoding step on an A100 80 GB GPU with vLLM. Batch sizes are maximized to saturate GPU memory for each scenario. Considering both speed and recognition quality (Table II), 
+
+R=4 offers the most practical operating point that matches the uncompressed baseline in accuracy while delivering 1.49 
+
+to 2× faster decoding that scales with audio length. VI. C ONCLUSION 
+
+We presented SpeechKV, a method that compresses the speech KV cache at an intermediate LLM layer using learned pooling, deferring the reduction of speech sequences into the LLM itself rather than at the adapter level. By preserving full-resolution queries and the residual stream, SpeechKV allows the LLM’s pretrained parameters to govern which acoustic features to retain while substantially reducing the per-step attention cost during decoding. Experiments on a Qwen3-1.7B-based Speech LLM trained on 71K hours show that compressing speech KV cache to text-level granularity ( R=4 ) still matches or even slightly improves the uncompressed baseline, with relative gains of up to 6.6% on entity recognition, while achieving at least 1.49 ×
+
+decoding speedup that scales with audio length. Analysis of attention patterns and local similarity reveals that SpeechKV reshapes the layer-wise behavior: early layers establish cross-modal correspondence sooner, while deeper layers attend more sharply over the de-duplicated key sequences, acting as a structural regularization for enhancing speech-text alignment. Future work includes extending SpeechKV to other speech tasks beyond ASR, investigating adaptive compression ratios across layers, and further analyzing the layer-wise dynamics within Speech LLMs. VII. G ENERATIVE AI U SE DISCLOSURE 
+
+Generative AI tools were used solely to assist with language polishing and editing of this manuscript. All technical content, experimental design, results, and analysis were produced by the authors. REFERENCES [1] B. Peng, C. Li, P. He, M. Galley, and J. Gao, “Instruction tuning with gpt-4,” arXiv preprint arXiv:2304.03277 , 2023. [2] A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [3] A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. , “Qwen3 technical report,” arXiv preprint arXiv:2505.09388 , 2025. [4] M. Abdin, J. Aneja, H. Behl, S. Bubeck, R. Eldan, S. Gunasekar, M. Harrison, R. J. Hewett, M. Javaheripi, P. Kauffmann, et al. , “Phi-4 technical report,” arXiv preprint arXiv:2412.08905 , 2024. [5] C. Tang, W. Yu, G. Sun, X. Chen, T. Tan, W. Li, L. Lu, Z. MA, and C. Zhang, “SALMONN: Towards generic hearing abilities for large language models,” in The Twelfth International Conference on Learning Representations , 2024. [6] A. Yang et al. , “Qwen2 Technical Report,” arXiv preprint arXiv:2412.15115 , 2024. [7] R. Fan, B. Ren, Y. Hu, R. Zhao, S. Liu, and J. Li, “Alignformer: Modality matching can achieve better zero-shot instruction-following speech-llm,” 
+
+IEEE Journal of Selected Topics in Signal Processing , vol. 19, no. 7, pp. 1329–1337, 2025. [8] S. Arora, K.-W. Chang, C.-M. Chien, Y. Peng, H. Wu, Y. Adi, E. Dupoux, H.-Y. Lee, K. Livescu, and S. Watanabe, “On the landscape of spoken language models: A comprehensive survey,” arXiv preprint arXiv:2504.08528 , 2025. [9] A. Abouelenin, A. Ashfaq, A. Atkinson, H. Awadalla, N. Bach, J. Bao, A. Benhaim, M. Cai, V. Chaudhary, C. Chen, et al. , “Phi-4-mini technical report: Compact yet powerful multimodal language models via mixture-of-loras,” arXiv preprint arXiv:2503.01743 , 2025. [10] K.-H. Lu, Z. Chen, S.-W. Fu, H. Huang, B. Ginsburg, Y.-C. F. Wang, and H.-Y. Lee, “DeSTA: Enhancing speech language models through descriptive speech-text alignment,” in Interspeech 2024 , pp. 4159–4163, 2024. [11] K.-H. Lu et al. , “Developing Instruction-Following Speech Language Model Without Speech Instruction-Tuning Data,” in IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) ,pp. 1–5, 2025. [12] K.-H. Lu, Z. Chen, S.-W. Fu, C.-H. H. Yang, S.-F. Huang, C.-K. Yang, C.-E. Yu, C.-W. Chen, W.-C. Chen, C.-y. Huang, Y.-C. Lin, Y.-X. Lin, C.-A. Fu, C.-Y. Kuan, W. Ren, X. Chen, W.-P. Huang, E.-P. Hu, T.-Q. Lin, Y.-K. Wu, K.-P. Huang, H.-Y. Huang, H.-C. Chou, K.-W. Chang, C.-H. Chiang, B. Ginsburg, Y.-C. F. Wang, and H.-y. Lee, “Desta2.5-audio: Toward general-purpose large audio language model with self-generated cross-modal alignment,” IEEE Transactions on Audio, Speech and Language Processing , pp. 1–16, 2026. [13] Y. Fathullah, C. Wu, E. Lakomkin, J. Jia, Y. Shangguan, K. Li, J. Guo, W. Xiong, J. Mahadeokar, O. Kalinli, C. Fuegen, and M. Seltzer, “Prompting large language models with speech recognition abilities,” in ICASSP 2024 - 2024 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pp. 13351–13355, 2024. [14] S. Hu et al. , “Wavllm: Towards robust and adaptive speech large language model,” arXiv preprint arXiv:2404.00656 , 2024. [15] Z. Ma, G. Yang, Y. Yang, Z. Gao, J. Wang, Z. Du, F. Yu, Q. Chen, S. Zheng, S. Zhang, et al. , “An embarrassingly simple approach for llm with strong asr capacity,” arXiv preprint arXiv:2402.08846 , 2024. [16] K. Deng, G. Sun, and P. Woodland, “Wav2Prompt: End-to-end speech prompt learning and task-based fine-tuning for text-based LLMs,” in 
+
+Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) (L. Chiruzzo, A. Ritter, and L. Wang, eds.), (Albuquerque, New Mexico), pp. 6940–6956, Association for Computational Linguistics, Apr. 2025. [17] W. Yu, C. Tang, G. Sun, X. Chen, T. Tan, W. Li, L. Lu, Z. Ma, and C. Zhang, “Connecting speech encoder and large language model for asr,” in ICASSP 2024 - 2024 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pp. 12637–12641, 2024. [18] H. Sun, C. Lyu, S. Zhao, X. Ni, X. Kong, L. Wang, W. Luo, and Y. Qin, “Speech-xl: Towards long-form speech understanding in large speech language models,” arXiv preprint arXiv:2602.05373 , 2026. [19] K. Deng, R. Fan, B. Ren, Y. Wang, and J. Li, “Speech llms are contextual reasoning transcribers,” arXiv preprint arXiv:2604.00610 , 2026. [20] J. Wu, Y. Gaur, Z. Chen, L. Zhou, Y. Zhu, T. Wang, J. Li, S. Liu, B. Ren, L. Liu, and Y. Wu, “On decoder-only architecture for speech-to-text and large language model integration,” in 2023 IEEE Automatic Speech Recognition and Understanding Workshop (ASRU) , pp. 1–8, 2023. [21] B. Mohapatra, M. Z. Boito, and I. Calapodescu, “Speechmap-per: Speech-to-text embedding projector for llms,” arXiv preprint arXiv:2601.20417 , 2026. [22] Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen, “Snapkv: Llm knows what you are looking for before generation,” in Advances in Neural Information Processing Systems (A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, eds.), vol. 37, pp. 22947–22970, Curran Associates, Inc., 2024. [23] A. Liu, J. Liu, Z. Pan, Y. He, G. Haffari, and B. Zhuang, “Minicache: Kv cache compression in depth dimension for large language models,” in Proceedings of the 38th International Conference on Neural Infor-mation Processing Systems , NIPS ’24, (Red Hook, NY, USA), Curran Associates Inc., 2024. [24] V. Srivastav, S. Zheng, E. Bezzam, E. L. Bihan, N. Koluguri, P. ˙ Zelasko, S. Majumdar, A. Moumen, and S. Gandhi, “Open asr leaderboard: Towards reproducible and transparent multilingual and long-form speech recognition evaluation,” 2026. [25] W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica, “Efficient memory management for large language model serving with pagedattention,” in Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles ,2023. [26] A. Graves, S. Fern´ andez, F. Gomez, and J. Schmidhuber, “Connection-ist temporal classification: labelling unsegmented sequence data with recurrent neural networks,” in Proceedings of the 23rd International Conference on Machine Learning , ICML ’06, (New York, NY, USA), p. 369–376, Association for Computing Machinery, 2006. [27] W. Zhou, J. Jia, L. Sari, J. Mahadeokar, and O. Kalinli, “Cjst: Ctc compressor based joint speech and text training for decoder-only asr,” in ICASSP 2025 - 2025 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pp. 1–5, 2025. [28] F. Verdini, P. Melucci, S. Perna, F. Cariaggi, M. Gaido, S. Papi, S. Mazurek, M. Kasztelnik, L. Bentivogli, S. Brati` eres, et al. , “How to connect speech foundation models and large language models? what matters and what does not,” arXiv preprint arXiv:2409.17044 , 2024. [29] L. Dong and B. Xu, “Cif: Continuous integrate-and-fire for end-to-end speech recognition,” in ICASSP 2020-2020 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) ,pp. 6079–6083, IEEE, 2020. [30] J. Li, D. Li, S. Savarese, and S. Hoi, “BLIP-2: Bootstrapping language-image pre-training with frozen image encoders and large language mod-els,” in Proceedings of the 40th International Conference on Machine Learning , vol. 202, pp. 19730–19742, PMLR, 2023. [31] W. Held, E. Li, M. Ryan, W. Shi, Y. Zhang, and D. Yang, “Distilling an end-to-end voice assistant without instruction training data,” arXiv preprint arXiv:2410.02678 , 2024. [32] H. LI, Y. Li, A. Tian, T. Tang, Z. Xu, X. Chen, N. HU, W. Dong, L. Qing, and L. Chen, “A survey on large language model acceleration based on KV cache management,” Transactions on Machine Learning Research , 2025. [33] Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. R´ e, C. Barrett, Z. A. Wang, and B. Chen, “H2o: Heavy-hitter oracle for efficient generative inference of large language models,” in Advances in Neural Information Processing Systems (A. Oh, T. Nau-mann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, eds.), vol. 36, pp. 34661–34710, Curran Associates, Inc., 2023. [34] G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis, “Efficient streaming language models with attention sinks,” in International Conference on Learning Representations (B. Kim, Y. Yue, S. Chaudhuri, K. Fragki-adaki, M. Khan, and Y. Sun, eds.), vol. 2024, pp. 21875–21895, 2024. [35] C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami, “Kvquant: Towards 10 million context length llm inference with kv cache quantization,” in Advances in Neural Information Processing Systems (A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, eds.), vol. 37, pp. 1270– 1303, Curran Associates, Inc., 2024. [36] P. Nawrot, A. Ła´ ncucki, M. Chochowski, D. Tarjan, and E. Ponti, “Dynamic memory compression: Retrofitting LLMs for accelerated inference,” in Forty-first International Conference on Machine Learning ,2024. [37] Z. Wang, B. Jin, Z. Yu, and M. Zhang, “Model tells you where to merge: Adaptive kv cache merging for llms on long-context tasks,” arXiv preprint arXiv:2407.08454 , 2024. [38] A. Chevalier, A. Wettig, A. Ajith, and D. Chen, “Adapting language models to compress contexts,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (H. Bouamor, J. Pino, and K. Bali, eds.), (Singapore), pp. 3829–3846, Association for Computational Linguistics, Dec. 2023. [39] V. Pratap, Q. Xu, A. Sriram, G. Synnaeve, and R. Collobert, “Mls: A large-scale multilingual dataset for speech research,” ArXiv ,vol. abs/2012.03411, 2020. [40] G. Chen, S. Chai, G.-B. Wang, J. Du, W.-Q. Zhang, C. Weng, D. Su, D. Povey, J. Trmal, J. Zhang, M. Jin, S. Khudanpur, S. Watanabe, S. Zhao, W. Zou, X. Li, X. Yao, Y. Wang, Z. You, and Z. Yan, “GigaSpeech: An Evolving, Multi-Domain ASR Corpus with 10,000 Hours of Transcribed Audio,” in Interspeech 2021 , pp. 3670–3674, 2021. [41] P. K. O’Neill, V. Lavrukhin, S. Majumdar, V. Noroozi, Y. Zhang, O. Kuchaiev, J. Balam, Y. Dovzhenko, K. Freyberg, M. D. Shulman, B. Ginsburg, S. Watanabe, and G. Kucsko, “SPGISpeech: 5,000 hours of transcribed financial audio for fully formatted end-to-end speech recognition,” arXiv e-prints , p. arXiv:2104.02014, Apr. 2021. [42] V. Panayotov, G. Chen, D. Povey, and S. Khudanpur, “Librispeech: an asr corpus based on public domain audio books,” in 2015 IEEE international conference on acoustics, speech and signal processing (ICASSP) , pp. 5206–5210, IEEE, 2015. [43] W. Kang, X. Yang, Z. Yao, F. Kuang, Y. Yang, L. Guo, L. Lin, and D. Povey, “Libriheavy: a 50,000 hours asr corpus with punctuation casing and context,” 2023. [44] R. Ardila, M. Branson, K. Davis, M. Henretty, M. Kohler, J. Meyer, R. Morais, L. Saunders, F. M. Tyers, and G. Weber, “Common voice: A massively-multilingual speech corpus,” in Proceedings of the 12th Conference on Language Resources and Evaluation (LREC 2020) ,pp. 4211–4215, 2020. [45] C. Wang, M. Riviere, A. Lee, A. Wu, C. Talnikar, D. Haziza, M. Williamson, J. Pino, and E. Dupoux, “VoxPopuli: A large-scale multilingual speech corpus for representation learning, semi-supervised learning and interpretation,” in Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th Interna-tional Joint Conference on Natural Language Processing (Volume 1: Long Papers) (C. Zong, F. Xia, W. Li, and R. Navigli, eds.), (Online), pp. 993–1003, Association for Computational Linguistics, Aug. 2021. [46] F. Hernandez, V. Nguyen, S. Ghannay, N. Tomashenko, and Y. Esteve, “Ted-lium 3: Twice as much data and corpus repartition for experiments on speaker adaptation,” in Speech and Computer: 20th International Conference, SPECOM 2018, Leipzig, Germany, September 18–22, 2018, Proceedings 20 , pp. 198–208, Springer, 2018. [47] M. D. Rio, P. Ha, Q. McNamara, C. Miller, and S. Chandra, “”earnings-22: A practical benchmark for accents in the wild”,” 2022. [48] J. Carletta, S. Ashby, S. Bourban, M. Flynn, M. Guillemot, T. Hain, J. Kadlec, V. Karaiskos, W. Kraaij, M. Kronenthal, G. Lathoud, M. Lin-coln, A. Lisowska, I. McCowan, W. Post, D. Reidsma, and P. Wellner, “The ami meeting corpus: A pre-announcement,” in Machine Learning for Multimodal Interaction (S. Renals and S. Bengio, eds.), (Berlin, Heidelberg), pp. 28–39, Springer Berlin Heidelberg, 2006. [49] A. Conneau, M. Ma, S. Khanuja, Y. Zhang, V. Axelrod, S. Dalmia, J. Riesa, C. Rivera, and A. Bapna, “Fleurs: Few-shot learning evaluation of universal representations of speech,” arXiv preprint arXiv:2205.12446 , 2022. [50] A. Radford, J. W. Kim, T. Xu, G. Brockman, C. McLeavey, and I. Sutskever, “Robust speech recognition via large-scale weak super-vision,” in International conference on machine learning , PMLR, 2023. [51] A. Gulati, J. Qin, C.-C. Chiu, N. Parmar, Y. Zhang, J. Yu, W. Han, S. Wang, Z. Zhang, Y. Wu, and R. Pang, “Conformer: Convolution-augmented Transformer for Speech Recognition,” in Interspeech 2020 ,pp. 5036–5040, 2020. [52] E. J. Hu, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, 
+
+et al. , “LoRA: Low-Rank Adaptation of Large Language Models,” in 
+
+International Conference on Learning Representations .

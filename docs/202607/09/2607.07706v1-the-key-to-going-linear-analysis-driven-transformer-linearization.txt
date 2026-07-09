@@ -1,0 +1,1515 @@
+Title: The Key to Going Linear: Analysis-Driven Transformer Linearization
+
+URL Source: https://arxiv.org/pdf/2607.07706v1
+
+Published Time: Thu, 09 Jul 2026 01:16:43 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# The Key to Going Linear: Analysis-Driven Transformer Linearization 
+
+Anna Kuzina 
+
+Qualcomm AI Research ∗
+
+akuzina@qti.qualcomm.com 
+
+Paul N. Whatmough 
+
+Qualcomm AI Research 
+
+pwhatmou@qti.qualcomm.com 
+
+Babak Ehteshami Bejnordi 
+
+Qualcomm AI Research 
+
+behtesha@qti.qualcomm.com 
+
+Abstract 
+
+The quadratic cost of causal self-attention severely bottlenecks long-context trans-former inference. While numerous post hoc linearization pipelines exist, it is difficult to identify which components preserve model quality. This work isolates the effect of state update design in a strict frozen-backbone regime. We show that softmax relies on key-dependent, rank-1 orthogonal projections, elucidating why delta-style networks outperform purely gated accumulation. We identify a potential source of approximation errors and introduce structural interventions, specifically sink tokens, short convolutions, and fixed-budget cache routing, which reduces the remaining gap. We scale this linearization approach across LLaMA and Qwen models up to 32B parameters, outperforming prior post hoc baselines on MMLU and matching the long-context retrieval of complex adaptive-caching frameworks. 
+
+1 Introduction 
+
+Causal self-attention is the main obstacle to scaling pretrained transformers to longer contexts. Its quadratic compute and growing KV cache make inference increasingly expensive as sequence length grows. A particularly appealing solution is post hoc linearization : converting an existing full-attention model into a linear-time architecture without pretraining from scratch [ 26 , 8, 11 , 12 , 20 , 13 ]. While recent approaches achieve this, they typically combine multiple interventions simultaneously, such as low-rank adaptation (LoRA), sliding-window attention (SWA), hybrid routing, and distillation. These confounding factors obscure a fundamental design question: which linear state update best approximates pretrained softmax attention? 
+
+To answer this, we take an analysis-driven approach to transformer linearization. We isolate the approximation problem by studying attention replacement in a strict regime: the pretrained backbone remains entirely frozen. Only the newly introduced parameters of the replacement mechanism are trained. This setting isolates the capacity of the linear attention replacements. Within this controlled setting, we derive a first-order approximation connecting softmax attention to linear state updates. Our analysis proves that softmax naturally applies key-dependent, rank-1 orthogonal projections. Delta-style updates (like Gated Delta Networks) natively implement these corrections through rank-1 operators constructed from keys, suppressing components aligned with previous keys. Conversely, pure gated accumulation (like Gated Linear Attention) relies on key-independent decay, missing this vital geometric correction. 
+
+> ∗Qualcomm AI Research is an initiative of Qualcomm Technologies, Inc. Preprint. arXiv:2607.07706v1 [cs.LG] 8 Jul 2026
+
+We empirically validate these insights across LLaMA and Qwen backbones. We first compare normalized kernelized linear attention [ 27 ], Gated Linear Attention (GLA) [ 23 ], and Gated Delta Networks [ 19 ] in the strict frozen-backbone setting. Delta-style updates consistently provide the strongest approximation. Guided by a theoretically identified approximation gap, we introduce practical design choices: a disjoint sliding-window path, sink tokens, and projection adaptation through short convolutions or LoRA. We find these components compensate for the limitations of linear mechanisms, narrowing the performance gap and serving as a robust default for post hoc linearization. Our main contributions are as follows: • We study post hoc linearization of pretrained language models in a strict frozen-backbone setting, and empirically compare kernelized, gated, and delta-based linear attention mecha-nisms as replacements for causal self-attention. • We provide a first-order approximation proving delta-based mechanisms faithfully capture the key-dependent, rank-1 dynamics of softmax attention, unlike pure gated updates. • We empirically demonstrate how practical interventions including SWA, sink tokens, and limited Q/K/V adaptation (e.g. short convolutions) compensate for approximation gaps. • We outperform prior post hoc baselines on MMLU, match the long-context retrieval of complex adaptive token-caching frameworks, and remain competitive across all downstream tasks, all while demonstrating effectiveness in hybrid settings and consistent scaling across LLaMA and Qwen models up to 32B parameters. 
+
+2 Background and Related works 
+
+Linear-Time Sequence Models. We build upon linear-time models that serve as primitives for transformer linearization. Early kernelized approaches, such as Performer [ 4 ] and later softmax-mimicking designs such as Hedgehog/Porcupine [ 27 ] develop feature-map based approximations to softmax attention, while recurrent and state-based models such as Gated Linear Attention (GLA) [ 23 ], delta-rule linear transformers [24], RetNet [16], Longhorn [10], Gated Delta Networks (GDN) [22], Kimi Linear [ 19 ], and transformer-SSM views of Mamba-style models [ 6 , 7] provide increasingly ex-pressive state updates for long-context modeling. These works motivate the replacement mechanisms studied here, but they are typically introduced as standalone architectures or pretraining recipes rather than analyzed as drop-in substitutes for frozen pretrained attention blocks. 
+
+Post-Hoc Linearization of Pretrained Transformers. Our work directly relates to post-hoc lin-earization, which converts full-attention transformers into subquadratic models for efficient inference. To recover the performance lost during this conversion, existing approaches frequently employ vari-ous structural interventions. These include intra-layer hybrid attention mechanisms, where Sliding Window Attention (SWA) is combined with the linear path to preserve essential local context, as seen in LoLCATs [ 26 ] and Liger [ 8 ]. Some works also rely on sparse caching strategies such as attention sinks and hybrid token selection in LoLA [ 11 ], STILL [ 12 ], and Lizard [ 20 ], to maintain exact long-range retrieval. Other common components include adaptive distillation [ 15 ], direct layerwise linearization [13], and low-rank adaptation (LoRA) on the original Q, K, V projections [26, 11]. While these interventions reduce the downstream performance gap, combining them obscures the approximation capacity of linear state updates. We therefore evaluate linear updates in a frozen - backbone setting to isolate their limitations. After identifying these gaps both theoreti-cally and empirically, we reintroduce SWA, sink tokens, short convolutions, and hybrid routing to assess their contribution. 
+
+3 Full Attention Approximation via Linear Mechanisms 
+
+We study the problem of approximating pretrained causal self-attention using linear-time mechanisms while minimizing architectural changes and finetuning overhead. Consider a pretrained transformer with a causal attention block, our goal is to replace each attention block with a mechanism that has linear complexity with respect to the number of tokens, while preserving downstream task performance as much as possible. 2Wk Wv Wq                                  
+
+> RMSNorm RMSNorm
+> Softmax Attention
+> kiviqi
+> RoPE RoPE
+> WkWvWq
+> RMSNorm RMSNorm
+> Hedgehog Linear Attention
+> kiviqi
+> RoPE RoPE
+> 𝜑 𝜑
+> WkWvWq
+> RMSNorm RMSNorm
+> Gated Linear Attention (GLA)
+> kiviqi𝛼 i
+> RoPE RoPE
+> L2 norm L2 norm
+> W𝛼
+> r2
+> W𝛼
+> r1
+> 𝜎
+> 𝑥 𝑥 𝑥
+> WkWvWq
+> RMSNorm RMSNorm
+> Gated DeltaNet (GDN)
+> kiviqi𝛼 i𝛽 i
+> RoPE RoPE
+> L2 norm L2 norm W𝛽
+> 𝑥
+> 𝜎 𝜎
+> W𝛼
+> r2
+> W𝛼
+> r1
+> (a) (b) (c) (d)
+
+Figure 1: Attention replacement blocks evaluated in our strict frozen-backbone setting. Blue  
+
+> `
+
+markers denote frozen pretrained parameters. The pretrained parameters including Wq ,Wk,Wv ,and RMSNorm parameters are kept frozen, while only the newly introduced mechanism-specific parameters are trained. (a) Standard Softmax. (b) Hedgehog [ 27 ] replaces the softmax kernel with learned feature maps φ. (c) GLA [ 23 ] introduces an input-dependent decay αi. (d) GDN [ 19 ] applies a key-dependent rank-1 delta update via βi. σ denotes sigmoid function. 
+
+3.1 Overview of Linear Attention Mechanisms 
+
+We consider two families of linear mechanisms used for attention replacement: normalized kernel attention and state-based unnormalized attention . In Figure 1 we present as overview of the linear attention mechanism we use for linearization of the Softmax Attention. Recall that Softmax Attention can be written as 
+
+yt = X
+
+> i≤t
+
+exp( q⊤ 
+
+> t
+
+ki/√d)
+
+P 
+
+> j≤t
+
+exp( q⊤ 
+
+> t
+
+kj /√d) vi. (1) The exponential kernel exp( q⊤k) can be viewed as a similarity function K(q, k ), motivating kernel-based approximations. 
+
+3.1.1 Kernelized Linear Attention 
+
+Following prior work on kernelized linear attention, we approximate the softmax kernel using feature maps ϕ : Rd → Rd′
+
+such that exp( q⊤k) ≈ ϕ(q)⊤ϕ(k). Substituting this into attention yields 
+
+yt = ϕ(qt)⊤St
+
+ϕ(qt)⊤Zt
+
+, St = X
+
+> i≤t
+
+ϕ(ki)v⊤ 
+
+> i
+
+, Zt = X
+
+> i≤t
+
+ϕ(ki), (2) This form explicitly normalizes attention weights. The denominator Zt acts as a running partition function shared across values. 
+
+Hedgehog. Following prior linearization works [26], we consider Hedgehog [27] feature maps. 
+
+ϕ(x) = σ(xW ) ⊕ σ(−xW ), (3) where x is keys or queries vector, σ denotes softmax and ⊕ is a concatenation operator. 
+
+3.1.2 State-Based Linear Attention without Normalization (GLA, GDN) 
+
+In contrast, Gated Linear Attention (GLA) and Gated DeltaNet (GDN) do not explicitly normalize attention weights. These methods maintain a recurrent state St such that 
+
+yt = q⊤ 
+
+> t
+
+St, St = U(St−1, k t, v t), (4) where U is a general form of a linear or affine update. However, by unrolling the recurrence, we can rewrite them in the same format. GLA [23] updates the state using 
+
+St = GtSt−1 + k⊤ 
+
+> t
+
+vt, (5) where the forget gate is usually chosen to be a diagonal input-dependent matrix Gt = diag( αt).Gated Delta Net [22] augments gated linear attention with a delta rule [24]: 
+
+St = ( I − βtktk⊤ 
+
+> t
+
+)GtSt−1 + βtk⊤ 
+
+> t
+
+vt, (6) where βt is an input-dependent per-head scalar. Note that originally GDN used a per-head scalar gate instead of a diagonal matrix. Kimi Linear [ 19 ] extended it to the same form as GLA. Unless stated explicitly, we will refer to the Kimi version of GatedDeltaNet as GDN. 33.2 From Softmax to Delta Rules: A First-Order Approximation View 
+
+Kernelized linear attention methods replace the softmax kernel with a factorized feature-map rep-resentation, yielding a computationally linear form that often serves as a faithful approximation to softmax attention [ 4, 14 ]. In contrast, for state -space linear attention variants such as GLA and Gated DeltaNet, it remains unclear whether their update rules correspond to softmax attention, despite strong empirical pre -training performance. In this work, we derive a first -order approximation to softmax attention and show that its structure aligns with Gated DeltaNet, supporting its suitability for linearization. To understand why delta-based mechanisms are a faithful approximation of attention, we analyze attention outputs as weighted sums of values. The attention output at time t (before the output projection) can be written as a weighted sum of values yt = P 
+
+> i≤t
+
+Pt,i vi, where Pt,i are the causal attention weights. For full softmax attention, they take the following form: 
+
+P full  
+
+> i
+
+= exp   1√d q⊤ki
+
+Ptj=1 exp   1√d q⊤kj
+
+ . (7) These weights are normalized, nonnegative, and depend jointly on the current query and all previous keys, inducing adaptive reweighting and implicit forgetting. 
+
+Gated Linear Attention (GLA). GLA induces implicit weights 
+
+P GLA  
+
+> i
+
+= q⊤h tY
+
+> j=i+1
+
+diag( αj )
+
+i
+
+ki = q⊤Wiki, (8) The decay matrix Wi depends on recency, since is a product of vector-valued gates αj ∈ (0 , 1) d, but is query- and key-independent. 
+
+Gated DeltaNet (GDN). DeltaNet induces weights 
+
+P ∆ 
+
+> i
+
+= βi q⊤Wi
+
+ tY
+
+> j=i+1
+
+(I − βj kj k⊤ 
+
+> j
+
+)
+
+
+
+ki, (9) Unlike GLA, the effective weights depend explicitly on previous keys via rank-1 operators. Each factor (I − βj kj k⊤ 
+
+> j
+
+) preserves components orthogonal to kj while downweighting the rest. 
+
+3.2.1 Derivations 
+
+We start from the softmax attention weights P full  
+
+> i
+
+and aim to approximate them with something of the form q⊤Ak i for some matrix A, linking it to linear attention. 
+
+Lemma 1 (First–order Taylor approximation of softmax) . Let p(x) = softmax( x), xi = q⊤ 
+
+> t
+
+ki, and 
+
+¯x = 1
+
+> t
+
+Ptj=1 xj . Then for each index i,
+
+pi(x) = 1
+
+t + 1
+
+t
+
+ xi − ¯x + ε(1)  
+
+> i
+
+(x),
+
+where the error term satisfies 
+
+∥ε(1) (x)∥∞ ≤ 12 ∥x∥22.
+
+See Appendix A.1 for the proof. Substituting xi = q⊤ 
+
+> t
+
+ki/√d gives pi(x) ≈ 1 
+
+> t
+
++ 1 
+
+> t√d
+
+q⊤ 
+
+> t
+
+(ki − ¯k).
+
+Lemma 2 (Projection approximation) . Define the mean key and the projection matrix 
+
+¯k = 1
+
+t
+
+> t
+
+X
+
+> j=1
+
+kj , Π¯k = ¯k¯k⊤
+
+∥¯k∥2 .
+
+Assume all keys are normalized, ∥ki∥ = 1 for all i. Then 
+
+ki − ¯k = ( I − Π¯k)ki + ri, (10) 
+
+where the residual satisfies ∥ri∥ ≤ | cos( αi) − 1| + |1 − ∥ ¯k∥| , and αi is the angle between ki and ¯k.
+
+4Here, we replace subtraction of the average with the projection orthogonal to the average key. This introduces an error that vanishes when keys are directionally aligned ( αi = 0 ) and concentrated around their mean ( ∥¯k∥ ≈ 1). See App. A.2 for the proof. Combining these two steps, we showed that P full  
+
+> i
+
+≈ 1 
+
+> t√d
+
+q⊤(I − Π¯k)ki + 1 
+
+> t
+
+.
+
+Lemma 3 (Rank–1 product approximation) . Let ∥kj ∥ = 1 and define 
+
+Mt =
+
+> t
+
+Y
+
+> j=1
+
+Dj , where Dj = I − βj kj k⊤ 
+
+> j
+
+, and βj ∈ (0 , 1) ,
+
+Then 
+
+Mt = I −
+
+> t
+
+X
+
+> j=1
+
+βj kj k⊤ 
+
+> j
+
++ Et, ∥Et∥2 ≤ C t (max  
+
+> j
+
+βj )2.
+
+If the vectors kj are concentrated around their mean ¯k = 1
+
+> t
+
+Ptj=1 kj , then 
+
+Mt ≈ I − c Π¯k, Π¯k = ¯k¯k⊤
+
+∥¯k∥2 ,
+
+for some scalar c ≥ 0.
+
+See App. A.3 for the proof. This final approximation steps allow us to replace a single projection to the direction orthogonal to the mean key with the sequence of projection that depend on all the keys. Combining it with the previous result, we obtain the following approximation to the full attention weights: 
+
+P full  
+
+> i
+
+≈ 1
+
+t√d q⊤ Y
+
+> j
+
+(I − βj kj k⊤ 
+
+> j
+
+)ki + 1
+
+t , (11) which aligns with the linear attention weights we get when using delta rule (Eq. 9). Note that while the Taylor expansion yields a constant bias 1 
+
+> t
+
+, practical GDN implementations do not have it, focusing entirely on capturing the dynamic, key-dependent variance. For large t values, this becomes negligible; however, we expect it to lead to higher approximation error at the beginning of the sequence. 
+
+3.2.2 Gated Linear Attention with Key-Dependent Gate 
+
+These approximations demonstrate that delta-based updates capture the first-order dynamics of softmax attention, while purely gated accumulation does not. However, we can potentially reduce the gap between the two linear kernels by introducing key - dependent gating. Standard GLA attention (defined in Eq. 8) computes a product of diagonal matrices, which only depends on the hidden states 
+
+hj through the gates αj = σ(W g hj ). To make GLA a better approximation of full attention, while preserving its hardware-efficient diagonal structure, we suggest using the following form: 
+
+yt = X
+
+> i
+
+(q⊤ tY
+
+> j=i+1
+
+diag( αj )
+
+
+
+I − βj Diag  kj ⊙ kj
+
+ki)vi (12) where we use the same βj as in GDN. We refer to this variant as kGLA (Key-Gated Linear Attention). While this diagonal approximation Diag( kj ⊙ kj ) is inherently less expressive than the exact rank-1 update kj k⊤ 
+
+> j
+
+used in the delta rule, it may serve as a stronger structural prior for GLA models and allows us to leverage existing highly optimized GLA kernels. 
+
+3.3 Empirical Evaluation Setup. We start by evaluating linear blocks without additional components like SWA or LoRA. We replace all layers in our full-attention baselines (L LAMA 3.1-8 B and Q WEN 3-8 B-B ASE ) with corre-sponding linear blocks. We use the FLA 2 library for efficient GLA and GDN kernel implementations. For Hedgehog, we use FLA implementation of the feature maps ϕ and implement its chunk-wise-parallel form for training and recurrent form for inference in pytorch . We freeze all parameters of 
+
+> 2Flash Linear Attention [25]
+
+50     
+
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> GPU Memory Usage (GB)
+> 2K 4K 8K 16K 32K
+> Context Length
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> 20.0
+> Latency (sec.)
+> GLA (FLA)
+> GDN (FLA)
+> Attention (FA2)
+> Hedgehog (Torch)
+> Latency (left axis)
+> Memory (right axis)
+
+(a) Latency 0 5 10 15 20 25 30  
+
+> Layer index
+> 10 0
+> Normalised MSE
+> GLA
+> GDN
+> kGLA
+> Hedgehog
+
+(b) MSE Per Layer 0 50 100 150 200 250 300 350 400  
+
+> Token position
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> Normalised MSE
+> Model
+> GLA
+> GDN
+> kGLA
+> Hedgehog
+> trained
+> untrained
+
+(c) MSE per Token 
+
+Figure 2: Comparison of linear attention variants for Llama3.1-8b linearization. [0.78, 
+
+> 0.82)
+> [0.82,
+> 0.83)
+> [0.83,
+> 0.85)
+> [0.85,
+> 0.87)
+> [0.87,
+> 0.91)
+> Key concentration bin
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> Normalised MSE
+> Key concentration vs. MSE
+> GLA
+> GDN
+> [0.08,
+> 0.09)
+> [0.09,
+> 0.10)
+> [0.10,
+> 0.11)
+> [0.11,
+> 0.12)
+> [0.12,
+> 0.14)
+> Projection residual bin
+> Normalised MSE
+> Projection residual vs. MSE
+> GLA
+> GDN
+
+(a) Per layer normalized MSE 0 50 100 150 200 250 300 350 400  
+
+> Token index
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Projection residual
+> Key Concentration
+
+(b) Token index 
+
+Figure 3: Key Concentration and Projection Residual for LLama3.1-8b the original model and train only the newly added parameters. We show the parametrization of the linear attention models as well as frozen and trainable parameters in Figure 1. See App. C for the full list of hyperparameters and implementation details. We train the model end-to-end with the standard next-token prediction loss (cross-entropy) on the DCLM-Edu [ 9 , 1] dataset for 10M tokens. We pack sequences to 4096 tokens and perform 2,500 training iterations, with batch size 1. Training GLA and GDN variants takes 1 hour on a single H100 GPU. Training Hedgehog takes approximately 8 hours, due to the absence of a Triton implementation. Note that this setting is intentionally stricter than most prior linear-attention work: we do not perform a distillation step, do not modify the original Q, K, V projections, and do not add sliding-window attention. This allows us to isolate the approximation properties of the linear mechanisms themselves. 
+
+Latency, Memory, and Approximation Error. Figure 2(a) shows latency and memory as a function of context size. Linear attention yields substantial memory savings, enabling evaluation up to 32k tokens, whereas FA2 runs out of memory in our setup. Latency gains are modest below ∼8k tokens, consistent with optimized quadratic kernels remaining competitive at short contexts. Figures 2(b–c) report the layerwise and tokenwise normalized MSE between the frozen full-attention outputs and the linearized replacements. GDN consistently achieves lower MSE than other linear ker-nels. As predicted by our first-order analysis, error is largest early in the sequence: the softmax Taylor expansion includes a uniform bias term 1/t that standard GDN/GLA implementations omit, making the first few timesteps harder to match when t is small. While this is not identical to the attention sink effect [ 21 ], it reflects a related observation: decoder-only LMs often place disproportionately high attention mass on the first tokens, producing sharp prefix attention patterns that are difficult for linear mechanisms to approximate. We refer to these prefix positions as sink tokens throughout. Finally, Key-Gated Linear Attention (green) has lower MSE at initialization than GLA (orange), as shown by the dashed curves, but this gap largely disappears after training. This suggests lightweight fine-tuning mitigates the initialization advantage and that performance is ultimately capped by the diagonal gate structure. In contrast, the rank-1 update in GDN yields both better initialization and better final approximation. See App. B.1 for full implementation details and Qwen3-8B results. 
+
+Assumption Checks: Residuals and Key Concentration. We empirically evaluate the assump-tions used in Sec. 3.2 in Fig. 3 for the Llama3.1-8B base model. See App. B.1 for full implementation details and Qwen3-8B results. First, we report the projection residual (Lemma 2; Eq. 10), which quantifies the error incurred when replacing mean subtraction (˜ki − ¯kt) with orthogonal projection (I − Π¯kt )˜ki. As shown in Fig. 3(a), larger residuals correlate with higher approximation error (normalized MSE). Fig. 3(b) further shows that residual is largest at the beginning of the sequence, consistent with early tokens being hardest to approximate. Second, we measure key concentration (Lemma 3) by computing the running mean 6Table 1: Downstream performance of the linearized models without SWA and fully fixed Q, K, V. Averaged over 3 random seeds. See App. B.1 for detailed results. Llama3.1 8b Qwen3 8b Param CR MMLU Lambada Param CR MMLU Lambada Full Attention — 73.98 65.25 74.79 — 73.73 76.94 70.95 GLA 4.3M 61.81 ±0.07 27.13 ±0.47 28.26 ±0.11 4.7M 52.04 ±0.02 24.50 ±0.07 11.29 ±0.07                                                 
+
+> kGLA 8.5M 62.60 ±0.02 27.37 ±0.09 27.49 ±0.31 9.6M 52.76 ±0.09 25.23 ±0.23 11.33 ±0.19
+> GDN 8.5M 63.08 ±0.09 27.55 ±0.36 44.67 ±0.26 9.6M 56.55 ±0.12 25.57 ±0.23 23.60 ±0.33
+> Hedgehog 10.6M 36.13 ±0.02 24.95 ±0.03 0.00 ±0.00 11.9M 35.90 ±0.06 22.91 ±0.01 0.00 ±0.00
+> Gap with Full, % 10.9 37.7 30.12 17.18 51.37 47.35
+
+Table 2: Downstream performance of the linearized models: SWA and Sink Token, averaged over 3 random seeds. See App. B.2 for detailed results. Llama3.1 8b Qwen3 8b Param CR MMLU Lambada Param CR MMLU Lambada Full Attention — 73.98 65.25 74.79 — 73.73 76.94 70.95                                                                                           
+
+> SWA  GLA 4.3M 68.52 ±0.07 39.50 ±0.60 36.19 ±0.14 4.7M 71.08 ±0.01 48.10 ±0.51 52.55 ±0.21
+> kGLA 8.5M 68.36 ±0.03 37.63 ±0.02 36.86 ±0.16 9.6M 71.13 ±0.05 48.86 ±0.53 53.30 ±0.22
+> GDN 8.5M 68.73 ±0.03 51.57 ±0.77 41.92 ±0.22 9.6M 71.44 ±0.07 53.70 ±0.20 59.30 ±0.13
+> SWA
+> + Sink  GLA 4.3M 73.07 ±0.01 44.25 ±0.08 59.31 ±0.11 4.7M 73.10 ±0.03 67.40 ±0.05 56.50 ±0.29
+> kGLA 8.5M 73.05 ±0.02 43.28 ±0.03 59.57 ±0.19 9.6M 73.08 ±0.01 67.70 ±0.17 57.05 ±0.12
+> GDN 8.5M 73.81 ±0.00 58.88 ±0.14 68.82 ±0.13 9.6M 73.46 ±0.01 70.97 ±0.18 64.53 ±0.04
+> Gap with Full, % 0.17 6.37 5.97 0.27 5.97 6.42
+
+of normalized keys and taking the cosine similarity between each key and the (normalized) running mean direction. Higher concentration corresponds to keys aligning with a dominant direction, the regime in which the rank-1 product in Lemma 3 behaves like a structured projection. We again observe a favorable trend: lower concentration is associated with higher MSE, and the first tokens exhibit the lowest concentration. 
+
+Downstream Evaluation. Table 1 reports zero-shot performance via LM-Eval [ 17 ] on five com-mon reasoning benchmarks (CR): Physical Interaction QA (PIQA), ARC Easy, ARC Challenge, HellaSwag, WinoGrande. We also report 5-shot MMLU and Lambada (OpenAI) accuracy. Notably, the state-based mechanisms (GLA/kGLA/GDN) substantially outperform the kernelized Hedgehog replacement. This separation without state-space models aligns with our first-order view: delta-style updates natively implement key-dependent rank-1 corrections that match the geometry induced by softmax, whereas purely kernelized feature maps must learn an adequate similarity representation under tight adaptation constraints. To bridge the remaining gap, prior work typically introduces structural compensations like SWA [ 26 ,8], and LoRA over projection layers. In the next sections, we reintroduce these components in a controlled manner to isolate which interventions most effectively compensate for the residual approximation errors observed in the pure replacement setting. 
+
+4 Improving Linear Attention Block Design 
+
+Adding Sliding Window Attention. Combining linear attention with sliding-window attention (SWA) has been shown to substantially improve downstream performance of linearized models [ 8,26 , 11 , 20 ]. Let w be the sliding-window size and let yswa  
+
+> t
+
+denote the SWA output for token t. In Liger-GLA [ 8 ], the total output takes the form yt = 0 .5 qtSt + 0 .5 yswa  
+
+> t
+
+. Tokens inside the window (i ∈ [t − w, t ]) contribute through both the linear and SWA paths, while tokens outside the window (i ∈ [1 , t − w)) contribute only through the linear path. Instead, we use: 
+
+yt = qtSt−w + yswa  
+
+> t
+
+, (13) so each token contributes either via the linear path or via SWA (no mixing weights). This is inspired by LoLCaTs [ 26 ]. Since we use a simpler form of linear attention, we do not need to change the normalization constant, and we can compute both components independently using standard kernels: 
+
+FA2 3 for SWA and FLA for the LA part. 
+
+> 3Flash Attention 2 [5]
+
+7Table 3: Downstream performance of the linearized models: LoRA or Short Convolution (SC), averaged over 3 random seeds. See App. B.3 for detailed results. Llama3.1 8b Qwen3 8b Param CR MMLU Lambada Param CR MMLU Lambada Full Attention — 73.98 65.25 74.79 — 73.73 76.94 70.95                                                                                           
+
+> SC  GLA 6.1M 73.82 ±0.01 59.13 ±0.18 68.70 ±0.12 6.9M 73.52 ±0.02 70.58 ±0.17 64.20 ±0.05
+> kGLA 10.3M 73.80 ±0.00 59.02 ±0.12 68.65 ±0.11 11.6M 73.51 ±0.03 70.75 ±0.17 64.20 ±0.06
+> GDN 10.3M 73.77 ±0.02 59.17 ±0.17 69.01 ±0.03 11.6M 73.49 ±0.00 71.10 ±0.13 64.64 ±0.12
+> LoRA  GLA 11.1M 71.71 ±0.09 50.10 ±0.59 67.51 ±1.16 12.5M 74.67 ±0.20 65.99 ±0.27 66.65 ±0.35
+> kGLA 15.3M 71.65 ±0.24 49.95 ±0.39 67.79 ±0.60 17.3M 74.97 ±0.08 66.29 ±0.30 65.48 ±0.51
+> GDN 15.3M 72.80 ±0.25 54.80 ±2.79 70.29 ±1.96 17.3M 75.17 ±0.21 69.61 ±0.19 67.94 ±0.77
+> Gap with Full, % 0.16 6.08 4.50 -1.44 5.84 3.01
+
+Our analysis also shows that the first few tokens are the hardest to approximate with linear attention. We therefore split a fixed SWA budget between w local-window tokens and s sink tokens . Follow-ing [ 26 ], we fix the budget to 64 tokens and use a 56-token sliding window with 8 sink tokens. The final output is: 
+
+yt = qtSs:t−w + yswa  
+
+> t
+
+, yswa  
+
+> t
+
+=
+
+P 
+
+> i∈I
+
+exp( q⊤ 
+
+> t
+
+ki/√d) vi
+
+P 
+
+> i∈I
+
+exp( q⊤ 
+
+> t
+
+ki/√d) , I = {1, . . . , s, t − w, . . . , t }. (14) Note that yswa  
+
+> t
+
+can be computed efficiently with FA2 , while the linear term can be computed with existing FLA kernels, enabling efficient training and inference. We report the result for three linear kernels and two backbone model in Table 2. Consistent with the prior works, adding sliding window to the linear layer reduces the gap with the full attention that we observe in Table 1. Furthermore, keeping the cache budget fixed to 64 tokens and allocating 8 of them to the sink instead of the sliding window, improved performance even further. This result is consistent across linear attention types and backbone architectures. 
+
+Adapting Q/K/V. Performance can be improved further by allowing modifications to the original model’s Q, K, and V projections, for which we consider LoRA and short convolutions. We keep all hyperparameters fixed, except reducing the LoRA learning rate to 5e-4 due to training instability. We report results in Table 3. We find that the gap between models with and without the delta rule almost disappears when we introduce short convolutions. A similar phenomenon was observed in [ 2 ], where a GLA model trained from scratch was able to catch up with GDN after adding short convolutions. For most benchmarks, short convolutions outperform LoRA. However, this may be due to the lower learning rate noted above, and we hypothesize that LoRA could benefit from longer training (e.g., 20M tokens, as used in prior work [8, 26]). A risk of this setup is that the additional representational capacity introduced by short convolutions and LoRA increases the likelihood of forgetting or overfitting to the training data. This becomes evident when comparing MMLU accuracy, which is more knowledge-based, versus LAMBADA, which is context-based. MMLU accuracy benefits little from short convolutions or LoRA, and the accuracy gap between full and linear models remains around 6%. For LAMBADA, by contrast, the gap shrinks, indicating that additional capacity helps the model handle context more effectively. 
+
+5 Final Evaluation 
+
+In the previous section, we established that GDN consistently outperforms other linear variants. While prior work shows SWA is essential for recovering performance, our analysis (Sec.3.2) revealed that linear mechanisms fundamentally struggle to approximate the attention patterns of early sequence tokens. Finally, short convolutions are added to enhance representational capacity. We now evaluate this final setup further, comparing it to other linearization methods, adding long context benchmarks, other models sizes and testing its performance in hybrid setting. 
+
+Common Reasoning. Table 4 reports our final results and compares against prior linearization methods. Under the same 64-token sliding-window budget used by prior work, our linearized model matches or exceeds the best existing linearization baselines on the common reasoning suite, while requiring substantially fewer additional training tokens. In particular, we outperform LoLCaT [ 26 ]and Liger-GLA [ 8] on 5-shot MMLU, yielding a noticeably smaller gap to the full-attention teacher. 8Table 4: LLama3.1-8b Linearization results comparison with previous works. Model Tok. (B) Cache Size Param. PIQA ARC-e ARC-c Hella. Wino. MMLU Avg. LLaMA 3.1 8B - ∞ - 79.05 82.15 54.78 79.34 74.59 65.25 72.52                                                                                                           
+
+> Linearized
+> Llamba 12 08B 80.9 82.5 54.6 77.6 73.3 60.0 71.5 LolCaT 0.04 64 80.96 82.37 54.44 79.07 69.69 54.88 70.24 Liger-GLA 0.02 64 80.5 81.8 55.6 75.4 69.5 46.9 68.3 OURS (GDN) 0.01 64 10.3M 79.07 ±0.02 81.97 ±0.01 54.92 ±0.08 78.79 ±0.07 74.11 ±0.00 59.17 ±0.17 71.34 ±0.05
+> Extended Cache budget
+> Lizard 0.04 132 82 83.5 56.7 79.3 71.7 61.2 74.6 LoLa 0.04 128 81.6 82.5 55.4 79.8 73.6 57.6 71.75 STILL (concurrent) 0.04 NA 81.3 83.0 56.7 79.0 73.4 61.3 72.5 OURS (GDN) 0.01 128 10.3M 79.16 ±0.00 82.15 ±0.00 54.86 ±0.00 79.34 ±0.00 74.11 ±0.00 63.22 ±0.13 72.14 ±0.02 0.6b 1.7b 4b 8b 14b 32b
+> Model size
+> 40
+> 50
+> 60
+> 70
+> 80
+> Accuracy (%)
+> Common Reasoning
+> Base
+> Linear (GDN)
+> 0.6b 1.7b 4b 8b 14b 32b
+> Model size
+> MMLU
+> Base
+> Linear (GDN)
+> 0.6b 1.7b 4b 8b 14b 32b
+> Model size
+> Lambada
+> Base
+> Linear (GDN)
+
+Figure 4: Downstream accuracies for linearized Qwen3 models of various sizes. See App. B.5 for detailed results. 0 20 40 60 80 100      
+
+> % full layers
+> 60.0
+> 62.5
+> 65.0
+> 67.5
+> 70.0
+> 72.5
+> 75.0
+> Accuracy (%)
+> MMLU
+> Full attn (65.2%)
+> All linear (59.2%)
+> Hard layers
+> Frequency
+> 020 40 60 80 100
+> % full layers
+> Lambada
+> Full attn (74.8%)
+> All linear (69.0%)
+> Hard layers
+> Frequency
+
+Figure 5: Hybrid setting: keeping full attention for 10% to 50% layers . Finally, our approach is competitive with Llamba [ 3] on common reasoning despite Llamba relying on full-model finetuning over a much larger token budget (12B), highlighting the strength of delta-style updates plus minimal compensations in the post hoc setting. Several recent linearization works further improve performance by augmenting the caching strategy beyond a fixed 64-token sliding window, typically by retaining additional globally important tokens. Lizard [ 20 ] uses 128 cache tokens and 4 meta, while LoLA [ 11 ] and STILL [ 12 ] select additional 64 cache tokens with content-based criteria. These mechanisms are complementary to our approach: even without specialized selection, simply matching their total cache budget by enlarging the sliding window already yields stronger 5-shot MMLU (Table 4). We expect that combining GDN-based linearization with content-aware token selection could further improve performance at a fixed budget. 
+
+Long Context. To evaluate long-context capabilities, we use S-NIAH and an extended RULER benchmarks (App. 9). Under the fair 128-window comparison, we outperform prior linearization baselines, and with a larger cache budget it becomes competitive with strong caching-based methods. 
+
+Scalability. To assess the scalability of the linearization approach to models of various sizes, we apply it to the full line of dense Qwen3 models from 0.6B to 32B parameters. We use Base models, except for the largest 32B version, for which only an instruction-tuned variant is available. The results in Figure 4 show that the linearized performance scales consistently with the original base model. 
+
+Hybrid Model. We evaluate a hybrid setting where only a subset of layers retain full attention and the remaining layers are replaced with GDN (Fig. 5). We select the retained full-attention layers either (i) uniformly across depth or (ii) using our hardness signals (key concentration and projection residual) to preferentially keep the hardest-to-linearize layers. We consider keeping 10% - 50% of layers; for LLaMA-3.1-8B (32 layers), this corresponds to retaining 3 - 16 full attention layers. When only a small fraction of layers is kept (10, 20%), the metrics-based selection improves Lambada accuracy compared to uniform selection (Fig. 5), indicating that preserving a few hard layers is particularly beneficial for context-dependent evaluation. 
+
+6 Conclusion and Limitations 
+
+We study post hoc transformer linearization starting from a strict regime, and progressively relax it to quantify the effect of additional components (SWA, a small “sink-token” budget, and Short Convolutions). In the strict setting, delta-style updates are the most performant replacement, aligning with our first-order view that softmax induces key-dependent rank-1 corrections. With the final recipe, we match full attention model on common reasoning benchmarks, outperform prior linearization baselines on MMLU, and match the long-context performance of complex adaptive-caching frame-works. Limitations: Our first-order theory relies on approximate assumptions that may not hold uniformly across layers or very short prefixes. We leave the extension of adaptive caching strategies to GDN linearization to future works. 9References 
+
+[1] Loubna Ben Allal, Anton Lozhkov, Elie Bakouch, Gabriel Martín Blázquez, Guilherme Penedo, Lewis Tunstall, Andrés Marafioti, Hynek Kydlíˇ cek, Agustín Piqueres Lajarín, Vaibhav Srivastav, Joshua Lochner, Caleb Fahlgren, Xuan-Son Nguyen, Clémentine Fourrier, Ben Burtenshaw, Hugo Larcher, Haojun Zhao, Cyril Zakka, Mathieu Morlon, Colin Raffel, Leandro von Werra, and Thomas Wolf. Smollm2: When smol goes big – data-centric training of a small language model, 2025. [2] Zeyuan Allen-Zhu. Physics of language models: Part 4.1, architecture design and the magic of canon layers. arXiv preprint arXiv:2512.17351 , 2025. [3] Aviv Bick, Tobias Katsch, Nimit Sohoni, Arjun Desai, and Albert Gu. Llamba: Scaling distilled recurrent models for efficient language processing. arXiv preprint arXiv:2502.14458 , 2025. [4] Krzysztof Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Davis, Afroz Mohiuddin, Lukasz Kaiser, et al. Rethinking attention with performers. arXiv preprint arXiv:2009.14794 , 2020. [5] Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. [6] Tri Dao and Albert Gu. Transformers are ssms: Generalized models and efficient algorithms through structured state space duality. arXiv preprint arXiv:2405.21060 , 2024. [7] Evgenii Egorov, Hanno Ackermann, Markus Nagel, and Hong Cai. Myosotis: structured computation for attention like layer. arXiv preprint arXiv:2509.20503 , 2025. [8] Disen Lan, Weigao Sun, Jiaxi Hu, Jusen Du, and Yu Cheng. Liger: Linearizing large language models to gated recurrent structures. arXiv preprint arXiv:2503.01496 , 2025. [9] Jeffrey Li, Alex Fang, Georgios Smyrnis, Maor Ivgi, Matt Jordan, Samir Gadre, Hritik Bansal, Etash Guha, Sedrick Keh, Kushal Arora, et al. Datacomp-lm: In search of the next generation of training sets for language models. Advances in Neural Information Processing Systems ,37:14200–14282, 2024. [10] Bo Liu, Rui Wang, Lemeng Wu, Yihao Feng, Peter Stone, and Qiang Liu. Longhorn: State space models are amortized online learners. arXiv preprint arXiv:2407.14207 , 2024. [11] Luke McDermott, Robert W Heath Jr, and Rahul Parhi. Lola: Low-rank linear attention with sparse caching. arXiv preprint arXiv:2505.23666 , 2025. [12] Weikang Meng, Liangyu Huo, Yadan Luo, Jiawen Guan, Jingyi Zhang, Yingjian Li, and Zheng Zhang. Still: Selecting tokens for intra-layer hybrid attention to linearize llms. arXiv preprint arXiv:2602.02180 , 2026. [13] Jean Mercat, Igor Vasiljevic, Sedrick Keh, Kushal Arora, Achal Dave, Adrien Gaidon, and Thomas Kollar. Linearizing large language models. arXiv preprint arXiv:2405.06640 , 2024. [14] Zhen Qin, Weixuan Sun, Hui Deng, Dongxu Li, Yunshen Wei, Baohong Lv, Junjie Yan, Lingpeng Kong, and Yiran Zhong. cosformer: Rethinking softmax in attention. arXiv preprint arXiv:2202.08791 , 2022. [15] Yeonju Ro, Zhenyu Zhang, Souvik Kundu, Zhangyang Wang, and Aditya Akella. On-the-fly adaptive distillation of transformer to dual-state linear attention. arXiv preprint arXiv:2506.09316 , 2025. [16] Yutao Sun, Li Dong, Shaohan Huang, Shuming Ma, Yuqing Xia, Jilong Xue, Jianyong Wang, and Furu Wei. Retentive network: A successor to transformer for large language models. arXiv preprint arXiv:2307.08621 , 2023. [17] Lintang Sutawika, Hailey Schoelkopf, Leo Gao, Baber Abbasi, Stella Biderman, Jonathan Tow, Charles Lovering, Jason Phang, Anish Thite, Thomas Wang, et al. Eleutherai/lm-evaluation-harness: v0. 4.9. Zenodo , 2025. 10 [18] Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy Liang, and Tatsunori B. Hashimoto. Stanford alpaca: An instruction-following llama model. 
+
+https://github.com/tatsu-lab/stanford_alpaca , 2023. [19] Kimi Team, Yu Zhang, Zongyu Lin, Xingcheng Yao, Jiaxi Hu, Fanqing Meng, Chengyin Liu, Xin Men, Songlin Yang, Zhiyuan Li, et al. Kimi linear: An expressive, efficient attention architecture. arXiv preprint arXiv:2510.26692 , 2025. [20] Chien Van Nguyen, Ruiyi Zhang, Hanieh Deilamsalehy, Puneet Mathur, Viet Dac Lai, Haoliang Wang, Jayakumar Subramanian, Ryan A Rossi, Trung Bui, Nikos Vlassis, et al. Lizard: An efficient linearization framework for large language models. arXiv preprint arXiv:2507.09025 ,2025. [21] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. [22] Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with delta rule. arXiv preprint arXiv:2412.06464 , 2024. [23] Songlin Yang, Bailin Wang, Yikang Shen, Rameswar Panda, and Yoon Kim. Gated linear attention transformers with hardware-efficient training. arXiv preprint arXiv:2312.06635 , 2023. [24] Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. Parallelizing linear transformers with the delta rule over sequence length. Advances in neural information processing systems , 37:115491–115522, 2024. [25] Songlin Yang and Yu Zhang. Fla: A triton-based library for hardware-efficient implementations of linear attention mechanism, January 2024. [26] Michael Zhang, Simran Arora, Rahul Chalamala, Alan Wu, Benjamin Spector, Aaryan Singhal, Krithik Ramesh, and Christopher Ré. Lolcats: On low-rank linearizing of large language models. 
+
+arXiv preprint arXiv:2410.10254 , 2024. [27] Michael Zhang, Kush Bhatia, Hermann Kumbong, and Christopher Ré. The hedgehog & the porcupine: Expressive linear attentions with softmax mimicry. arXiv preprint arXiv:2402.04347 ,2024. 11 A Proofs 
+
+A.1 Linear Approximation Lemma 4 (First–order Taylor approximation of softmax) . Let p(x) = softmax( x), xi = q⊤ 
+
+> t
+
+ki, and 
+
+¯x = 1
+
+> t
+
+Ptj=1 xj . Then for each index i,
+
+pi(x) = 1
+
+t + 1
+
+t
+
+ xi − ¯x + ε(1)  
+
+> i
+
+(x),
+
+where the error term satisfies 
+
+∥ε(1) (x)∥∞ ≤ 12 ∥x∥22.
+
+Proof. The derivative of softmax is given by the Jacobian 
+
+Jij (x) = pi(x)( δij − pj (x)) .
+
+We evaluate softmax at the zero vector x = 0 . At this point all entries are equal, so 
+
+pi(0) = 1
+
+t .
+
+Substituting into the Jacobian gives 
+
+Jij (0) = 1
+
+t
+
+
+
+δij − 1
+
+t
+
+
+
+.
+
+We apply the first–order Taylor expansion around x = 0 :
+
+p(x) = p(0) + J(0) x + R(x),
+
+where R(x) collects higher–order terms. Since p(0) = 1 
+
+> t
+
+1 and 
+
+J(0) x = 1
+
+t (x − ¯x1) ,
+
+we obtain 
+
+p(x) = 1
+
+t 1 + 1
+
+t (x − ¯x1) + R(x).
+
+Because softmax is smooth, the remainder is bounded by 
+
+∥R(x)∥∞ ≤ 12 ∥x∥22.
+
+Substituting xi = q⊤ 
+
+> t
+
+ki gives 
+
+pi(x) ≈ 1
+
+t + 1
+
+t q⊤ 
+
+> t
+
+(ki − ¯k).
+
+A.2 Projection Lemma 5 (Projection approximation of centering) . Define the mean key and the projection matrix 
+
+¯k = 1
+
+t
+
+> t
+
+X
+
+> j=1
+
+kj , Π¯k = ¯k¯k⊤
+
+∥¯k∥2 .
+
+Assume all keys are normalized ∥ki∥ = 1 for all i. Then 
+
+ki − ¯k = ( I − Π¯k)ki + ri,
+
+where the residual ri satisfies 
+
+∥ri∥ ≤ | cos( αi) − 1| + |1 − ∥ ¯k∥| ,
+
+and αi is the angle between ki and ¯k.
+
+12 Proof. The matrix Π¯k projects any vector onto the direction of ¯k. Applying it to ki gives 
+
+Π¯kki = ¯k ⟨ki, ¯k⟩∥¯k∥2 .
+
+We define the residual as the difference between exact centering and projection: 
+
+ri = ( ki − ¯k) − (I − Π¯k)ki = Π ¯kki − ¯k. 
+
+Substituting the projection formula, 
+
+ri = ¯k
+
+ ⟨ki, ¯k⟩∥¯k∥2 − 1
+
+
+
+.
+
+Because ki is a unit vector, the inner product can be written as 
+
+⟨ki, ¯k⟩ = ∥¯k∥ cos( αi).
+
+Thus 
+
+ri = ¯k
+
+ cos( αi)
+
+∥¯k∥ − 1
+
+
+
+.
+
+Taking norms yields 
+
+∥ri∥ = cos( αi) − ∥ ¯k∥ .
+
+Finally, we rewrite the difference as a sum: 
+
+cos( αi) − ∥ ¯k∥ = (cos( αi) − 1) + (1 − ∥ ¯k∥).
+
+Taking absolute values and using the triangular inequality 
+
+|a + b| ≤ | a| + |b|,
+
+which holds for all real numbers a, b , we obtain 
+
+∥ri∥ ≤ | cos( αi) − 1| + |1 − ∥ ¯k∥| .
+
+A.3 Rank-1 approximation Lemma 6 (Rank–1 product approximation) . Let ∥kj ∥ = 1 and define 
+
+Dj = I − βj kj k⊤ 
+
+> j
+
+, βj ∈ (0 , 1) , Mt =
+
+> t
+
+Y
+
+> j=1
+
+Dj .
+
+Then 
+
+Mt = I −
+
+> t
+
+X
+
+> j=1
+
+βj kj k⊤ 
+
+> j
+
++ Et, ∥Et∥2 ≤ C t (max  
+
+> j
+
+βj )2.
+
+If the vectors kj are concentrated around their mean ¯k = 1
+
+> t
+
+Ptj=1 kj , then 
+
+Mt ≈ I − c Π¯k, Π¯k = ¯k¯k⊤
+
+∥¯k∥2 ,
+
+for some scalar c ≥ 0.Proof. We expand 
+
+Mt =
+
+> t
+
+Y
+
+> j=1
+
+(I − βj kj k⊤ 
+
+> j
+
+).
+
+13 Multiplying out yields 
+
+Mt = I −
+
+> t
+
+X
+
+> j=1
+
+βj kj k⊤
+
+> j
+
++ X
+
+> 1≤j<ℓ ≤t
+
+βj βℓ(kj k⊤ 
+
+> j
+
+)( kℓk⊤ 
+
+> ℓ
+
+) + · · · .
+
+All terms of order two or higher are collected in Et.Each matrix kj k⊤ 
+
+> j
+
+satisfies 
+
+∥kj k⊤ 
+
+> j
+
+∥2 ≤ ∥ kj ∥2 = 1 .
+
+Using 
+
+∥AB ∥2 ≤ ∥ A∥2∥B∥2,
+
+every order m ≥ 2 term is bounded by (max j βj )m. There are at most O(tm) such terms, hence 
+
+∥Et∥2 ≤ C
+
+> ∞
+
+X
+
+> m=2
+
+t(max  
+
+> j
+
+βj )m ≤ C t (max  
+
+> j
+
+βj )2.
+
+If the vectors kj are close in direction to their mean ¯k, then 
+
+kj k⊤ 
+
+> j
+
+≈ cos 2(αj ) ¯k¯k⊤,
+
+where αj is the angle between kj and ¯k. Thus, 
+
+> t
+
+X
+
+> j=1
+
+βj kj k⊤ 
+
+> j
+
+≈
+
+
+
+> t
+
+X
+
+> j=1
+
+βj cos 2(αj )
+
+ ¯k¯k⊤.
+
+Defining 
+
+c =
+
+> t
+
+X
+
+> j=1
+
+βj cos 2(αj ),
+
+with c ≥ 0, we obtain 
+
+Mt ≈ I − c Π¯k.
+
+14 B Detailed Results 
+
+Here we report detailed accuracies for all the benchmarks and additional experimental evaluations. 
+
+B.1 Pure Linear Attention 
+
+Table 5: Downstream performance of the linearized models without SWA and without LoRA. We report the accuracy on common reasoning benchmarks (PiQA, ARC-e, ARC-c, HellaSwag, WinoGrande), 5-shot MMLU and Lambada (OpenAI). For ARC-c and HellaSwag we use normalized accuracy. Results are averaged over 3 random seeds. Model Params. PIQA ARC-e ARC-c Hella. Wino. MMLU (5-shot) Lambada Avg. Llama 3.1 8b – 79.05 82.15 54.78 79.34 74.59 65.25 74.79 72.84 GLA 4.3M 76.02 ±0.17 69.28 ±0.34 38.91 ±0.18 67.57 ±0.09 57.27 ±0.13 27.13 ±0.47 28.26 ±0.11 52.06 ±0.03 
+
+kGLA 8.5M 75.81 ±0.02 71.06 ±0.17 39.79 ±0.41 67.92 ±0.01 58.41 ±0.44 27.37 ±0.09 27.49 ±0.31 52.55 ±0.04 
+
+GDN 8.5M 76.30 ±0.34 70.81 ±0.47 39.36 ±0.27 70.75 ±0.08 58.17 ±0.34 27.55 ±0.36 44.67 ±0.26 55.37 ±0.11 
+
+Hedgehog 10.6M 51.83 ±0.05 26.28 ±0.07 25.97 ±0.27 25.39 ±0.03 51.17 ±0.19 24.95 ±0.03 0.00 ±0.00 29.37 ±0.01 
+
+Qwen3 8b - 79.16 81.73 56.14 78.69 72.93 76.94 70.95 73.79 GLA 4.7M 67.59 ±0.31 58.02 ±0.05 30.12 ±0.38 52.83 ±0.19 51.64 ±0.37 24.50 ±0.07 11.29 ±0.07 42.29 ±0.01 
+
+kGLA 9.6M 67.23 ±0.07 59.61 ±0.31 31.06 ±0.05 53.32 ±0.06 52.57 ±0.09 25.23 ±0.23 11.33 ±0.19 42.91 ±0.08 
+
+GDN 9.6M 68.53 ±0.29 64.79 ±0.15 35.52 ±0.38 59.64 ±0.19 54.28 ±0.23 25.57 ±0.23 23.60 ±0.33 47.42 ±0.08 
+
+Hedgehog 11.9M 52.79 ±0.04 26.52 ±0.02 24.63 ±0.08 25.88 ±0.03 49.67 ±0.27 22.91 ±0.01 0.00 ±0.00 28.91 ±0.04 
+
+Latency and memory All latecy measurements are run on a single NVIDIA H100 GPU with batch size 8. For each prompt length on the x-axis, we (i) run a forward pass on the prompt and then (ii) decode and time the generation of 16 new tokens. We report end-to-end latency for these 16 tokens, and peak GPU memory allocated during the run. We compare the linear attention variants against the full-attention baseline implemented with FlashAttention-2 (FA2) .
+
+Approximation error We compute approximation error as the mean squared error (MSE) between the attention-block outputs of the frozen full-attention model and the outputs produced by the corresponding linearized replacement, evaluated on the same inputs. We use a random subset of 8,000 sequences from the Clean Alpaca [ 18 ] dataset to compute this metric (this can serve as a hold-out set, as we use DCLM-Edu to train the model). For each layer ℓ, we compute 
+
+MSE (ℓ) = 1
+
+T d y(ℓ)
+
+full − y(ℓ)
+
+lin 
+
+22
+
+, nMSE (ℓ) = MSE (ℓ)
+
+Var 
+
+
+
+y(ℓ)
+
+full 
+
+ ,
+
+where y(ℓ)
+
+full , y (ℓ)
+
+lin ∈ RT ×d denote the attention-block outputs for a sequence of length T , and Var( ·) is the empirical variance of the full-attention activations at that layer. 0     
+
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> GPU Memory Usage (GB)
+> 2K 4K 8K 16K 32K
+> Context Length
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> 20.0
+> Latency (sec.)
+> GLA (FLA)
+> GDN (FLA)
+> Attention (FA2)
+> Hedgehog (Torch)
+> Latency (left axis)
+> Memory (right axis)
+
+(a) Latency 0 5 10 15 20 25 30 35   
+
+> Layer index
+> 10 0
+> 6 × 10 1
+> 2 × 10 0
+> 3 × 10 0
+> 4 × 10 0
+> Normalised MSE
+> GLA
+> GDN
+> kGLA
+> Hedgehog
+
+(b) MSE Per Layer 0 50 100 150 200 250 300 350 400  
+
+> Token position
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> Normalised MSE
+> Model
+> GLA
+> GDN
+> kGLA
+> Hedgehog
+> trained
+> untrained
+
+(c) MSE per Token 
+
+Figure 6: Comparison of linear attention variants for Qwen3-8b linearization. 
+
+Assumption Checks: Projection Residuals and Key Concentration Our first-order analysis relies on two empirically checkable conditions: • keys are approximately concentrated around a common direction, and • subtracting the mean key is well-approximated by projecting orthogonally to that mean. We evaluate these conditions via two diagnostics computed from the frozen full-attention model keys. 15 Notation. Let k(ℓ,h )
+
+i ∈ Rd denote the (RoPE-processed) key at layer ℓ, head h, and token position i.Because Lem. 2–3 assume unit-norm keys, we use normalized keys 
+
+˜k(ℓ,h )
+
+i = k(ℓ,h )
+
+i
+
+∥k(ℓ,h )
+
+i ∥2 + ε ,
+
+with a small ε > 0 for numerical stability. For a prefix of length t, define the running mean key direction 
+
+¯k(ℓ,h )
+
+t = 1
+
+t
+
+tX
+
+j=1 
+
+˜k(ℓ,h )
+
+j .
+
+Metric 1: Key Concentration We measure key concentration at token position t as the cosine similarity between the key and its running mean direction: 
+
+C(ℓ,h )
+
+t = cos  ˜k(ℓ,h )
+
+t , ¯k(ℓ,h )
+
+t
+
+ ∈ [−1, 1] .
+
+When keys are strongly aligned , ¯k(ℓ,h )
+
+j becomes a stable direction and Ct stays close to 1; when keys are dispersed, and Ct decreases. This directly corresponds to the small angle to the mean regime used in Lemma 2–3 (via cos( αi)). 
+
+Metric 2: Projection residual. Lemma 2 replaces subtracting the mean key (˜ki − ¯kt) with a projection orthogonal to the mean direction (I − Π¯kt )˜ki, where 
+
+Π¯kt = ¯kt ¯k⊤
+
+t
+
+∥¯kt∥22 + ε .
+
+We quantify the quality of this approximation using the projection residual :
+
+R(ℓ,h )
+
+t = 1
+
+t
+
+tX
+
+i=1 
+
+(˜k(ℓ,h )
+
+i − ¯k(ℓ,h )
+
+t ) − (I − Π¯k(ℓ,h )
+
+> t
+
+)˜k(ℓ,h )
+
+i 2
+
+.
+
+Equivalently, the inner term simplifies to Π¯kt
+
+˜ki − ¯kt, so the residual measures how well mean subtraction is captured by an orthogonal projection onto the complement of the mean-key direction. Smaller Rt indicates Lem. 2 is a good approximation for that prefix. For each evaluation sequence, we compute C(ℓ,h )
+
+t and R(ℓ,h )
+
+t for all token indices t and all (layer, head) pairs, then average across sequences and across heads/layers: 
+
+Ct = Eseq ,ℓ,h 
+
+C(ℓ,h )
+
+t
+
+, Rt = Eseq ,ℓ,h 
+
+R(ℓ,h )
+
+t
+
+.
+
+These produce the token-index curves shown in Fig. 3, 7(b). To relate the assumptions to approximation quality, we additionally bin token positions by C(ℓ,h )
+
+t (key concentration bins) or R(ℓ,h )
+
+t (projection residual bins) and compute the corresponding normalized MSE within each bin, yielding the binned trends in Fig. 3, 7(a). [0.72, 
+
+> 0.76)
+> [0.76,
+> 0.77)
+> [0.77,
+> 0.79)
+> [0.79,
+> 0.81)
+> [0.81,
+> 0.84)
+> Key concentration bin
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> 4.5
+> 5.0
+> Normalised MSE
+> Key concentration vs. MSE
+> GLA
+> GDN
+> [0.07,
+> 0.08)
+> [0.08,
+> 0.09)
+> [0.09,
+> 0.09)
+> [0.09,
+> 0.09)
+> [0.09,
+> 0.12)
+> Projection residual bin
+> Normalised MSE
+> Projection residual vs. MSE
+> GLA
+> GDN
+
+(a) Per layer normalized MSE 0 50 100 150 200 250 300 350 400  
+
+> Token index
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Projection residual
+> Key Concentration
+
+(b) Token index 
+
+Figure 7: Key Concentration and Projection Residual for Qwen3-8b 16 B.2 SWA and Sink Tokens 
+
+Table 6: Downstream performance of the linearized models with SWA and Sink Tokens. We report the accuracy on common reasoning benchmarks (PiQA, ARC-e, ARC-c, HellaSwag, WinoGrande), 5-shot MMLU and Lambada (OpenAI). For ARC-c and HellaSwag we use normalized accuracy. Results are averaged over 3 random seeds. Model Params. PIQA ARC-e ARC-c Hella. Wino. MMLU (5-shot) Lambada Avg. Llama 3.1 8b – 79.05 82.15 54.78 79.34 74.59 65.25 74.79 72.84 
+
+SWA (56) + Sink (8) 
+
+GLA 4.3M 78.94 ±0.03 81.94 ±0.04 54.81 ±0.08 75.55 ±0.03 74.11 ±0.00 44.25 ±0.08 59.31 ±0.11 66.99 ±0.02 
+
+kGLA 8.5M 78.98 ±0.04 81.93 ±0.04 54.58 ±0.03 75.63 ±0.04 74.11 ±0.00 43.28 ±0.03 59.57 ±0.19 66.87 ±0.02 
+
+GDN 8.5M 79.07 ±0.04 82.10 ±0.01 54.92 ±0.03 78.86 ±0.03 74.11 ±0.00 58.88 ±0.14 68.82 ±0.13 70.97 ±0.03 
+
+SWA (64) 
+
+GLA 4.3M 77.64 ±0.03 81.12 ±0.04 53.36 ±0.08 55.92 ±0.22 74.59 ±0.00 39.50 ±0.60 36.19 ±0.14 59.76 ±0.10 
+
+kGLA 8.5M 77.53 ±0.05 81.00 ±0.03 53.24 ±0.05 55.44 ±0.10 74.59 ±0.00 37.63 ±0.02 36.86 ±0.16 59.47 ±0.04 
+
+GDN 8.5M 78.06 ±0.07 80.98 ±0.05 53.58 ±0.15 56.44 ±0.21 74.59 ±0.00 51.57 ±0.77 41.92 ±0.22 62.45 ±0.09 
+
+Qwen3 8b - 79.16 81.73 56.14 78.69 72.93 76.94 70.95 73.79 
+
+SWA (56) + Sink (8) 
+
+GLA 4.9M 79.16 ±0.03 82.07 ±0.04 56.34 ±0.08 75.94 ±0.01 71.98 ±0.00 67.40 ±0.05 56.50 ±0.29 69.91 ±0.06 
+
+kGLA 9.6M 79.14 ±0.02 81.99 ±0.02 56.14 ±0.00 76.15 ±0.05 71.98 ±0.00 67.70 ±0.17 57.05 ±0.12 70.02 ±0.03 
+
+GDN 9.6M 79.22 ±0.05 81.82 ±0.02 56.37 ±0.03 77.90 ±0.03 71.98 ±0.00 70.97 ±0.18 64.53 ±0.04 71.83 ±0.03 
+
+SWA (64) 
+
+GLA 4.9M 78.75 ±0.02 81.09 ±0.04 55.66 ±0.12 66.99 ±0.08 72.93 ±0.00 48.10 ±0.51 52.55 ±0.21 65.15 ±0.07 
+
+kGLA 9.6M 78.87 ±0.13 81.20 ±0.01 55.55 ±0.00 67.10 ±0.16 72.93 ±0.00 48.86 ±0.53 53.30 ±0.22 65.40 ±0.13 
+
+GDN 9.6M 78.91 ±0.02 81.48 ±0.06 55.92 ±0.15 67.95 ±0.18 72.93 ±0.00 53.70 ±0.20 59.30 ±0.13 67.17 ±0.07 
+
+17 B.3 Short Convolution and LoRA 
+
+Table 7: Downstream performance of the linearized models with SWA and modified projections. We report the accuracy on common reasoning benchmarks (PiQA, ARC-e, ARC-c, HellaSwag, WinoGrande), 5-shot MMLU and Lambada (OpenAI). For ARC-c and HellaSwag we use normalized accuracy. Results are averaged over 3 random seeds. Model Params. PIQA ARC-e ARC-c Hella. Wino. MMLU (5-shot) Lambada Avg. Llama 3.1 8b – 79.05 82.15 54.78 79.34 74.59 65.25 74.79 72.84 
+
+Short Conv 
+
+GLA 6.1M 79.11 ±0.00 81.99 ±0.00 54.95 ±0.00 78.93 ±0.03 74.11 ±0.00 59.13 ±0.18 68.70 ±0.12 70.99 ±0.04 
+
+kGLA 10.3M 79.11 ±0.00 81.99 ±0.02 54.92 ±0.03 78.87 ±0.02 74.11 ±0.00 59.02 ±0.12 68.65 ±0.11 70.95 ±0.03 
+
+GDN 10.3M 79.07 ±0.02 81.97 ±0.01 54.92 ±0.08 78.79 ±0.07 74.11 ±0.00 59.17 ±0.17 69.01 ±0.03 71.01 ±0.04 
+
+LoRA 
+
+GLA 11.1M 78.87 ±0.16 79.55 ±0.14 51.25 ±0.32 76.93 ±0.04 71.93 ±0.28 50.10 ±0.59 67.51 ±1.16 68.02 ±0.31 
+
+kGLA 15.3M 79.00 ±0.14 79.92 ±0.06 51.62 ±0.68 76.84 ±0.21 70.88 ±0.30 49.95 ±0.39 67.79 ±0.60 68.00 ±0.29 
+
+GDN 15.3M 79.47 ±0.29 80.86 ±0.34 53.33 ±0.58 78.03 ±0.31 72.32 ±0.09 54.80 ±2.79 70.29 ±1.96 69.87 ±0.85 
+
+Qwen3 8b - 79.16 81.73 56.14 78.69 72.93 76.94 70.95 73.79 
+
+Short Conv 
+
+GLA 6.9M 79.33 ±0.03 81.92 ±0.04 56.43 ±0.12 77.93 ±0.07 71.98 ±0.00 70.58 ±0.17 64.20 ±0.05 71.77 ±0.04 
+
+kGLA 11.6M 79.34 ±0.02 81.89 ±0.04 56.43 ±0.03 77.93 ±0.08 71.98 ±0.00 70.75 ±0.17 64.20 ±0.05 71.77 ±0.04 
+
+GDN 11.6M 79.29 ±0.04 81.86 ±0.02 56.48 ±0.00 77.84 ±0.03 71.98 ±0.00 71.10 ±0.13 64.64 ±0.12 71.88 ±0.02 
+
+LoRA 
+
+GLA 12.5M 79.18 ±0.21 84.47 ±0.06 62.17 ±0.59 75.56 ±0.04 71.95 ±0.17 65.99 ±0.27 66.65 ±0.35 72.28 ±0.15 
+
+kGLA 17.4M 78.91 ±0.17 84.85 ±0.11 61.83 ±0.27 76.04 ±0.02 73.22 ±0.15 66.29 ±0.30 65.48 ±0.51 72.37 ±0.14 
+
+GDN 17.3M 79.27 ±0.17 84.39 ±0.15 62.29 ±0.39 76.56 ±0.04 73.35 ±0.50 69.61 ±0.19 67.94 ±0.77 73.34 ±0.05 
+
+18 B.4 Long context Evaluation on Ruler Benchmark 
+
+We evaluate long-context behavior on S-NIAH and an extended RULER benchmark at 4k context length (Tables 8 and 9). Under the fairest comparison setting, prior linearization baselines that use the same 64-token local windowm, our GDN-based linearization substantially outperforms LoLCATs and Liger-GLA by a wide margin, consistently across both common reasoning (Table 4) and long-context evaluation (Table 9). At the same time, Table 9 shows a strong dependence on cache budget. The small-cache configuration (128 total tokens: 8 sink + 120 sliding) is not viable for retrieval-heavy subsets. Increasing the cache (e.g., 896 tokens) makes GDN competitive on average, but exposes a clear profile: strong on aggregation/QA-style tasks and weaker on tasks requiring multiple independent memory items in parallel (e.g., multi-query/multi-value retrieval and variable tracking). Since we use a fixed-budget cache (8 sink tokens plus a sliding window) and do not perform adaptive token selection at inference time, these results suggest an obvious next step: combining GDN with content-aware token retention to improve multi-item retrieval under a fixed cache budget. Table 8: S-NIAH accuracy at 4K context length at different cache token budgets. 
+
+Model Task (4K) Cache Tokens 128 256 512 1024 Sliding-Window Attention S-NIAH-1 0 0 5.8 –S-NIAH-2 0 0 0 –S-NIAH-3 0 0 0 –LoLCATs S-NIAH-1 0 2.2 8.8 –S-NIAH-2 4.2 8.2 16.6 –S-NIAH-3 1.6 2.2 5.8 –Liger-GLA S-NIAH-1 0.2 2.8 0 –S-NIAH-2 1.0 0.8 0 –S-NIAH-3 0.8 0.6 0 –STILL S-NIAH-1 1.4 10.6 86.2 89.0 S-NIAH-2 2.8 9.4 37.4 69.8 S-NIAH-3 3.4 3.4 12.2 19.4 GDN (Ours) S-NIAH-1 2.6 6.0 13.20 26.2 S-NIAH-2 2.0 5.0 16.0 34.2 S-NIAH-3 1.8 4.2 13.8 28.4 
+
+Table 9: Extended RULER benchmark at 4K context length.                                                                                                   
+
+> Model Cache Tokens MK MQ MV CWE FWE HQA SQA VT Avg
+> Mamba-2 019.9 49.1 35.0 32.9 76.6 31.8 35.5 76.5 44.7 LoLCATs 896 4.9 3.3 3.6 3.0 13.6 14.2 14.0 0.7 7.2 Liger-GLA 896 0000.2 0.7 6.4 9.1 02.1 LoLA 896 19.5 67.6 65.0 45.9 51.3 24.2 53.9 85.2 45.2 STILL 896 21.5 52.2 51.3 36.7 76.3 32.2 49.6 63.7 47.9
+> Ours (GDN) 128 1.33 ±0.00 2.40 ±0.03 2.38 ±0.04 34.44 ±3.39 60.04 ±2.37 21.27 ±0.18 23.49 ±0.36 2.65 ±0.04 18.50 ±0.55
+> Ours (GDN) 896 25.36 ±0.06 22.62 ±0.09 25.38 ±0.02 80.49 ±3.86 81.67 ±1.64 38.60 ±0.31 68.37 ±0.54 37.68 ±0.56 47.52 ±0.66
+
+19 B.5 Results for all Qwen models 
+
+Table 10: Scaling result for all Qwen3 models. Model Attention PiQA ARC-e ARC-c HellaSwag WinoGrande MMLU Lambada Avg Qwen3-0.6b Full 70.24 65.74 38.31 53.69 58.56 52.48 53.68 56.10 GDN 69.89 ±0.02 65.64 ±0.01 38.25 ±0.06 52.53 ±0.04 57.93 ±0.00 47.22 ±0.11 47.77 ±0.04 54.18 ±0.02 
+
+Qwen3-1.7b Full 75.90 73.36 45.05 66.40 64.40 62.61 63.23 64.42 GDN 75.55 ±0.02 73.57 ±0.00 44.94 ±0.03 65.34 ±0.04 64.64 ±0.00 57.78 ±0.11 56.50 ±0.11 62.62 ±0.01 
+
+Qwen3-4b Full 78.02 79.21 51.62 73.67 70.72 72.98 69.09 70.76 GDN 78.27 ±0.02 78.98 ±0.01 51.96 ±0.05 72.81 ±0.01 70.48 ±0.00 67.52 ±0.13 62.68 ±0.08 68.96 ±0.03 
+
+Qwen3-8b Full 79.16 81.73 56.14 78.69 72.93 76.94 70.95 73.79 GDN 79.29 ±0.04 81.86 ±0.02 56.48 ±0.00 77.84 ±0.03 71.98 ±0.00 71.10 ±0.13 64.64 ±0.12 71.88 ±0.02 
+
+Qwen3-14b Full 80.47 83.33 58.96 81.27 74.19 80.46 74.33 76.14 GDN 80.36 ±0.00 83.36 ±0.04 59.36 ±0.03 80.73 ±0.07 74.35 ±0.00 74.63 ±0.03 67.93 ±0.12 74.39 ±0.02 
+
+Qwen3-32b Full 81.01 84.39 60.84 82.62 72.93 81.73 66.97 75.78 GDN 81.08 ±0.05 84.34 ±0.02 60.78 ±0.03 81.74 ±0.03 73.09 ±0.00 76.02 ±0.17 63.04 ±0.17 74.30 ±0.01 
+
+20 C Hyperparameters and Implementation Details 
+
+We fixed the experimental hyperparameter for all the experiments. We did not run hyperparameter sweep and fix the same setting for all the base model. Our main motivation is that good approximation should not require extensive training and thus should not depend much on training hyperparameter. The only difference is that LoRa experiments use a smaller learning rate than other runs. We list these training details below in Table 11. We run all the experiments with 3 random seed, fixing the seed to 1, 2, 3 .To make the implementation details clear, we also provide the shape of all the newly introduces tensors and mention any initialization that we use. It absent, default pytorch initialization is used. We use the following notations: • Hidden state: h
+
+• Hidden state feature dimension: dim h
+
+• Head dimension: dim head 
+
+• Number of query heads: head q
+
+• Number of key and value heads: head kv 
+
+• Output dimension: dim out = dim head · head q
+
+FLA kernels assumes gates to be in Log scale for stability. Thus on practice we use LogSigmoid 
+
+activation for the log α. We use HedgehogFeatureMap from the FLA library to compute ϕq and ϕk
+
+projections. We use ShortConvolution from the FLA library to compute short convolutions. We apply them after RoPE and before L2 normalization. For LoRA we use PEFT library. 21 Table 11: All the hyperparameters used for our experimnets. 
+
+Hyperparameter Optimization 
+
+learning rate 2e-3 learning rate (LoRA training) 5e-4 lr scheduler Cosine lr warmup linear lr warmup steps 100 optimizer AdamW weight decay 0gradient clipping 1training steps 2500 
+
+Training Data 
+
+batch size 1sequence len 4096 Dataset DCLM-Edu 
+
+Architecture details: Pure Linear (Tables 1,2) 
+
+Gate projection y = hW r1 
+
+> α
+
+W r2 
+
+> α
+
++ bα
+
+W r1 
+
+> α
+
+∈ Rdim h×16 , W r2 
+
+> α
+
+∈ R16 ×dim out 
+
+Gate activation Sigmoid 
+
+Gate Initialization bα = 1 
+
+Beta Projection y = hW β + bβ
+
+Wβ ∈ Rdim h×head q
+
+Beta Activation Sigmoid 
+
+Beta Initialization bβ = −1
+
+Hedgehog features size Rdim head ×dim head 
+
+Architecture details: Short Conv (Table 3) 
+
+kernel size 8bias True activation None 
+
+Architecture details: LoRA (Table 3) 
+
+Rank 8
+
+α 16 Dropout 0Target Modules k_proj, v_proj, q_proj, o_proj 
+
+D Broader Impact 
+
+Efficient long -context inference can reduce serving cost and memory footprint, enabling broader access to long -context capabilities. At the same time, cheaper inference can increase deployment scale and associated energy use. Our work does not introduce new training data or new model capabilities beyond the underlying backbones; it provides an efficient conversion recipe intended for research and deployment settings. 22
