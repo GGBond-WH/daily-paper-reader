@@ -1,0 +1,217 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-10T21:28:47.636829+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 4,
+    "deep_cap": 6,
+    "deep_selected": 4,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [
+    {
+      "id": "2607.05061v2",
+      "source": "arxiv",
+      "title": "KVpop -- Key-Value Cache Compression with Predictive Online Pruning",
+      "abstract": "Key-value (KV) cache growth is a major bottleneck in autoregressive decoding, as memory and bandwidth scale linearly with context length. Existing KV eviction methods often rely on static heuristics or proxy scores, which poorly track future token utility and cause brittle eviction as relevance shifts. To address this, we introduce KVpop, which learns a fixed-budget KV eviction policy by directly supervising the keep-or-drop decision. The scorer is trained against a novel future-attention target, computed efficiently without materializing dense attention maps. We further introduce a delayed memory-based scorer that, uniquely among learned eviction methods, defers scoring for a fixed number of steps to exploit near-future context. On AIME and HMMT mathematical reasoning, KVpop retains 98% of full-attention performance on Qwen3-4B at 75% KV cache compression and 97% at 88% compression, consistently outperforming established eviction baselines. Qwen3-8B shows even stronger results, reaching near-full teacher performance. These results show that supervising eviction with future-attention signals cuts memory costs while maintaining quality.",
+      "authors": [
+        "Lukas Hauzenberger",
+        "Niklas Schmidinger",
+        "Anamaria-Roberta Hartl",
+        "David Stap",
+        "Thomas Schmied",
+        "Sebastian Böck",
+        "Günter Klambauer",
+        "Sepp Hochreiter"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-07-06T13:32:34+00:00",
+      "link": "https://arxiv.org/pdf/2607.05061v2",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV cache compression via learned online pruning",
+      "llm_evidence_cn": "通过学习在线剪枝实现KV缓存压缩",
+      "llm_evidence": "通过学习在线剪枝实现KV缓存压缩",
+      "canonical_evidence": "通过学习在线剪枝实现KV缓存压缩",
+      "llm_tldr_en": "KVpop learns a fixed-budget KV eviction policy supervised by a future-attention target, achieving efficient compression for autoregressive decoding.",
+      "llm_tldr_cn": "KVpop通过学习固定预算的KV驱逐策略，利用未来注意力目标进行监督，解决了传统启发式方法无法适应动态相关性的问题。实验表明，该方法在保持生成质量的同时显著减少了KV缓存内存占用，为大模型高效推理提供了实用方案。",
+      "llm_tldr": "KVpop通过学习固定预算的KV驱逐策略，利用未来注意力目标进行监督，解决了传统启发式方法无法适应动态相关性的问题。实验表明，该方法在保持生成质量的同时显著减少了KV缓存内存占用，为大模型高效推理提供了实用方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.08032v1",
+      "source": "arxiv",
+      "title": "What to Keep, What to Forget: A Rate--Distortion View of Memory Compaction in LLMs and Agents",
+      "abstract": "Large language models, and the agents built on them, spend an ever-growing share of their compute and memory on remembering: caching attention keys and values, carrying long prompts, maintaining recurrent state, and storing what happened in previous turns and sessions. Because none of this memory is free, four largely separate research communities have each learned to compact it. They evict or quantize the KV cache, prune or distill prompts, bound architectural state, and consolidate agent memory. We argue that these are instances of one problem: a rate--distortion decision about what context-derived information to retain versus discard, at what fidelity, under a resource budget, so as to preserve downstream task utility. We make this lens precise with a single compaction objective and a layer-agnostic lower bound, use it to build a seven-axis taxonomy that classifies methods from across the stack uniformly, and use it to transfer mechanisms between layers that have never been connected, from serving-stack KV management to agent long-term memory. Two patterns hold across the survey. At every layer the signal that decides what to keep is attention magnitude or recency, and it fails in the same way everywhere, by discarding, before the query is known and with no way to undo it, information the query later needs. And while compression is measured carefully on single-turn long context, the repeated compaction that agents actually perform is almost never measured, and no benchmark holds one budget axis across all the layers at once. We turn both observations into a benchmark proposal, a small reference experiment, and a set of compaction-aware design principles, and we map the open problems.",
+      "authors": [
+        "Ashwin Gerard Colaco",
+        "Nada Lahjouji"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-09T01:15:03+00:00",
+      "link": "https://arxiv.org/pdf/2607.08032v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Rate-distortion view of KV cache compaction and memory management",
+      "llm_evidence_cn": "KV缓存紧凑化的率失真视角",
+      "llm_evidence": "KV缓存紧凑化的率失真视角",
+      "canonical_evidence": "KV缓存紧凑化的率失真视角",
+      "llm_tldr_en": "Unifies KV cache eviction, quantization, prompt pruning as a rate-distortion problem for memory compaction.",
+      "llm_tldr_cn": "本文将大语言模型及智能体中的KV缓存淘汰、量化、提示剪枝等多种内存紧凑化技术统一视为率失真决策问题，即在一定资源预算下决定保留或丢弃哪些上下文派生信息。该视角为KV缓存压缩提供了统一的理论框架，有助于系统化设计更优的内存管理策略。",
+      "llm_tldr": "本文将大语言模型及智能体中的KV缓存淘汰、量化、提示剪枝等多种内存紧凑化技术统一视为率失真决策问题，即在一定资源预算下决定保留或丢弃哪些上下文派生信息。该视角为KV缓存压缩提供了统一的理论框架，有助于系统化设计更优的内存管理策略。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.08057v1",
+      "source": "arxiv",
+      "title": "Towards Efficient Large Language Model Serving: A Survey on System-Aware KV Cache Optimization",
+      "abstract": "Despite the rapid advancements of large language models (LLMs), LLM serving systems remain memory-intensive and costly. The key-value (KV) cache, which stores KV tensors during autoregressive decoding, is crucial for enabling low-latency, high-throughput LLM inference serving. In this survey, we focus on system-aware KV infrastructure for serving LLMs (abbreviated as sKis). We revisit recent work from a system behavior perspective, organizing existing efforts into three dimensions: execution and scheduling (temporal), placement and migration (spatial), and representation and retention (structural). Furthermore, we analyze cross-behavior co-design affinity and behavior-objective links, highlighting future opportunities. Our work systematizes a rapidly evolving area, providing a foundation for understanding and innovating KV cache designs in modern LLM serving infrastructure.",
+      "authors": [
+        "Jiantong Jiang",
+        "Peiyu Yang",
+        "Rui Zhang",
+        "Feng Liu"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.CL"
+      ],
+      "published": "2026-07-09T02:11:18+00:00",
+      "link": "https://arxiv.org/pdf/2607.08057v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "survey on system-aware KV cache optimization for LLM serving",
+      "llm_evidence_cn": "面向大语言模型服务的系统感知KV缓存优化综述",
+      "llm_evidence": "面向大语言模型服务的系统感知KV缓存优化综述",
+      "canonical_evidence": "面向大语言模型服务的系统感知KV缓存优化综述",
+      "llm_tldr_en": "This survey systematically reviews KV cache optimization from execution, placement, and representation dimensions, analyzing co-design and future opportunities.",
+      "llm_tldr_cn": "该综述从系统行为视角重新审视KV缓存优化工作，将现有研究组织为执行与调度（时间维度）、放置与迁移（空间维度）以及表示与保留（结构维度）。分析了跨行为协同设计亲和性和行为-目标关联，指出未来研究方向。为设计高效KV基础设施提供了系统化视角。",
+      "llm_tldr": "该综述从系统行为视角重新审视KV缓存优化工作，将现有研究组织为执行与调度（时间维度）、放置与迁移（空间维度）以及表示与保留（结构维度）。分析了跨行为协同设计亲和性和行为-目标关联，指出未来研究方向。为设计高效KV基础设施提供了系统化视角。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.05708v1",
+      "source": "arxiv",
+      "title": "Akashic: A Low-Overhead LLM Inference Service with MemAttention",
+      "abstract": "Recent LLM-based agent systems continuously accumulate context across multi-turn interactions, tool invocations, and cross-session workflows. Replaying the full history for every request quickly becomes impractical: long contexts increase prefill cost, may exceed context limits, and often bury task-relevant evidence in irrelevant content, degrading both serving efficiency and output quality. We propose Akashic, a low-overhead memory system built around MemAttention, which organizes context into bounded chunks and models semantic relationships across chunks, preserving cross-chunk evidence without repeatedly rewriting the full history. Akashic further applies hardware-software co-designed memory placement to co-locate likely co-retrieved chunks, reducing retrieval fragmentation and I/O overhead. Across four representative workloads and three model sizes, Akashic improves task accuracy by up to 10.2 points, throughput by up to 1.21x, and sustainable request rate by up to 1.88x over strong prior memory baselines.",
+      "authors": [
+        "Yang Liu",
+        "Zhaokai Luo",
+        "Huayi Jin",
+        "Ruozhou He",
+        "Chenchen Hong",
+        "Zhiyong Wang",
+        "Yifei Liu",
+        "Yunfei Gu",
+        "Chentao Wu",
+        "Junhao Hu"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-07T00:06:22+00:00",
+      "link": "https://arxiv.org/pdf/2607.05708v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Context chunking and semantic caching for LLM inference, similar to prefix caching",
+      "llm_evidence_cn": "LLM推理中的上下文分块和语义缓存，类似于前缀缓存",
+      "llm_evidence": "LLM推理中的上下文分块和语义缓存，类似于前缀缓存",
+      "canonical_evidence": "LLM推理中的上下文分块和语义缓存，类似于前缀缓存",
+      "llm_tldr_en": "Akashic introduces MemAttention to organize long context into bounded chunks with semantic relationships, enabling efficient cross-chunk evidence preservation without full history replay, reducing inference cost.",
+      "llm_tldr_cn": "基于LLM的智能体系统在多轮交互中积累大量上下文，全历史回放效率低下。Akashic提出MemAttention，将上下文组织成有界块并建模跨块语义关系，避免重复写入完整历史。同时软硬协同设计将可能共取的块就近放置。实验表明Akashic显著降低预填充开销和延迟，为长上下文LLM服务提供了一种低开销的记忆系统，与前缀缓存理念相通。",
+      "llm_tldr": "基于LLM的智能体系统在多轮交互中积累大量上下文，全历史回放效率低下。Akashic提出MemAttention，将上下文组织成有界块并建模跨块语义关系，避免重复写入完整历史。同时软硬协同设计将可能共取的块就近放置。实验表明Akashic显著降低预填充开销和延迟，为长上下文LLM服务提供了一种低开销的记忆系统，与前缀缓存理念相通。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.07953v1",
+      "source": "arxiv",
+      "title": "Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing",
+      "abstract": "Self-attention lets each token retrieve information from the full context, but its quadratic cost in sequence length limits training and inference at long context. This paper presents a comparative study of softmax attention and four recent recurrent linear-attention architectures: DeltaNet, Gated DeltaNet, Kimi Delta Attention, and Gated DeltaNet-2. We express these mechanisms in a common recurrent-memory notation, making explicit how they differ in expressivity, memory decay, erase and write control, training throughput, and implementation complexity. Our experiments center on 350M-parameter models trained for 15B tokens, and include optimizer and learning-rate comparisons, hybrid-versus-pure stack comparisons, sequence-length runtime measurements, larger DeltaNet runs at 1.3B and 3B parameters, and a small set of downstream evaluations. The reported speed results measure training throughput and iteration time; we do not provide an empirical inference-speed benchmark. Within the reported 350M-parameter, 15B-token sweep, Kimi Delta Attention with Muon reaches the lowest final validation loss, a pure Gated DeltaNet stack trained with AdamW has the highest normalized training throughput, hybrid stacks generally improve loss at a throughput cost, and Muon consistently lowers final validation loss relative to AdamW in the matched architecture settings we evaluate. We introduce and evaluate lightweight cross-layer routing mechanisms for DeltaNet-style memories. The most natural DeltaNet-inspired formulation, forwarding a lower layer's delta-rule write error into the next layer's value target, does not improve over matched baselines. Routing into the aligned hidden stream and forwarding the write value instead yields a modest improvement in the matched runs we report: Cross-Layer Value Routing (CLVR) lowers final validation loss for both DeltaNet and Gated DeltaNet.",
+      "authors": [
+        "Tommaso Cerruti",
+        "Tim Rieder",
+        "George Rowlands",
+        "Lingfeng Jin",
+        "Imanol Schlag"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-07-08T22:14:14+00:00",
+      "link": "https://arxiv.org/pdf/2607.07953v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "comparative study of linear attention architectures with recurrent memory and cross-layer routing",
+      "llm_evidence_cn": "线性注意力架构的对比研究，包含循环记忆和跨层路由",
+      "llm_evidence": "线性注意力架构的对比研究，包含循环记忆和跨层路由",
+      "canonical_evidence": "线性注意力架构的对比研究，包含循环记忆和跨层路由",
+      "llm_tldr_en": "This paper compares softmax attention with four recurrent linear-attention architectures, using a common recurrent-memory notation, and evaluates expressivity, memory decay, erase/write control, and training throughput.",
+      "llm_tldr_cn": "该论文用统一的循环记忆表示法对比了softmax注意力和四种近期循环线性注意力架构（DeltaNet等），揭示它们在表达能力、记忆衰减、擦写控制等方面的差异。基于350M参数模型训练15B tokens的实验，涵盖了优化器、学习率以及混合架构的比较。为选择低缓存成本的注意力变体提供了系统参考。",
+      "llm_tldr": "该论文用统一的循环记忆表示法对比了softmax注意力和四种近期循环线性注意力架构（DeltaNet等），揭示它们在表达能力、记忆衰减、擦写控制等方面的差异。基于350M参数模型训练15B tokens的实验，涵盖了优化器、学习率以及混合架构的比较。为选择低缓存成本的注意力变体提供了系统参考。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}
