@@ -1,0 +1,527 @@
+Title: Attention to Detail: Evaluating Energy, Performance, and Accuracy Trade-offs Across vLLM Configurations
+
+URL Source: https://arxiv.org/pdf/2607.09172v1
+
+Published Time: Mon, 13 Jul 2026 01:00:19 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Attention to Detail: Evaluating Energy, Performance, and Accuracy Trade-offs Across vLLM Configurations 
+
+Nada ZINE ∗
+
+Univ. Lille, CNRS, Inria 
+
+Tristan COIGNION ∗
+
+Univ. Bordeaux, CNRS, LaBRI 
+
+Vincenzo STOICO 
+
+Vrije Universiteit Amsterdam 
+
+Ivano MALAVOLTA 
+
+Vrije Universiteit Amsterdam 
+
+Cl´ ement QUINTON 
+
+Univ. Lille, CNRS, Inria, IUF 
+
+Romain ROUVOY 
+
+Univ. Lille, CNRS, Inria 
+
+Patricia LAGO 
+
+Vrije Universiteit Amsterdam 
+
+Abstract —Large Language Models (LLMs) are reshaping how software is developed and maintained. They are typically de-ployed in production using inference engines such as vLLM, which can efficiently serve pre-trained, highly configurable mod-els. While prior work has focused on model architectures and hardware acceleration, the impact of inference engine configu-ration on energy consumption, performance, and output quality remains poorly understood. In this paper, we present a large-scale controlled study of three selected vLLM configuration options: attention kernel type, prefix caching, and chunked prefill. We evaluate all combinations of these configurations across 5 open-weight LLMs and 5 diverse inference tasks, totaling 9, 000 runs and 93 , 600 measures. We analyze energy consumption, latency, and accuracy, and examine both main effects and interaction effects between configuration options and tasks. Our results show that the studied configuration options sig-nificantly impact energy and performance, mainly driven by attention type and prefix caching, while chunked prefill has a limited effect under the default vLLM serving configuration and evaluated workloads. These effects are highly model- and workload-dependent, and no configuration is universally optimal. We further show that model choice dominates global trade-offs, while configuration tuning provides local improvements along the Pareto frontier. Unexpectedly, inference options can also affect model accuracy. 
+
+I. I NTRODUCTION 
+
+Large Language Models (LLMs), like GPT and Gemini, are among the technologies we can reasonably say have changed the world [1]. They have rapidly become key enablers of innovation across natural language processing, creative content generation and virtual assistants, with broad applications in industry and education [2], [3]. This growth raises concerns about their environmental im-pact , due to their significant energy requirements, both in terms of embodied [4] and operational emissions [5]. Both training and inference phases are highly resource-intensive [6]. 
+
+Inference , in particular, is attracting increasing attention, as LLMs receive millions of daily requests, accounting for more than 90 % of the total computational workload associated with 
+
+> ∗
+
+Corresponding authors: nada.zine@inria.fr ,
+
+tristan@coignion.fr 
+
+this type of machine learning models [7], [8]. To address these concerns, researchers have begun investigating various inference optimization strategies, either by proposing new methods to make LLMs inference more energy-efficient or by empirically evaluating existing approaches in terms of energy consumption, performance, and accuracy [9]. An LLMs inference engine is a specialized software system that efficiently execute pre-trained LLMs, managing tokenization, memory allocation ( e.g. , KV-cache), schedul-ing, batching, etc. to deliver low-latency and high-throughput outputs at scale [10]. Various inference engines for LLMs exist [11], including cloud-oriented frameworks such as vir-tual Large Language Model (vLLM) [12] and Hugging Face Transformers [13], as well as local deployment solutions like Ollama [14] and llama.cpp [15]. Among these, vLLM is the most widely used state-of-the-art LLM inference and serving engine [16]. A key challenge in deploying LLM inference engines is their large and complex configuration space [10], with tens of options, including temperature, top p, top k, etc. These configuration choices can significantly affect runtime properties such as latency, throughput, energy consumption, and even accuracy. However, properly configuring an LLM inference engine is not trivial since configuration options (i) might conflict with each other ( e.g. , enabling KV-cache and very long attention windows), (ii) are highly project-and context-dependent ( e.g. , conversational AI agents require different decoding strategies than code generation ), and (iii) can lead to drastically different runtime behaviours in terms of, e.g. , energy consumption and accuracy [5]. Despite active work on LLM inference optimization [17], we still lack a systematic understanding of how inference-engine configuration choices affect energy, performance, and accuracy in realistic scenarios. In particular, existing work either focuses on isolated optimizations or evaluates configura-tions in limited settings, leaving unclear (i) how configuration options interact, (ii) how their effects vary across task types, and (iii) whether they impact model outputs [18]. To address this gap, we conduct a controlled experiment [19] on the impact of three representative system-level vLLM arXiv:2607.09172v1 [cs.SE] 10 Jul 2026 configuration options on energy consumption, performance, and model accuracy. We evaluate five highly downloaded open-weight LLMs from the Hugging Face platform ranging from 3B to 32 B, on 2, 538 tasks from five diverse datasets. Because vLLM exposes tens of configuration options, ex-haustively evaluating the entire configuration space is impracti-cal. We therefore focus on exploring three widely used system-level options that target complementary stages of inference and allow a tractable full-factorial study across models and tasks: (i) 3 types of attention kernel (i.e. , FlashAttention-2 ,
+
+> FlashAttention-3
+
+, and FlashInfer ), which affect the low-level attention computation; (ii) prefix caching (on/off), which con-trols KV-cache reuse across shared prompt prefixes; and (iii) 
+
+chunked prefill (on/off), which changes how long prompts are processed during the prefill phase. Each configuration is repeated 30 times to capture metric fluctuations, leading to 
+
+9, 000 experimental runs. All runs are executed in random order on 4 nodes in a dedicated cluster. We collect vLLM runtime metrics and focus on (i) CPU and GPU energy usage, (ii) two complementary performance metrics ( i.e. , time to first token and request inference time), and (iii) two accuracy met-rics ( i.e. , pass@k and average per-item score). The experiment yields 93 , 600 collected data points, which are then statistically analyzed. Our results show that vLLM configuration choices influence energy consumption, request latency, and Time to First Token (TTFT), although the magnitude of these effects depends strongly on the model and workload. Under the selected vLLM serving configuration and evaluated workloads, attention type and prefix caching emerge as the most impactful vLLM-specific options, while chunked prefill has a limited effect. No single setup works best for all models or tasks, and in-teraction effects tend to be highly context-specific. Moreover, task types are the primary determinant of energy consumption and performance; attention type and prefix caching exhibit sig-nificant interactions with task types. Attention type varies sub-stantially across task types, often introducing energy–latency trade-offs. The choice of LLM dominates the energy-latency-accuracy Pareto front, while no single vLLM configuration emerges as universally optimal across task types. The main contributions of this paper are: (i) we go beyond the state of the art by providing empirical evidence that the selected vLLM options affect inference energy usage and performance, with task-dependent effects; (ii) we find that configuration options such as attention type and prefix caching interact, meaning that the impact of one cannot be assessed in isolation; for example, the latency gain from prefix caching depends on the attention backend in use; (iii) we show that model choice dominates global trade-offs, while configuration options provide only local optimizations along the Pareto frontier; (iv) we reveal that inference config-urations can unexpectedly affect model accuracy, challenging the assumption that such parameters are purely system-level optimizations; (v) we release a full replication package [20] to support reproducibility and future research. The target audience includes: (i) developers integrating vLLM-served LLMs in their software systems with energy, performance, and accuracy in mind, (ii) LLM inference en-gine vendors to better understand how configuration options interact and improve their inference engines, and (iii) software engineering researchers seeking inspiration for their future research based on the results and implications of our study. II. R ELATED WORK 
+
+The energy consumption of LLMs inference has recently gained significant attention, as inference is increasingly con-sidered as the major contributor to the overall footprint of deployed AI systems [21]. Prior work has shown that inference efficiency depends on multiple factors from different levels. A first set of studies focuses on hardware and infrastructure. Patel et al. compared inference serving at the server and cluster levels [8]. Stojkovic et al. studied the impact of task type, batching, and model parallelism in vLLM-based inference environments [5]. In later work, they analyzed the effects of varying the number of LLM instances, model parallelism, and GPU frequency settings, and proposed an energy-management framework for inference environments [22]. Lazuka et al. 
+
+evaluated LLMs inference across multiple GPUs and proposed a predictive model to recommend the most cost-effective hardware for unseen LLMs [23]. A second set of studies focuses on models and tasks. Samsi et al. studied the impact of GPU settings, LLaMA model size, input data, batch size, and generation length [24]. Luccioni et al. compared architectures, model sizes, and task types [25]. Other work examined the effects of DVFS, batch size, model choice, workload characteristics, prompt and out-put length, quantization, and serving configuration on energy, latency, and quality [26], [27], [28], [29], [30], [7]. A third set focuses on decoding-level factors. Several studies examined the effect of decoding hyperparameters on GPU en-ergy consumption, generation quality, and performance across models, quality metrics, and tasks [31], [32], [33]. Zine et al. 
+
+proposed variability models to evaluate and predict the energy consumption, performance, and output quality associated with Hugging Face Transformers generation hyperparameters [18]. Finally, a fourth set focuses on inference serving factors. Prior work studied the effects of concurrency, request patterns, quantization, number of GPUs, inference hyperparameters, decoding strategies, GPU architectures, online versus offline serving, and model parallelism across systems such as Text Generation Inference (TGI), vLLM and Hugging Face Trans-formers [34], [35], [36], [37], [38]. Overall, prior work shows that LLM inference efficiency depends on many factors. However, these factors are often studied in isolation or within a limited set of interactions, leaving their combined effects across models and task types heavily understudied. We fill this gap by studying the main effect and the interactions between three system-level vLLM options targeting different parts of the inference pipeline: attention computation, cache reuse, and prefill scheduling. III. S TUDY DESIGN 
+
+We followed established empirical software engineering and energy measurement guidelines [19], [39], [40], [41]. We also provide a complete replication package [20] with the experimental pipeline, intermediate artifacts, collected mea-surements, and analysis scripts. 
+
+A. Goal & Research Questions 
+
+We define the goal of the study using the Goal-Question-Metric (GQM) framework by Basili et al. [42]. The goal of this study is to analyse LLM inference engine configurations 
+
+for the purpose of understanding their impact on energy consumption, performance, and accuracy from the point of view of software developers, LLM inference engine vendors, and Software Engineering researchers in vLLM deployments .To achieve it, we evaluate vLLM across three configurations using 5 LLMs and 5 datasets that represent different task types. For each experimental trial, we measure the energy consumption and performance (across diverse metrics) of the vLLM instance, as well as the accuracy of the LLMs’ outputs. The research questions of this study are as follows. 
+
+RQ 1 – For a given LLM and task type, how do vLLM configuration options and their interactions affect energy consumption, performance, and LLM’s accuracy? This RQ assesses whether the studied vLLM options exhibit different behaviors in terms of energy, performance (total latency, Time to First Token (TTFT)), and LLM’s accuracy. 
+
+RQ 2 – What interaction effects exist between vLLM config-urations and task types on energy consumption, performance, and accuracy? In this RQ, we investigate whether different vLLM configurations interact with task characteristics in ways that affect energy consumption, latency, TTFT, and accuracy. 
+
+RQ 3 – For a given type of task, what Pareto-optimal vLLM configurations balance energy consumption, performance, and LLMs’ accuracy? This RQ focusses on how to best configure a vLLM instance in terms of resource usage ( i.e. , energy and CPU/GPU usage), performance (total latency) and LLM’s accuracy when having a fixed type of task and deploying varying LLMs. 
+
+B. Selection of vLLM Configuration Options 
+
+As vLLM exposes tens of configuration options [43], ex-haustively evaluating its configuration space across multiple models, tasks and repetitions would be impractical. We there-fore focus on system-level options that satisfy three criteria: (i) they are exposed to practitioners and can be changed without modifying model weights, (ii) they target runtime mechanisms likely to affect energy consumption, latency or benchmark scores, and (iii) they are model-independent, i.e. ,they do not directly influence the choice of the LLM being served by the vLLM instance. Based on these criteria, we select three complementary options: (1) attention kernel, (2) prefix caching, and (3) chunked prefill. Together, these options cover attention computation, cache reuse, and prefill schedul-ing, while keeping the design tractable for a full-factorial controlled experiment across models and tasks. TABLE I: LLMs considered in our study                         
+
+> LLM Family Size Context size Downloads
+> Qwen3-32B Qwen 32B 32,768 4,319,243 Qwen3-4B Qwen 4B 32,768 6,159,027 Magistral-Small-2509 Mistral 24B 32,768 20,807 Llama-3.1-8B-Instruct Llama 8B 131,072 7,360,488 Llama-3.2-3B-Instruct Llama 3B 131,072 3,857,887
+
+Attention kernel refers to the low-level GPU implemen-tation of the attention mechanism in transformer models. We consider three attention kernels: FlashAttention-2 [44],  
+
+> FlashAttention-3
+
+[45], and FlashInfer [46]. They focus on opti-mizing the attention mechanism by minimizing GPU memory accesses, thereby improving inference performance. 
+
+Prefix caching improves inference efficiency by caching the KV store of prompts during prefill reducing processing time and costs. It works best when prompts share a common prefix, allowing the system to quickly access cached results for repeated queries. Prefix caching is expected to shorten the prefill phase and lower the TTFT [43]. We evaluate this option with two settings, on and off .
+
+Chunked prefill improves long-prompts processing by split-ting the prefill phase into smaller chunks. Under the default vLLM setup used here, chunking is only activated when prompts exceed the default max_num_batched_tokens 
+
+threshold, set to 8192 . Consequently, we expect its impact mainly on long-context workloads. We evaluate this option with two settings, on and off .
+
+C. Selection of LLMs 
+
+We selected LLMs from Hugging Face, the most popular platform for hosting ML-based projects [47]. We searched text-generation models by downloads in October 2025 [48]), then retained models that: (i) have at least 3 B parameters, excluding micro-LLMs; (ii) have fewer than 40 B active pa-rameters to fit into a single GPU (see Section IV); (iii) are open weights for replicability; (iv) use dense architecture, excluding out-of-scope Mixture of Experts (MOE) models, which do not share the same attention kernels as dense models; and (v) are instruction-tuned rather than task-specific. We then iteratively selected the most downloaded remaining model family, kept its latest dense collection, and chose the largest model below 40 ,B active parameters and, when available, the smallest above 3,B. Selected families were re-moved from subsequent iterations until reaching three distinct families. This strategy favors recent models from popular open-weight families, while remaining feasible and replicable. Table I presents the final list of selected models. For clarity, in the rest of the paper, we refer to each model by its family name and size only, e.g. ,Qwen-32B for Qwen/Qwen3-32B .
+
+D. Selection of Task 
+
+We select five datasets to cover complementary task char-acteristics relevant to the studied vLLM options, including prompt/output length, repeated prompt prefixes, single versus multi-turn interactions, and ground-truth availability. This se-lection allows us to detect interactions between task charac-teristics and vLLM configurations while keeping the scope TABLE II: Overview of the task datasets used in this study.                                
+
+> AT EE LB NQ WC
+> Original #tasks 20 100 503 7,842 650,000 #Tasks sampled 20 100 30 1,500 200 Avg. Prompt Length 475
+> ±8.5 155
+> ±225,583
+> ±1,734 35.8
+> ±.42 818
+> ±4.6 Avg. Output Length 1,096
+> ±631 159
+> ±47 435
+> ±214 172
+> ±123 1,060
+> ±521 Repeated prompt prefixes ✓✓✗✗✓
+> Multi-turn ✓✗✗✗✓
+> Can be scored? ✗✓✓✗✗
+
+of the study explicit. An overview of the selected datasets is presented in Table II. 
+
+AssistantTraces (AT) contains GitHub Copilot generations from 20 coding sessions with different developers [34]. We evaluate the first 10 turns of each session in sequential batches. The dataset reflects the typical tasks handled by a code-assistant server. 
+
+EvoEval (EE) contains 100 programming problems from HumanEval with subtle changes in the requirements [49]. For each problem, we request the LLMs to generate 5 solutions. This dataset consists of cases where developers use LLMs to implement functions from predefined documentation and requirements. 
+
+LongBench-v2 (LB) evaluates long-context tasks requiring deep reasoning across real-world multitasks [50]. Since most models have limited context windows, we use the short subset (< 32 k words), sample 30 tasks, and format them with the benchmark’s zero-shot template. LB captures workloads dominated by prefill, with limited decoding. 
+
+Natural Questions (NQ) contains users’ questions issued to Google search with answers found on Wikipedia by annota-tors [51], [52]. We sample 1, 500 questions from 7, 842 test questions. To limit answer length and avoid right-tailing [53], we set max new tokens to 512 . Prompts use a concise QA format with a question and an Answer: cue, tasking LLMs with a simple QA without external documents. 
+
+WildChat (WC) contains 650 , 000 real user-ChatGPT con-versations across diverse languages and prompts [54]. We sampled 200 multi-turn conversations, limit them to five turns, and organized them by turn number into five batches. For subsequent turns, we used the dataset’s original assistant responses as conversation history. The output limit was set to 32 , 000 to simulate a ChatGPT-like multi-turn setting. We evaluate accuracy only on EE and LB, which provide ground-truth answers and established scoring procedures. AT and WC lack ground-truth, while NQ contains data used for training rather than for benchmarking. 
+
+E. Experimental Variables 
+
+The independent variables of this study are (i) the attention kernel (i.e. ,FlashAttention-2 , FlashAttention-3 , and FlashInfer ), (ii) the prefix caching (on/off), (iii) the chunked prefill 
+
+(on/off), (iv) the LLM (see Table I), (v) the task type for the LLM (see Table II). The used LLM (see Table I) is the blocking factor in our experiment. The data collected during this experiment are grouped by different independent variables (and the blocking factor), depending on the specific RQ being answered (see subsection III-A). The dependent variables represent the specific quality focus being considered— i.e. ,energy, performance, or accuracy. We also collect internal vLLM runtime metrics to support interpretation; these are available in our replication package [20]. 
+
+Energy . During the inference process, we sample the power draw of the CPU and GPU via perf and nvidia-smi ,respectively, both with a sampling rate of 1Hz. Energy con-sumption ( E, in Joules) is then computed by using the classical 
+
+E = W ×T formula, where W is the mean power draw of the system in Watts and T is the duration of the experimental run in seconds [40]. We use direct software-level sampling to con-trol the measurement window, avoid tool-specific aggregation heuristics, and keep the procedure independent of any specific higher-level energy framework. 
+
+Performance . We measure performance by collecting two metrics via vLLM: (i) TTFT , defined as the delay between sending a request to the vLLM instance and receiving the first generated token, and (ii) Request Inference Time , which represents the end-to-end duration of the inference request from submission to completion. 
+
+Accuracy . For EvoEval, we assess the functional correctness of the generated code using the pass@k metric [55], which estimates the probability that at least one of the k generated samples passes all test cases. For LongBench, accuracy is com-puted as the average per-item score ; specifically, a prediction receives a score of 1 if it exactly matches the ground-truth answer, 0 otherwise, with a compensation of 0.25 assigned when no extractable answer is produced [50]. 
+
+F. Data Analysis 
+
+Following Wohlin et al. ’s guidelines [19], we analyse RQ 1
+
+and RQ 2 through data exploration , hypothesis testing , and ef-fect size estimation , while RQ 3 uses a Pareto-frontier approach to identify non-dominated trade-offs [56]. 
+
+Data exploration . We characterize the collected measures using descriptive statistics, tables and boxplots to compare visually the groups. 
+
+Hypothesis testing . We assess the normality of the distribu-tions of our groups by using density plots and the Shapiro-Wilk test ( α = 0.05). Since the normality assumption is not satisfied in most cases, we use the Aligned Rank Transform (ART) ANOVA [57], a non-parametric extension of factorial ANOVA. RQ 1 and RQ 2 use the same dependent variables (energy consumption , end-to-end latency , and TTFT). For 
+
+RQ 1, for each model and task type, we conduct a three-factor ART ANOVA with attention type (3 levels), prefix caching 
+
+(2 levels), and chunked prefill (2 levels), studying both main effects and their interactions. For RQ 2, for each model, we conduct three separate two-factor ART ANOVA analyses—one per configuration factor, each paired with task type (5 levels)— to assess configuration×task-type interactions. We adjust p-values with Holm-Bonferroni [58] to reduce false positives across comparisons, while controlling the family-wise error rate less conservatively than other methods. We use ART contrasts for significant effects. 
+
+Effect size estimation . We use Cliff’s Delta [59] for non-parametric effect size estimation and interpret its results as proposed by Vargha and Delaney [60]. 
+
+Pareto frontier calculation . To compute the frontier, we first aggregate repeated runs of the same configuration into a single point, using the median for energy and latency metrics, and the mean for accuracy when available. We then compare configurations by minimizing energy and latency and maximizing accuracy. A configuration belongs to the Pareto frontier if it is not dominated by other configurations. IV. E XPERIMENT EXECUTION 
+
+When combining our selected configuration factors and the models described in Table I, we obtain 3×2×2×5 = 60 unique configurations. Each of these configurations is evaluated on five task types presented in Table II and is executed 30 
+
+times to account for measurement variability. As such, our experiment is comprised of 60 × 5 × 30 = 9 , 000 individual runs. In total, our experiments consumed approximately (1.44 
+
+×10 6) kJ ≈400 kWh (enough to power a Western-European home for 28 days). Each individual run consists of loading the LLM for a given configuration, running a warmup and calibration phase, and then submitting the dataset’s prompts to vLLM’s offline inference interface. We use the offline interface to keep prompt submission, batching, and cache state controlled across repetitions. For single-turn datasets (EE, LB, NQ), all prompts are submitted as a single batch; vLLM internally schedules and processes them concurrently. For multi-turn datasets (AT, WC), one batch per conversation turn is submitted sequentially, with each batch containing one prompt per active conversation. When selecting the next configuration and repetition to run, the selection is random to avoid running all repetitions of a given configuration on the same day and node. To mitigate cold-start effects, we included a warmup before each configuration evaluation. The warmup consists of three short prompts (a few words each) and one long prompt (which maximizes context size), all run sequen-tially. Evaluations were preceded by a 30-second calibration phase, during which we measured the machine’s idle energy consumption. Between dataset evaluations, the KV cache and prefix cache are explicitly reset to prevent state leakage across runs, ensuring that prefix-caching configurations start each run from a cold cache. Energy is measured exclusively during the generation phase; model loading and warmup are excluded from the reported energy figures. Across all experiments, idle consumption measurements exhibited a coefficient of variation of 0.024 , and repeated energy measurements of identical con-figurations had a coefficient of variation of 0.043 , indicating high measurement stability. All experiments run on a cluster of 4 identical nodes with an AMD EPYC 7513 processor, 512 GiB of memory, and 4
+
+Nvidia A100-SXM4-40GB GPUs. The system ran Debian 11 with the Linux 5.10.0-28-amd64 kernel. Lastly, we used vLLM version 0.10.2, FlashInfer version 0.4.1, and cuda 12.2.128. 525 550 575                                                
+
+> f2-p0-c0
+> f2-p0-c1
+> f2-p1-c0
+> f2-p1-c1
+> f3-p0-c0
+> f3-p0-c1
+> f3-p1-c0
+> f3-p1-c1
+> fi-p0-c0
+> fi-p0-c1
+> fi-p1-c0
+> fi-p1-c1
+> Qwen3-32B
+> 120 140
+> Qwen3-4B
+> 300 325 350
+> Magistral-Small-2509
+> 140 160
+> Llama-8B
+> 40 60 80 AssistantTraces
+> Llama-3B
+> 50 60
+> f2-p0-c0
+> f2-p0-c1
+> f2-p1-c0
+> f2-p1-c1
+> f3-p0-c0
+> f3-p0-c1
+> f3-p1-c0
+> f3-p1-c1
+> fi-p0-c0
+> fi-p0-c1
+> fi-p1-c0
+> fi-p1-c1
+> 15 20 40 45 50 17.5 20.0 22.5 12 14
+> EvoEval
+> 250 300 350
+> f2-p0-c0
+> f2-p0-c1
+> f2-p1-c0
+> f2-p1-c1
+> f3-p0-c0
+> f3-p0-c1
+> f3-p1-c0
+> f3-p1-c1
+> fi-p0-c0
+> fi-p0-c1
+> fi-p1-c0
+> fi-p1-c1
+> 60 80 120.0 122.5 125.0 75 80 30 40
+> LongBench
+> 90 100 110
+> f2-p0-c0
+> f2-p0-c1
+> f2-p1-c0
+> f2-p1-c1
+> f3-p0-c0
+> f3-p0-c1
+> f3-p1-c0
+> f3-p1-c1
+> fi-p0-c0
+> fi-p0-c1
+> fi-p1-c0
+> fi-p1-c1
+> 15.0 17.5 10 15 50 55 8910
+> NaturalQuestions
+> 300 350
+> f2-p0-c0
+> f2-p0-c1
+> f2-p1-c0
+> f2-p1-c1
+> f3-p0-c0
+> f3-p0-c1
+> f3-p1-c0
+> f3-p1-c1
+> fi-p0-c0
+> fi-p0-c1
+> fi-p1-c0
+> fi-p1-c1
+> 100 120 140 125 150 175 120 140 160 60 70
+> WildChat
+> Total Energy (kJ)
+> Configuration
+
+Fig. 1: Total energy consumption (kJ) by model, task, and vLLM configuration. Points are runs; black dots show medians. IDs encode attention kernel (f2= FlashAttention-2, f3= FlashAttention-3 , fi= FlashInfer ); p/c encode prefix caching/chunked prefill (0/1=off/on). All configurations use the same inference parameters: (i) tem-perature = 0.4, a commonly adopted value in LLM inference studies [55]; (ii) top-p = 0.95, following the nucleus sampling setting recommended by Holtzman et al. [61]; and (iii) 
+
+max-tokens = 2, 048 , an upper bound on the output tokens that limits truncation while avoiding unusually long genera-tions when models fail to stop. Unless stated otherwise, all remaining vLLM serving and decoding parameters were kept at their default values. We intentionally adopted these defaults to remain representative of common vLLM deployments while isolating the effects of the studied configuration options. V. R ESULTS 
+
+A. Impact of vLLM Configurations (RQ1) 1) Data Exploration : Figure 1 shows that energy varies across vLLM configurations for all models, although the importance of this effect strongly depends on the model. We observe that for certain model–task pairs, the resulting distributions differ notably across configurations, indicating that configuration choices can significantly impact energy consumption, whereas for others the distributions overlap much more, showing lower sensitivity. On LB, for example, 
+
+Qwen-32B spans 220 kJ to more than 388 kJ per prompt, while 
+
+Llama-3B ranges from about 28 to 42 kJ. These examples illustrate two distinct effects: model size mainly shifts the TABLE III: Statistically significant ANOVA effects ( p < 0.05 )across main, 2-way, and 3-way factor effects, over 25 tests for energy, latency, and TTFT, and 10 for accuracy. 
+
+Factor / Interaction Energy Latency TTFT Accuracy 
+
+Attention 24 23 25 6Prefix Caching 18 21 22 6Chunked Prefill 2 1 1 1Attention × Prefix Caching 4 10 11 3Attention × Chunked Prefill 2 2 0 1Prefix Caching × Chunked Prefill 2 1 1 1Attention × Prefix Caching × Chunked Prefill 1 1 1 1
+
+energy baseline, whereas configuration sensitivity varies by model–task pair and does not simply scale with model size, as 
+
+Qwen-32B , despite its highest overall consumption, varies by up to 30% across configurations compared with about 39% for 
+
+Llama-3B . A similar trend is observed for TTFT and total la-tency, whose sensitivity to configuration choices also depends on the model and task (the corresponding plots are provided in the replication package). However, the effect’s importance differs substantially across metrics: median differences reach 38.8% for energy consumption, 80.6% for request latency, and 324.0% for TTFT, indicating a particularly strong effect on TTFT. 
+
+2) Hypothesis Testing : Table III shows counts of signifi-cant ANOVA tests ( p < 0.05 ) for main effects, 2-way, and 3-way interactions across factors, using total energy, total latency, and TTFT metrics (out of 25 total tests). We observe a higher number of significant outcomes for conditions without an interaction effect of attention ( 24 , 23 , and 25 ) and prefix caching ( 18 , 21 , and 22 ), compared to the low numbers observed for chunked prefill ( 2, 1, and 1). This observation suggests that attention and prefix caching have a greater influence on the dependent variables and that their interaction is noteworthy, particularly for total latency and TTFT ( 10 and 
+
+11 , respectively), but it is not dominant. By contrast, effects involving chunked prefill are rare and are observed only on LB, the task with the longest prompts, which is consistent with the fact that shorter prompts are not expected to trigger prefill chunking under vLLM’s default setup. The interaction effects are inconsistent across models and tasks. They are particularly frequent for Qwen-32B and 
+
+Llama-3B , whereas no significant interaction is observed for 
+
+Magistral-24B . LB has the highest concentration of interaction effects, including most of the significant three-way interac-tions, whereas NQ shows very few significant interactions overall. These results show that interaction effects are model-and task-dependent rather than systematic. 
+
+3) Main effects of vLLM options : Table IV reports ART ANOVA and Cliff’s Delta tests on the direct impact of attention type, chunked prefill, and prefix caching on the energy consumption. The same tests on performance and accuracy are available in the replication package [20]. Non-significant effects are omitted from the post hoc analysis. The results confirm that attention type has a significant im-pact on energy consumption across most models and metrics. 
+
+FlashInfer generally has an advantage over FlashAttention-3 ,TABLE IV: Pairwise comparisons of inference options for Energy (kJ): pHolm and Cliff’s δ. AT: AssistantTraces, EE: EvoEval, LB: LongBench-v2, NQ: Natural Questions, WC: WildChat, v2: FlashAttention-2, v3: FlashAttention-3, inf: FlashInfer                                                                                                                              
+
+> Options Model Contrast AT EE LB NQ WC
+> Attention Type Q-32B f2 - fi < . 001(+ .65) < . 001(+ .31) < . 001(+ .39) < . 001(+1 .00) < . 001(+ .71)
+> f2 - f3 < . 001( −.72) .006(+ .09) < . 001(+ .22) < . 001(+1 .00) .087(+ .11)
+> f3 - fi < . 001(+ .94) < . 001(+ .25) .046(+ .26) < . 001(+ .79) < . 001(+ .63)
+> Q-4B f2 - fi < . 001(+ .74) < . 001(+ .64) < . 001(+ .93) < . 001(+1 .00) < . 001(+ .99)
+> f2 - f3 < . 001( −.90) < . 001( −.77) < . 001( −.62) < . 001(+ .98) < . 001( −.50)
+> f3 - fi < . 001(+ .98) < . 001(+ .97) < . 001(+1 .00) < . 001(+ .88) < . 001(+1 .00)
+> M-24B f2 - fi < . 001(+ .22) < . 001(+ .21) .441(+ .04) .294(+ .06) -f2 - f3 .515( −.04) .012( −.11) < . 001(+1 .00) < . 001(+ .30) -f3 - fi < . 001(+ .26) < . 001(+ .29) < . 001( −.99) .019( −.23) -L-8B f2 - fi < . 001(+ .25) < . 001(+ .19) < . 001(+1 .00) < . 001(+1 .00) < . 001(+1 .00)
+> f2 - f3 < . 001( −.30) < . 001( −.23) < . 001( −.58) .006(+ .17) < . 001(+ .44)
+> f3 - fi < . 001(+ .52) < . 001(+ .37) < . 001(+1 .00) < . 001(+1 .00) < . 001(+1 .00)
+> L-3B f2 - fi .113( −.08) < . 001(+ .30) < . 001(+ .96) < . 001(+ .75) < . 001(+1 .00)
+> f2 - f3 < . 001( −.17) < . 001( −.48) .002( −.09) < . 001(+ .51) .438(+ .04)
+> f3 - fi .113(+ .13) < . 001(+ .68) < . 001(+ .89) < . 001(+ .34) < . 001(+1 .00)
+> Chunked Prefill Q-32B off - on --.001( −.04) --L-3B off - on --.007(+ .07) --Prefix caching Q-32B off - on < . 001(+ .42) < . 001(+1 .00) < . 001(+ .93) -< . 001(+ .47)
+> Q-4B off - on < . 001(+ .20) < . 001(+ .44) --< . 001(+ .25)
+> M-24B off - on < . 001(+ .60) < . 001(+ .98) --< . 001(+ .30)
+> L-8B off - on < . 001(+ .57) < . 001(+ .69) -.003( −.10) < . 001(+ .20)
+> L-3B off - on < . 001( −.26) < . 001(+ .67) .004( −.09) -< . 001(+ .19)
+> P-values lower than α= 0 .05 are shown in bold .Effect sizes: Large -Medium -Small -Negligible
+
+with strong positive effect size across models, particularly for Qwen-4B (AT and LB) and Llama-8B (AT, LB, and WC). FlashAttention-3 , in turn, tends to consume more than 
+
+FlashAttention-2 . Enabling prefix caching also has a significant impact, reducing energy consumption in almost all cases, even for tasks that are not normally affected by it. This reduction is particularly pronounced on EE, Magistral-24B , and Qwen-32B . However, this trend is not universal: for Llama-3B on AT, prefix caching leads to a negative effect size, indicating an increase in energy consumption in this specific case. By contrast, enabling chunked prefill shows limited observable effects on energy consumption under our studied workloads. As expected, the few significant cases are limited to LB, however, their effect sizes remain negligible. The same overall trends are observed for total latency and TTFT, although the effects are less consistent than for energy consumption. Attention type remains an important factor for both metrics, but the best-performing backend varies more across models and tasks than for energy. Prefix caching has its clearest effect on TTFT, which it reduces in most cases; for total latency, the effect is weaker and more task-dependent. Chunked prefill again shows limited observable effects under our studied workloads. 
+
+4) Interaction effects between vLLM options. : Figure 2 shows representative 2-way interaction patterns observed for end-to-end request latency. In Figure 2a and Figure 2b, en-abling prefix caching decreases latency when FlashAttention-3 
+
+is used, for both Llama-3B and Qwen-4B . This pattern is not limited to these two examples: with FlashAttention-3 , prefix caching improves latency in 37/50 cases, TTFT in 38/50 cases, and generation energy usage in 40/50 cases. FlashAttention-3 is the backend for which prefix caching appears slightly flash-v2 flash-v3 flash-infer  
+
+> Attention Type
+> 0.90
+> 0.95
+> 1.00
+> 1.05
+> 1.10
+> Total Latency (s)
+> Prefix caching
+> off on
+
+(a) Llama-3B-Instruct with Assis-tantTraces flash-v2 flash-v3 flash-infer  
+
+> Attention Type
+> 21.0
+> 21.5
+> 22.0
+> 22.5
+> Total Latency (s)
+> Prefix caching
+> off on
+
+(b) Qwen-4B with LongBench 
+
+Fig. 2: Representative 2-way interaction effects on end-to-end request latency. more consistently beneficial. Still, similar gains are also ob-served with FlashAttention-2 and FlashInfer : for latency, prefix caching improves 29/50 cases with FlashAttention-2 and 31/50 with FlashInfer ; for TTFT, 34/50 with FlashAttention-2 and 35/50 with FlashInfer ; and for generation energy usage, 36/50 with FlashAttention-2 and 37/50 with FlashInfer . The effect is not exclusive to FlashAttention-3 , but only slightly more consistent with it. 
+
+5) Anomalous effects of our factors on accuracy : We identified statistically significant effects of inference con-figuration parameters, especially attention type and prefix caching, on benchmark accuracy scores across several model– benchmark pairs (Table III), with chunked prefill showing only one significant test of negligible effect. These findings are unexpected, as the parameters in question are intended solely for computational optimization and have no bearing on model outputs. 
+
+Effect of attention type. The clearest case is Qwen-4B on LB, where FlashInfer reached accuracy in the 0.37 –0.43 range against 0.20 –0.35 for both FlashAttention variants, differing from each with a large effect, while the two FlashAttention 
+
+variants differed only slightly. The same pattern appears more weakly on EE, where FlashInfer significantly outperforms 
+
+FlashAttention-2 for all models (small-to-medium effects) and 
+
+FlashAttention-3 for all but Magistral-24B . The exception is 
+
+Llama-3B on LB, where FlashAttention-2 performs worse than both other backends, which are themselves indistinguishable. 
+
+Effect of prefix caching. Enabling prefix caching signif-icantly altered measured accuracy for six model–benchmark combinations. It reduced accuracy on EE for Magistral-24B 
+
+(large effect) and, more weakly, Llama-8B , but increased it on EE for Qwen-32B , Qwen-4B , and Llama-3B (largest positive shift for the latter). Llama-3B on LB also differed significantly but with negligible effect size. The exact statistics for all contrasts are reported in the replication package [20]. 
+
+RQ1: Attention type and prefix caching show the most frequent effects on energy and performance. FlashInfer of-ten reduces energy, while the fastest backend depends on the settings. Prefix caching mainly affects TTFT, whereas 20     
+
+> 40
+> 60
+> 80
+> 100
+> 120
+> 140
+> Total Energy (kJ)
+> Qwen-32B
+> 100
+> 200
+> 300
+> 400
+> 500
+> Qwen-4B
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> Total Energy (kJ)
+> Magistral-24B
+> flash-v2 flash-v3 flash-infer
+> Attention Type
+> 0
+> 100
+> 200
+> 300
+> Llama-8B
+> flash-v2 flash-v3 flash-infer
+> Attention Type
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> Total Energy (kJ)
+> Llama-3B
+> Task
+> AssistantTraces
+> EvoEval
+> LongBench
+> NaturalQuestions
+> WildChat
+
+Fig. 3: Task and attention type interaction on total energy consumption (kJ) chunked prefill has limited effects even on the long-prompt task. We also observe significant accuracy dif-ferences for some model–benchmark pairs. Implication: 
+
+attention type and prefix caching should be evaluated jointly across energy, performance, and accuracy. 
+
+B. Interaction Effects between Configurations & Task Types (RQ2) 1) Data exploration : Interaction between task and atten-tion . As shown in Figure 3, the task is the dominant factor influencing energy consumption, introducing a stronger effect than the attention parameter in every case. FlashInfer tends to reduce energy usage compared to FlashAttention-2 and 
+
+FlashAttention-3 across most models and tasks. However, in certain configurations, such as specific models or tasks like EE, the attention type has minimal impact. Model size also plays a substantial role, with larger models consistently consuming more energy. Latency and TTFT have related, but not iden-tical, patterns (the corresponding figures are provided in the replication package). In several cases, FlashAttention-3 yields lower latency and slightly lower TTFT than FlashAttention-2, showing that although FlashInfer often achieves the lowest energy consumption, it is not systematically the fastest option. This suggests a trade-off between time and energy efficiency, as the attention type that minimizes energy consumption is not always the one that minimizes response time. AT EE LB NQ WC                     
+
+> Task
+> Qwen-32B
+> Qwen-4B
+> Llama-8B
+> Llama-3B
+> Magistral-24B
+> Model
+> -9.43 -6.47 -39.67 -0.11 -15.71
+> -2.31 -1.12 0.11 0.08 -5.81
+> -5.13 -1.60 -0.01 0.11 -2.95
+> 3.56 -1.06 -0.04 0.05 -0.83
+> -8.06 -5.40 0.04 -0.26 -7.67
+> 10
+> 5
+> 0
+> 5
+> 10
+> Total Energy (kJ) (On - Off)
+
+Fig. 4: Difference in total energy consumption (prefix caching enabled minus disabled) across tasks and models, in kJ. 
+
+Interaction between task and prefix caching. Figure 4 summarizes this interaction for total energy consumption by showing, for each model and task pair, the change in median total energy when prefix caching is enabled rather than dis-abled ( ∆ = On − Off ). Negative values, therefore, indicate lower energy consumption with prefix caching, whereas posi-tive values indicate an increase. Figure 4 shows that, despite a statistically significant in-teraction, enabling prefix caching generally leads to modest decreases in energy consumption, with effects that remain strongly task-dependent. The largest decreases Latency and TTFT show a similar overall pattern: their interactions with the task are also statistically significant, but the corresponding changes induced by prefix caching remain limited across most model-task combinations. In most cases, enabling prefix caching slightly reduces latency and TTFT, although some combinations show almost no effect and a few exhibit small increases. Runtime metrics in the replication package [20], including prefix-cache queries and hits, confirm that benefits depend on workload characteristics and cache utilization. Overall, task remains the dominant factor, while prefix caching introduces a secondary, statistically detectable effect that should be interpreted as a small task-dependent optimiza-tion rather than a uniform benefit. 
+
+2) Hypothesis Testing : The ART ANOVA results revealed a significant interaction between attention type and task, and between prefix caching and task, in determining total energy, latency, and TTFT across all tested models (15 out of 15 tests were significant for each factor). By contrast, chunked prefill shows no significant task-level interaction (0/15), even with LB included as the long-context workload 
+
+RQ2: Attention type and prefix caching show significant interactions with the task, while chunked prefill does not. Attention type leads to substantial task-dependent variations, often revealing trade-offs between energy and latency. In contrast, prefix caching yields smaller and less consistent improvements. Implication: configuration effects are heavily task-dependent and must be evaluated on representative datasets rather than in isolation. 
+
+C. Pareto-optimal vLLM Configurations (RQ3) 
+
+The Pareto analysis confirms that no single vLLM configu-ration is optimal across all tasks. For each task, the Pareto front is computed over latency, energy consumption, and accuracy when available. For readability, Figure 5 shows a two-dimensional projection of this front, focusing on energy and accuracy, while the full Pareto-optimal configurations, including latency, are reported in Table V. On EE (Figure 5), the Pareto front is mainly driven by the choice of model rather than by vLLM options. Llama-3B occupies the low-cost end of the front (with energy between 11.0 and 12.2 kJ, latency between 1.61 and 1.71 s, and accuracy between 0.48 and 0.49). In contrast, Qwen-4B provides a more balanced trade-off, increasing accuracy to 0.62 (+27% compared to the best Llama-3B point), at the cost of a 33–47% increase in energy and a 63–73% increase in latency (16.2 kJ and 2.78 s). Llama-8B lies between these regimes, reaching 0.57 accuracy with 18.2–19.5 kJ and 2.48–2.63 s, whereas Qwen-32B achieves the highest accuracy (0.65–0.66) but at the cost of a 223–232% increase in energy and a 62–64% increase in latency compared to Qwen-4B . Within a given model, vLLM parameters mainly move configurations locally along the front. For instance, for Qwen-32B , switching from FlashAttention-3 to FlashInfer reduces energy consumption by about 3% with negligible impact on accuracy. In contrast, for Llama-8B , FlashInfer reduces energy by about 7% at the cost of a small latency increase (5–6%). Similar patterns are observed across other tasks. As detailed in Table V, on LB all Pareto-optimal points use Qwen-4B with FlashInfer , trading latency and energy for accuracy. On NQ, the Pareto set reflects a small latency–energy trade-off, with the lowest latency obtained from FlashAttention-3 (no prefix caching or chunked prefill) and the lowest energy from FlashInfer with chunked prefill. On WC, FlashInfer consistently reduces energy compared with FlashAttention-3 at the cost of a small latency increase. Finally, AT has a single optimal configuration: Llama-3B with 
+
+FlashAttention-2 and chunked prefill. Overall, these results show that model choice determines the main performance regime, while vLLM configuration options (attention kernel, prefix caching, chunked prefill) provide fine-grained adjustments within that regime. 
+
+RQ3: No single configuration is optimal across tasks. Model choice dominates the Pareto front, defining the main trade-offs between energy, latency, and accuracy. vLLM configuration options only induce local adjust-ments, typically yielding modest energy savings or la-tency trade-offs without changing the overall regime. Im-plication: selecting the right model is the primary deci-sion, while configuration tuning provides secondary, fine-grained optimization whose benefits are task-dependent. 0.40 0.45 0.50 0.55 0.60 0.65 
+
+> Accuracy
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> Total Energy (kJ)
+> Dominated solution
+> Pareto front
+> Optimal solution
+
+Fig. 5: Two-dimensional projection of the EvoEval Pareto front over energy (kJ) and accuracy across configurations and selected LLMs. The front is computed over energy, latency, and accuracy; latency is reported in Table V. TABLE V: Pareto-optimal configurations by task. Only frontier models are shown. Best values are highlighted in green, worst in red. AT: AssistantTraces, EE: EvoEval, LB: LongBench-v2, NQ: Natural Questions, WC: WildChat, v2: FlashAttention-2, v3: FlashAttention-3, infer: FlashInfer                                                                                                                         
+
+> Task Type Model Attention Type Prefix Caching Chunked Prefill Energy (kJ) Latency (s) Accuracy AT Llama-3B f2 ×✓46.0 0.910 -
+> EE
+> Qwen-32B f3 ✓×53.8 4.490 0.650 fi ✓×52.3 4.520 0.650 fi ✓✓52.4 4.560 0.660 Qwen-4B fi ✓✓16.2 2.780 0.620 Llama-8B f3 ✓×19.5 2.480 0.570 fi ✓×18.2 2.610 0.570 fi ✓✓18.2 2.630 0.570 Llama-3B f2 ✓✓11.2 1.610 0.480 f3 ✓✓12.2 1.660 0.490 fi ✓✓11.1 1.700 0.480 fi ✓×11.0 1.710 0.480
+> LB Qwen-4B fi ×✓56.8 20.730 0.370 fi ✓×60.3 21.900 0.410 fi ✓✓61.3 22.630 0.420
+> NQ Llama-3B f3 ××8.8 3.240 -f3 ✓✓8.8 3.310 -fi ×✓8.6 3.580 -
+> WC Llama-3B f3 ××66.0 6.680 -f3 ✓×65.1 6.810 -fi ××57.9 6.900 -fi ✓×56.7 6.920 -
+
+VI. D ISCUSSION 
+
+This section contextualizes the results in Section V. Across the three RQs, no vLLM configuration dominates across all models and tasks: optimal settings are model- and task-specific. Attention kernel and prefix caching are the main levers, while chunked prefill has negligible effects in our settings. Overall, LLM and task drive most variance, with configurations acting as secondary but non-negligible modi-fiers. Unexpectedly, inference-time optimizations intended to be output-neutral can measurably affect benchmark accuracy, with implications for LLM evaluation reproducibility. 
+
+a) Configuration Effects on Benchmark Accuracy :
+
+Prefix caching and attention backend selection are inference-time optimizations that operate exclusively at the computa-tional level: they should not alter either model weights or the mathematical operations they approximate. In principle, then, the change in benchmark accuracy under these settings should be zero. Yet we observe non-zero shifts. Two ex-planations are possible: the differences are statistical noise from a finite evaluation set, or they reflect a real effect— for example, attention kernels and cache code paths reorder floating-point reductions, and floating-point addition is non-associative, so numerically distinct (though mathematically equivalent) results can propagate into different sampled tokens. Disentangling these would require repeated runs with fixed seeds and per-token logit comparison, which we leave to future work. These results imply that published benchmark scores may not be reproducible across inference stacks when the full configuration is not reported, although further research is needed to correctly assess the effect. If this effect is not a statistical anomaly, practitioners should not assume that a model’s published benchmark performance will transfer to a different deployment configuration, and empirical studies evaluating LLM accuracy should report their full inference setup as part of their experimental protocol. 
+
+b) Interpreting Cross-cutting Patterns : Why chunked prefill had negligible effects. The almost nonexistent effect of the prefill chunk can be explained by the interaction between our task characteristics and the default value of vLLM’s option max_num_batched_tokens of 8,192. A prompt is only chunked when it exceeds this token budget. Four of our five tasks have average prompt lengths well below this threshold, meaning that chunked prefill was never actually triggered for the vast majority of requests in these tasks. Furthermore, vLLM’s documentation states that 8,192 is the recommended value for optimizing throughput, which directly affects total energy and end-to-end latency. Conversely, set-ting max_num_batched_tokens too low degrades per-formance, since small chunks reduce the compute intensity of each prefill step and leave the GPU underutilized [62]. Our default-budget configuration therefore reflects the regime vLLM recommends, and the negligible effect we observe is specific to that recommended setting rather than to chunked prefill in general. 
+
+Why energy and latency are not proportional. A practically important and recurring observation is that FlashInfer tends to achieve the lowest energy consumption while FlashAttention-3 
+
+tends to achieve the lowest latency. This decoupling highlights that optimizing for energy and optimizing for latency can require different configuration choices, and that reporting only one metric is insufficient for a complete characterization of efficiency. Isolating the contribution of individual task-level factors through fine-grained profiling would be a valu-able direction for follow-up work, as would measuring per-configuration memory bandwidth utilization. 
+
+KV cache block allocation and the LB prefix caching anomaly. For Qwen-32B on LB, enabling prefix caching re-duces energy with a large effect ( δ = 0 .93 ), yet LB contains no repeated prompt prefixes, ruling out cache hits as the cause. A plausible explanation is that enabling prefix caching alters vLLM’s KV-cache block allocation and memory-management path even when no prefix is reused, changing GPU memory access patterns independently of cache hits. Confirming this would require instrumenting block-level allocation and repro-ducing the effect on additional long-context datasets, which we leave to future work. 
+
+c) Implications for Stakeholders. : Prioritize attention kernel and prefix caching; chunked prefill can be left at its default. Among the three options studied, attention kernel and prefix caching are the dominant configuration levers. FlashInfer 
+
+should be the default choice when energy efficiency is the priority, while FlashAttention-3 is preferable when minimizing latency. Prefix caching reduces energy and latency in most cases, but practitioners should validate this on their specific task. Chunked prefill, by contrast, had no meaningful effect across our experiment and can safely be left at its default value. 
+
+Use the Pareto frontier as a decision tool. The Pareto-optimal configurations in Table V provide practitioners with a principled basis for selecting configurations under multi-objective constraints. Rather than picking the configuration that ranks best on a single metric, the frontier identifies the set of configurations where no alternative is strictly better on all 
+
+objectives simultaneously. In practice, this means: if energy efficiency is the primary concern, select the Pareto-optimal point with the lowest energy value (typically FlashInfer with prefix caching enabled); if latency is critical, select the point with the lowest latency (often FlashAttention-3 with prefix caching enabled). 
+
+Evaluate options jointly. The attention × prefix caching interaction is significant in 10/25 latency and 11/25 TTFT tests—i.e., the best attention kernel may depend on whether prefix caching is enabled. Options evaluated independently can lead to suboptimal choices. We recommend that practitioners / future benchmarking efforts adopt a factorial design to capture such interactions, and that vendors consider task-aware defaults over a single static configuration. 
+
+For researchers: report the full inference configuration. 
+
+Our results show that attention backend and prefix caching settings can shift accuracy scores by margins comparable to differences between models of different sizes. Benchmark results reported without specifying the full configuration of the inference engine are therefore not fully reproducible: a replication using a different inference stack may produce substantially different accuracy scores for the same model. In line with Baltes et al. guidelines [63], we recommend that empirical studies evaluating LLM accuracy include the complete inference configuration in their protocol. VII. T HREATS TO VALIDITY 
+
+Construct Validity. We measure GPU and CPU energy using nvidia-smi and perf , respectively. On A100 GPUs, 
+
+nvidia-smi samples power for only 25% of runtime, inter-polating the rest, which can cause energy errors of up to 65% in very spiky workloads [64]. Repeating runs reduces noise but not systematic bias, energy values should therefore be interpreted as estimates. Accuracy was evaluated only for EE and LB, as AT, WC, and NQ lack suitable ground truth. These benchmarks may not represent accuracy across all task types. With sampling-based decoding, accuracy differences may also partly reflect stochastic generation effects The 30 repetitions help capture this variability while preserving a realistic setup. 
+
+Internal Validity. To keep the study tractable, we evaluated three vLLM configurations while holding all other settings at their defaults. These defaults may interact with the studied factors in unseen ways, but exhaustive exploration is infea-sible [18]. We therefore focus on practically relevant options likely to act independently. In addition, under vLLM’s default setup, enabling chunked prefill does not necessarily activate the mechanism for short-prompt tasks. Therefore, for such tasks, our results capture the effect of enabling the option rather than the behavior of active prefill chunking. 
+
+External Validity. Our experiments used NVIDIA A100-SXM4-40GB GPUs. Since attention kernel performance de-pends on hardware, e.g. ,FlashAttention-3 is tuned for H100 GPUs, results on A100s may not generalize to other plat-forms. Our results reflect a specific setup using vLLM 0.10.2, five models from three families, and five datasets. Because inference optimizations evolve quickly, and our models and workloads cover only part of the design space, generalization to other versions, architectures, scales, and tasks should be made with caution. We use vLLM’s offline batch inference in-terface rather than its HTTP server mode, where asynchronous requests, scheduling, and cache behavior may differ. Finally, our findings are specific to vLLM; other inference servers may implement similar options differently. 
+
+Conclusion Validity. Although 30 repetitions per config-uration is substantial compared to prior work, it may still be limited given the variability of LLM inference. Energy measurements were highly stable (CV = 0.043). To limit false positives, we applied the Holm–Bonferroni correction [58] and used ART ANOVA for our non-normal data [57]. VIII. C ONCLUSION 
+
+Rather than providing universal deployment guidelines, we presented a controlled exploratory study of how three vLLM options—attention kernel, prefix caching, and chunked prefill—affect energy consumption, performance, and accuracy across five LLMs and five tasks. We identify trade-offs that deserve further investigation and call for treating the inference stack as a first-class experimental variable. The broader lesson is that vLLM configuration is not a neu-tral implementation detail. Defaults or unreported choices can affect energy, latency, and accuracy conclusions. Navigating this space requires a task-aware, multi-objective perspective, as evaluating options in isolation can lead to suboptimal decisions. Future work should extend this factorial design to other vLLM parameters, hardware settings, multi-GPU deploy-ments, and MoE architectures. It should also further inves-tigate chunked prefill on workloads where prefill chunking is systematically triggered. 
+
+Data Availability Statement: All artifacts (code, datasets, and results) are made available in an online replication pack-age [20]. REFERENCES [1] T. Eloundou, S. Manning, P. Mishkin, and D. Rock, “Gpts are gpts: Labor market impact potential of llms,” Science , vol. 384, no. 6702, pp. 1306–1308, 2024. [2] G. Bharathi Mohan, R. Prasanna Kumar, P. Vishal Krishh, A. Keerthi-nathan, G. Lavanya, M. K. U. Meghana, S. Sulthana, and S. Doss, “An analysis of large language models: their impact and potential applications,” Knowledge and Information Systems , vol. 66, no. 9, pp. 5047–5070, 2024. [3] M. Murtaza, C.-T. Cheng, B. M. Albahlal, M. M. A. Muslam, and M. S. Raza, “The impact of llm chatbots on learning outcomes in advanced driver assistance systems education,” Scientific Reports , vol. 15, no. 1, p. 7260, 2025. [4] A. d. Vries-Gao, “Recalibrating global artificial intelligence e-waste estimates,” Resources, Conservation and Recycling , vol. 229, p. 108872, 2026. [Online]. Available: https://www.sciencedirect.com/ science/article/pii/S0921344926000960 [5] J. Stojkovic, E. Choukse, C. Zhang, I. Goiri, and J. Torrellas, “Towards greener llms: Bringing energy-efficiency to the forefront of llm infer-ence,” arXiv preprint arXiv:2403.20306 , 2024. [6] N. Jegham, M. Abdelatti, C. Y. Koh, L. Elmoubarki, and A. Hendawi, “How hungry is ai? benchmarking energy, water, and carbon footprint of llm inference,” arXiv preprint arXiv:2505.09598 , 2025. [7] Z. Fu, F. Chen, S. Zhou, H. Li, and L. Jiang, “Llmco2: Advancing accu-rate carbon footprint prediction for llm inferences,” ACM SIGENERGY Energy Informatics Review , vol. 5, no. 2, pp. 63–68, 2025. [8] P. Patel, E. Choukse, C. Zhang, ´ I. Goiri, B. Warrier, N. Mahalingam, and R. Bianchini, “Characterizing power management opportunities for llms in the cloud,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 , 2024, pp. 207–222. [9] Y. Ding and T. Shi, “Sustainable llm serving: Environmental implica-tions, challenges, and opportunities,” in 2024 IEEE 15th International Green and Sustainable Computing Conference (IGSC) . IEEE, 2024, pp. 37–38. [10] S. Park, S. Jeon, C. Lee, S. Jeon, B.-S. Kim, and J. Lee, “A survey on in-ference engines for large language models: Perspectives on optimization and efficiency,” preprint arXiv:2505.01658 , 2025. [11] B. Li, Y. Jiang, V. Gadepally, and D. Tiwari, “Llm inference serving: Survey of recent advances and opportunities,” in 2024 IEEE High Performance Extreme Computing Conference (HPEC) . IEEE, 2024, pp. 1–8. [12] W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica, “Efficient memory management for large language model serving with pagedattention,” in Proceedings of the 29th symposium on operating systems principles , 2023, pp. 611–626. [13] T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz et al. , “Huggingface’s trans-formers: State-of-the-art natural language processing,” arXiv preprint arXiv:1910.03771 , 2019. [14] F. S. Marcondes, A. Gala, R. Magalh˜ aes, F. Perez de Britto, D. Dur˜ aes, and P. Novais, “Using ollama,” in Natural Language Analytics with Generative Large-Language Models: A Practical Approach with Ollama and Open-Source LLMs . Springer, 2025, pp. 23–35. [15] “ggml-org/llama.cpp,” Mar. 2026. [Online]. Available: https://github. com/ggml-org/llama.cpp [16] Q. Su, W. Zhao, X. Li, M. Andoorveedu, C. Jiang, Z. Zhu, K. Song, C. Giannoula, and G. Pekhimenko, “Seesaw: High-throughput llm inference via model re-sharding,” preprint arXiv:2503.06433 , 2025. [17] L. Solovyeva and F. Castor, “Towards green ai: Decoding the energy of llm inference in software development,” preprint arXiv:2602.05712 ,2026. [18] N. Zine, C. Quinton, and R. Rouvoy, “Pimp My LLM: Leveraging Variability Modeling to Tune Inference Hyperparameters,” in EASE’26 - 30th International Conference on Evaluation and Assessment in Software Engineering , Glasgow, United Kingdom, Jun. 2026. [Online]. Available: https://hal.science/hal-05567430 [19] C. Wohlin, P. Runeson, M. H¨ ost, M. Ohlsson, B. Regnell, and A. Wessl´ en, Experimentation in Software Engineering , ser. Computer Science. Springer, 2012. [20] Anonymous, “Replication package of this study,” Aug. 2026. [Online]. Available: https://doi.org/10.5281/zenodo.19253906 [21] C.-J. Wu, R. Raghavendra, U. Gupta, B. Acun, N. Ardalani, K. Maeng, G. Chang, F. Aga, J. Huang, C. Bai et al. , “Sustainable ai: Environmental implications, challenges and opportunities,” Proceedings of machine learning and systems , vol. 4, pp. 795–813, 2022. [22] J. Stojkovic, C. Zhang, ´ I. Goiri, J. Torrellas, and E. Choukse, “Dy-namollm: Designing llm inference clusters for performance and energy efficiency,” in 2025 IEEE International Symposium on High Perfor-mance Computer Architecture (HPCA) . IEEE, 2025, pp. 1348–1362. [23] M. Lazuka, A. Anghel, and T. Parnell, “Llm-pilot: Characterize and opti-mize performance of your llm inference services,” in SC24: International Conference for High Performance Computing, Networking, Storage and Analysis . IEEE, 2024, pp. 1–18. [24] S. Samsi, D. Zhao, J. McDonald, B. Li, A. Michaleas, M. Jones, W. Bergeron, J. Kepner, D. Tiwari, and V. Gadepally, “From words to watts: Benchmarking the energy costs of large language model inference,” in IEEE High Performance Extreme Computing Conference (HPEC) . IEEE, 2023, pp. 1–9. [25] S. Luccioni, Y. Jernite, and E. Strubell, “Power hungry processing: Watts driving the cost of ai deployment?” in Proceedings of the 2024 ACM conference on fairness, accountability, and transparency , 2024, pp. 85– 99. [26] P. J. Maliakel, S. Ilager, and I. Brandic, “Investigating energy efficiency and performance trade-offs in llm inference across tasks and dvfs settings,” arXiv preprint arXiv:2501.08219 , 2025. [27] G. Wilkins, S. Keshav, and R. Mortier, “Offline energy-optimal llm serv-ing: Workload-based energy models for llm inference on heterogeneous systems,” ACM SIGENERGY Energy Informatics Review , vol. 4, no. 5, pp. 113–119, 2024. [28] E. J. Husom, A. Goknil, M. Astekin, L. K. Shar, A. K˚ asen, S. Sen, B. A. Mithassel, and A. Soylu, “Sustainable llm inference for edge ai: Evaluating quantized llms for energy efficiency, output accuracy, and inference latency,” arXiv preprint arXiv:2504.03360 , 2025. [29] J. Delavande, R. Pierrard, and S. Luccioni, “Understanding efficiency: Quantization, batching, and serving strategies in llm energy use,” arXiv preprint arXiv:2601.22362 , 2026. [30] A. Kolovska, M. Gusev, and D. Mileski, “Small prompts, big energy and co 2 impact: Benchmarking ollama llms on cpu and gpu,” in 2025 33rd Telecommunications Forum (TELFOR) . IEEE, 2025, pp. 1–4. [31] C. Shi, H. Yang, D. Cai, Z. Zhang, Y. Wang, Y. Yang, and W. Lam, “A thorough examination of decoding methods in the era of llms, 2024,” 
+
+URL https://arxiv. org/abs/2402.06925 .[32] E. G. Arias, M. Li, C. Heumann, and M. Aßenmacher, “Decoding decoded: Understanding hyperparameter effects in open-ended text generation,” in Proceedings of the 31st International Conference on Computational Linguistics , 2025, pp. 9992–10 020. [33] A. Nik, M. A. Riegler, and P. Halvorsen, “Impact of decoding strategies on gpu energy usage in large language model text generation,” Scientific Reports , 2025. [34] T. Coignion, C. Quinton, and R. Rouvoy, “Green my llm: Studying the key factors affecting the energy consumption of code assistants,” arXiv preprint arXiv:2411.11892 , 2024. [35] M. Martinez, “The impact of hyperparameters on large language model inference performance: An evaluation of vllm and huggingface pipelines,” in Proceedings of the 33rd ACM International Conference on the Foundations of Software Engineering , 2025, pp. 1672–1678. [36] J. Fernandez, C. Na, V. Tiwari, Y. Bisk, S. Luccioni, and E. Strubell, “Energy considerations of large language model inference and efficiency optimizations,” preprint arXiv:2504.17674 , 2025. [37] K. Pronk and Q. Zhao, “Benchmarking Energy Efficiency of Large Language Models Using vLLM,” Sep. 2025. [38] C. Niu, W. Zhang, Y. Zhao, and Y. Chen, “Energy Efficient or Exhaus-tive? Benchmarking Power Consumption of LLM Inference Engines,” 
+
+SIGENERGY Energy Inform. Rev. , vol. 5, no. 2, pp. 56–62, 2025. [39] F. Shull, J. Singer, and D. I. Sjøberg, Guide to advanced empirical software engineering . Springer, 2007. [40] A. Guldner and et al. , “Development and evaluation of a reference measurement model for assessing the resource and energy efficiency of software products and components-green software measurement model (gsmm),” Future Generation Computer Systems , vol. 155, pp. 402–418, 2024. [41] A. Jagannadharao, N. Beckage, S. Biswas, H. Egan, J. Gafur, T. Metsch, D. Nafus, G. Raffa, and C. Tripp, “A Beginner’s Guide to Power and Energy Measurement and Estimation for Computing and Machine Learning,” Dec. 2024. [42] V. R. Basili and H. D. Rombach, “The tame project: Towards improvement-oriented software environments,” IEEE Transactions on Software Engineering , vol. 14, no. 6, pp. 758–773, 1988. [43] “vllm – configuration options,” 2026. [Online]. Available: https: //docs.vllm.ai/en/latest/configuration [44] T. Dao, D. Fu, S. Ermon, A. Rudra, and C. R´ e, “Flashattention: Fast and memory-efficient exact attention with io-awareness,” Advances in neural information processing systems , vol. 35, pp. 16 344–16 359, 2022. [45] T. Dao, “Flashattention-2: Faster attention with better parallelism and work partitioning,” arXiv preprint arXiv:2307.08691 , 2023. [46] Z. Ye, L. Chen, R. Lai, W. Lin, Y. Zhang, S. Wang, T. Chen, B. Kasikci, V. Grover, A. Krishnamurthy et al. , “Flashinfer: Efficient and customizable attention engine for llm inference serving,” arXiv preprint arXiv:2501.01005 , 2025. [47] A. Ait, J. L. C´ anovas Izquierdo, and J. Cabot, “On the suitability of hug-ging face hub for empirical studies,” Empirical Software Engineering ,vol. 30, no. 2, p. 57, 2025. [48] “Text Generation Models – Hugging Face — huggingface.co,” https:// huggingface.co/models?pipeline tag=text-generation&sort=downloads, 2025. [49] C. S. Xia, Y. Deng, and L. Zhang, “Top leaderboard ranking= top coding proficiency, always? evoeval: Evolving coding benchmarks via llm,” 
+
+arXiv preprint arXiv:2403.19114 , 2024. [50] Y. Bai, S. Tu, J. Zhang, H. Peng, X. Wang, X. Lv, S. Cao, J. Xu, L. Hou, Y. Dong et al. , “Longbench v2: Towards deeper understanding and reasoning on realistic long-context multitasks,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 3639–3664. [51] T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin, K. Lee et al. , “Natural questions: a benchmark for question answering research,” Transactions of the Association for Computational Linguistics , vol. 7, pp. 453–466, 2019. [52] N. Habib, C. Fourrier, H. Kydl´ ıˇ cek, T. Wolf, and L. Tunstall, “Lighteval: A lightweight framework for llm evaluation,” 2023. [Online]. Available: https://github.com/huggingface/lighteval [53] Q. Hu, S. Yang, J. Guo, X. Yao, Y. Lin, Y. Gu, H. Cai, C. Gan, A. Klimovic, and S. Han, “Taming the long-tail: Efficient reasoning rl training with adaptive drafter,” preprint arXiv:2511.16665 , 2025. [54] W. Zhao, X. Ren, J. Hessel, C. Cardie, Y. Choi, and Y. Deng, “Wildchat: 1m chatgpt interaction logs in the wild,” preprint arXiv:2405.01470 ,2024. [55] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman et al. , “Evaluating large language models trained on code,” arXiv preprint arXiv:2107.03374 ,2021. [56] P. Ngatchou, A. Zarei, and A. El-Sharkawi, “Pareto multi objective optimization,” in Proceedings of the 13th International Conference on, Intelligent Systems Application to Power Systems , 2005, pp. 84–91. [57] J. O. Wobbrock, L. Findlater, D. Gergle, and J. J. Higgins, “The aligned rank transform for nonparametric factorial analyses using only anova procedures,” in Proceedings of the SIGCHI conference on human factors in computing systems , 2011, pp. 143–146. [58] S. Holm, “A simple sequentially rejective multiple test procedure,” 
+
+Scandinavian journal of statistics , pp. 65–70, 1979. [59] N. Cliff, “Dominance statistics: Ordinal analyses to answer ordinal questions.” Psychological bulletin , vol. 114, no. 3, p. 494, 1993. [60] A. Vargha and H. D. Delaney, “A critique and improvement of the cl common language effect size statistics of mcgraw and wong,” Journal of Educational and Behavioral Statistics , vol. 25, no. 2, pp. 101–132, 2000. [61] A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi, “The Curious Case of Neural Text Degeneration,” Feb. 2020. [62] “vllm – optimization and tuning,” 2026. [Online]. Available: https: //docs.vllm.ai/en/latest/configuration/optimization.html [63] S. Baltes, F. Angermeir, C. Arora, M. M. Bar´ on, C. Chen, L. B¨ ohme, F. Calefato, N. Ernst, D. Falessi, B. Fitzgerald, D. Fucci, M. Kalinowski, S. Lambiase, D. Russo, M. Lungu, L. Prechelt, P. Ralph, R. van Tonder, C. Treude, and S. Wagner, “Guidelines for Empirical Studies in Software Engineering involving Large Language Models,” Sep. 2025. [64] Z. Yang, K. Adamek, and W. Armour, “Part-time Power Measurements: Nvidia-smi’s Lack of Attention,” in SC24: International Conference for High Performance Computing, Networking, Storage and Analysis , Nov. 2024, pp. 1–17.

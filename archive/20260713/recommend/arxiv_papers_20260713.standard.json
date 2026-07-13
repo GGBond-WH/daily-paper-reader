@@ -1,0 +1,300 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-13T20:25:24.339758+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 4,
+    "deep_cap": 6,
+    "deep_selected": 4,
+    "quick_candidates": 3,
+    "quick_skim_target": 11,
+    "quick_selected": 3
+  },
+  "deep_dive": [
+    {
+      "id": "2607.09052v1",
+      "source": "arxiv",
+      "title": "COBS: Cumulant Order Block Sparse Attention",
+      "abstract": "Block sparse attention is a hardware friendly way to alleviate the key-value (KV) cache read bottleneck in large language models (LLMs). However, it is not prevalent among leading open-weight LLMs, which rely instead on dense attention or fine-grained selection, thereby motivating our analysis. We study DeepSeek's Native Sparse Attention (NSA) as a representative method, whose three-branch design lets us isolate block selection, the most challenging and consequential stage. We formalize selection and reduce it to ranking blocks by a single quantity, the attention mass: the sum of a block's attention scores. We show that if selection retrieves the blocks with the largest attention mass, block sparse attention can match the quality of dense attention. However, computing the exact attention mass requires reading every key, so the problem of block selection ultimately reduces to approximating this mass from a compact summary instead of the full keys. Via a cumulant expansion, we show why existing methods falter: their selection strategies attempt to estimate the attention mass, but are confined to a first-order approximation. Therefore, we propose COBS (Cumulant Order Block Sparse Attention), an attention method that builds on NSA, incorporating a novel selector that stores a compressed second-order statistic per block. On the 32k RULER long-context retrieval benchmark, COBS raises the NSA baseline's mean score from 0.2999 to 0.8195, approaching dense attention at 0.9040 and closing about 86% of the gap, while using only 1.21x the KV cache read traffic of the NSA baseline and 15.15x less read traffic than dense. The same model preserves short-context behavior and attains lower position-wise negative log-likelihood (NLL) than dense attention in our comparison.",
+      "authors": [
+        "Alexander Tian",
+        "Aditya Ghai",
+        "Sanjit Neelam",
+        "Zaal Vasania",
+        "Akshay Mishra"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-10T02:48:43+00:00",
+      "link": "https://arxiv.org/pdf/2607.09052v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "alleviates KV cache read bottleneck in LLMs",
+      "llm_evidence_cn": "缓解大语言模型KV缓存读取瓶颈",
+      "llm_evidence": "缓解大语言模型KV缓存读取瓶颈",
+      "canonical_evidence": "缓解大语言模型KV缓存读取瓶颈",
+      "llm_tldr_en": "COBS formalizes block sparse attention to reduce KV cache reads, showing that ranking blocks by attention mass can match dense attention quality, making block sparse attention more practical for LLMs.",
+      "llm_tldr_cn": "块稀疏注意力是缓解大语言模型KV缓存读取瓶颈的硬件友好方式，但主流模型未采用。本文以DeepSeek的Native Sparse Attention为例，将块选择简化为按注意力质量（attention mass）排序，证明若选择注意力质量最大的块，块稀疏注意力可匹配密集注意力质量。该分析为块稀疏注意力的实际应用提供理论基础。",
+      "llm_tldr": "块稀疏注意力是缓解大语言模型KV缓存读取瓶颈的硬件友好方式，但主流模型未采用。本文以DeepSeek的Native Sparse Attention为例，将块选择简化为按注意力质量（attention mass）排序，证明若选择注意力质量最大的块，块稀疏注意力可匹配密集注意力质量。该分析为块稀疏注意力的实际应用提供理论基础。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.09153v1",
+      "source": "arxiv",
+      "title": "KV-PRM: Efficient Process Reward Modeling via KV-Cache Transfer for Multi-Agent Test-Time Scaling",
+      "abstract": "Process Reward Models (PRMs) have been proven to be highly effective in guiding test-time scaling (TTS) methods, which significantly boost the capabilities of LLM-based multi-agent systems. However, existing PRMs are text-based: they re-encode the entire trajectory text from scratch. In long multi-agent rollouts, the scoring cost, growing quadratically with respect to sequence length L, creates a severe computational bottleneck, severely limiting PRMs' application in long-context scenarios. To resolve this, we introduce KV-PRM, a highly efficient process reward model that eliminates the heavy text re-encoding by directly reading the KV cache produced naturally during the LLM's generation phase. By processing a single \"verify token\" against the pre-existing KV cache, KV-PRM reduces the scoring cost from O(L^2) to O(L). We formally prove that the KV cache contains strictly greater information capacity than text, and is more efficient for downstream reward modeling. Empirically, across the MATH, GSM8K, and AIME benchmarks, KV-PRM matches or strictly outperforms text-PRMs under various TTS methods such as Beam Search, MCTS, and Weighted Voting, with up to a 5,000x reduction in scoring FLOPs, a 37x reduction in latency, and a 34x reduction in per-sequence memory footprint compared to text-based PRMs.",
+      "authors": [
+        "Peng Kuang",
+        "Haibo Jin",
+        "Xiaoyu Han",
+        "Yanli Wang",
+        "Xiaopeng Yuan",
+        "Ye Yu",
+        "Kaidi Xu",
+        "Haohan Wang"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-10T07:16:43+00:00",
+      "link": "https://arxiv.org/pdf/2607.09153v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV-PRM directly uses KV cache from LLM generation to accelerate process reward modeling",
+      "llm_evidence_cn": "KV-PRM直接利用LLM生成阶段的KV缓存加速过程奖励模型",
+      "llm_evidence": "KV-PRM直接利用LLM生成阶段的KV缓存加速过程奖励模型",
+      "canonical_evidence": "KV-PRM直接利用LLM生成阶段的KV缓存加速过程奖励模型",
+      "llm_tldr_en": "KV-PRM eliminates text re-encoding in process reward models by reading the KV cache produced during LLM generation, drastically reducing computational cost for multi-agent test-time scaling.",
+      "llm_tldr_cn": "过程奖励模型（PRM）在长序列多智能体场景中需重新编码整个轨迹，导致二次计算开销。KV-PRM通过直接读取LLM生成阶段自然产生的KV缓存来避免重新编码，仅需一个验证智能体的KV缓存即可高效评分。该方法大幅降低了长上下文PRM的计算瓶颈，提升了多智能体测试时扩展的效率。",
+      "llm_tldr": "过程奖励模型（PRM）在长序列多智能体场景中需重新编码整个轨迹，导致二次计算开销。KV-PRM通过直接读取LLM生成阶段自然产生的KV缓存来避免重新编码，仅需一个验证智能体的KV缓存即可高效评分。该方法大幅降低了长上下文PRM的计算瓶颈，提升了多智能体测试时扩展的效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.09172v1",
+      "source": "arxiv",
+      "title": "Attention to Detail: Evaluating Energy, Performance, and Accuracy Trade-offs Across vLLM Configurations",
+      "abstract": "Large Language Models are reshaping how software is developed and maintained. They are typically deployed in production using inference engines such as vLLM, which can efficiently serve pre-trained, highly configurable models. While prior work has focused on model architectures and hardware acceleration, the impact of inference engine configuration on energy consumption, performance, and output quality remains poorly understood.   In this paper, we present a large-scale controlled study of three selected vLLM configuration options: attention kernel type, prefix caching, and chunked prefill. We evaluate all combinations of these configurations across 5 open-weight LLMs and 5 diverse inference tasks, totaling $9,000$ runs and $93,600$ measures. We analyze energy consumption, latency, and accuracy, and examine both main effects and interaction effects between configuration options and tasks.   Our results show that the studied configuration options significantly impact energy and performance, mainly driven by attention type and prefix caching, while chunked prefill has a limited effect under the default vLLM serving configuration and evaluated workloads. These effects are highly model- and workload-dependent, and no configuration is universally optimal. We further show that model choice dominates global trade-offs, while configuration tuning provides local improvements along the Pareto frontier. Unexpectedly, inference options can also affect model accuracy.",
+      "authors": [
+        "Nada Zine",
+        "Tristan Coignion",
+        "Vincenzo Stoico",
+        "Clément Quinton",
+        "Romain Rouvoy",
+        "Patricia Lago"
+      ],
+      "primary_category": "cs.SE",
+      "categories": [
+        "cs.SE",
+        "cs.AI",
+        "cs.PF"
+      ],
+      "published": "2026-07-10T08:04:19+00:00",
+      "link": "https://arxiv.org/pdf/2607.09172v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "prefix caching in vLLM configuration study",
+      "llm_evidence_cn": "vLLM配置中的前缀缓存研究",
+      "llm_evidence": "vLLM配置中的前缀缓存研究",
+      "canonical_evidence": "vLLM配置中的前缀缓存研究",
+      "llm_tldr_en": "This paper evaluates vLLM configurations including prefix caching, directly studying prefix caching for transformer inference optimization.",
+      "llm_tldr_cn": "该论文系统评估了vLLM推理引擎的不同配置对能耗、性能和输出质量的影响，特别关注了前缀缓存、注意力内核类型和分块预填充等选项。通过在5个开源大语言模型和5个推理任务上进行9000次运行实验，揭示了不同配置之间的权衡关系，为实际部署中的配置选择提供了指导。前缀缓存作为关键配置之一，直接关系到KV缓存的高效管理。",
+      "llm_tldr": "该论文系统评估了vLLM推理引擎的不同配置对能耗、性能和输出质量的影响，特别关注了前缀缓存、注意力内核类型和分块预填充等选项。通过在5个开源大语言模型和5个推理任务上进行9000次运行实验，揭示了不同配置之间的权衡关系，为实际部署中的配置选择提供了指导。前缀缓存作为关键配置之一，直接关系到KV缓存的高效管理。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.09248v1",
+      "source": "arxiv",
+      "title": "General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing",
+      "abstract": "We study non-clairvoyant scheduling for batched Large Language Model (LLM) inference under a hard Key-Value (KV) cache memory budget. Each request has a known prompt length but an unknown response length, and its memory footprint comprises a fixed prompt component together with a response component that grows with each decoded token. At each decoding round, the scheduler chooses a feasible batch of active requests; evicting a request discards its accumulated cache states, wasting prior computation. The goal is to minimize total completion time against the optimal clairvoyant schedule that knows all response lengths.   We present the first constant-competitive algorithm for arbitrary prompt lengths and arbitrary response lengths with no additional assumptions. Rather than relying on a single universal scheduling policy, our algorithm is built on a novel regime-aware routing framework. Specialized sub-schedulers handle different memory-growth geometries, while a meta-scheduler time-shares the memory budget across them and dynamically routes each job as its execution progressively reveals its behavior. This framework also yields constant-competitive guarantees for makespan and for total completion time under online arrivals.",
+      "authors": [
+        "Yiding Feng",
+        "Siyu Liu",
+        "Zonghan Yang",
+        "Yuhao Zhang"
+      ],
+      "primary_category": "cs.DS",
+      "categories": [
+        "cs.DS"
+      ],
+      "published": "2026-07-10T09:52:11+00:00",
+      "link": "https://arxiv.org/pdf/2607.09248v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "KV-cache scheduling under memory budget for LLM inference",
+      "llm_evidence_cn": "LLM推理中KV缓存调度及内存预算",
+      "llm_evidence": "LLM推理中KV缓存调度及内存预算",
+      "canonical_evidence": "LLM推理中KV缓存调度及内存预算",
+      "llm_tldr_en": "Proposes the first constant-competitive algorithm for non-clairvoyant KV-cache scheduling in batched LLM inference, minimizing completion time.",
+      "llm_tldr_cn": "该论文研究批处理LLM推理中的非预知KV缓存调度问题，在硬内存预算下最小化完成时间。每个请求有已知提示长度但未知响应长度，调度器需选择可行批次，驱逐会浪费计算。作者提出首个常数竞争比算法，适用于任意提示和响应长度，无需额外假设，显著改进实际部署效率。",
+      "llm_tldr": "该论文研究批处理LLM推理中的非预知KV缓存调度问题，在硬内存预算下最小化完成时间。每个请求有已知提示长度但未知响应长度，调度器需选择可行批次，驱逐会浪费计算。作者提出首个常数竞争比算法，适用于任意提示和响应长度，无需额外假设，显著改进实际部署效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.04031v1",
+      "source": "arxiv",
+      "title": "TileLens: Efficiently Using Large-Granularity Memory Systems with Transparent Two-Dimensional Memory Layout",
+      "abstract": "Large Language Model (LLM) inference is bottlenecked by the capacity and bandwidth of GPU High-Bandwidth Memory (HBM). Recent proposals, such as High-Bandwidth Flash (HBF) and RoMe, offer higher capacity or bandwidth than HBM, but require a minimum access granularity of kilobytes. We show that these Large-Granularity Memory Systems (LGMS) can degrade the performance of tiled matrix-multiplication, which is the dominant operation in LLM inference, by up to an order of magnitude. The root cause of the slowdown is read amplification, where memory requests fetch far more data than the tile actually needs. This waste stems from a fundamental mismatch between the two-dimensional nature of compute tiles and the one-dimensional memory layout, leading to each request spilling well beyond the tile boundaries.   To mitigate read amplification, we propose to use tile-major layout for LGMS. Rather than storing data as a one-dimensional strip, tile-major layout reshapes each contiguous memory block into a two-dimensional rectangle, aligning memory granularity with tile boundaries. To ease the adoption of tile-major layout on GPUs, we propose TileLens, lightweight software and hardware extensions that collectively cover major classes of GPU kernels. TileLens-SW extends GPU DSLs so that DSL-based kernels can adopt tile-major in global memory by changing only the layout descriptor. TileLens-HW extends the Tensor Memory Accelerator (TMA) for transparent tile-major support in TMA-based kernels without code changes. We evaluate TileLens on a cycle-level simulator using matrix-multiplication kernels from Qwen-3 30B and Llama-3.1 70B. Combining a tile-major layout with an adaptive hardware prefetcher, TileLens achieves near-HBM performance on HBF-augmented GPUs with a 5us HBF NAND read latency, reducing the geomean slowdown from 1.61-6.49x with conventional layouts to within 1% of an HBM-only baseline.",
+      "authors": [
+        "Jae Hyung Ju",
+        "Euijun Chung",
+        "Hritvik Taneja",
+        "Anish Saxena",
+        "Shinnung Jeong",
+        "Hyesoon Kim",
+        "Moinuddin K. Qureshi"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR"
+      ],
+      "published": "2026-07-04T21:19:49+00:00",
+      "link": "https://arxiv.org/pdf/2607.04031v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "optimizes memory system for LLM inference via 2D layout, addressing read amplification that affects KV cache efficiency",
+      "llm_evidence_cn": "通过二维布局优化LLM推理内存系统，减少读放大问题，间接提升KV缓存效率",
+      "llm_evidence": "通过二维布局优化LLM推理内存系统，减少读放大问题，间接提升KV缓存效率",
+      "canonical_evidence": "通过二维布局优化LLM推理内存系统，减少读放大问题，间接提升KV缓存效率",
+      "llm_tldr_en": "TileLens proposes a 2D memory layout to mitigate read amplification in large-granularity memory systems, a technique applicable to KV cache storage for LLMs.",
+      "llm_tldr_cn": "TileLens针对LLM推理中大粒度内存系统的读放大问题，提出透明二维内存布局，将矩阵乘法的数据访问模式与内存分布对齐。该方法可缓解KV缓存存储中的带宽浪费，为内存高效的KV缓存管理提供新思路。实验表明该布局显著减少读取放大，提升内存利用率。",
+      "llm_tldr": "TileLens针对LLM推理中大粒度内存系统的读放大问题，提出透明二维内存布局，将矩阵乘法的数据访问模式与内存分布对齐。该方法可缓解KV缓存存储中的带宽浪费，为内存高效的KV缓存管理提供新思路。实验表明该布局显著减少读取放大，提升内存利用率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2607.08930v1",
+      "source": "arxiv",
+      "title": "BlockServe: Block-Grained Continuous Batching for High-Throughput Diffusion LLM Serving",
+      "abstract": "Efficient serving of diffusion large language models (dLLMs) is hindered by convergence heterogeneity: when batching multiple requests, different sequences converge at different rates, causing faster requests to stall behind slower stragglers and introducing compute bubbles and tail latency. We present BlockServe, a continuous batching framework that integrates block-grained scheduling -- immediately evicting completed requests at block boundaries -- with mixed-state execution that extends dual cache and parallel decoding to heterogeneous batches via gather-scatter indexing. Furthermore, a compute-aware admission controller expands effective batch capacity through token-budgeted refill. On Dream and LLaDA across five benchmarks, BlockServe achieves 1.9--10.6$\\times$ throughput over Fast-dLLM with comparable generation quality, establishing block-grained scheduling as a foundation for high-throughput offline dLLM inference.",
+      "authors": [
+        "Yuanjie Zhu",
+        "Liangwei Yang",
+        "Ke Xu",
+        "Weizhi Zhang",
+        "Shanghao Li",
+        "Zihe Song",
+        "Philip S. Yu"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-09T20:48:08+00:00",
+      "link": "https://arxiv.org/pdf/2607.08930v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "block-grained scheduling with dual cache and parallel decoding for diffusion LLM serving",
+      "llm_evidence_cn": "面向扩散LLM服务的块粒度调度与双缓存并行解码",
+      "llm_evidence": "面向扩散LLM服务的块粒度调度与双缓存并行解码",
+      "canonical_evidence": "面向扩散LLM服务的块粒度调度与双缓存并行解码",
+      "llm_tldr_en": "BlockServe introduces block-grained continuous batching with dual cache and parallel decoding to handle convergence heterogeneity in diffusion LLM serving, achieving high throughput.",
+      "llm_tldr_cn": "扩散大语言模型（dLLM）服务面临收敛异质性导致的计算气泡和尾延迟问题。本文提出BlockServe，一种块粒度连续批处理框架，通过集成块级调度、混合状态执行（扩展双缓存和并行解码）以及计算感知接纳控制来提升吞吐量。在Dream和LLaDA上的实验表明，该方法有效提高了dLLM服务的效率。",
+      "llm_tldr": "扩散大语言模型（dLLM）服务面临收敛异质性导致的计算气泡和尾延迟问题。本文提出BlockServe，一种块粒度连续批处理框架，通过集成块级调度、混合状态执行（扩展双缓存和并行解码）以及计算感知接纳控制来提升吞吐量。在Dream和LLaDA上的实验表明，该方法有效提高了dLLM服务的效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2607.07386v1",
+      "source": "arxiv",
+      "title": "Sparse Delta Memory: Scaling the State of Linear RNNs through Sparsity",
+      "abstract": "Linear attention models allow a fixed state size and a fixed amount of compute per token. However, due to their limited state size, linear attention models fall behind in long-context recall compared to softmax-attention-based transformer architectures. Increasing the state size of linear attention improves recall performance but at the cost of higher FLOPs. In this work, we introduce Sparse Delta Memory (SDM), an architecture that scales the hidden state of gated linear RNNs to orders of magnitude higher capacity using a sparse addressing scheme. SDM extends the Gated DeltaNet architecture by replacing the dense key-value outer product with sparse reads and writes to a large explicit memory. We show that, under an isoFLOP constraint and with an identical number of parameters, a higher state memory capacity significantly improves performance on in-context learning and long-context retrieval tasks. Moreover, by learning the initial state of the SDM memory and therefore using it as a parametric memory, we show that the model further improves on a wide range of common-knowledge and reasoning tasks.",
+      "authors": [
+        "Loïc Cabannes",
+        "Pierre-Emmanuel Mazaré",
+        "Gergely Szilvasy",
+        "Matthijs Douze",
+        "Maria Lomeli",
+        "Ilze Amanda Auzina",
+        "Justin Carpentier",
+        "Gabriel Synnaeve",
+        "Hervé Jégou"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-08T13:17:19+00:00",
+      "link": "https://arxiv.org/pdf/2607.07386v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "sparse key-value memory for linear RNNs, applicable to KV cache compression",
+      "llm_evidence_cn": "线性RNN的稀疏键值记忆，可应用于KV缓存压缩",
+      "llm_evidence": "线性RNN的稀疏键值记忆，可应用于KV缓存压缩",
+      "canonical_evidence": "线性RNN的稀疏键值记忆，可应用于KV缓存压缩",
+      "llm_tldr_en": "Sparse Delta Memory scales hidden state of linear RNNs using sparse reads/writes, offering a compression technique transferable to KV cache.",
+      "llm_tldr_cn": "线性注意力模型因固定状态大小而在长上下文回忆中落后于Transformer。本文提出稀疏Delta记忆（SDM），通过稀疏寻址方案将门控线性RNN的隐藏状态扩展到更高容量，用稀疏读写替代密集键值外积。在等FLOP约束下，SDM提高了长上下文召回性能，其稀疏记忆机制可启发Transformer KV缓存的压缩和高效管理。",
+      "llm_tldr": "线性注意力模型因固定状态大小而在长上下文回忆中落后于Transformer。本文提出稀疏Delta记忆（SDM），通过稀疏寻址方案将门控线性RNN的隐藏状态扩展到更高容量，用稀疏读写替代密集键值外积。在等FLOP约束下，SDM提高了长上下文召回性能，其稀疏记忆机制可启发Transformer KV缓存的压缩和高效管理。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}

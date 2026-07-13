@@ -1,0 +1,416 @@
+Title: BlockServe: Block-Grained Continuous Batching for High-Throughput Diffusion LLM Serving
+
+URL Source: https://arxiv.org/pdf/2607.08930v1
+
+Published Time: Mon, 13 Jul 2026 00:13:29 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# BlockServe: Block-Grained Continuous Batching for High-Throughput Diffusion LLM Serving 
+
+Yuanjie Zhu, Liangwei Yang, Ke Xu, Weizhi Zhang, Shanghao Li, Zihe Song, and Philip S. Yu 
+
+University of Illinois Chicago, USA 
+
+{yzhu224, lyang84, kxu25, wzhan42, sli261, zsong29, psyu }@uic.edu 
+
+Abstract —Efficient serving of diffusion large language models (dLLMs) is hindered by convergence heterogeneity: when batch-ing multiple requests, different sequences converge at different rates, causing faster requests to stall behind slower stragglers and introducing compute bubbles and tail latency. We present Block-Serve, a continuous batching framework that integrates block-grained scheduling—immediately evicting completed requests at block boundaries—with mixed-state execution that extends dual cache and parallel decoding to heterogeneous batches via gather-scatter indexing. Furthermore, a compute-aware admission con-troller expands effective batch capacity through token-budgeted refill. On Dream and LLaDA across five benchmarks, BlockServe achieves 1.9–10.6 × throughput over Fast-dLLM with comparable generation quality, establishing block-grained scheduling as a foundation for high-throughput offline dLLM inference. 
+
+Index Terms —diffusion large language models, continuous batching, model serving, block-grained scheduling, throughput 
+
+I. I NTRODUCTION 
+
+The deployment of Large Language Models (LLMs) has shifted focus from model architecture to efficient serving systems [1]. In the autoregressive (AR) paradigm, continuous batching [2], [3] has become the industry standard, schedul-ing at the granularity of a single token to maintain high GPU utilization. However, the emergence of Diffusion LLMs (dLLMs) [4], [5] introduces a fundamental paradigm shift. Unlike AR models that generate tokens sequentially, dLLMs employ a parallel denoising process, generating entire blocks of tokens iteratively. While recent works like Fast-dLLM [6] have successfully optimized dLLMs for low-latency single-request inference, efficient batched serving for these models remains challenging when requests converge at different rates across block boundaries. We term this phenomenon convergence heterogeneity. In autoregressive serving, output length variation is the primary source of scheduling heterogeneity, which token-level con-tinuous batching handles by preempting at every generation step [7], [8]. dLLMs, however, generate in discrete blocks, and requests reach completion at different block boundaries even under the same generation budget. As a result, some requests can finish early while others continue denoising, creating mixed completion states within a single batched serving iteration. In current dLLM batching, the entire batch is gated by the slowest request (the “straggler”), forcing already-completed requests to remain idle while occupying resources in the active batch. The resulting “compute bubbles”—idle time where GPU resources are underutilized—lead to severe long-tail latency, calling for a dedicated block-level batch scheduling framework. To address these challenges, we propose BlockServe, a specialized serving framework that enables high-throughput continuous batching for dLLMs without altering the underly-ing model architecture. BlockServe integrates a block-grained scheduler with a mixed-state memory manager, preventing stragglers from stalling the batch while enabling the execu-tion of requests at different block indices within a unified dense tensor. A compute-aware admission controller under a token budget further adapts concurrency to workload ge-ometry. These components form a block-centric execution loop: completed requests are reclaimed at block boundaries, heterogeneous in-flight requests remain executable in a shared dense batch, and the recovered capacity is then converted into additional admissions. Our contributions are summarized as follows:  
+
+> •
+
+We introduce a block-grained scheduler that operates at block granularity, immediately evicting completed requests via block-wise completion checks to reduce straggler-induced compute bubbles in batched diffusion inference.  
+
+> •
+
+We design a mixed-state memory manager that ma-terializes unified dense tensors with explicit position alignment, extending dual cache and parallel decoding to heterogeneous batches without requiring custom kernels.  
+
+> •
+
+We propose a compute-aware admission controller that replaces fixed batch sizes with a token budget, dynam-ically adapting concurrency to workload geometry and enabling a 2–4 × increase in effective batch capacity.  
+
+> •
+
+On Dream and LLaDA across five benchmarks, Block-Serve achieves 1.9–10.6 × throughput over Fast-dLLM with comparable generation quality. II. M ETHOD 
+
+A. Problem formulation 
+
+We consider the concurrent serving of a diffusion LLM processing a batch of user requests. Unlike autoregressive generation, dLLMs produce the sequence via an iterative denoising process. For a specific request ri with prompt length 
+
+pi and target generation length gi, the generation workload is decomposed into Ki = ⌈gi/L ⌉ fixed-length execution blocks of length L along the generated sequence. Each block is itera-tively denoised over S diffusion steps. The state of request ri is arXiv:2607.08930v1 [cs.LG] 9 Jul 2026 Algorithm 1 BlockServe scheduling loop  
+
+> 1:
+
+Input: Pending queue P (sorted by pi) with (Ki, b i) = (⌈gi/L ⌉, 0) for each request ri; Active set A ← ∅ ; block length L; token budget βbudget  
+
+> 2:
+
+while P̸ = ∅ or A̸ = ∅ do  
+
+> 3:
+
+Admit requests from P into A while Cost (A ∪ {rcand }) ≤ βbudget {§II-D } 
+
+> 4:
+
+Y ← ExecBlockCycle (A) {§II-E } 
+
+> 5:
+
+for each request ri ∈ A do  
+
+> 6:
+
+Update ri output with Y[i] and set bi ← bi + 1  
+
+> 7:
+
+end for  
+
+> 8:
+
+Remove from A any request with bi ≥ Ki or CheckEOS (ri) 
+
+> 9:
+
+end while 
+
+characterized by its current block index bi ∈ { 0, . . . , K i − 1}.The core objective of BlockServe is to maximize system throughput by maintaining an active set A of mixed-state requests—where ri, r j ∈ A may be at distinct block indices 
+
+bi̸ = bj —while respecting hardware memory constraints. 
+
+B. System overview 
+
+BlockServe operates as a continuous iteration loop centered on block-grained scheduling and mixed-state execution. In each iteration, the Block-Grained Scheduler (Section II-C) advances all active requests by exactly one block-cycle, regard-less of their individual lifecycle stages, while the Mixed-State Memory Manager (Section II-E) maps these heterogeneous requests into a unified dense tensor layout for vectorized execution. To further expand effective batch capacity, the Compute-Aware Admission Controller (Section II-D) selects candidates from the pending queue P to populate the active set A under a length-aware token budget. Figure 1 illustrates how these stages interact. In Example 1, when request 3 finishes its last block, the scheduler evicts it at the block boundary and the admission controller refills the vacant slot with request 4 from the sorted queue. Example 2 demonstrates how the batch can expand: after request 1 com-pletes and is evicted, its large row width no longer constrains the bounding box, so previously required padding (purple) is reclaimed, freeing budget for two additional admissions and expanding the batch from three to four. 
+
+C. Block-grained scheduling 
+
+BlockServe’s core innovation is the shift from request-level locking to block-level preemption. Each scheduling quantum corresponds to one block-cycle of S denoising steps. Algo-rithm 1 outlines the protocol. In each iteration, the admission controller populates the active set A from the pending queue P
+
+under the token budget constraint (Section II-D). The sched-uler then executes one block-cycle for the batch in parallel (Section II-E); this execution is block-agnostic, as requests at different generation stages are advanced within the same block-cycle. After execution, the scheduler performs block-boundary completion checks: any request that has reached its block limit Ki or produced an end-of-sequence token is immediately evicted from A. This fine-grained preemption mitigates the straggler effect by reclaiming resources at each block boundary rather than waiting for the entire batch to synchronize. 
+
+D. Compute-aware admission control 
+
+To maximize hardware utilization without causing Out-Of-Memory (OOM) errors, we abandon fixed batch sizes in favor of a token budget policy. Since standard GPU kernels operate on regular dense tensors, serving unequal-length re-quests within the same batch requires padding, which leads to memory waste. We define the memory cost of an active batch A based on the bounding box of the dense tensor that must be materialized at each iteration. Since BlockServe only allocates space for prompt tokens and blocks that have been completed or are currently being denoised, the effective row width of request ri at block index bi is pi + ( bi + 1) × L. The batch cost is: Cost (A) = |A| × max 
+
+> ri∈A
+
+ pi + ( bi + 1) × L (1) Prompt length and block progress determine the bounding box. When the request defining the current maximum completes and is evicted, the bounding box shrinks—freeing budget for new admissions without explicit memory reclamation. Minimizing padding waste requires reducing the gap between each request’s row width and the batch-wide maximum. To approximate this, we implement a length-aware greedy batching strategy. The pending queue P is maintained in sorted order by prompt length. During the refill phase, the scheduler searches for candidates rcand whose initial row width pcand + L
+
+(starting at block 0) fits within the current bounding box without expanding it (“sand filling”). A candidate is admitted only if Cost (A∪{ rcand }) ≤ βbudget , where βbudget is determined by offline profiling of peak GPU memory utilization. This enables BlockServe to safely surpass static batch size limits, adapting concurrency to workload geometry. 
+
+E. Mixed-state memory management 
+
+Efficient mixed-state execution requires reconciling request raggedness with the physical density required by GPU kernels. BlockServe achieves this through two coordinated mecha-nisms: Logical Positional Alignment and Vectorized Mixed-Schedule Execution. 
+
+a) Logical positional alignment: We materialize the bounding box (Eq. 1) as a dense tensor of |A| rows, each of length max ri∈A (pi + ( bi + 1) × L). To preserve positional semantics, we apply left-padding so that each prompt’s tokens occupy contiguous positions ending immediately before its generation region. We then compute explicit position IDs via cumulative indexing over the attention mask, ensuring that the first non-padding token always starts at logical position zero. This preserves the logical relative distances required by rotary embeddings (RoPE) [9] while keeping positional encoding, attention masking, and prefix-cache alignment consistent for each request within the batched execution. Fig. 1. Overview of BlockServe’s continuous batching framework. Requests from a length-sorted queue (left) are batched at block granularity; dashed-green cells indicate the next block to be processed. Example 1 (top): eviction and refill upon request completion. Example 2 (bottom): dynamic batch expansion via bounding-box shrinkage. 
+
+b) Vectorized mixed-schedule execution: While existing dLLM engines optimize single-request latency via dual cache and parallel decoding [6], applying these to mixed-state contin-uous batching is non-trivial because requests in a batch may be processing blocks at different sequence positions. BlockServe addresses this through gather-scatter indexing that selects each request’s active block region within the shared batch tensor. Standard dual cache mechanisms rely on static physical positions, which break under the dynamic realignments of continuous batching. We introduce a gather-scatter update mechanism that decouples logical token positions from physi-cal memory addresses. By computing a sparse mask of active block regions, BlockServe performs in-place KV updates only at the physical offsets corresponding to the current execution block of each request, preserving the integrity of the frozen prefix cache across batch reconfigurations. Standard parallel decoding requires all requests to be synchronized at the same block index. BlockServe removes this constraint by decoupling each request’s generation trajectory. At the start of each block-cycle, the per-step transfer quota is computed by uniformly distributing the block’s masked tokens across S diffusion steps; since every block begins fully masked, this computation is block-agnostic. The same gather-based indexing enables a unified block-cycle to advance all active requests regardless of their individual block progress. Gather-scatter indexing is the implementation primitive that makes mixed-state batching practical: gather extracts each request’s active block region into a compact tensor for de-noising, and scatter writes results back to the corresponding positions. This mechanism is not an independent algorithmic contribution but the execution substrate that enables block-grained scheduling over heterogeneous request states. III. E XPERIMENTS 
+
+We evaluate BlockServe by answering the following re-search questions: 1) RQ1: How does BlockServe compare to state-of-the-art baselines in terms of end-to-end throughput, total wall-clock time, and generation quality? 2) RQ2: How does per-sample latency relate to output length under batching? 3) RQ3: How does the system scale with increasing batch size? 4) RQ4: What is the impact of token-budget admission control on batch capacity? 5) RQ5: How do block length and prompt-length sorting affect performance? 
+
+A. Experimental setup 
+
+We implement BlockServe and all baselines on a sin-gle NVIDIA H200 GPU using the LLaDA-8B-Instruct and Dream-v0-Instruct-7B models in bfloat16. The default block length is L = 32 tokens with S = 32 denoising steps per block. We compare against two baselines: Vanilla, the default LLaDA and Dream configurations without serving optimiza-tions, and Fast-dLLM [6], a dLLM inference accelerator with Dual Cache and Parallel Decoding enabled. For a fair comparison, BlockServe also incorporates these optimizations, isolating gains to our scheduling and memory management. We evaluate two BlockServe variants: BlockServe (Fixed), which replaces the token-budget admission rule with a fixed batch-size cap, and BlockServe (Budget), which uses the token budget policy to determine effective concurrency dynamically (Section II-D). We report throughput (tokens/sec), total wall-clock time, and task-specific accuracy across five widely used standard benchmarks—GSM8K [10], HumanEval [11], MBPP [12], MATH [13], and TruthfulQA-Gen [14]—covering mathemati-cal reasoning, code generation, and factual question answering. Implementation details and benchmark statistics, including the gap between generation limits and actual output lengths, are provided in Section III-A1. 
+
+1) Detailed experimental setup: a) Implementation details: We implement BlockServe and all baselines on a single NVIDIA H200 GPU (141GB HBM3e) using the official model implementations of LLaDA-8B-Instruct and Dream-v0-Instruct-7B, both loaded in bfloat16 precision. The default block length is L = 32 tokens with S =32 denoising steps per block. To ensure deterministic evalua-tion, all evaluations are conducted with temperature=0.0 
+
+(greedy decoding) under fixed seeds. For BlockServe (Budget), the token budget is set based on offline profiling on the target H200 GPU. We use 5-shot prompting for GSM8K, 3-shot for MBPP, 4-shot for MATH, and 0-shot for HumanEval and TruthfulQA-Gen. All benchmarks use the test split. 
+
+b) Benchmarks: We evaluate our system using five widely used standard benchmarks that together cover a diverse range of reasoning and generation tasks:  
+
+> •
+
+GSM8K: A dataset of grade-school math word prob-lems [10].  
+
+> •
+
+HumanEval: A code-generation benchmark of 164 hand-written Python function-synthesis problems evaluated with unit tests [11].  
+
+> •
+
+MBPP: A benchmark of programming tasks for syn-thesizing short Python programs from natural language descriptions [12].  
+
+> •
+
+MATH: A dataset of 12,500 challenging competition mathematics problems with step-by-step solutions [13].  
+
+> •
+
+TruthfulQA-Gen: The generation setting of TruthfulQA, a benchmark to measure whether a language model is truthful in generating answers to questions [14]. We adopt the reference-guided LLM-as-judge evaluation protocol of Badshah and Sajjad [15] for automated accuracy assessment. 
+
+c) Baselines: We compare BlockServe against the fol-lowing baselines:  
+
+> •
+
+Vanilla: The default LLaDA and Dream configurations, used as plain reference baselines in our evaluation without serving optimizations.  
+
+> •
+
+Fast-dLLM (Static) [6]: An inference acceleration method for dLLMs. Fast-dLLM does not include a batch-ing mechanism; in our evaluation, requests are processed in fixed groups where all must finish before the next batch begins. To ensure a strong baseline, we enable Dual Cache and Parallel Decoding.  
+
+> •
+
+BlockServe (Ours): Our proposed system equipped with block-grained mixed-state scheduling. We evaluate two admission policies: BlockServe (Fixed) with a fixed batch size limit, and BlockServe (Budget) with the token budget policy. Both variants employ the length-aware sorting strategy (Section II-D) to minimize padding. For fair comparison, BlockServe also incorporates Dual Cache and Parallel Decoding, ensuring that performance gains are attributed to our scheduling and memory management rather than kernel-level optimizations. 
+
+d) Metrics: We evaluate performance using the following metrics:  
+
+> •
+
+Accuracy: Task-specific accuracy to assess whether gen-eration quality remains comparable across BlockServe and the baselines.  
+
+> •
+
+Throughput: Defined as the total number of valid gen-erated tokens (excluding padding and masked tokens) divided by the total wall-clock time (in seconds). This measures the effective computation rate of the serving system.  
+
+> •
+
+Total Time: The wall-clock time required to complete the entire benchmark dataset. 
+
+e) Benchmark statistics: We provide a comprehensive breakdown of the benchmark datasets used in our evaluation in Table I. The substantial variance between the predefined gener-ation limit and the actual generated sequence length—most no-tably observed in the TruthfulQA benchmark—underscores the inefficiency of static batching mechanisms. Such systems are compelled to reserve memory resources based on the worst-case generation limit, leading to significant underutilization when actual generations are short. 
+
+B. End-to-end performance (RQ1) 
+
+We evaluate the end-to-end performance in terms of tokens per second (TPS), accuracy, and total wall-clock time. Table II summarizes the results for LLaDA; Dream results, which exhibit consistent trends, are provided in Section III-B1. 
+
+a) Throughput improvement: BlockServe consistently achieves higher throughput than the Fast-dLLM baseline across all benchmarks. For example, on HumanEval with LLaDA (Table II, Gen Len 256), BlockServe increases throughput from 231.5 TPS (Fast-dLLM, best-performing batch size) to 552.6 TPS (BlockServe, Fixed, batch size (BS)=16), and further reaches 597.8 TPS with token-budget admission control (Budget, reported as the peak throughput across batch sizes), corresponding to a 2.6 × speedup over the TABLE I EVALUATION BENCHMARK STATISTICS (LL ADA TOKENIZER ).                              
+
+> Dataset Shots Prompt Len (Avg/Max) Gen Limit Actual Gen Len (Avg/Max) GSM8K 5-shot 1020 / 1632 256 231 / 260 512 265 / 511
+> HumanEval 0-shot 157 / 423 256 231 / 255 512 466 / 512
+> MBPP 3-shot 750 / 4332 256 148 / 255 512 284 / 512
+> MATH 4-shot 698 / 2029 512 428 / 514 1024 600 / 1027
+> TruthfulQA 0-shot 198 / 245 256 33 / 254 512 33 / 510 1024 36 / 1022
+
+best-performing Fast-dLLM configuration we evaluated. On LLaDA, speedups range from 2.6 × to 7.7 × across bench-marks (Table II); on Dream, the range extends to 1.9–10.6 ×
+
+(Section III-B1). 
+
+b) Accuracy maintenance: Although all evaluated meth-ods exhibit minor accuracy variations under different batch size settings, BlockServe achieves accuracy comparable to the baselines across the benchmarks considered. As shown in Table II, BlockServe maintains generation quality broadly comparable to the baselines. For instance, on the MATH benchmark, BlockServe matches the baseline accuracy of 
+
+∼36%, suggesting that our throughput gains are achieved while maintaining comparable generation accuracy. 
+
+1) Dream model results (RQ1): Table III reports the end-to-end results for the Dream model across all five benchmarks. The trends mirror those observed for LLaDA in Section III: BlockServe achieves 1.9–10.6 × throughput improvement over Fast-dLLM across benchmarks while maintaining comparable generation accuracy. The largest speedup (10.6 ×) occurs on TruthfulQA at generation length 1024, where short output lengths amplify the straggler effect in static batching. 
+
+C. Latency–length relationship (RQ2) 
+
+To understand the source of our speedup, we analyze per-sample service-time latency—the wall-clock time from scheduling to completion—as a function of output length. Figure 2 presents the distribution for Dream on HumanEval at batch sizes 4 and 16. 
+
+a) Latency analysis: Figure 2 highlights the distribu-tional advantage of BlockServe. BlockServe maintains a con-sistent, low-variance latency across output-length buckets. In contrast, Fast-dLLM exhibits pronounced “straggler effects” characterized by a heavy tail and multiple modes. Even for short generations, the baseline incurs high latency because the entire batch remains blocked by the longest-running request. 
+
+b) Effective concurrency analysis: Figure 3 quantifies the effective concurrency gap between methods. We report the Effective Compute Ratio R (Eq. 2), measuring the average number of active requests per scheduling step, normalized by the baseline batch size: 
+
+R = 1
+
+T B 
+
+> T
+
+X
+
+> t=1
+
+at, (2) where at is the number of active requests at block-cycle t, B
+
+is the baseline batch size, and T is the total number of block-cycles. For Fast-dLLM, the effective ratio drops sharply be-cause finished requests occupy slots while the batch completes. On TruthfulQA (Figure 3a), which has short generations, the ratio at BS=16 drops to 0.07. In contrast, BlockServe (Fixed) maintains a ratio near 1.0, indicating that block-grained pre-emption effectively reduces compute bubbles. BlockServe (Budget) can exceed 2.0 (e.g., ∼2.4 at BS=4 on HumanEval, Figure 3b), reflecting efficient oversubscription under token-budget control. 
+
+D. Batch-size scaling of straggler effects (RQ3) 
+
+Figure 4 demonstrates the critical scalability advantage of BlockServe. At small batch sizes (BS=1, 2), the latency gap between Fast-dLLM (Blue) and BlockServe (Orange) is minimal. However, as batch size increases to 16, the baseline latency grows disproportionately because the probability of en-countering a long straggler request within the batch increases, leading to extreme tail latency, particularly on HumanEval where generation lengths vary significantly. BlockServe ef-fectively decouples request latency from batch composition: for compute-intensive tasks like HumanEval, latency grows steadily with batch size; for shorter tasks like TruthfulQA, latency remains nearly constant as batch size increases. Block-Serve’s latency distribution remains compact even at BS=16, confirming that block-grained scheduling ensures predictable latency even under heavy contention. 
+
+E. Admission control and batch capacity (RQ4) 
+
+We compare the maximum safe batch size, defined as the largest number of concurrent requests that completes without triggering OOM under a fixed generation-length limit. Table IV reports the per-benchmark results. Under static TABLE II PERFORMANCE COMPARISON ON LL ADA ( BATCH SIZES 4, 8, 16). TPS: T OKENS /S. A CC : A CCURACY (%). T IME : W ALL -CLOCK TIME . D ASH :    
+
+> EXCEEDED 24 H OR OOM. B EST TPS IN BOLD .
+
+Dataset Gen Batch LLaDA (Default) Fast-dLLM BlockServe (Fixed) BlockServe (Budget) Len Size TPS Acc Time TPS Acc Time TPS Acc Time TPS Acc Time GSM8K 
+
+256 4 17.5 77.71 17547.4 s 145.6 78.39 2098.4 s 248.8 77.56 1231.6 s 
+
+392.5 77.86 778.2 s 8 17.0 77.41 18094.9 s 149.2 78.09 2054.3 s 330.4 77.48 925.6 s 16 16.4 76.95 18842.5 s 142.3 77.94 2158.3 s 378.9 78.85 807.0 s 512 4 8.5 76.72 41469.7 s 102.4 74.68 3458.8 s 229.0 75.06 1535.7 s 
+
+334.7 76.12 1038.8 s 8 8.3 77.41 42630.7 s 95.0 75.06 3715.8 s 292.4 75.51 1208.4 s 16 8.0 76.72 44295.1 s 83.9 74.91 4205.4 s 325.6 76.65 1072.0 s 
+
+HumanEval 
+
+256 4 53.5 41.46 736.8 s 193.1 32.32 197.8 s 284.9 38.41 135.8 s 
+
+597.8 38.41 63.4 s 8 51.8 39.63 761.0 s 226.2 31.10 169.8 s 409.8 38.41 93.4 s 16 48.9 39.63 798.8 s 231.5 34.15 165.9 s 552.6 36.59 67.8 s 512 4 34.2 45.73 2226.1 s 184.4 45.12 410.9 s 276.0 43.29 279.1 s 
+
+538.1 43.29 140.1 s 8 33.9 48.78 2253.4 s 195.1 44.51 389.0 s 401.7 42.68 190.6 s 16 32.7 48.78 2339.6 s 197.1 43.90 385.7 s 509.8 45.12 150.0 s 
+
+MBPP 
+
+256 4 15.9 32.00 5064.1 s 105.1 29.00 662.4 s 219.3 25.80 345.0 s 
+
+363.1 27.00 190.5 s 8 15.5 31.60 5298.2 s 99.8 29.00 705.4 s 302.2 26.20 250.4 s 16 - - - 92.5 29.00 758.1 s 344.5 27.00 210.8 s 512 4 10.4 20.60 12505.3 s 93.2 17.60 1388.2 s 220.9 14.40 655.9 s 
+
+334.5 15.60 413.5 s 8 9.7 22.40 12965.8 s 83.5 19.40 1486.0 s 290.0 14.40 483.7 s 16 - - - 77.5 19.60 1591.8 s 321.5 14.20 423.6 s 
+
+MATH 
+
+512 4 - - >24 h 138.7 35.94 15380.2 s 252.3 36.28 8499.6 s 
+
+401.0 36.36 5358.6 s 8 - - >24 h 141.4 35.46 15081.6 s 329.7 35.80 6510.7 s 16 - - >24 h 135.2 35.20 15779.3 s 386.8 36.24 5547.5 s 1024 4 - - >24 h 103.2 35.02 28866.5 s 221.5 35.76 13649.9 s 
+
+314.3 35.30 9563.6 s 8 - - >24 h 96.6 34.68 30666.6 s 278.4 35.14 10823.8 s 16 - - >24 h 86.8 34.66 34144.3 s 309.8 35.04 9713.5 s 
+
+TruthfulQA 
+
+256 4 7.4 40.88 3470.2 s 35.6 39.78 766.4 s 78.6 38.56 352.6 s 
+
+217.6 37.94 127.4 s 8 7.8 40.51 3370.9 s 38.2 37.82 700.0 s 132.1 39.41 210.8 s 16 7.8 40.88 3312.9 s 37.0 37.33 726.8 s 187.3 38.19 148.3 s 512 4 2.5 39.41 10663.9 s 22.0 37.21 1227.6 s 55.5 36.84 500.4 s 
+
+140.9 37.82 200.2 s 8 2.6 38.56 10442.8 s 20.4 36.60 1337.1 s 89.2 36.96 308.6 s 16 2.6 39.41 10249.5 s 18.8 37.09 1455.8 s 126.3 37.09 222.4 s 1024 4 0.8 39.53 36442.5 s 14.6 36.60 2033.0 s 54.0 36.60 552.3 s 
+
+112.8 35.25 264.4 s 8 0.8 38.92 35788.0 s 13.3 35.74 2118.6 s 81.7 36.60 376.2 s 16 0.8 39.29 35765.5 s 13.2 35.86 2287.3 s 101.7 35.37 313.2 s 
+
+batching, Fast-dLLM must reserve all memory slots for the entire batch lifetime, enforcing a conservative batch size. BlockServe reclaims slots at block granularity and admits new requests under the token budget, progressively tightening the memory bounding box as high-progress requests complete (Section II-D). For example, on LLaDA MBPP, the maximum batch size increases from 16 (Fast-dLLM) to 64 (BlockServe), a 4.0× improvement. Across benchmarks, this yields a 2.0×–
+
+4.0× increase in effective batch capacity under the same hardware constraints. Table IV compares the maximum safe batch size—the largest number of concurrent requests that completes without OOM under a fixed generation length of 1024 tokens. Block-Serve’s token-budget admission control achieves 2.0×–4.0×
+
+larger batch capacity than Fast-dLLM’s fixed limit across both models and the evaluated benchmarks, confirming that block-grained slot reclamation effectively relaxes the conservative memory constraints of static batching. 
+
+F. Ablation studies (RQ5) 
+
+We ablate two design choices affecting throughput–quality trade-offs: block length L, which controls preemption gran-ularity, and prompt-length sorting, which reduces padding waste. 
+
+a) Impact of block generation length: We evaluate block length L ∈ { 16 , 32 , 64 } on GSM8K and HumanEval. The results are presented in Table V and Table VI. At L = 16 , throughput is consistently lower than at L = 32 ,indicating overhead at fine granularity. Increasing to L = 64 
+
+can degrade accuracy—Dream on GSM8K suffers a ∼9% accuracy drop—because larger blocks denoise more tokens simultaneously, which can amplify the approximation effects TABLE III PERFORMANCE COMPARISON ON DREAM (BATCH SIZES 4, 8, 16). TPS: T OKENS /S. A CC : A CCURACY (%). T IME : W ALL -CLOCK TIME . D ASH : 
+
+> EXCEEDED
+
+24 H OR OOM. B EST TPS IN BOLD .
+
+Dataset Gen Batch Dream (Default) Fast-dLLM BlockServe (Fixed) BlockServe (Budget) Len Size TPS Acc Time TPS Acc Time TPS Acc Time TPS Acc Time GSM8K 
+
+256 4 5.1 45.19 16112.1 s 124.2 77.18 1405.1 s 222.9 76.50 782.0 s 
+
+280.3 76.35 620.9 s 8 5.0 44.88 16646.1 s 142.1 77.10 1229.6 s 263.3 74.68 661.7 s 16 4.8 45.26 17183.3 s 147.2 76.42 1183.8 s 279.0 76.19 626.2 s 512 4 2.5 47.01 38642.9 s 77.7 75.36 2091.4 s 199.6 74.53 810.4 s 
+
+238.5 76.42 690.2 s 8 2.5 47.31 39665.7 s 84.5 76.50 1944.1 s 228.6 74.83 714.1 s 16 2.4 47.92 40968.7 s 83.9 75.66 1953.6 s 238.1 75.97 693.0 s 
+
+HumanEval 
+
+256 4 5.4 20.12 633.6 s 130.9 57.93 157.1 s 293.9 57.32 71.3 s 
+
+477.9 57.32 44.6 s 8 5.4 20.12 646.6 s 183.8 59.15 111.8 s 407.3 58.54 53.1 s 16 5.0 19.51 673.2 s 205.1 58.54 98.7 s 462.9 56.71 45.2 s 512 4 1.7 18.29 1979.9 s 108.9 57.32 227.3 s 252.8 56.10 103.8 s 
+
+374.8 60.98 66.2 s 8 1.7 18.29 1999.4 s 130.2 57.93 186.6 s 328.8 57.32 78.5 s 16 1.7 19.51 2054.1 s 142.2 56.71 176.4 s 369.4 59.15 68.0 s 
+
+MBPP 
+
+256 4 2.1 26.20 4420.4 s 83.5 53.00 292.9 s 186.0 52.60 126.8 s 
+
+220.8 50.80 105.9 s 8 2.0 26.60 4646.6 s 91.6 52.00 265.1 s 209.9 51.40 112.3 s 16 1.8 26.60 5057.8 s 89.5 52.20 274.9 s 195.3 51.00 119.7 s 512 4 0.9 29.80 11155.8 s 46.6 51.60 532.4 s 162.6 52.00 144.1 s 
+
+201.0 51.60 118.7 s 8 0.9 30.20 11601.9 s 49.3 52.00 505.6 s 191.2 51.80 123.8 s 16 0.8 28.80 12348.7 s 48.9 51.60 518.2 s 182.9 51.60 128.2 s 
+
+MATH 
+
+512 4 - - >24 h 122.8 37.76 9337.5 s 251.8 37.18 4545.2 s 
+
+305.1 37.28 3733.6 s 8 - - >24 h 142.5 37.38 8063.4 s 292.5 36.86 3933.7 s 16 - - >24 h 146.9 37.58 7766.0 s 305.4 37.26 3725.4 s 1024 4 - - >24 h 83.8 37.18 17060.0 s 220.4 37.26 6533.7 s 
+
+234.0 37.70 6097.4 s 8 - - >24 h 89.5 37.30 15827.6 s 235.8 36.94 6061.6 s 16 - - >24 h 88.6 37.30 16139.6 s 235.6 37.52 6089.5 s 
+
+TruthfulQA 
+
+256 4 1.3 42.96 2961.5 s 35.1 51.90 262.6 s 96.3 49.08 86.7 s 
+
+174.9 48.84 48.2 s 8 1.3 42.59 2916.7 s 46.2 50.55 203.7 s 133.6 48.96 62.7 s 16 1.3 42.96 2865.0 s 51.5 49.94 180.9 s 160.8 48.35 52.7 s 512 4 0.4 43.45 9447.7 s 20.4 52.63 510.0 s 89.3 52.14 100.3 s 
+
+146.9 51.77 61.1 s 8 0.4 43.57 9255.6 s 24.1 52.14 424.2 s 116.6 52.51 75.6 s 16 0.4 44.06 9202.8 s 25.4 52.39 396.2 s 135.2 51.77 65.9 s 1024 4 0.1 42.35 33687.9 s 8.2 54.83 1317.7 s 70.2 52.88 127.7 s 
+
+99.0 52.39 91.3 s 8 0.1 41.98 33138.4 s 9.0 54.71 1206.6 s 85.9 53.86 104.0 s 16 0.1 42.59 32371.4 s 9.3 54.59 1166.9 s 94.3 52.02 95.4 s 
+
+TABLE IV MAXIMUM SAFE BATCH SIZE COMPARISON (GENERATION LENGTH FIXED AT 1024 TOKENS ). F AST -DLLM: FIXED BATCH LIMIT . B LOCK SERVE :
+
+> TOKEN
+
+-BUDGET PEAK CAPACITY .
+
+Model Dataset Fast-dLLM BlockServe Improvement Dream 
+
+GSM8K 32 64 2.0 ×
+
+HumanEval 64 128 2.0 ×
+
+MBPP 32 71 2.2 ×
+
+TruthfulQA 64 128 2.0 ×
+
+LLaDA 
+
+GSM8K 16 37 2.3 ×
+
+HumanEval 32 64 2.0 ×
+
+MBPP 16 64 4.0 ×
+
+TruthfulQA 16 64 4.0 ×
+
+inherent in parallel decoding [6]. We adopt L = 32 , balancing scheduling overhead against generation stability. 
+
+b) Impact of prompt-length sorting: The admission con-troller sorts the pending queue by prompt length to reduce padding overhead. To evaluate this effect, we compare sorted and unsorted queues with all other parameters held constant. Table VII reports results at BS=16 across both models. Length-aware sorting consistently improves throughput by 4.7%–9.2%. This aligns with the analysis in Section II-D: grouping requests of similar prompt length ensures that newly admitted requests have comparable initial row widths, resulting in a tighter bounding box with less padding waste. IV. R ELATED WORK 
+
+A. Diffusion Language Models 
+
+Diffusion models have emerged as a compelling alternative to autoregressive (AR) language models, producing text by iteratively denoising a corrupted sequence rather than generat-(a) BS=4 (b) BS=16 Fig. 2. Dream latency distribution (HumanEval, gen len 512). Violin plots show per-sample latency density at each output-length bucket.   
+
+> (a) TruthfulQA (Gen Len 512). (b) HumanEval (Gen Len 512). Fig. 3. Effective concurrency analysis via compute ratio (Eq. 2). Results shown for Dream.
+
+ing tokens sequentially. Early discrete diffusion foundations— structured transition matrices [16], score entropy [17], and masked diffusion with semi-autoregressive samplers [18]— progressively narrowed the quality gap with AR models. Building on these advances, LLaDA [4] scaled masked dif-fusion to 8B parameters with semi-autoregressive block gen-eration, achieving performance competitive with LLaMA3 8B. Ye et al. [19] demonstrated that discrete diffusion models are particularly effective for complex reasoning and planning tasks. Dream [5] further advanced this line by training a 7B-parameter diffusion LLM with AR-based initialization and context-adaptive noise rescheduling, establishing a new state of the art among open diffusion language models. BlockServe is evaluated on both LLaDA and Dream. 
+
+B. LLM Serving Systems 
+
+The AR serving ecosystem has converged on iteration-level scheduling [2], paged KV cache management [3], chunked prefills with stall-free batching [7], [8], and prefill-decode disaggregation [20]. These techniques are tailored to the AR execution model, where each iteration produces exactly one token per request. In contrast, dLLMs exhibit a fundamentally different execution pattern: each request undergoes multiple denoising iterations over a fixed-length block. This mismatch renders token-level continuous batching inapplicable to dLLM serving, motivating the block-grained scheduling introduced in BlockServe. 
+
+C. Diffusion LLM Inference Optimization 
+
+Fast-dLLM [6] accelerates single-request dLLM inference via a block-wise approximate KV cache enabling computation (a) HumanEval (Gen Len 512) (b) TruthfulQA (Gen Len 512) Fig. 4. Batch size scaling (LLaDA). Boxplots show per-sample latency for batch sizes 1–16. TABLE V BLOCK LENGTH (L) ABLATION ON GSM8K (G EN LEN 256, B ATCH SIZE 
+
+> 4/8).
+
+Model L BS=4 BS=8 TPS ACC TPS ACC Dream 16 178.0 77.48 204.3 78.62 
+
+32 222.9 76.50 263.3 74.68 64 213.1 67.48 243.1 65.50 
+
+LLaDA 16 184.0 79.00 232.0 79.08 
+
+32 248.8 77.56 330.4 77.48 64 280.8 77.33 366.1 76.95 TABLE VI BLOCK LENGTH (L) ABLATION ON HUMAN EVAL (G EN LEN 256, B ATCH  
+
+> SIZE 4/8).
+
+Model L BS=4 BS=8 TPS ACC TPS ACC Dream 16 268.6 54.88 381.4 53.66 32 293.9 57.32 407.3 58.54 
+
+64 262.1 55.49 314.2 57.32 
+
+LLaDA 16 250.8 36.59 366.6 37.20 32 284.9 38.41 409.8 38.41 
+
+64 283.5 34.15 393.0 33.54 
+
+reuse across denoising steps despite bidirectional attention, and a confidence-aware parallel decoding scheme that selec-tively unmasks high-confidence tokens to reduce denoising iterations. Concurrently, dLLM-Serve [21] targets the memory footprint challenge in production dLLM serving, introducing logit-aware activation budgeting to cap peak memory from out-put projections, a phase-multiplexed scheduler that interleaves compute-bound and bandwidth-bound denoising phases across requests, and head-centric sparse attention. While Fast-dLLM optimizes single-request latency and dLLM-Serve addresses phase-level resource heterogeneity in continuous dLLM serving, neither explicitly targets the con-vergence heterogeneity that arises when batched requests com-plete at different block boundaries. BlockServe fills this gap with block-grained preemption—immediately evicting com-pleted requests to eliminate the straggler effect—mixed-state memory alignment for concurrent requests at different denois-ing stages, and compute-aware admission control that dynam-ically adapts batch concurrency to workload geometry. The single-request optimizations of Fast-dLLM are complementary to BlockServe and are integrated as drop-in accelerators within our scheduling framework without modification. V. C ONCLUSION 
+
+BlockServe demonstrates that block-grained scheduling sub-stantially alleviates the straggler bottleneck in batched dif-fusion LLM serving, achieving 1.9–10.6 × throughput im-provement across two models compared with the best-performing baseline we evaluated, while maintaining com-parable generation quality. The core insight is that con-vergence heterogeneity—the varying rates at which dLLM requests reach completion—can be addressed by treating each execution block as an independent scheduling quantum. By combining block-level eviction with mixed-state memory alignment, BlockServe keeps GPU resources better utilized even as individual requests complete at different paces. Token-budget admission control further enables a 2–4 × increase in effective batch capacity under the same hardware constraints. Our evaluation focuses on offline batch inference; extending BlockServe to online serving with dynamic request arrivals remains future work. TABLE VII PROMPT -LENGTH SORTING ABLATION (BS=16). S ORTED : QUEUE ORDERED BY PROMPT LENGTH . U NSORTED : UNORDERED . G EN LEN : 256 (GSM8K, HUMAN EVAL ), 512 (MATH). 
+
+Model Dataset TPS (Unsorted) TPS (Sorted) Improvement Time (Unsorted) Time (Sorted) Dream 
+
+GSM8K 260.3 279.0 7.2% 669.5 s 626.2 s HumanEval 424.0 462.9 9.2% 48.8 s 45.2 s MATH 285.3 305.4 7.0% 3998.2 s 3725.4 s 
+
+LLaDA 
+
+GSM8K 351.5 378.9 7.8% 852.0 s 807.0 s HumanEval 519.7 552.6 6.3% 72.0 s 67.8 s MATH 369.6 386.8 4.7% 5768.5 s 5547.5 s 
+
+REFERENCES [1] C. Holmes, M. Tanaka, M. Wyatt, A. A. Awan, J. Rasley, S. Rajbhandari, R. Y. Aminabadi, H. Qin, A. Bakhtiari, L. Kurilenko et al. , “Deepspeed-fastgen: High-throughput text generation for llms via mii and deepspeed-inference,” arXiv preprint arXiv:2401.08671 , 2024. [2] G.-I. Yu, J. S. Jeong, G.-W. Kim, S. Kim, and B.-G. Chun, “Orca: A distributed serving system for {Transformer-Based } generative models,” in 16th USENIX symposium on operating systems design and implemen-tation (OSDI 22) , 2022, pp. 521–538. [3] W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica, “Efficient memory management for large language model serving with pagedattention,” in Proceedings of the 29th symposium on operating systems principles , 2023, pp. 611–626. [4] S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J.-R. Wen, and C. Li, “Large language diffusion models,” arXiv preprint arXiv:2502.09992 , 2025. [5] J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong, “Dream 7b: Diffusion large language models,” arXiv preprint arXiv:2508.15487 , 2025. [6] C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie, “Fast-dllm: Training-free acceleration of diffu-sion llm by enabling kv cache and parallel decoding,” arXiv preprint arXiv:2505.22618 , 2025. [7] A. Agrawal, A. Panwar, J. Mohan, N. Kwatra, B. S. Gulavani, and R. Ramjee, “Sarathi: Efficient llm inference by piggybacking decodes with chunked prefills,” arXiv preprint arXiv:2308.16369 , 2023. [8] A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. Gulavani, A. Tumanov, and R. Ramjee, “Taming {Throughput-Latency } tradeoff in {LLM } inference with {Sarathi-Serve },” in 18th USENIX symposium on operating systems design and implementation (OSDI 24) , 2024, pp. 117–134. [9] J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu, “Roformer: En-hanced transformer with rotary position embedding,” Neurocomputing ,vol. 568, p. 127063, 2024. [10] K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano et al. , “Training verifiers to solve math word problems,” arXiv preprint arXiv:2110.14168 , 2021. [11] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman et al. , “Evaluating large language models trained on code,” arXiv preprint arXiv:2107.03374 ,2021. [12] J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le et al. , “Program synthesis with large language models,” arXiv preprint arXiv:2108.07732 , 2021. [13] D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt, “Measuring mathematical problem solving with the math dataset,” arXiv preprint arXiv:2103.03874 , 2021. [14] S. Lin, J. Hilton, and O. Evans, “Truthfulqa: Measuring how models mimic human falsehoods,” in Proceedings of the 60th annual meeting of the association for computational linguistics (volume 1: long papers) ,2022, pp. 3214–3252. [15] S. Badshah and H. Sajjad, “Reference-guided verdict: Llms-as-judges in automatic evaluation of free-form qa,” in Proceedings of the 9th Widening NLP Workshop , 2025, pp. 251–267. [16] J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. Van Den Berg, “Struc-tured denoising diffusion models in discrete state-spaces,” Advances in neural information processing systems , vol. 34, pp. 17 981–17 993, 2021. [17] A. Lou, C. Meng, and S. Ermon, “Discrete diffusion modeling by estimating the ratios of the data distribution,” arXiv preprint arXiv:2310.16834 , 2023. [18] S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov, “Simple and effective masked diffusion language models,” Advances in Neural Information Processing Systems ,vol. 37, pp. 130 136–130 184, 2024. [19] J. Ye, J. Gao, S. Gong, L. Zheng, X. Jiang, Z. Li, and L. Kong, “Beyond autoregression: Discrete diffusion for complex reasoning and planning,” 
+
+arXiv preprint arXiv:2410.14157 , 2024. [20] Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang, “{DistServe }: Disaggregating prefill and decoding for goodput-optimized large language model serving,” in 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , 2024, pp. 193–210. [21] J. Fan, Y. Zhang, X. Li, and D. S. Nikolopoulos, “Taming the memory footprint crisis: System design for production diffusion llm serving,” 
+
+arXiv preprint arXiv:2512.17077 , 2025.

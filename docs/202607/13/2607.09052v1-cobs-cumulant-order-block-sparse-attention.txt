@@ -1,0 +1,929 @@
+Title: COBS: Cumulant Order Block Sparse Attention
+
+URL Source: https://arxiv.org/pdf/2607.09052v1
+
+Published Time: Mon, 13 Jul 2026 00:40:18 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# COBS : CUMULANT ORDER BLOCK SPARSE ATTENTION 
+
+Alexander Tian * Aditya Ghai * Sanjit Neelam Zaal Vasania Akshay Mishra 
+
+MatX 
+
+{alexander,adi,sanjit,zaal,akshay}@matx.com 
+
+## ABSTRACT 
+
+Block sparse attention is a hardware friendly way to alleviate the key–value (KV) cache read bottleneck in large language models (LLMs). However, it is not prevalent among leading open-weight LLMs, which rely instead on dense attention or fine-grained selection, thereby motivating our analysis. We study DeepSeek’s Native Sparse Attention (NSA) [ 1] as a representative method, whose three-branch design lets us isolate block selection, the most challenging and consequential stage. We formalize selection and reduce it to ranking blocks by a single quantity, the attention mass : the sum of a block’s attention scores. We show that if selection retrieves the blocks with the largest attention mass, block sparse attention can match the quality of dense attention. However, computing the exact attention mass requires reading every key, so the problem of block selection ultimately reduces to approximating this mass from a compact summary instead of the full keys. Via a cumulant expansion, we show why existing methods falter: their selection strategies attempt to estimate the attention mass, but are confined to a first-order approximation. Therefore, we propose COBS (Cumulant Order Block Sparse Attention), an attention method that builds on NSA, incorporating a novel selector that stores a compressed second-order statistic per block. On the 32k RULER long-context retrieval benchmark [ 2], COBS raises the NSA baseline’s mean score from 0.2999 to 0.8195 , approaching dense attention at 0.9040 and closing about 86% of the gap, while using only 1.21 × the KV cache read traffic of the NSA baseline and 15 .15 ×
+
+less read traffic than dense. The same model preserves short-context behavior and attains lower position-wise negative log-likelihood (NLL) than dense attention in our comparison. 
+
+## 1 Introduction 
+
+Transformer inference at long context is bottlenecked by reading the key–value (KV) cache: at each decode step, attention reads the keys and values of every past token, so decoding is limited by memory bandwidth rather than compute and leaves hardware underutilized. Sparse attention reduces this cost by reading the keys and values of only a fraction of past tokens. Sparse attention methods differ in what they keep and how they choose it. Fixed-pattern methods attend to predeter-mined local windows and global tokens (Longformer [ 3], BigBird [ 4]); KV-eviction methods drop low-importance tokens (StreamingLLM [ 5 ], H2O [ 6], SnapKV [ 7 ]); and low-rank methods compress the keys themselves [ 8 ]. Closest to our setting are query-aware block selectors, which summarize contiguous blocks of the cache offline and, per query, run fine-grained attention over the highest-scoring blocks; this family includes Quest [ 9 ] and the learned block selector of Native Sparse Attention (NSA) [1]. We return to these methods in Section 6. Among these families, block sparsity is arguably the most hardware friendly: attending to contiguous blocks yields contiguous memory accesses, and a coarse block granularity requires a far smaller top-k than selecting individual tokens. Despite this affinity for hardware, block sparsity is largely absent from leading open-weight LLMs. Recent releases instead span the alternatives: dense grouped-query attention (GQA [ 10 ]; e.g. Hunyuan Hy3 [ 11 ]), latent KV compression (Multi-head Latent Attention (MLA) [ 12 ], used by Kimi K2.6 [ 13 ]), local windows interleaved with periodic global layers (Gemma 4 [ 14 ]), and fine-grained token selection (DeepSeek Sparse Attention (DSA) [ 15 ], adopted in modified form by GLM-5.2 [ 16 ]). Even the closest case, DeepSeek-V4’s CSA [ 17 ], selects over blocks only four tokens wide and pairs them with a compression branch (HCA) that performs no selection at all. Large-block selection, the form most amenable to hardware, is thus conspicuously underused, raising the question of what limits block sparse methods and whether the gap to dense attention can be closed. 
+
+> ∗Equal contribution. arXiv:2607.09052v1 [cs.LG] 10 Jul 2026
+
+COBS: Cumulant Order Block Sparse Attention 2k 4k 8k 16k 32k 64k             
+
+> per-decode-step KV read traffic (KiB / layer, log scale)
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 32k RULER
+> dense / OSA accuracy ceiling Dense OSA (mass oracle)
+> NSA MLP
+> NSA mean-pool
+> NSA Quest
+> COBS full-space r= 4 (bf16)
+> COBS full-space r= 6 (bf16)
+> COBS full-space r= 6 (FP4)
+> COBS (ours):
+> 86% of the gap to dense,
+> at 15 × less KV traffic
+
+Accuracy vs. KV-read traffic 
+
+> Pareto frontier
+
+Figure 1: COBS approaches dense accuracy at a fraction of the KV cache read traffic. Accuracy on 32k RULER versus per-decode-step KV cache read traffic (KiB per layer, log scale; see Table 3). The plotted FP4 COBS configurations lie on the Pareto frontier (dashed); the highlighted star is COBS (adaptive s≈85 , r=4 , FP4), which recovers most of the gap between dense and NSA MLP at 1.21 × NSA MLP’s KV cache read traffic. NSA MLP and NSA Quest are dominated; NSA mean-pool anchors the low-traffic end of the frontier, and OSA buys its accuracy by re-reading all keys. We study this question through NSA, a representative query-aware block sparse method. NSA pairs a coarse stream with a top-k block selection branch, so selection alone decides which distant blocks are seen at full resolution while its scoring summary stays cacheable, cleanly isolating the mechanism we analyze (Section 2). Our findings target NSA but extend to the broader family of first-order block selectors, which score each block from a cached, query-independent summary. With selection isolated, the question becomes what a cacheable selector should compute. Under explicit assumptions, block selection reduces to ranking blocks by their attention mass (Section 3), and an oracle (OSA) ranking by the exact mass essentially matches dense attention, so the obstacle is estimating the mass rather than the criterion. Existing selectors estimate it only to first order and miss how relevance curves with the query direction, whereas our proposed method, COBS, restores the omitted second-order term from a compressed key covariance cached per block. We evaluate and ablate COBS at long context, where it closes most of the gap between first-order selection and dense attention. 
+
+Contributions. 
+
+• We formalize block selection as preserving the true attention outputs and, under explicit assumptions, reduce it to ranking blocks by their attention mass, with an oracle (OSA) confirming this criterion essentially recovers dense attention performance (Section 3). • We give a cumulant-expansion view of block selection (Section 4) that explains the limitation of first-order selectors: they capture the first-order term but discard the within-block covariance and higher-order terms needed to approximate the oracle. • We propose COBS (Cumulant Order Block Sparse Attention, Section 5), an NSA-based sparse attention method whose block selector is derived from the cumulant expansion, storing the within-block covariance in compressed form per block (a low-rank factorization, a query-subspace projection, and FP4 quantization) at a small multiple of the cost of mean-pool scoring. • We evaluate on our 11-task 32k RULER configuration (Section 7), where COBS raises mean score from 
+
+0.2999 (NSA baseline) to 0.8195 , approaching full (dense) attention at 0.9040 and closing about 86% 
+
+of the gap, while using only 1.21 × the KV cache read traffic of the NSA baseline and 15 .15 × less read traffic than dense attention (Figure 1). Ablations isolate the main design choices. 2COBS: Cumulant Order Block Sparse Attention 
+
+## 2 Background 
+
+Notation. At a decode step a query q ∈ RD , with D the per-head dimension, attends over a KV cache of past tokens with keys kr , v r ∈ RD . Dense attention forms scores sr , weights ∝ esr , and outputs the weighted average of values. We absorb the usual attention scale into q. We partition the cache into contiguous blocks b, each holding 
+
+L tokens, and write the block mass mb and value centroid vcb as 
+
+sr = qTkr , mb = X
+
+> r∈b
+
+esr , vcb = 1
+
+mb
+
+X
+
+> r∈b
+
+esr vr . (1) We use multi-head attention (MHA) [ 18 ] and grouped-query attention (GQA) [ 10 ]; under GQA a group of G query heads shares one KV head, so the model has H KV heads in total, and quantities indexed by g range over the heads in a group. 
+
+NSA and its three branches. NSA [ 1] composes three attention branches whose outputs are gated and summed. (i) A compression branch attends over a coarse stream of pooled block representations. (ii) A selection branch ranks blocks by a lightweight per-block score, keeps the top-k, and runs fine-grained attention over the kept blocks. (iii) A sliding-window branch covers recent local context. The selection branch is the focus of this paper: it alone determines which blocks fine-grained attention ever sees, so its fidelity bounds the quality of the whole method, and its scoring summary is what must be cached. 
+
+What the selection branch must do. Selection must identify, before reading a block’s full keys and values, the blocks that contribute most to the attention output for the current query. NSA scores a block by an inner product between the query and a cached summary vector produced by a small MLP over the block’s keys; although this pooling is nonlinear in the keys, the summary enters the score only to first order in the query [ 1]. Section 3 derives the attention mass surrogate used as our oracle, and Section 6 shows how the first-order score relates to that surrogate. 
+
+The cacheability constraint. A selector is cacheable if its per-block summary can be precomputed and stored, then reused across decode steps without re-reading the block. This forces the summary to be independent of the decode query q; for instance, any function of the block’s keys alone satisfies this. Every design choice in this paper respects this constraint (we never store a query-dependent quantity per block), and it is precisely this constraint that makes the cumulant order of the stored summary the binding limitation (Section 4). 
+
+## 3 The Selection Oracle 
+
+The selection oracle formalizes block selection as reconstructing dense per-head attention outputs from a top-k
+
+block subset. We derive the exact single-head error from dropping blocks, then a value-agnostic reconstruction bound whose minimizer gives the mass criterion. Index the H KV heads by h and the G query heads sharing a KV head by g (Section 2); per-head quantities carry superscript (g, h ). The selector chooses one block set S(h) per KV head, shared by its G query heads (we write S when the head is clear from context). 
+
+3.1 Dense head output and exact single-head error 
+
+Within a head, normalizing the block masses mb (Equation (1)) by the full softmax denominator Z = P 
+
+> i
+
+esi gives block probabilities Pb = mb/Z , so the dense head output is a Pb-weighted mixture of the block centroids vcb . Then, a selector that keeps a block set S (dropping its complement Sc with dropped mass τ = P 
+
+> b∈Sc
+
+Pb) renormalizes over the kept blocks: 
+
+o⋆ = X
+
+> b
+
+Pb vcb , ˆoS =
+
+P 
+
+> b∈S
+
+Pb vcb
+
+1 − τ . (2) Subtracting the second from the first and collecting terms gives the exact per-head reconstruction error, 
+
+o⋆ − ˆoS = 11 − τ
+
+X
+
+> b∈Sc
+
+Pb
+
+ vcb − o⋆, (3) which is the renormalized sum over dropped blocks of probability mass times the deviation of each centroid from the true output. 3COBS: Cumulant Order Block Sparse Attention 
+
+3.2 The per-KV-head selection objective 
+
+We define the oracle directly at the head-output level and optimize each KV head independently. For a fixed KV head h, the shared top-k block set controls the sum of the group’s head-output reconstruction errors: 
+
+E(h)(S) = 
+
+> G
+
+X
+
+> g=1
+
+(o⋆ − ˆoS )(g,h ) . (4) The assumptions below turn this objective into a value-agnostic bound to minimize. 
+
+3.3 Assumptions Assumption 1 (A1: Value-agnosticism) . Within each head the centroid deviations share a common magnitude bound across blocks, (vcb − o⋆)(g,h ) ≤ c(g,h ). We adopt this relaxation as the deviations are nontrivial to estimate, since they require the exact head output o⋆ which we do not have. 
+
+Assumption 2 (A2: Disregard c). The per-head coefficients c(g,h ) (the deviation-magnitude bounds of Assumption 1) are ignored for ranking. We also adopt this relaxation as these bounds are unknown. 
+
+Assumption 3 (A3: Linear relaxation) . For G > 1 the per-head penalty P 
+
+> g
+
+τ (g)/(1 − τ (g)) is replaced by its leading-order (linear) term P 
+
+> g
+
+τ (g), rendering the per-block score additive. 
+
+3.4 The GQA selection score 
+
+Under Assumptions 1 to 3, minimizing the per-KV-head objective (4) reduces to ranking blocks by an additive per-block score (derived in Section A), maximized by the top-k blocks under 
+
+score (h) 
+
+> b
+
+=
+
+> G
+
+X
+
+> g=1
+
+m(g,h )
+
+> b
+
+Z(g,h ) , Z(g,h ) = X
+
+> b′
+
+m(g,h ) 
+
+> b′
+
+(5) The relaxation is valid when each dropped mass τ (g) is small, so ranking by (5) is a reasonable oracle rather than an exact optimum. For multi-head attention ( G = 1 ), minimizing the bound is exactly keeping the top-k blocks by mass mb, equivalently by log-mass ln mb, so Assumptions 2 and 3 are unnecessary in this case (Section A). Crucially, (5) gives the value-agnostic mass criterion that DeepSeek’s NSA [ 1 ] approximates with a cached summary. Our contribution is therefore a justification of the mass criterion and a better estimator of it (Sections 4 and 5). 
+
+3.5 Oracle Sparse Attention (OSA): a mass-oracle reference 
+
+The analysis above establishes the mass criterion as the target of selection, but leaves open how well that criterion performs, and how much of the gap to dense attention it can close. OSA (Oracle Sparse Attention) answers this by applying the selection mass criterion with the exact masses, removing any error a cached summary would introduce. Concretely, OSA extends NSA with only a single change. It computes the true block masses m(g,h ) 
+
+> b
+
+by reading the full block keys and ranks blocks by the normalized GQA score of (5) , leaving every other component of NSA intact. Because OSA reads every block’s keys to form the exact masses, it provides sparsity only on value reads while key traffic stays dense. Its exact-mass ranking is therefore impractical to deploy, and we use OSA purely as a diagnostic. On our 11-task 32k RULER configuration (Section 7), OSA essentially matches dense attention, reaching a mean score of 0.9010 against dense’s 0.9040 and closing 99 .5% of the gap from the NSA baseline, which remains far below. Selecting the right blocks, when done with the true masses, thus recovers nearly all of dense attention’s long-context accuracy. What separates existing block sparse methods from this ceiling is therefore not the selection criterion but rather the estimation of the mass from a cacheable summary. 
+
+## 4 The Cumulant Expansion 
+
+Section 3 showed that block selection reduces to ranking blocks by their mass mb, and that the difficulty lies in estimating mb from a compact, query-independent summary. To expose what such a summary can capture, we expand the mass, and its logarithm, in the statistics of the block’s keys. Write the mass as L times an expectation over the block’s empirical key distribution X:
+
+mb = L · 1
+
+L
+
+X
+
+> r∈b
+
+esr = L Er
+
+eqTkr  = L M X (q), MX (q) = EX
+
+eqTX , (6) 4COBS: Cumulant Order Block Sparse Attention so MX is the moment generating function of the keys and 
+
+ln mb = ln L + KX (q), KX (q) = ln MX (q) (7) 
+
+KX is its cumulant generating function. The standard multivariate cumulant expansion, equivalently the Taylor expansion of KX around q = 0 [19, Ch. 2], is 
+
+KX (q) = qTκ1 + 12 qTκ2 q + 16
+
+X
+
+> ijk
+
+(κ3)ijk qiqj qk + · · · , (8) with first two cumulants the block mean key and the within-block key covariance (derived in Section B), 
+
+κ1 = ¯kb = 1
+
+L
+
+X
+
+> r∈b
+
+kr , κ2 = Σ b = 1
+
+L
+
+X
+
+> r∈b
+
+(kr − ¯kb)( kr − ¯kb)T. (9) Equivalently, mb = L e KX (q): a block’s mass is fixed entirely by the cumulants of its keys. Our method works from this form and its low-order truncations, keeping ¯kb and Σb as the per-block summary (Section 5). 
+
+## 5 Method 
+
+We present our method COBS , Cumulant Order Block Sparse Attention, as a sequence of additive improvements over a single controlled NSA baseline (the exact baseline configuration is fixed in Section 7). The headline change is Section 5.2: storing a compressed within-block covariance per block. The remaining subsections are the estimation and storage optimizations that reduce its KV cache read traffic at fixed selection quality. 
+
+5.1 NoPE in the compression and selection branches 
+
+We remove rotary position encoding (RoPE) from the compression and selection branches, a no-position-encoding (NoPE) scheme, so block summaries depend only on content. With RoPE, keys at different positions are rotated by different angles, so pooling over a block mixes content with position and injects positional spread into the summary. NoPE strips out this compression noise, letting each block summary focus on content; precise relative position is retained only where it is needed, in the local window. We report NoPE as a standalone additive change that on its own empirically improves NSA (Section 7). 
+
+5.2 Second-order truncation: store ¯kb and a compressed Σb
+
+Truncating the cumulant expansion (8) at second order gives the core estimator: 
+
+ln mb ≈ ln L + qT ¯kb + 12 qTΣb q (10) Note that the first-order term is simply a mean-pool over the block keys: 
+
+ˆℓb = qT ¯kb, (11) while the second-order term 12 qTΣb q is the curvature that mean-pooling omits (Figure 2). Under GQA the second-order mass estimate enters the group score of Equation (5) through 
+
+[score (h) 
+
+> b
+
+=
+
+> G
+
+X
+
+> g=1
+
+1
+
+bZ(g,h ) exp 
+
+
+
+q(g,h )⊤ ¯k(h) 
+
+> b
+
++ 12 q(g,h )⊤Σ(h) 
+
+> b
+
+q(g,h )
+
+,
+
+bZ(g,h ) = X
+
+> b′
+
+exp 
+
+
+
+q(g,h )⊤ ¯k(h) 
+
+> b′
+
++ 12 q(g,h )⊤Σ(h) 
+
+> b′
+
+q(g,h )
+
+.
+
+(12) Here bZ(g,h ) is the second-order estimate of the normalizer Z(g,h ) of (5) after the common block-length factor L in 
+
+mb = L e KX (q) is cancelled from numerator and denominator. We therefore store, per block, the mean key ¯kb and a compressed form of the covariance Σb, and score blocks with this second-order estimate. The covariance summary is used for block selection only: COBS retains a mean-pool compression branch, so selection and compression use different summaries. We find that even the first-order mean-pool approximation already improves on DeepSeek’s NSA MLP selection summary (Section 7.2). 
+
+5.3 Covariance compression 
+
+For D > L , the O(D2) covariance costs more memory than the LD keys it summarizes, thus requiring compression of Σb. We use a low-rank spectral decomposition keeping the top r eigendirections of Σb,
+
+Σb ≈
+
+> r
+
+X
+
+> i=1
+
+λiuiuT 
+
+> i
+
+=
+
+> r
+
+X
+
+> i=1
+
+ξfs  
+
+> i
+
+(ξfs  
+
+> i
+
+)T, ξfs  
+
+> i
+
+= pλi ui, (13) 5COBS: Cumulant Order Block Sparse Attention where the standard spectral decomposition is rewritten by folding √λi into each eigenvector. We store the block mean ¯kb (D floats) and the r scaled eigenvectors ξfs  
+
+> i
+
+(rD floats), where the superscript fs denotes full-space, for 
+
+D + rD floats per block. 
+
+5.4 Subspace method 
+
+The rank-r approximation stores covariance directions in the full key space RD , but ranking depends on Σb only through the scalar quadratic form qTΣbq. Let UQ ∈ RD×s hold the top s eigenvectors of the query second moment 
+
+E[qq T], spanning the s-dimensional query subspace. We keep the covariance only within this subspace, 
+
+Bb = U T
+
+> Q
+
+Σb UQ ∈ Rs×s, (14) and, projecting the query as ˜q = U T
+
+> Q
+
+q ∈ Rs with Π = UQU T
+
+> Q
+
+, score with the projected quadratic form 
+
+qTΣb q ≈ qT Π Σ b Π q = ˜qTBb ˜q, (15) which is exact when Πq = q; the adaptive s below keeps the out-of-subspace residual ∥(I − Π) q∥ negligible. Rather than store the s × s matrix Bb, we take a rank-r spectral decomposition in the projected space, 
+
+Bb ≈
+
+> r
+
+X
+
+> i=1
+
+ξss  
+
+> i
+
+(ξss  
+
+> i
+
+)T, ξss  
+
+> i
+
+∈ Rs, (16) where the ξss  
+
+> i
+
+(ss denoting subspace) are the stored scaled eigenvectors of Bb. Subspace COBS stores the ξss  
+
+> i
+
+and full-space ablations store the ξfs  
+
+> i
+
+of (13) ; the estimation, storage, and quantization below apply identically to either, so we write ξi for the stored factors wherever the distinction is immaterial. We set s per layer as a function of the rank capturing 90% of the query spectral energy, averaged over heads. This preserves near-full 32k RULER selection quality while reducing the stored eigenvector cost from rD to rs floats per block. At r = 4 , this is 340 
+
+rather than 512 floats, a ≈1.5× reduction. The subspace descriptor is thus an inference-time compression of the full-space one: starting from the corresponding trained full-space checkpoint, we leave the model weights fixed and replace each block’s covariance descriptor by its query-subspace projection. 
+
+5.5 Quantization 
+
+We quantize the stored scaled eigenvectors ξi to the E2M1 FP4 format, keeping one fp32 scale per eigenvector and the block mean at bf16 precision. On the rank-4 descriptor this is essentially lossless: 32k RULER changes by only 
+
++0 .0013 (bf16 0.8238 to FP4 0.8251 ), while shrinking the covariance-factor descriptor ≈3.8× (from 1024 to 272 
+
+bytes per block, excluding the bf16 mean) on top of the low-rank and subspace reductions of Sections 5.3 and 5.4; additional quantization results are reported in Section 7.6.3. 
+
+5.6 Cost and KV cache read traffic Per-decode-step scoring. We describe the subspace descriptor here; the full-space variant is identical after dropping the projection and using q in place of ˜q. At each decode step we form the projected query ˜q = U T
+
+> Q
+
+q once, then evaluate the curvature term from the stored subspace factors, 
+
+qTΣb q ≈
+
+> r
+
+X
+
+> i=1
+
+(ξT 
+
+> i
+
+˜q)2, (17) i.e. r inner products in the s-dimensional subspace, costing O(rs ) per block (plus one O(sD ) query projection shared across all blocks) against O(D) for mean-pool. 
+
+Eigenvector computation (Gram trick). The scaled eigenvectors ξi are recomputed once per block (once every ≈L decode steps) as the block fills. Let ˜K ∈ RL×D be the centered key matrix with rows (kr − ¯kb)T, so 
+
+Σb = 1 
+
+> L
+
+˜KT ˜K. Rather than forming the full D × D covariance, we apply the Gram trick to the L × L Gram matrix  
+
+> 1
+> L
+
+˜K ˜KT: a unit eigenpair (λi, w i) maps to the unit eigenvector ui = ˜KTwi/√Lλ i of Σb at the same eigenvalue 
+
+λi, giving the stored ξi = √λi ui = ˜KTwi/√L. For D > L this avoids materializing the full covariance: forming the Gram matrix costs O(L2D), the small eigendecomposition costs O(L3), and recovering the top r
+
+scaled eigenvectors costs O(rLD ). The subspace descriptor uses the same computation after replacing ˜K by its query-subspace projection ˜KU Q.6COBS: Cumulant Order Block Sparse Attention −2 −1 0 1 2               
+
+> key coordinate ∥ q
+> −1.5
+> −1.0
+> −0.5
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> key coordinate  ⟂ q
+> q
+> shared mean ̄ k
+> spread ∥ q
+> ⇒ high mass
+> spread ⟂q
+> ⇒ low mass
+> Same mean, di ff erent spread (2D keys)
+> 0.0 0.5 1.0 1.5 2.0 2.5
+> query magnitude t(q=t̂q)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> log mass
+> curvature
+> gap
+> Log mass along the query ray
+> true log mass
+> + covariance (2nd order, ours)
+> affi ne class (1st order)
+
+Figure 2: First-order block scores miss within-block curvature. Left (2D example): two blocks share the same mean key ¯kb but spread differently relative to the query direction q. Spread codirectional with q (from the blue block) raises the block’s softmax mass while spread orthogonal to q (from the orange block) does not, a difference invisible to the shared mean ¯kb. Right: for queries along a fixed direction ˆq, a first-order score such as q⊤ ¯kb is linear in the query, whereas the true log mass is curved; the covariance term supplies the second-order curvature captured by COBS. 
+
+## 6 Related Work 
+
+We focus on the query-aware, cacheable block selectors of Section 2, organized by the cumulant order of the cached summary. The broader landscape (fixed-pattern, KV-eviction, low-rank) is surveyed in Section 1. 
+
+6.1 CCQ 
+
+The closest related method is CCQ [ 20 ], which rests on the same observation we make independently: a log-partition (cumulant generating) function carries a second-order term set by a covariance, and keeping it sharpens a first-order estimate. CCQ applies this to query correction at read time in linear attention; we instead apply it to block selection 
+
+in sparse attention, estimating each block’s softmax mass from the within-block key covariance Σb (Section 4). The mathematics is shared, though the premises and resulting methods differ. 
+
+6.2 First-order selectors 
+
+The prevailing cacheable block selectors summarize a block by a single cached vector. NSA [ 1] scores each block from a learned MLP pooling of its keys (Section 2). DeepSeek-V4’s CSA [ 17 ] pools each short token window by a learned, data-dependent weighting and selects entries with a ReLU lightning indexer. Although the pooling can be nonlinear in the keys, the cached entry is still query-independent and scored only to first order in q; the next subsection makes the discarded covariance explicit. 
+
+6.3 Limits of first-order selectors 
+
+Consider first multi-head attention, where each head selects its own blocks. Selection ranks blocks by normalized mass Pb = mb/Z with mb = P 
+
+> r∈b
+
+eqTkr (Section 2); the shared denominator Z makes this equivalent to ranking by mb, hence by ln mb. A first-order selector caches a single vector ϕb and an offline scalar ab per block and scores affinely, 
+
+score aff  
+
+> b
+
+(q) = ab + qTϕb. (18) Cacheability is the sole constraint, enforcing that ϕb and ab be computed offline and independent of q; they may, however, be arbitrary functions of the cache, not just a pool of the block’s own keys. Therefore, mean-pooling (ϕb = ¯kb, ab = ln L), NSA’s MLP pooling ( ϕb = MLP( Kb), where Kb is the block’s key matrix), and CSA’s gated pooling are all of the same first-order class, represented by the affine score (18) . Note that the overlapping windows of DeepSeek’s NSA and CSA do not change this, as the cached vector stays a single query-independent vector. The exact ln mb, however, is ln L plus the keys’ cumulant generating function (Section 4), 
+
+ln mb = ln L + qT ¯kb + 12 qTΣb q + · · · . (19) Choosing ab = ln L and ϕb = ¯kb matches its constant and first-order terms, but no choice reaches the quadratic  
+
+> 12
+
+qTΣb q, which is not affine in q (Figure 2). 7COBS: Cumulant Order Block Sparse Attention Real GQA selectors share one block set across the G query heads of a group and aggregate the per-head masses (Equation (5)), so the group score is a sum of per-head normalized masses (softmax probabilities) and is no longer affine in q. One might hope this cross-head nonlinearity recovers some curvature. We give an informal argument that it cannot lift the first-order family’s retrieval quality past its ceiling. Sharing a single block set across heads is a 
+
+constraint relative to letting each head select independently, and a more permissive selector should only match or exceed the constrained one, giving the reasonable upper bound: 
+
+max  
+
+> shared block sets
+
+quality ≲ max  
+
+> independent block sets
+
+quality . (20) Independent per-head selection reduces to the MHA case above, whose affine score is curvature-blind. To the extent (20) holds, the retrieval quality of the whole first-order family, including NSA’s and CSA’s selectors, is bounded by that curvature-blind ceiling. As such, this is an informal bound on quality rather than a claim that the aggregated GQA score is itself affine. This is corroborated by experiment, as the original NSA MLP scorer is the weakest selector we test (Section 7): a more expressive pooling does not help, as its summary still enters the score only to first order. CSA’s ReLU indexer adds a query nonlinearity, yet it scores the same query-independent entries to first order, so the same curvature-blindness applies. 
+
+6.4 Beyond first-order selectors 
+
+Escaping this first-order ceiling means caching more than a first-order summary, for instance a statistic of the keys’ spread. One example we analyze is Quest [ 9 ], which stores per block the element-wise minimum and maximum of its keys, 
+
+kmin  
+
+> b
+
+= min  
+
+> r∈b
+
+kr , kmax  
+
+> b
+
+= max  
+
+> r∈b
+
+kr (element-wise ), (21) an axis-aligned bounding box of the block’s keys. It scores a block by the largest inner product any point in that box could attain with the query, 
+
+ˆsb = X
+
+> i
+
+max  qi kmin  
+
+> b,i
+
+, q i kmax 
+
+> b,i
+
+ = X
+
+> i
+
+  max( qi, 0) kmax  
+
+> b,i
+
++ min( qi, 0) kmin 
+
+> b,i
+
+, (22) keeping the top-scoring blocks. The min/max range is a coarse, axis-aligned proxy for how the keys are spread, making ˆsb piecewise-linear rather than affine in q and letting it carry some of the discarded curvature. Our method is the principled form: in place of a per-axis range we cache the within-block covariance Σb and score with the exact second-order term 12 qTΣb q of (19). 
+
+6.5 Orthogonal directions 
+
+Many efficient-attention directions are orthogonal to block selection; within the DeepSeek lineage specifically, two sit just outside our scope. DeepSeek-V3.2’s DSA [ 15 ] selects individual tokens with a lightweight ReLU “lightning indexer” rather than summarizing blocks, so the cumulant-order analysis does not apply. DeepSeek-V4’s HCA [ 17 ] compresses long spans (roughly 128 tokens per entry) and attends densely, with no selection. Both reduce a different cost axis and could compose with a better selector. 
+
+## 7 Experiments 
+
+7.1 Setup 
+
+We use a ≈1.2B-parameter decoder-only transformer with 16 layers, model dimension 2048 , a SwiGLU FFN with width 8192 , 16 query heads, 4 KV heads under GQA, head dimension D = 128 , RoPE [ 21 ] with base θ = 10 6,and a ≈50k-token vocabulary. Pretraining uses LongCrawl64 [ 22 ] for ≈20B tokens roughly following Chinchilla scaling [ 23 ] at a 4k sequence length. We then extend the context to 32k with YaRN [ 24 ] and perform supervised fine-tuning (SFT) on generated RULER-style long-context data, separate from the evaluation data (Section C). We evaluate long-context retrieval on RULER [ 2] at 32k, using 11 tasks: single-key, multi-key, multi-query, and multi-value needle retrieval; common-word and frequent-word extraction (CWE, FWE); and variable tracking (VT). We also report standard zero-shot common-sense benchmarks at this scale (Section 7.3) along with position-wise language-modeling loss (Section 7.4). NSA branches are controlled to use L = 32 -token blocks, top-k = 16 
+
+selected blocks, and a 256 -token sliding window. We compare selectors under this shared protocol as separate controlled runs. NSA MLP is our NSA baseline: a controlled replication of DeepSeek’s NSA [ 1 ], which summarizes each block with a generous LD → 4LD → D
+
+MLP (ReLU activations) applied separately to keys and values, i.e. two such MLPs. NSA mean-pool is a diagnostic baseline that replaces the learned MLP summary with the block mean key, motivated by the cumulant expansion. 8COBS: Cumulant Order Block Sparse Attention 
+
+NSA Quest adapts Quest’s [ 9] per-page key min/max scoring to the NSA selection branch. COBS adds the within-block covariance summary instead, and our deliverable configuration is COBS ( s≈85 , rank-r=4 , FP4), with full-space variants reported as ablations. NSA mean-pool, NSA Quest, and COBS share the same mean-pool compression branch and differ only in the selection scoring summary (block mean, Quest’s min/max, or COBS’s covariance), so differences among them are selection-branch effects. NSA MLP is the only parameter-count exception: at ≈1.7B we scale its pretraining token budget proportionally to ≈28B tokens, versus ≈20B for all other variants at ≈1.2B. Subspace and FP4 results reuse the corresponding full-space COBS checkpoint as inference-time changes to the selector descriptor and scoring path, with no weight updates. 
+
+7.2 Headline results (32k RULER) 
+
+Figure 3 and Table 1 show the headline result: extending first-order selection with a covariance summary gives the main selector gain. COBS (subspace s≈85 , r=4 , FP4) reaches 0.8195 on 32k RULER, closing about 86% of the headroom from the NSA MLP baseline ( 0.2999 ) to full (dense) attention ( 0.9040 ); the full-space low-rank descriptor reaches 0.8238 at r = 4 and 0.8493 at r = 6 (Table 1). Removing RoPE from the selection summary is an additive improvement that raises the mean-pool baseline from 
+
+0.4186 (RoPE) to 0.5554 (NoPE), so we evaluate the NoPE-based selectors (NSA Quest, COBS, and OSA) under this scheme. NSA Quest ( 0.5765 ) improves only modestly over mean-pool, while COBS’s covariance summary accounts for the large remaining gain.  
+
+> MLP RoPE
+> mean RoPE
+> mean NoPE NSA Quest
+> COBS subspace FP4
+> COBS full
+> r=4
+> COBS full
+> r=6
+> OSA mass oracle
+> dense
+
+0
+
+0.2
+
+0.4
+
+0.6
+
+0.8
+
+1    
+
+> 0.2999
+> 0.4186
+> 0.5554 0.5765
+> 0.9010 0.9040
+> 0.8195 0.8238 0.8493
+> 32k RULER
+
+Figure 3: 32k RULER gap ladder (COBS variants in green). The main gain comes from the covariance summary; the two mean-pool bars show the additive NoPE improvement over the RoPE baseline. Table 1: 11-task 32k RULER breakdown. Gap closed is measured from NSA MLP (RoPE) ( 0.2999 ) to full (dense) attention ( 0.9040 ). NSA MLP (RoPE) is the native baseline, and we note that the NoPE scheme does not improve the NSA MLP baseline. Subtask scores are rounded. Method Mean Gap closed S1 S2 S3 MK1 MK2 MK3 MQ MV CWE FWE VT Dense (full attention) 0.9040 100.0% 1.00 1.00 1.00 0.98 0.95 0.92 0.92 0.93 0.44 0.90 0.92 OSA (mass oracle) 0.9010 99.5% 1.00 1.00 1.00 0.99 0.94 0.91 0.96 0.96 0.22 0.95 0.98 NSA MLP (RoPE) 0.2999 0.0% 1.00 0.11 0.05 0.09 0.00 0.00 0.09 0.10 0.10 0.93 0.83 NSA MLP (NoPE) 0.2822 −2.9% 1.00 0.07 0.25 0.09 0.00 0.00 0.08 0.08 0.03 0.95 0.54 NSA mean-pool (RoPE) 0.4186 19.6% 1.00 0.35 0.62 0.22 0.14 0.00 0.34 0.30 0.03 0.90 0.72 NSA mean-pool (NoPE) 0.5554 42.3% 1.00 0.78 0.82 0.53 0.01 0.00 0.47 0.47 0.15 0.91 0.97 NSA Quest 0.5765 45.8% 1.00 0.86 0.87 0.39 0.03 0.00 0.55 0.55 0.19 0.93 0.97 COBS full-space r=4 0.8238 86.7% 1.00 1.00 1.00 0.98 0.78 0.34 0.89 0.92 0.24 0.94 0.97 COBS full-space r=6 0.8493 90.9% 1.00 1.00 1.00 1.00 0.91 0.48 0.94 0.94 0.15 0.94 0.99 COBS (subspace s≈85 , r=4 , FP4) 0.8195 86.0% 1.00 1.00 1.00 0.97 0.79 0.31 0.89 0.91 0.23 0.94 0.97 9COBS: Cumulant Order Block Sparse Attention 
+
+7.3 Short-context common-sense reasoning (parity) 
+
+Table 2 checks whether the sparse variants preserve short-context reasoning on OpenBookQA [ 25 ], PIQA [ 26 ], HellaSwag [ 27 ], ARC [ 28 ], TriviaQA [ 29 ], and WinoGrande [ 30 ]. These benchmarks contain only tens to hundreds of tokens, so the local window plus top-k selected blocks already covers almost all of the input. In this regime, selection has little room to help: the desired outcome is parity with dense attention, which all variants achieve within a 0.6-point average spread. Table 2: Short-context common-sense reasoning: zero-shot accuracy (%) over seven tasks. At these sequence lengths the selection budget largely covers the input, and all sparse variants preserve dense-like performance. NSA MLP here refers to the baseline with RoPE, while OSA, mean-pool, NSA Quest, and COBS use the NoPE scheme. Model OBQA PIQA Hella. ARC-c TQA ARC-e Wino. Avg. Dense 18.8 63.6 31.1 23.1 42.5 37.3 50.7 38.2 OSA (mass oracle) 17.0 63.7 31.5 20.7 44.3 38.1 50.7 38.0 NSA mean-pool 17.2 63.0 31.3 21.8 43.1 37.9 51.9 38.0 NSA MLP 17.8 62.7 31.9 22.3 44.7 37.8 50.6 38.3 NSA Quest 16.0 64.7 31.4 21.5 44.6 38.4 52.2 38.4 COBS 17.8 64.5 31.3 23.5 44.0 38.3 50.9 38.6 
+
+7.4 Position-wise language-modeling loss 
+
+RULER isolates retrieval, so we also evaluate ordinary next-token prediction over long natural contexts. Figure 4 reports position-wise NLL for the SFT-trained GQA-4 variants. COBS has the lowest average NLL ( 1.633 ), below dense ( 1.727 ), NSA MLP ( 1.683 ), and NSA mean-pool ( 1.745 ). NSA MLP’s lower short-context loss here is likely a byproduct of our charitable baseline, because it carries many more parameters ( ≈1.7B vs ≈1.2B) with a much longer, proportionally scaled pretraining budget. Furthermore, the average alone is weak evidence, since strong short-context prediction can mask a weak long-context tail. The more telling signal is the behavior at long positions, where COBS’s NLL slope stays flat and shows no upturn, unlike the weaker selectors. This indicates COBS is conditioning on distant tokens rather than leaning on the local window, so the retrieval gains in Section 7.2 do not come at the cost of long-context language modeling. 256 512 1k 2k 4k 8k 16k 32k     
+
+> Position in context (tokens)
+> 1.600
+> 1.625
+> 1.650
+> 1.675
+> 1.700
+> 1.725
+> 1.750
+> 1.775
+> 1.800
+> 1.825
+> 1.850
+> Next-token NLL  (nats / token)
+> Position-wise language-modeling loss on held-out long text
+> GQA-4 · 32k YaRN-SFT · LongCrawl (n = 4096 docs)
+> avg NLL over 0 32k
+> (lower is better)
+> COBS 1.633
+> dense (full attn) 1.727
+> NSA MLP 1.683
+> NSA mean-pool 1.745
+
+Figure 4: Position-wise next-token NLL on held-out natural LongCrawl64 at 32k (GQA-4, 32k YaRN SFT; ≈1.2B except NSA MLP at ≈1.7B). 
+
+7.5 KV cache read traffic study 
+
+We report the KV cache read traffic per decode step and layer (Table 3). The accounting uses a 32k context with 
+
+H = 4 KV heads of dimension D = 128 and the same L = 32 , top-k = 16 , and 256 -token window from setup. Methods differ in the per-block summary read to score blocks. Dense reads the whole KV cache, while OSA re-reads all raw keys to compute the true attention masses and normalized GQA score before using the same NSA read pattern. The resulting accuracy–traffic tradeoff is summarized in Figure 1. 10 COBS: Cumulant Order Block Sparse Attention Table 3: Per-decode-step, per-layer KV cache read traffic at 32k, by branch (KiB; 1 KiB = 1024 bytes). Summary keys: each method’s per-block key summary read. Summary values: the compression branch’s per-block value summary read. Window: the 256 -token local window. Fine-grained: full K,V for the top-k = 16 selected blocks (the full-cache read for Dense). Last two columns report dense read traffic divided by each method’s traffic ( ×less), and each method’s traffic divided by NSA MLP’s traffic ( 3584 KiB; ×more). Note that NSA Quest is a modification of NSA mean-pool’s selection branch only. Method Summary keys Summary values Window Fine grained Per layer vs. dense vs. NSA MLP (KiB) (KiB) (KiB) (KiB) (KiB) (×less) (×more) Dense (full attention) – – – 65 ,536 65 ,536 – 18 .29 ×                                                                         
+
+> OSA (mass oracle) 33 ,792 1024 512 1024 36 ,352 1.80 ×10 .14 ×
+> NSA MLP 1024 1024 512 1024 3584 18 .29 ×–NSA mean-pool 1024 1024 512 1024 3584 18 .29 ×1.00 ×
+> NSA Quest 3072 1024 512 1024 5632 11 .64 ×1.57 ×
+> COBS full-space r=4 (bf16) 5120 1024 512 1024 7680 8.53 ×2.14 ×
+> COBS full-space r=6 (bf16) 7168 1024 512 1024 9728 6.74 ×2.71 ×
+> COBS full-space r=4 (FP4) 2112 1024 512 1024 4672 14 .03 ×1.30 ×
+> COBS full-space r=6 (FP4) 2656 1024 512 1024 5216 12 .56 ×1.46 ×
+> COBS (subspace s≈85 ,r=4 , FP4) 1767 1024 512 1024 4327 15 .15 ×1.21 ×
+
+7.6 Ablations 7.6.1 Rank sweep and high-rank regression 
+
+Selection rises with the stored rank through r = 8 , which peaks at 0.8539 on 32k RULER, but then regresses to 
+
+0.8006 at r = 16 (Figure 5). The collapse is concentrated in the multi-key needle subtasks: MK3 falls from 0.470 
+
+at r = 8 to 0.054 at r = 16 and MK2 from 0.934 to 0.800 , while the single-needle subtasks stay saturated ( 1.000 ). We attribute this to the unsigned variance term in the covariance summary. To second order, the score combines signed alignment, q⊤ ¯k, with the nonnegative curvature term 12 q⊤Σq. Additional eigenvectors can therefore boost blocks whose keys have large variance along the query direction even when the aligned signal is weak or oppositely signed, for instance, blocks with many distractors. By r = 16 , this false-positive mass overwhelms the genuine signal on multi-key tasks. This does not reverse at higher rank: with L = 32 keys per block the covariance has rank at most L − 1 = 31 , yet the full r = 31 descriptor still scores only 0.8135 , below the r = 8 peak, with MK3 still collapsed ( 0.062 ); retaining eigenvectors beyond the few dominant directions does not recover the signal. The low-rank descriptors ( r = 4 –8) avoid much of this effect by retaining only the few dominant directions, so we keep 
+
+r ≤ 8 as the operating range. 1 2 3 4 5 6 8 16 31           
+
+> stored rank r
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 32k RULER
+> dense / OSA reference
+> NSA Quest
+> NSA mean-pool
+> 0.719
+> 0.770 0.769
+> 0.824 0.833
+> 0.849 0.854
+> 0.801 0.814
+> peak
+> Selection quality peaks at r= 8, then regresses at higher rank
+> COBS full-space (rank r)high-rank regression ( r≥ 16)
+
+Figure 5: COBS full-space rank sweep on 32k RULER. Selection peaks at r = 8 (0.8539 ), then regresses at r = 16 
+
+(0.8006 ) and stays below the peak at the maximum rank r = 31 (0.8135 ). 
+
+7.6.2 Subspace: adaptive vs. global 
+
+Adaptive per-layer subspaces outperform a single global budget at comparable dimension. At an average of s ≈ 85 ,the score is within ≈0.005 of the full low-rank form ( s = 128 ; Table 4). Concretely, the s ≈ 85 configuration sets each layer’s s to 1.25 × the rank capturing 90% of the query spectral energy, averaged over heads; the resulting allocation (Figure 6) concentrates dimensions in the later layers, while the early layers need far fewer. 11 COBS: Cumulant Order Block Sparse Attention Table 4: Global (blanket) versus adaptive per-layer subspace dimension s on 32k RULER, applied at inference time to the full-space low-rank r = 4 checkpoint. Global s = 128 is the full low-rank form (no subspace reduction); the adaptive rows set s per layer and report the across-layer average. Allocation s (dim) 32k RULER Global 128 (full) 0.8238 Global 96 0.8188 Global 64 0.7856 Adaptive (per-layer) ≈85 (avg) 0.8195 Adaptive (per-layer) ≈68 (avg) 0.8054                
+
+> 12345678910 11 12 13 14 15 16
+
+0
+
+50 
+
+100 avg = 84 .875  
+
+> avg = 68
+
+Layer Subspace dim.  s
+
+Figure 6: Adaptive per-layer query-subspace dimension s for the deliverable COBS configuration ( r=4 , FP4). Each bar’s lower (dark) portion is the rank capturing 90% of the query spectral energy, averaged over heads (across-layer average s ≈ 68 ); the full bar scales this by 1.25 × to give the deliverable configuration (average s = 84 .875 , i.e. 
+
+s ≈ 85 ). Dashed lines mark the two across-layer averages. Early layers need far fewer query dimensions; the 
+
+s ≈ 85 average is the value underlying Tables 3 and 4. 
+
+7.6.3 Descriptor quantization 
+
+Table 5 quantizes the stored scaled eigenvectors ξi while keeping the block mean at higher precision. FP4 (E2M1) is the COBS format. Table 5: Descriptor quantization on 32k RULER; “bytes/desc” counts covariance-factor bytes only, excluding the bf16 block mean, and “reduction” is versus the bf16 descriptor. FP4 is essentially lossless.                                        
+
+> Descriptor Quant 32k RULER ∆vs bf16 bytes/desc reduction Full-space r=4 (128-dim) bf16 0.8238 —1024 1×
+> fp4 (E2M1) 0.8251 +0 .0013 272 3.8×
+> Subspace r=4 , s =64 (64-dim) bf16 0.7856 —512 1×
+> fp4 (E2M1) 0.7844 −0.0012 144 3.6×
+> Full-space r=6 (128-dim) bf16 0.8493 —1536 1×
+> fp4 (E2M1) 0.8467 −0.0026 408 3.8×
+
+7.7 Negative results 
+
+We include two negative results because each motivates a design choice. 
+
+Query-centered expansion. Expanding the CGF around a calibrated query origin q0 instead of q = 0 underper-forms, for two reasons. First, under the same cache budget, the tilted moments must be shared by the G query heads in a KV group. Second, the approximation is local around q0 and can degrade on outlier needle queries far from that origin. Empirically it lowers 32k RULER from 0.8238 to 0.8100 (Table 6), concentrated on the multi-key and multi-value needle tasks (MK3 0.34 → 0.26 , MV 0.92 → 0.88 ). We therefore expand at q = 0 .12 COBS: Cumulant Order Block Sparse Attention Table 6: Query-centered expansion on 32k RULER (COBS full-space r=4 ): expanding the CGF around a calibrated origin q0 instead of q = 0 regresses selection, concentrated on the multi-key and multi-value needle tasks. Method Mean S1 S2 S3 MK1 MK2 MK3 MQ MV CWE FWE VT COBS full-space r=4 (q=0 ) 0.8238 1.00 1.00 1.00 0.98 0.78 0.34 0.89 0.92 0.24 0.94 0.97 query-centered ( q0) 0.8100 1.00 1.00 1.00 0.97 0.75 0.26 0.88 0.88 0.25 0.94 0.97 
+
+Cheap diagonal skew. As the variance term is sign-blind (Figure 5), a natural fix is adding the signed third cumulant κ3. Caching the full O(D3) third-order tensor is impractical, but the diagonal in the stored eigenbasis ui
+
+costs one scalar gi per eigenvector and adds a signed cubic correction to the block log-score, 
+
+> 16
+
+X
+
+> ijk
+
+(κ3)ijk qiqj qk ≈ 16
+
+> r
+
+X
+
+> i=1
+
+(uT 
+
+> i
+
+q)3 gi, gi = 1
+
+L
+
+X
+
+> t∈b
+
+ uT 
+
+> i
+
+(kt − ¯kb)3. (23) Empirically the effect depends on the stored rank (Table 7). At low rank the correction only hurts : the cheap skew approximation drops r = 4 from 0.8238 to 0.7754 , and r = 6 from 0.8493 to 0.7696 , in both cases collapsing the multi-key needles (at r = 4 , MK2 0.78 → 0.54 , MK3 0.34 → 0.01 ). The diagonal projection discards mixed third-order interactions and is dominated by heavy-tailed outlier keys, thereby confounding the retained dominant eigenvectors. However, the signed term helps in the regressed high-rank regime of Figure 5. At r = 16 , adding sixteen skew scalars raises 32k RULER from 0.8006 (no skew) to 0.8252 and partially undoes the multi-key collapse (MK3 
+
+0.05 → 0.34 ). This supports our diagnosis: the extra eigenvectors accumulate spurious unsigned variance mass on blocks with many distractors, and the signed cubic term ameliorates this by canceling part of that false-positive mass. Even so, the repaired high-rank point ( 0.8252 ) still trails the clean low-rank covariance operating range (peak 
+
+0.8539 at r = 8 , 0.8493 at r = 6 ) while paying extra KV cache read traffic. We therefore stop at the covariance. Table 7: Cheap diagonal skew on 32k RULER: adding r skew scalars gi along the stored eigendirections. The signed cubic term regresses at low rank ( r = 4 , 6), collapsing the multi-key needles, but at r = 16 it partially repairs the high-rank regression (Figure 5), lifting the mean and recovering MK3. Method Mean S1 S2 S3 MK1 MK2 MK3 MQ MV CWE FWE VT COBS full-space r=4 0.8238 1.00 1.00 1.00 0.98 0.78 0.34 0.89 0.92 0.24 0.94 0.97 + diagonal skew ( 4) 0.7754 1.00 1.00 1.00 0.97 0.54 0.01 0.93 0.94 0.20 0.97 0.96 COBS full-space r=6 0.8493 1.00 1.00 1.00 1.00 0.91 0.48 0.94 0.94 0.15 0.94 0.99 + diagonal skew ( 6) 0.7696 1.00 1.00 1.00 0.97 0.60 0.02 0.89 0.93 0.16 0.94 0.97 COBS full-space r=16 0.8006 1.00 1.00 1.00 0.96 0.80 0.05 0.92 0.94 0.25 0.91 0.98 + diagonal skew ( 16 ) 0.8252 1.00 1.00 1.00 0.99 0.80 0.34 0.93 0.94 0.17 0.94 0.97 
+
+## 8 Conclusion 
+
+Block sparsity is arguably the most hardware friendly form of sparse attention, yet it remains conspicuously absent from leading open-weight LLMs. Through the lens of NSA, we traced the present challenges of block sparse methods to the selection branch, and showed that selection reduces to ranking blocks by their attention mass. An oracle that ranks by the exact mass essentially matches dense attention, therefore reducing the remaining problem to precisely estimating the mass from a cacheable, query-independent summary. A cumulant expansion of the block mass illustrates the precise limitations of existing selectors: their cached summaries provide only a score that is first-order in the query, discarding the within-block key covariance that supplies the second-order curvature term 12 qTΣbq. COBS keeps the cacheability constraint while raising the cumulant order of the summary, storing a compressed second-order statistic per block. Empirically, raising the cumulant order with a compressed covariance yields a large gain: COBS (subspace s≈85 ,
+
+r=4 , FP4) lifts our 11-task 32k RULER score from the mean-pool baseline’s 0.5554 to 0.8195 . Measured against the full headroom, these additive changes close about 86% of the gap between the NSA MLP baseline ( 0.2999 ) and full (dense) attention ( 0.9040 ). The same model preserves short-context common-sense performance and attains the lowest position-wise language-modeling NLL in our comparison ( 1.633 , versus dense at 1.727 ) while using only 1.21 × the NSA baseline’s KV cache read traffic and 15 .15 × less than dense. Cumulant order is therefore both a diagnostic lens for existing cacheable selectors and a practical design axis for better methods, and we see it as a step towards making block sparse attention a more prevalent strategy. 13 COBS: Cumulant Order Block Sparse Attention 
+
+## 9 Limitations 
+
+Scale. This is a mechanism study at ≈1.2B backbone scale with a 4k pretraining sequence length; the NSA MLP replication is ≈1.7B after adding its learned selector. The results characterize why second-order selection helps, rather than demonstrating a deployment-scale system. 
+
+Controlled NSA comparison. Our setup differs from the original NSA: we use different hyperparameters, a large MLP for the underspecified compression branch, and non-overlapping blocks. These are held fixed across the selector variants, which are separate controlled runs. Our numbers should therefore be read as system-level comparisons against a strong NSA baseline, not as a reproduction of NSA’s reported results. 
+
+NoPE confound. The sparse variants remove RoPE from the compression and selection branches (the NoPE scheme, Section 5.1), which we found benefits long-context behavior, whereas the dense baseline retains RoPE throughout. Long-context comparisons between the sparse variants and dense therefore partly reflect this position-encoding difference and not sparsity alone. Moreover, NoPE was only ablated on our long-context retrieval configuration, where the content of tokens may have had higher importance than their relative position. 
+
+RULER-style SFT. Our long-context signal comes from fine-tuning on generated RULER-style data (Section C), a nonstandard protocol whose rankings may not match a more representative long-context setting. We therefore read our RULER numbers as relative selection quality rather than absolute accuracy. The comparison is still informative because the protocol is identical and generous for every selector: the first-order NSA baseline falls well below dense even under this favorable SFT, and OSA matches dense while COBS recovers most of the gap, illustrating meaningful differences in selection quality. Relatedly, the upward long-context slope in the position-wise NLL of some variants (Section 7.4) may itself be an artifact of the RULER-style SFT. 
+
+KV read accounting. COBS stores more per block than the mean-pool baseline: without quantization it costs more KV cache read traffic, and it still does if standard KV is also kept in FP4. In all cases the footprint stays far below dense, and FP4 quantization of the stored eigenvectors is empirically lossless on our evaluation (Section 5.5). These accounting numbers do not by themselves imply end-to-end runtime gains, which depend on kernels, batching, hardware, and decoding regime. 
+
+## Contributions and Acknowledgments 
+
+Alexander Tian and Aditya Ghai developed the primary analysis and methods, including the selection-oracle derivation, the cumulant expansion, the cumulant-order analysis, and the compression approaches; they conducted the experiments and wrote the paper. Sanjit Neelam proposed and implemented SFT on RULER-like examples to assess long-context ability under a limited compute budget, and wrote the kernels used to train the NSA baselines. Sanjit Neelam and Zaal Vasania developed the NoPE scheme for the compression and selection branches, among other prior experiments that provided useful insights. Akshay Mishra developed OSA and empirically found that it closes most of the gap between block sparse attention and dense attention; he also set the research direction of approximating OSA without reading all keys, and provided senior guidance throughout the project. We also thank Vaclav Cvicek and Daniel Heinlein for their much appreciated feedback on earlier drafts. We additionally thank Sanjit Neelam, Zaal Vasania, Akshay Mishra, Vaclav Cvicek, Hayden Le, Daniel Heinlein, Neil Adit, and Reiner Pope for developing and maintaining the MatX training and evaluation infrastructure used for these experiments. We use seqax [ 31 ], MatX’s research-focused LLM codebase built on JAX, to perform all experiments. 
+
+## References 
+
+[1] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Y. X. Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng. Native sparse attention: Hardware-aligned and natively trainable sparse attention. arXiv:2502.11089, 2025. DeepSeek-AI. [2] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. RULER: What’s the real context size of your long-context language models? arXiv:2404.06654, 2024. COLM 2024. [3] Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document transformer. arXiv:2004.05150, 2020. [4] Manzil Zaheer, Guru Guruganesh, Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontañón, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big Bird: Transformers for longer sequences. arXiv:2007.14062, 2020. NeurIPS 2020. 14 COBS: Cumulant Order Block Sparse Attention [5] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv:2309.17453, 2023. ICLR 2024. [6] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen. H2O: Heavy-hitter oracle for efficient generative inference of large language models. arXiv:2306.14048, 2023. NeurIPS 2023. [7] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. SnapKV: LLM knows what you are looking for before generation. arXiv:2404.14469, 2024. [8] Prajwal Singhania, Siddharth Singh, Shwai He, Soheil Feizi, and Abhinav Bhatele. Loki: Low-rank keys for efficient sparse attention. arXiv:2406.02542, 2024. NeurIPS 2024. [9] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context LLM inference. In Proceedings of the 41st International Conference on Machine Learning (ICML) , 2024. arXiv:2406.10774. [10] Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-head checkpoints. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2023. arXiv:2305.13245. [11] Tencent Hunyuan. Hy3: Tencent hunyuan large language model. 
+
+https://github.com/Tencent-Hunyuan/Hy3 , 2026. [12] DeepSeek-AI. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv:2405.04434, 2024. [13] Moonshot AI. Kimi K2.6. https://huggingface.co/moonshotai/Kimi-K2.6 , 2026. [14] Gemma Team, Google DeepMind. Gemma 4 technical report. arXiv:2607.02770, 2026. [15] DeepSeek-AI, Aixin Liu, Aoxue Mei, Bangcai Lin, Bing Xue, et al. DeepSeek-V3.2: Pushing the frontier of open large language models. arXiv:2512.02556, 2025. [16] Zhipu AI. GLM-5.2: Built for long-horizon tasks. https://z.ai/blog/glm-5.2 , 2026. [17] DeepSeek-AI, Anyi Xu, Bangcai Lin, Bing Xue, Bingxuan Wang, et al. DeepSeek-V4: Towards highly efficient million-token context intelligence. arXiv:2606.19348, 2026. [18] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. arXiv:1706.03762. [19] Peter McCullagh. Tensor Methods in Statistics . Dover Publications, Mineola, NY, 2018. Republication of the 1987 Chapman & Hall edition. [20] Dong Le, Thong Nguyen, Cong-Duy Nguyen, and Anh Tuan Luu. Don’t read everything: A curvature-conditioned query for linear attention. arXiv:2606.01294, 2026. [21] Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu. RoFormer: Enhanced transformer with rotary position embedding. arXiv:2104.09864, 2021. [22] Jacob Buckman. LongCrawl64: A long-context natural-language dataset. Manifest AI, 2024. 
+
+https://manifestai.com/articles/longcrawl64/ .[23] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, Tom Hennigan, Eric Noland, Katie Millican, George van den Driessche, Bogdan Damoc, Aurelia Guy, Simon Osindero, Karen Simonyan, Erich Elsen, Jack W. Rae, Oriol Vinyals, and Laurent Sifre. Training compute-optimal large language models. arXiv:2203.15556, 2022. [24] Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and Enrico Shippole. YaRN: Efficient context window extension of large language models. arXiv:2309.00071, 2023. ICLR 2024. [25] Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a suit of armor conduct electricity? a new dataset for open book question answering. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2018. arXiv:1809.02789. [26] Yonatan Bisk, Rowan Zellers, Ronan Le Bras, Jianfeng Gao, and Yejin Choi. PIQA: Reasoning about physical commonsense in natural language. In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI) , 2020. arXiv:1911.11641. [27] Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. HellaSwag: Can a machine really finish your sentence? In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics (ACL) , 2019. arXiv:1905.07830. 15 COBS: Cumulant Order Block Sparse Attention [28] Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. Think you have solved question answering? try ARC, the AI2 reasoning challenge. arXiv:1803.05457, 2018. [29] Mandar Joshi, Eunsol Choi, Daniel S. Weld, and Luke Zettlemoyer. TriviaQA: A large scale distantly supervised challenge dataset for reading comprehension. In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (ACL) , 2017. arXiv:1705.03551. [30] Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. WinoGrande: An adversarial Winograd schema challenge at scale. In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI) ,2020. arXiv:1907.10641. [31] Reiner Pope, Vaclav Cvicek, Daniel Heinlein, Akshay Mishra, Mahdi Nazemi, and Sanjit Neelam. seqax = sequence modeling + JAX, 2024. URL https://github.com/MatX-inc/seqax .16 COBS: Cumulant Order Block Sparse Attention 
+
+## A Derivation of the selection score 
+
+We derive the additive GQA selection score (5) and its MHA special case from the per-KV-head objective (4) under Assumptions 1 to 3. 
+
+Reducing the objective under A1. Applying the triangle inequality over the dropped blocks in (3) and using Assumption 1 bounds each query head’s reconstruction error: 
+
+(o⋆ − ˆoS )(g,h ) ≤ 11 − τ (g,h )
+
+X
+
+> b∈Sc
+
+P (g,h ) 
+
+> b
+
+(vcb − o⋆)(g,h ) ≤ c(g,h ) τ (g,h )
+
+1 − τ (g,h ) . (24) Summing over the group bounds the per-head objective (4), 
+
+E(h)(S) ≤
+
+> G
+
+X
+
+> g=1
+
+c(g,h ) τ (g,h )
+
+1 − τ (g,h ) . (25) 
+
+The GQA score. For GQA ( G > 1), disregarding c(g,h ) (Assumption 2) leaves the per-KV-head objective (25) as min S(h)
+
+P 
+
+> g
+
+τ (g)/(1 − τ (g)) (fixing the KV head h, we abbreviate τ (g,h ) as τ (g)). This is set-dependent: the 
+
+1/(1 − τ (g)) factor makes the gain from keeping a block depend on which blocks are already kept, so no fixed per-block score is exactly optimal. Performing a Taylor expansion of the penalty centered at 0, 
+
+τ (g)
+
+1 − τ (g) = τ (g) + O (τ (g))2,
+
+and replacing it by its linear leading term (Assumption 3) makes the objective additive, hence maximized by the top-k blocks under the additive score (5). 
+
+MHA special case. For multi-head attention ( G = 1 ) the group sum collapses to a single term c τ / (1 − τ ), with 
+
+τ = P 
+
+> b∈Sc
+
+Pb the total dropped mass. The positive constant c does not affect the ordering in this case; moreover, the penalty is monotonically increasing in τ , and τ is additive over the dropped blocks. Therefore, minimizing the bound is exactly keeping the top-k blocks by mass mb, equivalently by log-mass ln mb, so Assumptions 2 and 3 are unnecessary. 
+
+## B Cumulants of a block’s key distribution 
+
+We justify (9) . The cumulants are the derivatives of KX (q) = ln MX (q) at q = 0 ; the standard cumulant–moment relations give the first two as the mean and covariance of X,
+
+κ1 = EX [X], κ2 = EX
+
+XX T − EX [X] EX [X]T = EX
+
+(X − EX [X])( X − EX [X]) T, (26) so κ2 is the second central moment. Since X is uniform over the block’s L keys {kr }r∈b, these evaluate to 
+
+κ1 = 1
+
+> L
+
+P 
+
+> r∈b
+
+kr = ¯kb and κ2 = 1
+
+> L
+
+P
+
+> r∈b
+
+(kr − ¯kb)( kr − ¯kb)T = Σ b.
+
+## C RULER-style supervised fine-tuning and task selection 
+
+RULER-style SFT. Long-context retrieval is difficult to elicit from small models by pretraining alone. To obtain a meaningful long-context retrieval signal at a scale we can iterate on, we perform supervised fine-tuning (SFT) on generated RULER-style long-context data [ 2 ] for our ≈1B-parameter models. This lets ≈1B models reach accuracies where the differences between selection mechanisms are measurable, so we can compare attention mechanisms and architecture changes at a small, fast-to-train scale rather than at frontier-scale pretraining. The SFT data uses the same task templates as RULER but is disjoint from the evaluation instances (Section 7). 
+
+Omitting the QA tasks. RULER includes reading-comprehension question-answering (QA) tasks, which we omit from our 11-task configuration for two reasons. First, we do not SFT on any QA-style data, so these tasks are out of distribution for our fine-tuned models. Second, QA accuracy is limited by the world knowledge and comprehension acquired during pretraining, which our models largely lack after pretraining on LongCrawl64 [ 22 ]: even full (dense) attention scores at most ≈10% on the QA tasks. Because every variant sits near this floor, the QA tasks contribute noise rather than signal about selection quality, so we exclude them and report the mean over the remaining 11 tasks. 17

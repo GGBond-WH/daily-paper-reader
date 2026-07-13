@@ -1,0 +1,2382 @@
+Title: General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing
+
+URL Source: https://arxiv.org/pdf/2607.09248v1
+
+Published Time: Mon, 13 Jul 2026 01:21:28 GMT
+
+Number of Pages: 41
+
+Markdown Content:
+# General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing 
+
+Yiding Feng ∗ Siyu Liu † Zonghan Yang ‡ Yuhao Zhang §
+
+Abstract 
+
+We study non-clairvoyant scheduling for batched Large Language Model (LLM) inference under a hard Key-Value (KV) cache memory budget. Each request has a known prompt length but an unknown response length, and its memory footprint comprises a fixed prompt component together with a response component that grows with each decoded token. At each decoding round, the scheduler chooses a feasible batch of active requests; evicting a request discards its accumulated cache states, wasting prior computation. The goal is to minimize total completion time against the optimal clairvoyant schedule that knows all response lengths. We present the first O(1)-competitive algorithm for arbitrary prompt lengths and arbitrary response lengths with no additional assumptions. Rather than relying on a single universal scheduling policy, our algorithm is built on a novel regime-aware routing framework. Specialized sub-schedulers handle different memory-growth geometries, while a meta-scheduler time-shares the memory budget across them and dynamically routes each job as its execution progressively reveals its behavior. This framework also yields constant-factor guarantees for makespan and for total completion time under online arrivals. 
+
+# 1 Introduction 
+
+Large Language Model (LLM) inference has become a cornerstone of modern computing infrastruc-ture, supporting interactive assistants, automated workflows, and agentic applications at massive scale. As these workloads shift from short exchanges toward longer and more computation-intensive tasks, the inference phase has become a major contributor to operational cost and energy consump-tion [Luccioni et al., 2024, Stojkovic et al., 2025a,b]. Meeting quality-of-service requirements under these resource pressures calls for careful scheduling across the serving stack, from cluster-wide request routing to the memory management logic on individual serving instances. This work focuses on replica-level scheduling inside an LLM inference service. In modern LLM serving stacks, a routing layer assigns each incoming request to one of many parallel serving instances, known as replicas ; within each replica, the local scheduler decides which requests to process together and how to manage the finite memory budget [Yu et al., 2022, Kwon et al., 2023, Zheng et al., 2024, Sun et al., 2024]. The central challenge arises from the Transformer architecture, whose self-attention mechanism stores intermediate states in a per-request Key-Value (KV) cache to avoid quadratic recomputation during decoding [Vaswani et al., 2017, Pope et al.,     
+
+> ∗Hong Kong University of Science and Technology. Email: ydfeng@ust.hk
+> †Shanghai Jiao Tong University. Email: williamliusy@sjtu.edu.cn
+> ‡Shanghai Jiao Tong University. Email: fstqwq@sjtu.edu.cn
+> §Shanghai Jiao Tong University. Email: zhang yuhao@sjtu.edu.cn
+
+1arXiv:2607.09248v1 [cs.DS] 10 Jul 2026 2023]. Processing a request involves a prefill phase that encodes the input prompt and initializes the cache, followed by a decode phase that generates response tokens autoregressively, appending new KV entries at each step. The memory footprint of a request therefore has a fixed component from the prompt and a component that grows linearly with the response length. Modern systems manage this dynamic growth through two mechanisms: continuous batching [Yu et al., 2022], which updates the active batch at the granularity of individual decoding iterations, and block-based cache management [Kwon et al., 2023, Zheng et al., 2024], which allocates and recycles memory across requests. When the budget is exhausted, active requests must be killed , discarding the KV-cache entries accumulated during decoding. The scheduler must therefore balance high concurrency, which improves throughput, against the cost of kills that waste prior computation. This tension is compounded by a second critical difficulty: the scheduler is non-clairvoyant .Response lengths are not known in advance but are determined by the model’s generation process and revealed only at completion. The autoregressive and stochastic nature of text generation makes exact prediction inherently impossible, even with dedicated predictors [Zheng et al., 2023, Fu et al., 2024, Qiu et al., 2024]. In classical non-clairvoyant scheduling, a job of unknown size occupies a fixed amount of resource whenever it runs; here, uncertainty in response length directly translates into uncertainty in future memory demand, because the cache grows with every decoded token. The scheduler must therefore manage dynamically growing resource requirements under incomplete information—a doubly constrained trade-off between latency and memory safety. This places the problem in the non-clairvoyant setting of scheduling theory [Motwani et al., 1994, Becchetti and Leonardi, 2004], with the additional feature that the resource demand of a job increases during its execution. For this problem, a recent line of theoretical work [Jaillet et al., 2025, Wang et al., 2025, Chen et al., 2025b, Feng et al., 2026, Kong et al., 2026] has established guarantees for the single-replica model under restricted regimes, such as clairvoyant scheduling, identical prompt lengths, or large-memory settings. Removing these restrictions, we ask: 
+
+Can a non-clairvoyant scheduler perform comparably to the optimal schedule computed with full knowledge of all response lengths? 
+
+To make this question concrete, we adopt the standard offline batch model studied in recent theoretical work on LLM inference scheduling [Wang et al., 2025, Chen et al., 2025b, Feng et al., 2026, Kong et al., 2026]. A single serving instance, or replica, has a hard memory budget M . A set of jobs (inference requests) arrives at time zero. Each job has a known prompt length si and an unknown response length oi. Time proceeds in discrete rounds. In each round, the scheduler chooses a batch of unfinished jobs to process; every job in the batch decodes one token. The memory consumed by a job equals its prompt length plus the number of tokens it has already decoded in its current uninterrupted attempt. The total memory of all active jobs must not exceed the budget M .The scheduler may also kill an active job, discarding all progress from that attempt and forcing a restart. The objective is to minimize total completion time—the sum of the completion times of all jobs—measured against an optimal clairvoyant schedule that knows all response lengths in advance. A non-clairvoyant algorithm is competitive if its total completion time is at most a constant factor times this optimum on every instance. Compared to classical non-clairvoyant scheduling, the defining feature of our model is that resource demands are dynamic rather than static. A batch that is feasible at the start of a round may become infeasible as its members grow, forcing the scheduler to kill jobs to free memory or to run fewer jobs in parallel. 21.1 Our Results and Techniques 
+
+We answer the aforementioned question affirmatively. In a nutshell, we give the first constant-competitive non-clairvoyant scheduling algorithm for the offline batch model with arbitrary prompt lengths and arbitrary response lengths, requiring no additional assumptions on the problem in-stances. Formally, our main result is as follows. 
+
+Theorem 1. For every feasible batch KV-cache scheduling instance J with arbitrary prompt lengths and arbitrary response lengths, there exists a fully non-clairvoyant scheduling algorithm whose total completion time is within a constant factor of the optimal clairvoyant total completion time: 
+
+Alg (J ) = O(1) · Opt (J ).
+
+Beyond satisfying the competitive guarantee stated in the theorem, our algorithm runs in poly-nomial time and is also constant-competitive for the alternative objective of makespan. 1
+
+In the remainder of this section, we give an overview of the key challenges and the main technical ingredients of our algorithm: regime decomposition , which partitions jobs into geometric regimes; 
+
+budget-doubling , which handles unknown response lengths within each regime; and a routing meta-scheduler , which combines the regimes with only constant-factor overhead. 
+
+From area order to regime decomposition. A natural starting point is the clairvoyant setting, where the scheduler knows all response lengths in advance. Following prior work [Feng et al., 2026], we define the (memory-time) area of a job as its total memory occupation over a successful run, i.e., Ai ≜ si · oi + oi(oi + 1) /2. Below, we refer to memory-time area simply as area . Note that the optimal total completion time can be lower bounded by sorting all jobs by nondecreasing area and charging each job for the cumulative area that must be supplied before it can finish: the r-th smallest job cannot complete before the system has delivered the total area of the first r jobs, which takes time proportional to the sum of their areas divided by the memory budget (see Lemma 1). This bound holds because the system can supply at most M units of memory-time area per round, so the aggregate area of all jobs must be paid for in time. The area lower bound not only provides a tractable way to characterize the optimal clairvoyant benchmark; more importantly, it also suggests a sufficient condition for a constant approximation or competitiveness: 
+
+• (High memory utilization) the schedule should keep a constant fraction of the memory occupied; and 
+
+• (Area-order completion) the completion order should be close to nondecreasing memory-time area order. One might hope to achieve both with a single priority rule over job types—for example, greedy scheduling by area. 2 Indeed, all known non-clairvoyant algorithms in the related restart and KV-cache scheduling models, and the majority of clairvoyant KV-cache scheduling algorithms, derive their schedules from a global ordering criterion [J¨ ager et al., 2025, Feng et al., 2026, Jaillet et al., 
+
+> 1In our model, makespan is a relatively easier objective; we therefore focus primarily on completion time (i.e., latency), which is also the more practically important metric in LLM inference.
+> 2Specifically, put all jobs in a priority queue based on their area. At any time step, if the job at the top of the priority queue can be added to the current batch while respecting the memory constraint, remove it from the queue and add it to the processing batch.
+
+32025, Chen et al., 2025b, Kong et al., 2026]. However, we show that this is impossible even with full knowledge of all response lengths in Proposition 1. The obstruction has two complementary forms. If the scheduler prioritizes small-area jobs, it may leave the memory severely underutilized while a long small-prompt job monopolizes the batch. If it prioritizes large-area jobs, it may block many small-area jobs behind a few large-prompt jobs that must run serially. These two failure modes impose opposite pressures: high utilization and area-consistent ordering cannot be reconciled by one global priority. This motivates a decomposition into geometric regimes that are treated separately. We partition the jobs using a prompt cutoff Λ = M/ 4 into three regimes: 
+
+• (Large jobs) si > Λ. These jobs are so wide that each one nearly fills the memory budget alone. 
+
+• (Small prompt-heavy jobs) si ≤ Λ and oi ≤ si. The response is no longer than the prompt, so the memory footprint stays within a constant factor of the prompt length. 
+
+• (Small response-heavy jobs) si ≤ Λ and oi > s i. The memory footprint grows well beyond the prompt, and the area is dominated by the response length. This three-way partition is the regime decomposition used by the algorithm: jobs are classified by their geometric properties and sent to distinct scheduling pipelines, each specialized to a particular memory-growth profile. Each regime, taken in isolation, admits a constant-competitive non-clairvoyant algorithm, which we describe in the next two parts. The remaining challenge is that the non-clairvoyant scheduler does not know which regime a job belongs to, because the distinction between prompt-heavy and response-heavy depends on the unknown response length. We explain how to resolve this difficulty when we discuss the meta-scheduler below. 
+
+Rectangle scheduling for large and prompt-heavy jobs. For large jobs and prompt-heavy jobs, the KV-cache footprint grows by at most a constant factor during execution. Specifically, if 
+
+oi ≤ si, then the memory usage at every timestep lies between si + 1 and 2 si. This allows us to abstract each job as a rectangle of fixed width wi ≜ 2si and unknown processing time pi ≜ oi, where killing an active attempt discards all progress. 3 To our knowledge, this non-clairvoyant version of rectangle strip scheduling has not been studied in the literature, and our results here may be of independent interest. Our scheduler Rect (Algorithm 1) maintains a priority queue of attempts ordered by their 
+
+area budget wi · 2r, where 2 r is the geometrically increasing length cap for the r-th attempt of job 
+
+i. At each event time, the scheduler greedily admits the minimum-budget attempt if it fits in the remaining memory. If an attempt reaches its cap without completing, it is killed and replaced by a doubled attempt, which is added back to the priority queue with the updated area budget. The analysis rests on a queue monotonicity (Lemma 4): the minimum area budget among pending attempts is weakly increasing over time, and every active attempt has area budget no larger than every pending attempt. This invariant lets us split the completion time of each job into active time and waiting time. The active time—the total time during which some (possibly unsuccessful) attempt of job i is executing, so that no attempt of that job is waiting in the queue— is bounded by 4 pi because the geometric caps up to and including the first successful one sum to less than 4 pi. The waiting time—the total time during which an attempt of job i is in the priority 
+
+> 3Here we use terminology from strip packing and resource-constrained scheduling [Lodi et al., 2002, Jansen and Rau, 2021].
+
+4queue—is controlled by a utilization bound: when all rectangle widths lie in a bounded range [ δ, ∆], every waiting round has active memory of at least max {δ, M − ∆}. For large jobs, δ = 2Λ = Ω( M ), so utilization is constant, as desired; for prompt-heavy jobs, ∆ = 2Λ, and utilization is at least 
+
+M − 2Λ = Ω( M ), again as desired. Moreover, the queue monotonicity ensures that the completion order approximately follows the area order. Consequently, the scheduler Rect (Algorithm 1) is 36-competitive when all jobs are large, and also when all jobs are small prompt-heavy. Remarkably, even a few small response-heavy jobs suffice to break the guarantee: memory may still be well utilized, but jobs can now finish in the wrong order—with large-area jobs completing before small-area ones—because the queue monotonicity no longer holds. This ordering failure makes the competitive ratio unbounded. 
+
+Geometric slicing for response-heavy jobs. When the response length dominates the prompt, the memory footprint grows far beyond the prompt length, so the fixed-width rectangle view no longer applies. Instead, the area of a response-heavy job is governed by its response length: for each job i, the area Ai ≜ si · oi + oi(oi + 1) /2 lies between o2 
+
+> i
+
+/2 and 2 o2 
+
+> i
+
+. Thus response-length order and area order agree up to a constant factor. We handle these jobs with a scheduler Response (Algorithm 2) that extends the geometric-slicing approach of Feng et al. [2026] from identical to non-identical prompt lengths. The algorithm proceeds in phases r = 0 , 1, . . . with geometrically increasing response caps τr = 2 r. In each phase, every unfinished job with si ≤ τr becomes eligible . All eligible jobs are then scheduled using the SPS (Staggered Pipeline Scheduling) subroutine of Feng et al. [2026], which packs jobs with identical prompt and response lengths into a high-utilization batch. We invoke SPS by treating all eligible jobs as sharing a common proxy prompt ¯ sr = min {τr, M − τr} and the current cap τr as their common response length. The key insight is that within a phase, the shared proxy prompt lets SPS guarantee high memory utilization. Moreover, since the caps grow geometrically, each job completes in the first phase whose cap exceeds its true response length. This means the completion order induced by the phases approximately follows the response-length order, which in this regime is close to the area order. Consequently, the scheduler is 236 /3 ≈ 78 .67-competitive when all jobs are response-heavy. Remarkably, even a few prompt-heavy jobs are enough to break the guarantee. If we keep the same phase-based eligibility (i.e., admitting a job whenever its prompt fits under the current re-sponse cap), the SPS schedule can leave memory underutilized because prompt-heavy jobs consume far less cache than their proxy length suggests. In addition, response-length order and area order can diverge dramatically for such jobs: a short-response job with a long prompt may have large area, while a long-response job with a short prompt may have small area. Either mismatch alone makes the competitive ratio of our scheduler Response (Algorithm 2) unbounded. 
+
+Meta-scheduling with routing. So far, we have described separate schedulers for large jobs, small prompt-heavy jobs, and small response-heavy jobs. From an engineering perspective, if we had three replicas—each with its own memory budget of M —we could route each regime to a dedicated replica and immediately obtain an O(1)-competitive guarantee, provided the jobs were partitioned correctly. The remaining challenge is to achieve the same guarantee on a single replica, without knowing the partition in advance. If the three-way partition were known, we could combine the sub-schedulers via a black-box meta-scheduler. The meta-scheduler BlackBoxMeta (Algorithm 3) runs the sub-schedulers in round-robin order over doubling stages of length 2 r. Each sub-scheduler receives a fresh copy of its job set in each of its allotted rounds. Completed jobs are treated as dummy jobs in later stages. 5A per-job completion bound shows that this time-sharing loses only a constant factor relative to running each sub-scheduler in isolation. In the non-clairvoyant setting, however, the partition is not known: for a job with small prompt, the scheduler cannot tell whether oi ≤ si or oi > s i without running it. We therefore use a routing meta-scheduler Route (Algorithm 4). Small jobs are initially assigned to the prompt-heavy branch. If a job completes before generating si tokens, it is finished; if it reaches si tokens without completing, it is certified as response-heavy and routed to the response-heavy branch. Large jobs are sent directly to the large-job branch. The routing meta-scheduler uses the same doubling stages as the black-box version. In each stage, it runs the prompt-heavy branch, then the response-heavy branch (which now includes any newly certified jobs), then the large branch. The key observation is that a job certified in the prompt-heavy branch during stage r is available to the response-heavy branch in the same stage, and the doubling lengths ensure that both certification and completion are accommodated within a constant factor of their isolated completion times (Lemma 11). Combining the three branch guarantees yields the final O(1)-competitive guarantee for all instances with arbitrary prompt lengths and arbitrary response lengths stated in Theorem 1. 
+
+Variants and extensions. Beyond our main non-clairvoyant result stated in Theorem 1, we establish several complementary guarantees using our algorithmic framework to chart the broader landscape of KV-cache scheduling. First, in the clairvoyant setting, our framework yields a 16-approximation algorithm for all instances with arbitrary prompt lengths and arbitrary response lengths (Theorem 6), and a (3 + o(1))-approximation for the large-memory regime where every job satisfies si + oi = o(M ) (Corollary 2). 4 Second, the same routing algorithm yields an O(1)-competitive ratio for the makespan objective (Theorem 8), showing that the structural benefits of regime decomposition extend beyond total completion time. Third, we extend our results to online arrivals, where jobs arrive over time and reveal their prompt lengths upon arrival: we give an online variant of our routing meta-scheduler that remains O(1)-competitive for total completion time (Theorem 9). 5
+
+System insights. Modern LLM inference systems already allow global request routing across different replicas. Our results provide a principled foundation for how this routing should be done: partition jobs according to their geometric structure—large jobs, small prompt-heavy jobs, and small response-heavy jobs. This partition can be implemented at the global router level, where prompt lengths are known and response-based classifications can be updated dynamically as execution reveals job behavior. Once jobs are routed to separate replicas, each local scheduler can simply run the corresponding sub-scheduler from our framework. This avoids the overhead of the theoretical meta-scheduler, which must time-share a single memory budget across heterogeneous classes. Consequently, such an implementation achieves a better competitive ratio than the single-replica theoretical bound, while remaining easy to deploy. The geometric regime decomposition explains why the existing separation between routing and local scheduling is algorithmically useful. Simple local rules, properly routed by geometric class, can achieve both worst-case robustness and practical efficiency. 
+
+> 4The same approximation factor of 3 for large-memory instances has been established in concurrent work by Kong et al. [2026].
+> 5For the standard flow-time objective under adversarial arrivals, strong impossibility results hold: even restricted settings admit super-constant lower bounds on the competitive ratio [Jaillet et al., 2025]. Total completion time is therefore the natural latency objective for constant-competitive guarantees in the online non-clairvoyant setting.
+
+61.2 Organization 
+
+Section 2 defines the scheduling model and develops an area-based lower bound on the optimal completion time. Section 3 classifies jobs into three regimes—large, prompt-heavy, and response-heavy—and motivates treating them separately through explicit hard instances. Section 4 gives the rectangle scheduler Rect (Algorithm 1), which handles large and prompt-heavy jobs by exploiting their nearly constant memory footprint, while Section 5 gives the response scheduler Response (Al-gorithm 2), which handles the growing footprint of response-heavy jobs through area-geometric slic-ing with doubling response caps. Section 6 presents the black-box meta-scheduler BlackBoxMeta 
+
+(Algorithm 3) that time-shares the memory budget across independent sub-schedulers, and extends it to the routing meta-scheduler Route (Algorithm 4) that resolves the unknown job partition dur-ing execution, completing the proof of Theorem 1. Finally, Sections A to D contain the clairvoyant approximation guarantees, deferred analyses for the rectangle and response-heavy schedulers, and extensions to makespan and online-arrival completion time. 
+
+1.3 Related Work 
+
+KV-cache scheduling. Jaillet et al. [2025] initiate the theoretical study of KV-cache schedul-ing for LLM inference by formulating the scheduling model, proving an Ω( √n) lower bound for deterministic algorithms under adversarial online arrivals, and giving the Memory-Constrained Shortest-First rule which achieves a 9216-approximation in the offline identical-prompt clairvoyant setting. In the clairvoyant setting, Wang et al. [2025] study the large-memory regime with hetero-geneous prompt and response lengths and give a polynomial-time (48 + ε)-approximation for any fixed ε > 0. Recently, concurrent work by Kong et al. [2026] improves the approximation ratio for the clairvoyant large-memory regime to 3 + o(1). For non-clairvoyant settings, Chen et al. [2025b] study scheduling under output-length uncertainty and give an O(log M )-competitive algorithm in the large-memory regime. Feng et al. [2026] give a non-clairvoyant geometric-slicing algorithm for the identical-prompt offline batch model, with a competitive ratio of at most 61 .92 in general and 32 in the large-memory regime. Parallel lines of work [Ao et al., 2025, Dai et al., 2025] study stochastic arrivals through fluid-guided online scheduling and queueing-throughput viewpoints with different optimization objectives. 
+
+Non-clairvoyant scheduling. Classical non-clairvoyant scheduling is mainly studied in a pre-emptive pause-and-resume model, where processing times are unknown until completion and a suspended job keeps its completed work. Motwani et al. [1994] introduced this model and gave deterministic and randomized upper and lower bounds; Becchetti and Leonardi [2004] developed randomized multilevel-feedback algorithms for total flow time on single and parallel machines. Later variants add limited side information, including approximate processing-time classes [Bec-chetti et al., 2004], job-size predictions [Im et al., 2023], predictions for only a subset of jobs [Beno-mar and Perchet, 2024], and progress-bar feedback [Benomar et al., 2025]. Im et al. [2018] in-troduce the packing/polytope scheduling framework, where active jobs receive processing rates subject to packing constraints on the rate vector, and give non-clairvoyant algorithms including a constant-competitive guarantee for total weighted completion time. J¨ ager et al. [2026] sharpen the proportional-fairness analysis for this framework, including important monotone special cases, under the same total weighted completion-time objective. Another line of research studies restart models, where interrupting a job destroys its accumu-lated progress. In clairvoyant online settings, restarts have been studied for single-machine total 7completion time and for completion-time and flow-time lower bounds [van Stee and Poutr´ e, 2005, Epstein and van Stee, 2003]. J¨ ager et al. [2025] study single-machine scheduling with a weighted completion-time objective in a non-clairvoyant restart model, prove lower bounds for deterministic restart strategies, and give tight analyses for geometric restart strategies. 
+
+Completion-time scheduling. Total and weighted completion time are central min-sum ob-jectives in scheduling. For the basic single-machine weighted case, Smith [1956] gives an exact ordering principle by sorting jobs according to processing time per unit weight. For richer machine environments, Hall et al. [1997] develop general offline and online approximation techniques for completion-time objectives, using linear-programming relaxations to guide list scheduling. Chekuri et al. [2001] give ordering and rounding methods for average completion time with release dates, parallel machines, and precedence constraints; their algorithms derive an order from a preemptive or linear-programming relaxation and round it into a nonpreemptive schedule. More recently, Li [2020] shows the strength of time-indexed linear-programming relaxations for total weighted completion time, including precedence-constrained machine scheduling; using completion-time structure as a guide, Chen et al. [2025a] give a gradient-descent meta-algorithm based on the residual weighted completion-time optimum and obtain scalable algorithms for weighted flow time. 
+
+Geometric strip packing & scheduling. The memory-time view represents executions as grow-ing geometric regions packed under a fixed memory width. The KV-cache regions in this model are trapezoidal, while related geometric-packing literature studies rectangles and more general poly-gons, often with objectives such as the number of bins or the strip length. Lodi et al. [2002] survey two-dimensional packing models, including bin packing and strip packing variants. Adamaszek et al. [2017] prove APX-hardness for strip packing, including the case with polynomially bounded input data. Steinberg [1997] gives a 2-approximation for rectangle strip packing. Jansen and Zhang [2007] give a (3 + ϵ)-approximation for maximum-profit rectangle packing in a bounded rectangle. More general polygon packing has also been studied: Alt et al. [2017] give approximation algo-rithms for packing convex polygons into minimum-area containers, and Kurpisz and Suter [2023] improve approximation guarantees for translational packing of convex polygons, including polygon strip packing. Resource-constrained scheduling gives a closely related strip view: a job with processing time and resource demand occupies a rectangle in the time-resource strip, so makespan corresponds to strip length and total completion time corresponds to the sum of rectangle endpoint times. Under this view, Jansen and Rau [2021] give a tight (3 /2 + ϵ)-approximation for the unweighted makespan objective on identical machines with one shared renewable resource, while Cohen et al. [2024] give constant-approximation algorithms for the weighted total completion-time objective on capacitated parallel machines, using volume-by-weight ordering and a hybrid treatment of large resource demands. 
+
+# 2 Preliminaries 
+
+In this section, we define the scheduling model, the non-clairvoyant information structure, the total completion-time objective, and the benchmark bounds used throughout the paper. Our notation mostly follows the offline batch setting studied in the recent line of work on LLM inference scheduling [Jaillet et al., 2025, Feng et al., 2026]. 
+
+Jobs and scheduling actions. The system has a single serving instance with a KV-cache 8memory budget M ∈ N+. There are n jobs, denoted by J ≜ [n]. Job i ∈ J has a known prompt length si ∈ N+ and an unknown response length oi ∈ N+. We assume that each job is individually feasible: 
+
+si + oi ≤ M, ∀i ∈ J .
+
+All jobs arrive at time zero. Time is discrete and proceeds in rounds t = 0 , 1, 2, . . . , where time 
+
+t denotes the beginning of round t. At time t, each unfinished job is either active in a current attempt or inactive. For each active job i, let ui,t denote the number of response tokens already decoded in its current uninterrupted attempt before round t begins. For notational convenience, define ui,t = 0 when job i is inactive. At the beginning of each round t, the scheduler chooses an active batch Bt ⊆ J of unfinished jobs. Every job i ∈ B t receives one unit of processing during the round. If ui,t + 1 = oi, then job i completes at the end of round t, and its completion time is t + 1. Before deciding Bt, the scheduler may kill any active unfinished job i, discarding all progress in its current attempt and setting ui,t = 0; every unfinished job in Bt−1 \ B t is implicitly killed. 
+
+KV-cache memory feasibility. If job i is active in round t, its KV-cache memory usage is 
+
+si + ui,t + 1 ,
+
+where the term +1 accounts for the token being decoded in the current round. A schedule is feasible if every active batch satisfies 
+
+X
+
+> i∈B t
+
+(si + ui,t + 1) ≤ M, ∀t ≥ 0.
+
+In other words, the total memory occupied by all active jobs (i.e., their fixed prompts P 
+
+> i∈B t
+
+si plus the KV entries generated so far P 
+
+> i∈B t
+
+ui,t plus the tokens currently being decoded |B t|) must never exceed the memory budget M .
+
+Non-clairvoyant setting and competitive analysis. The non-clairvoyant scheduler knows the number of jobs n, memory budget M , and the prompt lengths {si}i∈J . It does not know the response lengths {oi}i∈J in advance. The value of response length oi is revealed only when job i
+
+completes. The benchmark scheduler is clairvoyant and knows all response lengths in advance. The objective is to minimize total completion time , i.e., the sum of the completion times of all jobs. We evaluate non-clairvoyant algorithms against the optimal clairvoyant schedule, which knows all response lengths in advance. Let Opt (J ) denote the minimum total completion time achievable by such a clairvoyant schedule 6 on the full instance J .7 For an algorithm Alg , let Alg (J ) denote its total completion time on J starting from time 0. We say that Alg is Γ-competitive for Γ ≥ 1if, for every feasible instance, 
+
+Alg (J ) ≤ Γ · Opt (J ).
+
+For the analysis, we extend these definitions to any subset J ′ ⊆ J . Let Opt (J ′) denote the minimum total completion time achievable by a clairvoyant schedule that processes exactly the jobs in J ′, and let Alg (J ′) denote the total completion time of Alg on J ′ starting from time 0. An important concept in our algorithms and analysis is the memory-time area , which we ab-breviate simply as area when the context is clear.    
+
+> 6We allow the optimal clairvoyant scheduler to preempt or pause jobs (i.e., retain a job in memory without processing it). However, neither is necessary in an optimal solution: delaying a job’s start time weakly dominates pausing, and preemption provides no advantage.
+> 7With slight abuse of notation, we also use Jto denote both the set of jobs and the corresponding instance.
+
+9Definition 1 (Memory-time area) . For a job with prompt length s and response length o, its 
+
+memory-time area is the cumulative KV-cache memory occupied over a successful run: 
+
+A(s, o ) ≜ s · o + o · (o + 1) 2 .
+
+For job i, we write Ai ≜ A(si, o i) for the total KV-cache resource consumed by one uninterrupted successful execution of job i.
+
+In addition to its role in our algorithms, the memory-time area provides a clear lower bound on the optimal total completion time. The intuition is that the system can supply at most M units of memory-time area per round, so the aggregate area of all jobs must be paid for in time; placing smaller-area jobs earlier minimizes the resulting sum of completion times. 
+
+Lemma 1 (Area-order lower bound) . For every J ′ ⊆ J , if we order the jobs as π(1) , . . . , π (|J ′|)
+
+so that Aπ(1) ≤ · · · ≤ Aπ(|J ′|), then 
+
+Opt (J ′) ≥ 1
+
+M 
+
+> |J ′|
+
+X
+
+> r=1
+
+  J ′ − r + 1  Aπ(r).
+
+Proof. Consider any clairvoyant feasible schedule for J ′ and let σ(1) , . . . , σ (|J ′|) be the jobs ordered by completion time in that schedule. By the time job σ(r) completes, the schedule must have supplied the successful memory-time area of the first r completed jobs. Since the system supplies at most M units of memory-time area per round, 
+
+Cσ(r) ≥ 1
+
+M
+
+> r
+
+X
+
+> q=1
+
+Aσ(q).
+
+Summing over r and exchanging the order of summation gives  
+
+> |J ′|
+
+X
+
+> r=1
+
+Cσ(r) ≥ 1
+
+M 
+
+> |J ′|
+
+X
+
+> q=1
+
+  J ′ − q + 1  Aσ(q).
+
+The right-hand side is minimized when the areas are ordered nondecreasingly, i.e., when σ = π,which yields the claimed bound. We also use the following two standard lower bounds. 
+
+Lemma 2 (Deletion bound) . If C⋆i is the completion time of job i in an optimal clairvoyant schedule for the full instance, then for any disjoint subsets J1, . . . , Jk ⊆ J ,
+
+> k
+
+X
+
+> ℓ=1
+
+Opt (Jℓ) ≤
+
+> k
+
+X
+
+> ℓ=1
+
+X
+
+> i∈J ℓ
+
+C⋆i ≤ Opt (J ).
+
+Proof. Restricting the optimal full-instance schedule to each subset Jℓ yields a feasible schedule for Jℓ with total completion time at most P 
+
+> i∈J ℓ
+
+C⋆i , so Opt (Jℓ) ≤ P 
+
+> i∈J ℓ
+
+C⋆i for each ℓ; summing over ℓ gives the first inequality. The second inequality holds because P 
+
+> i∈J
+
+C⋆i = Opt (J ) by definition. 10 Lemma 3 (Processing lower bound) . For every J ′ ⊆ J ,
+
+Opt (J ′) ≥ X 
+
+> i∈J ′
+
+oi.
+
+Proof. Each job i ∈ J ′ must receive oi units of processing and can receive at most one unit per round, so it cannot complete before time oi; summing over all jobs in J ′ gives the claimed bound. 
+
+# 3 From Area Order to Three Scheduling Cases 
+
+In the previous section we derived the area-order lower bound, which gives a tractable benchmark for the optimal clairvoyant completion time. A natural next step is to ask whether a simple scheduling policy can simultaneously achieve high memory utilization and a completion order consistent with this lower bound. In this section we show that, outside the large-memory regime, no single priority rule can satisfy both requirements. This structural impossibility motivates our main algorithmic idea: a decomposition of the job set into three geometric regimes that are handled by specialized sub-schedulers. The area lower bound in Section 2 suggests that two properties are sufficient for a constant approximation in the clairvoyant setting: 
+
+• (High memory utilization) the schedule should keep a constant fraction of the memory occupied; and 
+
+• (Area-order completion) the completion order should be close to nondecreasing memory-time area order. High memory utilization ensures that the system delivers Ω( M ) units of memory-time area in every round, so the total area of all jobs is paid for within a constant factor of the time needed in the optimal schedule. Area-order completion ensures that the schedule respects the ordering that minimizes the weighted sum in the area lower bound (Lemma 1). Together, they guarantee that the total completion time is bounded by a constant multiple of the lower bound, yielding a constant approximation. In the clairvoyant large-memory setting where each job satisfies si + oi = o(M ), these two prop-erties can be achieved by area-order greedy, which gives a 3 + o(1) approximation; see Corollary 2 in Section A.1. 
+
+The failure of a single priority rule. Outside the large-memory setting, a single global priority order cannot simultaneously preserve an area-consistent completion order and high memory utilization. 
+
+Proposition 1. No clairvoyant algorithm that follows a single priority rule achieves a constant approximation. An algorithm follows a single priority rule if it fixes a priority order ≺ on job types 
+
+(s, o ) and never runs a lower-priority job while an unfinished higher-priority job is feasible. Proof. Fix a large integer L and set M = L3 + 1. Consider two job types 
+
+X = (1 , L ), Y = ( L3, 1) .
+
+11 Type X has area Θ( L2) and type Y has area Θ( L3). Since a type-Y job occupies L3 + 1 = M
+
+memory in its only active round, it cannot share any round with another job. Below we consider two possible cases of the priority rule. 
+
+Case 1: X ≺ Y . In this case, take one type-X job and K = ⌊√L⌋ type-Y jobs. The completion order follows nondecreasing area, but memory utilization is at most ( L + 1) /M = o(1) while the type-X job runs alone for L rounds, blocking all type-Y jobs. Thus Alg = Ω( KL ) = Ω( L3/2). Running the type-Y jobs first gives Opt = O(K2 + L) = O(L), hence a ratio of Ω( √L). 
+
+Case 2: Y ≺ X. In this case, take N = M/ (L + 1) = L2 − L + 1 type-X jobs and K = ⌊L3/2⌋
+
+type-Y jobs. Memory is fully utilized during type-Y rounds, but the completion order reverses the area ranking: all N small-area type-X jobs are blocked until the K serial type-Y jobs complete. Thus Alg ≥ N K = Ω( L7/2). Running all type-X jobs together first (they fit since N (L + 1) ≤ M )and then the type-Y jobs serially gives Opt = O(L3), hence a ratio of Ω( √L). Combining the two cases together, since L = Θ( M 1/3) is unbounded, no such single priority rule gives a constant approximation. The proposition rules out any single priority order, including natural global orders such as response-length order and area order. In the non-clairvoyant setting, the obstruction is further compounded because response lengths are unknown and a killed attempt loses all accumulated progress. The two cases impose opposite pressures on a non-clairvoyant scheduler. On one hand, small-prompt jobs must sometimes yield memory to large-prompt jobs; otherwise short large-prompt jobs may remain undiscovered. On the other hand, large-prompt jobs cannot be run too aggressively, because one such attempt may already fill the cache and block many small-prompt jobs. The fundamental obstacle is serving both geometries without letting either monopolize the memory budget. This points to a decomposition into geometric regimes: we first ask whether each regime, taken independently, admits a constant-factor guarantee. 8
+
+Prompt-heavy jobs. For jobs whose prompt length dominates the response length, the growing memory use is close to a fixed width. If oi ≤ si, then during a successful attempt, 
+
+si + 1 ≤ si + ui,t + 1 ≤ 2si.
+
+Hence the dynamic KV-cache memory use is within a constant factor of a fixed rectangle width. This motivates the rectangle strip abstraction: job i is represented by a fixed rectangle width wi,and the scheduler packs active rectangle widths under the same memory budget. The fixed-width view gives good utilization when rectangle widths are uniformly small or uni-formly large. 1. Suppose every relevant rectangle width is at most ∆. Then utilization comes from greedy packing: if a waiting job cannot be inserted, then the active rectangles already use more than 
+
+M − ∆ memory. Therefore the schedule has high utilization whenever M − ∆ = Ω( M ). 2. Suppose every relevant rectangle width is at least δ. Then any non-idle round uses at least 
+
+δ memory. Therefore any work-conserving schedule has constant utilization whenever δ =Ω( M ).  
+
+> 8The hard instance in Proposition 1 mixes large prompt-heavy jobs with response-heavy jobs. In the two cases of the proposition, the failure of the constant ratio comes from violating high-memory utilization and area-order completion, respectively.
+
+12 Mixing these widths in one schedule can destroy the utilization lower bound. We therefore separate jobs by the prompt length first, using a prompt cutoff Λ ∈ (0 , M/ 2): large jobs with si > Λ are separated first, and the other small jobs have bounded rectangle widths under the fixed-width view when oi ≤ si.
+
+Response-heavy jobs. When oi > s i instead, the memory footprint grows well beyond the prompt length and the fixed-width view no longer applies. For these jobs, the area is controlled by the response length: 
+
+o2
+
+> i
+
+2 ≤ Ai ≤ 2o2 
+
+> i
+
+.
+
+Thus response-length order and area order agree up to constant factors. 
+
+Three scheduling cases. The above discussions give the following three regimes: 
+
+• (Large jobs) si > Λ. These jobs are so wide that each one nearly fills the memory budget alone. 
+
+• (Small prompt-heavy jobs) si ≤ Λ and oi ≤ si. The response is no longer than the prompt, so the memory footprint stays within a constant factor of the prompt length. 
+
+• (Small response-heavy jobs) si ≤ Λ and oi > s i. The memory footprint grows well beyond the prompt, and the area is dominated by the response length. Each regime, taken in isolation, admits a constant-competitive non-clairvoyant algorithm. Specif-ically, Sections 4 and 5 give constant-competitive algorithms for these regimes (Propositions 2 and 3 and Theorem 3). The remaining challenge is that the non-clairvoyant scheduler does not know which regime a job belongs to, because the distinction between prompt-heavy and response-heavy depends on the unknown response length. We explain how to resolve this difficulty when we discuss the meta-scheduler below. If the three-way partition were known in advance, one could simply run each sub-scheduler on a dedicated replica (a three-fold resource augmentation) and obtain an O(1)-competitive guarantee immediately. Without resource augmentation, the black-box meta-scheduler of Section 6 time-shares a single memory budget across the three sub-schedulers, losing only a constant factor. In the non-clairvoyant setting, the additional difficulty is that the partition is not known: the scheduler cannot distinguish small prompt-heavy jobs from small response-heavy jobs without executing them. We resolve this by routing jobs dynamically as their response lengths reveal themselves, using the routing meta-scheduler described in Section 6. 
+
+# 4 Non-Clairvoyant Rectangle Strip Scheduling 
+
+This section analyzes two of the three branches: large branch and prompt-heavy branch. These two branches share the following useful property: for each job, its memory growth can be bounded by a constant factor of its prompt length. In particular, in large branch, the rectangle width is at most M , which is O(si) when the prompt cutoff Λ satisfies Λ = Θ( M ). In prompt-heavy branch, the width is at most 2 si.This property allows us to reduce the analysis of these two branches to a non-clairvoyant rectangle strip scheduling problem. In this problem, each job is represented by a rectangle with a known fixed width and an unknown processing time. The clairvoyant counterpart of this problem 13 has been studied in Cohen et al. [2024]. To the best of our knowledge, the non-clairvoyant version has not been investigated before. We prove an O(1)-competitive algorithm for this problem, which may also be of independent interest. Next, we define the non-clairvoyant rectangle strip scheduling problem. 
+
+4.1 The Rectangle Strip Scheduling Problem 
+
+An instance of the rectangle strip problem consists of a job set J , a memory budget M , a known width wi ≤ M , and an unknown processing time pi for each job i ∈ J . At every round, the total width of the active attempts must be at most M . An active attempt of job i uses width wi and completes the job after receiving pi consecutive processing rounds. If an attempt is stopped earlier, its progress is lost. The processing time pi is not known to the scheduler. Let Opt rect (J ) denote the optimal clairvoyant total completion time for this rectangle strip instance. 
+
+4.2 The Rectangle Strip Scheduler and Analysis 
+
+The scheduler Rect processes each job through a sequence of capped attempts with geometrically increasing length caps. Since pi is unknown, this prevents the schedule from spending too much time on any single job. If the job does not complete within this cap, the attempt expires and is killed. The next attempt restarts the job from zero progress with the doubled cap. Thus the level-r
+
+attempt of job i can run for at most 2 r rounds. Based on this doubling rule, Rect is a greedy allocator over attempts. For attempt ( i, r ), define its area budget by 
+
+Bi,r ≜ wi2r.
+
+This is a doubling estimate of the true rectangle area ARect  
+
+> i
+
+≜ wipi. A pending queue Q is main-tained, containing all job attempts waiting to be started. At every event time, the scheduler checks whether the pending attempt with the minimum area budget (min Q) can fit into the remaining memory. If so, it starts the attempt and repeats the scan; otherwise, the scan stops. The critical events are time 0, a job completion, and an attempt expiration. Without loss of generality, simultaneous events in Algorithm 1 are processed one at a time under an arbitrary fixed tie-breaking order: each event time after time 0 contains only one completion or one expiration. The pseudocode is given in Algorithm 1. 
+
+Proof overview. In the analysis, we decompose the completion time of each job into its active time and queue waiting time. The active time is immediate: the total active time of job i over all its attempts is at most 4 pi; it remains to bound the queue waiting time. To relate the waiting time to the optimal solution, we use a memory-area argument, extending the clairvoyant argument from Section 3. This argument relies on the following two properties maintained by Algorithm 1: (i) attempts are processed in order of nearly nondecreasing rectangle area budget; and (ii) every round with a nonempty queue uses a constant fraction of the memory. Property (ii) turns queue waiting time into an area charge: whenever an attempt waits, the greedy scan and the width conditions ensure that a constant fraction of the memory is occupied by active attempts. Property (i) makes this charge compatible with the area order: the active area charged to a waiting attempt must come only from attempts with no larger budget. This condition lets us bound the total waiting contribution by the area-order lower bound. 14 Algorithm 1: Budget-Doubling Greedy for Rectangle Strips ( Rect )
+
+Input: Rectangle job set J , widths {wi}i∈J , memory M . 
+
+> 1
+
+Q ← { (i, 0) : i ∈ J } ; // attempt (i, r ): length cap 2r, budget Bi,r = wi2r 
+
+> 2
+
+for each event in order: time 0, a completion, or an expiration do  
+
+> 3
+
+if the current event is the completion of an active attempt then  
+
+> 4
+
+Finalize that completed attempt;  
+
+> 5
+
+else if the current event is the expiration of an active attempt (i, r ) then  
+
+> 6
+
+Kill ( i, r ) and insert ( i, r + 1) into Q;
+
+// Greedy admission scan until no more jobs can be accepted.  
+
+> 7
+
+while Q̸ = ∅ do  
+
+> 8
+
+(i, r ) ← min Q; // the minimum budget attempt  
+
+> 9
+
+if (i, r ) does not fit in the remaining memory then  
+
+> 10
+
+break ; 
+
+> 11
+
+Remove ( i, r ) from Q and start it; The difficulty in proving property (i) is that attempts are created over time. Although the greedy scan always starts a minimum-budget pending attempt when it fits, a replacement attempt (i, r ) appears only when ( i, r − 1) expires. While ( i, r − 1) is active, the scan may have admitted other attempts whose budgets are larger than the budget of the replacement. If ( i, r ) remained pending, those active attempts would have a larger budget than a pending attempt, violating the desired order. We rule out this situation using a crucial property of the rectangle strip model: the width of each job is fixed across all attempts, even though the length cap 2 r increases with the level r.When ( i, r − 1) expires, it releases a block of memory of width wi. The replacement ( i, r ) has the same width wi, so this released memory is enough to run the replacement. If the replacement budget is small enough to threaten the budget order, then it has priority over every older pending attempt. The following greedy scan therefore starts the replacement immediately, before any older pending attempt can use the released memory. The approximate budget order is formalized by queue monotonicity (Lemma 4): every pending attempt has budget at least that of every active attempt in each settled state. This fixed-width argument is specific to the rectangle strip regime, which captures both large branch and prompt-heavy branch. In contrast, in the response-heavy regime, the effective width of a job may continue to grow, and therefore the reduction to fixed-width rectangle scheduling no longer applies. For this reason, Section 5 uses a different approach to maintain a good competitive ratio. This separation explains why the branches require different scheduling policies. To precisely state the property of our algorithm, we index completion and expiration events by 
+
+ℓ = 1 , 2, . . . , and let ℓ = 0 denote the initial event at time 0. We call a state settled when the greedy admission scan has stopped. Let Sℓ denote the settled state at the end of the outer for loop in Algorithm 1 after event ℓ, and let Q(Sℓ) denote the pending queue in Sℓ.
+
+Lemma 4 (Queue monotonicity) . Consider the minimum budget among all pending attempts at a settled state: 
+
+min  
+
+> (i,r )∈Q (Sℓ)
+
+Bi,r .
+
+15 This quantity is nondecreasing with ℓ = 0 , 1, 2, . . . , with the convention that its value is +∞ when 
+
+Q(Sℓ) = ∅. Moreover, at any settled state Sℓ, every active attempt (i, r ) and every pending attempt 
+
+(j, q ) satisfy 
+
+Bi,r ≤ Bj,q .
+
+Proof. We prove the two claims by induction on ℓ.For the base case ℓ = 0, all attempts initially have level 0 and are placed in the pending queue. The greedy admission scan repeatedly starts a minimum-budget pending attempt until the queue is empty or the minimum-budget pending attempt no longer fits. Thus, at the settled state S0,every active attempt has budget at most every remaining pending attempt. Now fix ℓ ≥ 1, assume both claims hold at settled state Sℓ−1, and consider event ℓ. We first show that the minimum pending budget does not decrease, by distinguishing two kinds of events. 
+
+Completion. Suppose event ℓ is a completion. No new attempt is inserted before the greedy admission scan. The scan only removes attempts from the pending queue and starts them. Thus the minimum pending budget cannot decrease. 
+
+Expiration. Suppose event ℓ is the expiration of an active attempt ( i, r ). The scheduler kills this attempt and inserts its replacement ( i, r + 1). The replacement has the same width wi and a larger budget. If 
+
+Bi,r +1 ≥ min  
+
+> (h,q )∈Q (Sℓ−1)
+
+Bh,q ,
+
+then inserting ( i, r + 1) does not decrease the minimum pending budget. The following greedy admission scan only removes pending attempts and starts them, so the minimum pending budget at Sℓ is at least the minimum pending budget at Sℓ−1.It remains to consider the case 
+
+Bi,r +1 < min  
+
+> (h,q )∈Q (Sℓ−1)
+
+Bh,q .
+
+Then ( i, r + 1) has strictly smaller budget than every older pending attempt. The expired attempt (i, r ) has just released width wi, and the replacement ( i, r + 1) has the same width. Therefore (i, r + 1) fits immediately after the expiration. Since it is the minimum-budget pending attempt, the greedy admission scan starts it before any older pending attempt. Thus ( i, r + 1) cannot remain pending in Sℓ. All attempts that remain pending in Sℓ are older pending attempts from Q(Sℓ−1), except that some of them may have been removed by the scan. Therefore the minimum pending budget at Sℓ is again at least the minimum pending budget at Sℓ−1.
+
+Budget order. In both cases, the minimum pending budget does not decrease from Sℓ−1 to Sℓ.An active attempt in Sℓ either survived from Sℓ−1 or was started during the greedy admission scan after event ℓ. If it survived from Sℓ−1, the induction hypothesis bounds its budget by the minimum pending budget at Sℓ−1; since the minimum pending budget does not decrease, its budget is also at most every pending budget at Sℓ. If it was started during the scan, then it was a minimum-budget pending attempt at the moment it was started. Because the scan always removes a current minimum-budget pending attempt, any attempt started by the scan has budget at most every attempt that remains pending when the scan stops. Thus every active attempt in Sℓ has budget at most every pending attempt in Sℓ.16 Write ARect  
+
+> i
+
+≜ wipi for the rectangle area of job i. Let ri ≜ min {r : 2 r ≥ pi} be the first successful level. Then 
+
+ARect  
+
+> i
+
+≤ Bi,r i < 2ARect  
+
+> i
+
+.
+
+Lemma 5 (Per-job completion-time control) . Assume the rectangle instance on J has waiting utilization U : in every settled state where Q̸ = ∅, the active attempts use at least U total memory. For every job i ∈ J ,
+
+CRect  
+
+> i
+
+≤ 4pi + 4
+
+U
+
+X
+
+> j∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+}.
+
+Proof. Let Wi be the total time during which there exists an attempt of job i pending before it starts. The active time is bounded by the geometric caps: 
+
+> ri
+
+X
+
+> r=0
+
+2r < 2ri+1 ≤ 4pi.
+
+Hence 
+
+CRect  
+
+> i
+
+≤ 4pi + Wi.
+
+Consider any waiting round counted by Wi. Let ( i, q ) be the pending attempt of job i in that round. By Lemma 4, every active attempt ( j, r ) satisfies 
+
+Bj,r ≤ Bi,q ≤ Bi,r i .
+
+The utilization assumption gives at least U active memory in this round, all from attempts of budget at most Bi,r i . Therefore 
+
+U W i ≤ X
+
+> j∈J
+
+X 
+
+> 0≤q≤rj
+> Bj,q ≤Bi,r i
+
+Bj,q .
+
+For each fixed job j,
+
+X 
+
+> 0≤q≤rj
+> Bj,q ≤Bi,r i
+
+Bj,q < 2 min {Bi,r i , B j,r j } ≤ 4 min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+},
+
+where the last inequality uses the successful budget bound above. Combining the previous displays gives 
+
+Wi ≤ 4
+
+U
+
+X
+
+> j∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+}.
+
+Together with the active-time bound above, this proves the lemma. 
+
+Lemma 6 (Rectangle lower bounds) . For every rectangle strip instance on J ,
+
+Opt rect (J ) ≥ X
+
+> i∈J
+
+pi
+
+and 12M
+
+X
+
+> i,j ∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+} ≤ Opt rect (J ).
+
+17 Proof. The processing lower bound is immediate. For the area lower bound, order the jobs so that 
+
+ARect  
+
+> π(1)
+
+≤ ARect  
+
+> π(2)
+
+≤ · · · ≤ ARect 
+
+> π(|J | )
+
+.
+
+The same area-order lower-bound argument (Lemma 1) applied to rectangle areas gives 
+
+Opt rect (J ) ≥ 1
+
+M
+
+> |J |
+
+X
+
+> r=1
+
+(|J | − r + 1) ARect  
+
+> π(r)
+
+.
+
+Also, 
+
+X
+
+> i,j ∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+} =
+
+> |J |
+
+X
+
+> r=1
+
+(2( |J | − r) + 1) ARect  
+
+> π(r)
+
+≤ 2
+
+> |J |
+
+X
+
+> r=1
+
+(|J | − r + 1) ARect  
+
+> π(r)
+
+.
+
+The claim follows. 
+
+Lemma 7 (Width utilization) . Suppose every job satisfies 
+
+δ ≤ wi ≤ ∆.
+
+Then the rectangle instance has waiting utilization 
+
+U = max {δ, M − ∆}.
+
+Proof. Consider a settled state in which an attempt is waiting. Let m be the total active memory. Let ( i, r ) = min Q. Since ( i, r ) does not fit and has width at most ∆, we have 
+
+m > M − ∆.
+
+Also, the active set is nonempty; otherwise ( i, r ) would fit because wi ≤ M . Since every active attempt has width at least δ, we also have 
+
+m ≥ δ. 
+
+Thus the instance has waiting utilization max {δ, M − ∆}.
+
+Theorem 2 (Rectangle strip guarantee) . Suppose every job satisfies 
+
+δ ≤ wi ≤ ∆.
+
+Then 
+
+Rect (J ) ≤
+
+
+
+4 + 8M
+
+max {δ, M − ∆}
+
+
+
+Opt rect (J ).
+
+Proof. Let U = max {δ, M − ∆}. By Lemma 7, the rectangle instance has waiting utilization U .Summing Lemma 5 over all jobs gives 
+
+Rect (J ) ≤ 4 X
+
+> i∈J
+
+pi + 4
+
+U
+
+X
+
+> i,j ∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+}.
+
+The theorem follows from Lemma 6. 
+
+Remark 1. For a general rectangle strip instance with no width range assumption, the same scheduler can be applied to two width classes and combined by a black-box doubling meta-scheduler defined in Section 6.1. This gives a constant-competitive algorithm for the full rectangle strip problem; the complete statement and proof are in Section B. 
+
+18 4.3 Applying to Homogeneous KV-Cache Regimes 
+
+The large branch and the prompt-heavy branch are both applications of Rect to homogeneous KV-cache regimes. When every job satisfies the same regime condition, the corresponding branch is an ordinary rectangle strip schedule with a direct completion-time guarantee. They are defined as follows. 
+
+• Large branch. Use Rect with rectangle width wi = M and processing time pi = oi.
+
+• Prompt-heavy branch. Use Rect with rectangle width wi = 2 si and processing time 
+
+pi = oi.
+
+Proposition 2 (Large homogeneous guarantee) . If every job satisfies si > Λ, then the large branch schedule has total completion time at most 
+
+
+
+4 + 8M
+
+Λ
+
+
+
+Opt (J ).
+
+Proof. By per-job feasibility, every rectangle completion is true completion in the original KV-cache instance. Taking δ = ∆ = M satisfies the width assumptions in Theorem 2. Also, for every job i,
+
+ARect  
+
+> i
+
+= M o i ≤ M
+
+Λ sioi ≤ M
+
+Λ Ai.
+
+As in the proof of Theorem 2, by Lemma 5 and Lemma 7, 
+
+Rect (J ) ≤ 4 X
+
+> i∈J
+
+oi + 4
+
+M
+
+X
+
+> i,j ∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+} ≤ 4 X
+
+> i∈J
+
+oi + 4
+
+MM
+
+Λ
+
+X
+
+> i,j ∈J
+
+min {Ai, A j }
+
+As in the proof of Lemma 6, by the area-order lower bound argument in Lemma 1, 
+
+X
+
+> i∈J
+
+oi ≤ Opt (J ),
+
+and 12M
+
+X
+
+> i,j ∈J
+
+min {Ai, A j } ≤ Opt (J ).
+
+Thus we conclude 
+
+Rect (J ) ≤
+
+
+
+4 + 8M
+
+Λ
+
+
+
+Opt (J ).
+
+Proposition 3 (Prompt-heavy homogeneous guarantee) . If every job satisfies si ≤ Λ and oi ≤ si,then the prompt-heavy branch schedule has total completion time at most 
+
+
+
+4 + 16 MM − 2Λ 
+
+
+
+Opt (J ).
+
+19 Proof. Under the prompt-heavy condition, every rectangle completion is true completion in the original KV-cache instance. Every rectangle width is at most 2Λ. Taking δ = 0 and ∆ = 2Λ satisfies the width assumptions in Theorem 2. Moreover, 
+
+ARect  
+
+> i
+
+= 2 sioi ≤ 2Ai.
+
+The same argument as Large branch (Proposition 2) gives 
+
+Rect (J ) ≤ 4 X
+
+> i∈J
+
+oi + 4
+
+M − 2Λ 
+
+X
+
+> i,j ∈J
+
+min {ARect  
+
+> i
+
+, A Rect  
+
+> j
+
+}≤ 4 X
+
+> i∈J
+
+oi + 8
+
+M − 2Λ 
+
+X
+
+> i,j ∈J
+
+min {Ai, A j }≤
+
+
+
+4 + 16 MM − 2Λ 
+
+
+
+Opt (J ).
+
+Remark 2. For Λ = M/ 4, the constants in Propositions 2 and 3 are both equal to 36 .
+
+# 5 Area-Geometric Slicing for Response-heavy Jobs 
+
+Response-heavy jobs create a different obstacle from the rectangle strip setting of Section 4. Their memory footprint can grow far beyond the prompt length, so the fixed-width queue-monotonicity argument from Section 4 no longer applies. This section uses a structural fact absent from the prompt-heavy regime: response length determines area up to constant factors. Every job i considered in this section satisfies 
+
+si < o i, si + oi ≤ M. 
+
+Under this condition, memory-time area and the squared response length are equivalent up to constants: 
+
+o2
+
+> i
+
+2 ≤ Ai ≤ 2o2 
+
+> i
+
+.
+
+Thus ordering jobs by response caps also orders their area scales within constant factors. This equivalence permits each phase to replace the true prompts with a common prompt upper bound with only a constant-factor loss. The scheduler Response uses geometric slicing to exploit this equivalence. The geometric slicing approach of Feng et al. [2026] was developed for the identical-prompt setting. Although prompts may differ across jobs here, the area equivalence above allows each phase of Response to impose a common response cap and replace heterogeneous prompts with a common proxy prompt. The resulting proxy jobs are scheduled by the SPS subroutine described below. This construction realizes the two sufficient conditions from Section 3: SPS provides high memory utilization within each phase, and the geometric response caps ensure that the completion order is consistent with nearly nondecreasing area. 
+
+The SPS subroutine. The Staggered Pipeline Schedule ( SPS ) is a deterministic subroutine from Feng et al. [2026] for scheduling an ordered batch of identical jobs. An SPS instance consists 20 of m ≥ 1 identical jobs, each with common prompt length s ≥ 0 and slice length τ ≥ 1. Given a degree of parallelism k ≥ 1, the schedule assigns the job of rank j ∈ { 0, . . . , m − 1} the start offset 
+
+Sj = ⌊ jτ k ⌋,
+
+and runs that job for τ rounds. Consecutive jobs are therefore spaced roughly τ /k rounds apart, so at most k jobs overlap at any time. The key property is efficiency: by staggering the start times, 
+
+SPS can choose a nearly optimal parallelism. 
+
+Fact 1 (SPS properties from Feng et al. [2026]) . For a degree of parallelism k, slice length τ , and common prompt length s, the peak memory of the infinite SPS schedule is 
+
+Peak (k, τ, s ) ≜ sk + τ k + τ + k − gcd( τ, k )2 .
+
+Hence, if Peak (k, τ, s ) ≤ M , then every finite SPS prefix is feasible. In particular, whenever 
+
+τ + s ≤ M , the maximum feasible degree of parallelism satisfies 
+
+k∗(τ, s ) ≜ max {k ∈ N+ : Peak (k, τ, s ) ≤ M } ≥ 
+
+ 2M − τ + 1 2s + τ + 1 
+
+
+
+≥ 1.
+
+The Response scheduler (Algorithm 2) uses geometrically increasing response caps. Fix a scaling factor α > 1. Let L ≜ ⌈log α M ⌉. In phase r, the response cap is 
+
+τr = min {⌈ αr⌉, M }.
+
+For each phase r, define the proxy prompt ¯sr = min {τr, M − τr}
+
+and choose the maximum feasible proxy parallelism kr = k∗(τr, ¯sr). The SPS call uses the induced order on its current job set from a deterministic order on the input job set; a job that reaches the cap without completing is killed. 
+
+Algorithm 2: Response-Geometric SPS ( Response )
+
+Input: Job set J , known prompt lengths {si}, memory M , scaling factor α > 1.  
+
+> 1
+
+U ← J ; 
+
+> 2
+
+for r = 0 , 1, . . . , L do  
+
+> 3
+
+Set τr ← min {⌈ αr⌉, M }; 
+
+> 4
+
+Set ¯ sr ← min {τr, M − τr}; 
+
+> 5
+
+Set kr ← k∗(τr, ¯sr);  
+
+> 6
+
+Tr ← { i ∈ U : si ≤ τr}; 
+
+> 7
+
+Run the SPS [Feng et al., 2026] for prompt ¯ sr, slice τr, and parallelism kr on Tr;
+
+// When the proxy slot of job i starts, run the real job i.// Kill job i if it does not complete after τr rounds.  
+
+> 8
+
+Remove completed jobs from U;21 Lemma 8 (Feasibility of Response ). Every phase of Algorithm 2 is feasible. Proof. Fix phase r and write τ = τr and k = kr. Every scheduled job satisfies si ≤ τ .If τ > M/ 2, we have 
+
+Peak (2 , τ, M − τ ) = 2( M − τ ) + 2τ + τ + 2 − gcd( τ, 2) 2 ≥ 2M − τ + 1 > M, 
+
+hence k = 1; each job runs sequentially, and per-job feasibility si + oi ≤ M bounds the memory in every round. If τ ≤ M/ 2, then ¯ sr = τ ≥ si, so the real memory si + u + 1 at progress u does not exceed the proxy memory ¯ sr + u + 1; the proxy SPS schedule is feasible by Fact 1 and the choice of k.
+
+Lemma 9 (Completion of Response ). Let r be the first phase with τr ≥ oi. Job i completes in phase r.Proof. For any phase q < r , the cap satisfies τq < o i, so job i receives fewer than oi rounds and cannot complete. In phase r, response dominance gives si < o i ≤ τr, so job i is eligible. The phase runs job i for up to τr rounds. Since τr ≥ oi, the job completes in that phase. The following theorem gives the response-heavy guarantee used by the meta-scheduler. 
+
+Theorem 3. For every fixed α > 1, the scheduler Response satisfies 
+
+Response (J ) = Oα(1) Opt (J )
+
+on every response-heavy instance J . In particular, for α = 2 ,
+
+Response (J ) ≤ 236 3 Opt (J ) ≈ 78 .67 Opt (J ).
+
+Proof overview. Let τ−1 = 0, and let Jr = {i ∈ J : τr−1 < o i ≤ τr} and nr = |J r| for 
+
+r = 0 , 1, . . . , L . Write N≥r ≜ PLq=r nq for the number of jobs in classes r, r + 1 , . . . , L . By Lemma 9, every job in Jr completes in phase r. Let Dr denote the duration of phase r. By the start-offset rule of SPS , the last start time in phase r is less than τrN≥r/k r. Thus 
+
+Dr ≤ τr + τr
+
+kr
+
+N≥r.
+
+The lower bound on k∗ implies kr = Ω( M/τ r) when τr ≤ M/ 2, while kr = 1 when τr > M/ 2. The choice of kr gives τr/k r = O(τ 2 
+
+> r
+
+/M ), so 
+
+Response (J ) = O
+
+> L
+
+X
+
+> r=0
+
+τrN≥r + 1
+
+M
+
+> L
+
+X
+
+> r=0
+
+τ 2 
+
+> r
+
+N 2
+
+> ≥r
+
+!
+
+.
+
+The linear sum is charged to the processing lower bound because the caps grow geometrically. For the quadratic sum, expand the square over ordered pairs of jobs and charge each pair to the smaller response class. Response dominance gives Ai = Θ( o2 
+
+> i
+
+), so this pairwise charge is bounded by the area-order lower bound. The complete proof is deferred to Section C. 22 6 Meta-Scheduling with Routing 
+
+If the cases in Section 3 were known in advance, the scheduler could run the corresponding sub-schedulers through a black-box meta-scheduler on one shared memory resource. This known-partition reduction is given in Section 6.1. The black-box meta-scheduler runs the sub-schedulers in a round-robin order over doubling stages and preserves the total completion-time objective up to a constant factor. The non-clairvoyant setting, however, does not directly provide this partition. For jobs with 
+
+si ≤ Λ, the distinction between oi ≤ si (prompt-heavy) and oi > s i (response-heavy) depends on the unknown response length. The meta-scheduler therefore needs to route small jobs between sub-schedulers: a small job first enters the prompt-heavy branch; this branch either completes the job or reaches the boundary si and certifies oi > s i. Certified jobs are then routed to the response-heavy branch. The routing meta-scheduler in Section 6.2 uses the same doubling stages as the black-box meta-scheduler to combine these two events and gives a constant-competitive guarantee. 
+
+6.1 The Black-Box Meta-Scheduler 
+
+The meta-scheduler in Algorithm 3 merges a constant number of job partitions into one schedule and loses only a constant factor in the competitive guarantee. In each fresh invocation of a sub-scheduler, every job that has already completed in the meta-scheduler is still included as a dummy job . They follow exactly the schedule produced by the sub-scheduler, but their scheduled processing is ignored. This allows the meta-scheduler to invoke each sub-scheduler as an unchanged black box, without requiring any modification or any structural assumptions about its behavior. 
+
+Algorithm 3: Black-Box Meta-Scheduler ( BlackBoxMeta )
+
+Input: Job partition J1, . . . , Jk and corresponding sub-schedulers Alg 1, . . . , Alg k. 
+
+> 1
+
+for stage r = 0 , 1, 2, . . . do  
+
+> 2
+
+for ℓ = 1 , 2, . . . , k do  
+
+> 3
+
+Run a fresh copy of Alg ℓ on Jℓ for 2 r rounds; 
+
+// Completed jobs remain in the fresh copy as dummy jobs. // Their scheduled processing is idle. 
+
+Lemma 10 (Black-box per-job completion control) . Suppose that J is partitioned into disjoint sets J1, . . . , Jk. For each ℓ = 1 , . . . , k , let Cℓi be the completion time of job i ∈ J ℓ in the fresh run 
+
+Alg ℓ(Jℓ). Then the meta-scheduler BlackBoxMeta in Algorithm 3 completes every job i ∈ J ℓ
+
+by time 
+
+CBlackBoxMeta (J ) 
+
+> i
+
+≤  2( k + ℓ − 1) + 1 Cℓi ≤ (4 k − 1) Cℓi .
+
+Proof. For each i ∈ J ℓ, let r be the first stage with 2 r ≥ Cℓi , at which job i completes. The ℓ-th call of stage r starts after at most another ( ℓ − 1)2 r rounds. Therefore 
+
+CBlackBoxMeta (J ) 
+
+> i
+
+≤ k(2 r − 1) + ( ℓ − 1)2 r + Cℓi ≤  2( k + ℓ − 1) + 1 Cℓi ≤ (4 k − 1) Cℓi .
+
+The claim follows. 23 Corollary 1 (Black-box competitive guarantee) . Under the assumptions and notation of Lemma 10, suppose that each sub-scheduler Alg ℓ satisfies 
+
+Alg ℓ(Jℓ) ≤ Γℓ · Opt (Jℓ).
+
+Let Γ = max ℓ=1 ,...,k Γℓ. Then the meta-scheduler BlackBoxMeta in Algorithm 3 satisfies 
+
+BlackBoxMeta (J ) ≤ (4 k − 1)Γ · Opt (J ).
+
+Proof. By Lemma 10, 
+
+BlackBoxMeta (J ) ≤ (4 k − 1) 
+
+> k
+
+X
+
+> ℓ=1
+
+Alg ℓ(Jℓ).
+
+The assumed sub-scheduler guarantees give 
+
+BlackBoxMeta (J ) ≤ (4 k − 1)Γ 
+
+> k
+
+X
+
+> ℓ=1
+
+Opt (Jℓ).
+
+Since J1, . . . , Jk form a partition of J , Pkℓ=1 Opt (Jℓ) ≤ Opt (J ) holds by Lemma 2. 
+
+6.2 The Routing Meta-Scheduler 
+
+The black-box reduction assumes that every job is already assigned to the correct sub-scheduler. The non-clairvoyant algorithm does not have this partition: for jobs with si ≤ Λ, it must decide online whether a job is prompt-heavy or response-heavy. The large branch and prompt-heavy branch use the rectangle strip scheduler Rect defined in Section 4. They differ only in how completion in the rectangle strip instance is interpreted in the original KV-cache instance. 
+
+• Large branch L. Jobs with large prompts are run by the full-width rectangle scheduler; every rectangle completion is true completion. 
+
+• Prompt-heavy branch P. Jobs in the prompt pool are run by the capped rectangle scheduler. In each run, the current pool P is represented by the capped instance bP, with the original prompt lengths and response lengths capped at min {oi, s i}. Completion in bP is either true completion in the original instance or certification that oi > s i; certified jobs move to R.
+
+• Response-heavy branch R. Certified response-heavy jobs are run by the response-heavy scheduler Response .
+
+L is known in advance; P is initialized to {i ∈ J : si ≤ Λ} and R is initially empty. During the algorithm, certified but unfinished jobs move from P to R. As in the black-box meta-scheduler, completed jobs remain in their branch pool and are treated as dummy jobs in fresh runs; their scheduled processing is idle. 9 
+
+> 9This is only a notational convention. The same analysis also applies if completed jobs are removed from their branch pools, because each later branch call is on a subset of the corresponding reference instance.
+
+24 Algorithm 4: Routing Meta-Scheduler ( Route )
+
+Input: Job set J , memory M , prompt cutoff Λ, and branch schedulers large branch, prompt-heavy branch, response-heavy branch.  
+
+> 1
+
+L ← { i ∈ J : si > Λ} ; // large branch  
+
+> 2
+
+P ← { i ∈ J : si ≤ Λ} ; // prompt-heavy branch  
+
+> 3
+
+R ← ∅ ; // response-heavy branch  
+
+> 4
+
+for stage r = 0 , 1, 2, . . . do  
+
+> 5
+
+Run a fresh copy of the prompt-heavy branch scheduler on P for 2 r rounds;  
+
+> 6
+
+Move every newly certified job from P to R; 
+
+> 7
+
+Run a fresh copy of the response-heavy branch scheduler on R for 2 r rounds;  
+
+> 8
+
+Run a fresh copy of the large branch scheduler on L for 2 r rounds; 
+
+Analysis ingredients. For the analysis, define 
+
+S ≜ J \ L = {i ∈ J : si ≤ Λ}, P∗ ≜ {i ∈ S : oi ≤ si}, R∗ ≜ {i ∈ S : oi > s i}.
+
+Let bS denote the auxiliary capped instance on S: it has the same jobs and prompt lengths as S,and response length min {oi, s i} for each job i. Thus every capped prompt-pool instance bP that appears during the algorithm is a subinstance of bS. The instance bS is a relaxation of S: every feasible schedule for S is feasible for bS, so Opt ( bS) ≤ Opt (S). The branch calls made by the meta-scheduler are controlled by bounds defined on the corre-sponding full sets. 
+
+• For the rectangle branches, let CL 
+
+> i
+
+(i ∈ L ) and CP 
+
+> i
+
+(i ∈ S ) be the per-job bounds from Lemma 5 for the large branch instance on L and the capped instance bS, respectively. The sum in Lemma 5 only decreases under job deletion, so these bounds remain valid for every rectangle branch call on a current subset. 
+
+• For the response-heavy branch, let CR 
+
+> i
+
+be the completion time of i in Response (R∗). By Lemma 15, CR 
+
+> i
+
+also bounds the completion time of i in every response-heavy branch call on a certified subset containing i.
+
+Lemma 11 (Routing loss) . Consider any job i ∈ R ∗. Then Algorithm 4 completes i by time 
+
+CRoute  
+
+> i
+
+≤ max {8CP 
+
+> i
+
++ CR 
+
+> i
+
+, 9CR 
+
+> i
+
+}.
+
+Proof. Let rP 
+
+> i
+
+be the first stage with 2 rP 
+
+> i
+
+≥ CP 
+
+> i
+
+, and let rR 
+
+> i
+
+be the first stage with 2 rR 
+
+> i
+
+≥ CR 
+
+> i
+
+. By minimality, 2 rP 
+
+> i
+
+< 2CP 
+
+> i
+
+and 2 rR 
+
+> i
+
+< 2CR 
+
+> i
+
+.Each stage q consists of three calls, each of length 2 q. Hence the total time before stage r is 3
+
+> r−1
+
+X
+
+> q=0
+
+2q = 3(2 r − 1) .
+
+The prompt-heavy branch call in stage r ends by time 3(2 r −1)+2 r, and the response-heavy branch call in the same stage starts at that time. 25 If rP 
+
+> i
+
+≤ rR 
+
+> i
+
+, then job i has been certified by the time the response-heavy branch call of stage rR
+
+> i
+
+starts. By Lemma 15, this call completes i within CR 
+
+> i
+
+additional rounds. Therefore 
+
+CRoute  
+
+> i
+
+≤ 3(2 rR 
+
+> i
+
+− 1) + 2 rR 
+
+> i
+
++ CR 
+
+> i
+
+≤ 9CR 
+
+> i
+
+.
+
+If rP 
+
+> i
+
+> r R 
+
+> i
+
+, then job i is certified during the prompt-heavy branch call of stage rP 
+
+> i
+
+and is included in the following response-heavy branch call of the same stage. Since rP 
+
+> i
+
+> r R 
+
+> i
+
+, this response-heavy branch call has length at least CR 
+
+> i
+
+. Again by Lemma 15, 
+
+CRoute  
+
+> i
+
+≤ 3(2 rP 
+
+> i
+
+− 1) + 2 rP 
+
+> i
+
++ CR 
+
+> i
+
+≤ 8CP 
+
+> i
+
++ CR 
+
+> i
+
+.
+
+Combining the two cases proves the lemma. 
+
+Theorem 1. For every feasible batch KV-cache scheduling instance J with arbitrary prompt lengths and arbitrary response lengths, there exists a fully non-clairvoyant scheduling algorithm whose total completion time is within a constant factor of the optimal clairvoyant total completion time: 
+
+Alg (J ) = O(1) · Opt (J ).
+
+Proof. Set Λ = M/ 4 and α = 2. Run the routing meta-scheduler Route (Algorithm 4). We first bound each job’s completion time by the corresponding branch cost, and then compare the branch sums with Opt .By Lemma 10, applied to the prompt-heavy branch and large branch calls, 
+
+CRoute  
+
+> i
+
+≤ 7CP 
+
+> i
+
+(i ∈ P ∗), CRoute  
+
+> i
+
+≤ 11 CL 
+
+> i
+
+(i ∈ L ).
+
+Together with Lemma 11, this gives 
+
+Route (J ) ≤ 11 X
+
+> i∈L
+
+CL 
+
+> i
+
++ 8 X
+
+> i∈S
+
+CP 
+
+> i
+
++ 9 X
+
+> i∈R ∗
+
+CR 
+
+> i
+
+.
+
+With Λ = M/ 4, Propositions 2 and 3 give 
+
+X
+
+> i∈L
+
+CL 
+
+> i
+
+≤ 36 Opt (L), X
+
+> i∈S
+
+CP 
+
+> i
+
+≤ 36 Opt ( bS) ≤ 36 Opt (S).
+
+For the response branch, Theorem 3 and the deletion bound (Lemma 2) give 
+
+X
+
+> i∈R ∗
+
+CR 
+
+> i
+
+= Response (R∗) ≤ 236 3 Opt (R∗) ≤ 236 3 Opt (S).
+
+Since L and S partition J , combining with the deletion bound (Lemma 2) gives 
+
+Route (J ) ≤ 396 Opt (L) + (288 + 708) Opt (S) ≤ 996 Opt .
+
+Remark 3 (Computational complexity of Route ). Although the scheduling model describes deci-sions round by round, the total number of discrete events across Rect , Response , and Route is bounded by poly( n, log M ). An event-driven implementation that jumps between successive events therefore runs in polynomial time. 
+
+26 7 Conclusion and Discussion 
+
+We have presented the first constant-competitive non-clairvoyant scheduling algorithm for batched LLM inference under a hard KV-cache memory budget with arbitrary prompt lengths and arbitrary response lengths. The core algorithmic idea is a regime-aware routing framework that decomposes jobs into three geometric regimes—large jobs, small prompt-heavy jobs, and small response-heavy jobs—and handles each with a specialized sub-scheduler. A meta-scheduler time-shares the memory budget across these regimes and dynamically routes jobs as their execution reveals their true geo-metric class. This yields an O(1)-competitive guarantee for total completion time, and the same framework extends to other variants and extensions such as makespan minimization and online arrivals. From a systems perspective, our results provide a principled foundation for a design principle already present in modern serving stacks: global request routing across replicas. Rather than in-troducing routing complexity inside a single replica, our framework shows that partitioning jobs by their geometric structure—large jobs, prompt-heavy jobs, and response-heavy jobs—and dispatch-ing each class to a dedicated replica with a simple specialized local scheduler can simultaneously achieve worst-case robustness and practical efficiency. Because the theoretical meta-scheduler must time-share a single memory budget across heterogeneous classes, a multi-replica implementation actually attains a better competitive ratio than our single-replica bound, while remaining rela-tively simpler to deploy with existing continuous-batching and block-based cache managers. In this sense, simple local rules, properly routed by geometric class, suffice for both theoretical and practical performance. 
+
+# References 
+
+Anna Adamaszek, Tomasz Kociumaka, Marcin Pilipczuk, and Michal Pilipczuk. Hardness of approximation for strip packing. ACM Trans. Comput. Theory , 9(3):14:1–14:7, 2017. doi: 10.1145/3092026. URL https://doi.org/10.1145/3092026 .Helmut Alt, Mark de Berg, and Christian Knauer. Approximating minimum-area rectangular and convex containers for packing convex polygons. J. Comput. Geom. , 8(1):1–10, 2017. doi: 10.20382/JOCG.V8I1A1. URL https://doi.org/10.20382/jocg.v8i1a1 .Ruicheng Ao, Gan Luo, David Simchi-Levi, and Xinshang Wang. Optimizing LLM inference: Fluid-guided online scheduling with memory constraints. CoRR , abs/2504.11320, 2025. doi: 10.48550/ARXIV.2504.11320. URL https://doi.org/10.48550/arXiv.2504.11320 .Luca Becchetti and Stefano Leonardi. Nonclairvoyant scheduling to minimize the total flow time on single and parallel machines. J. ACM , 51(4):517–539, 2004. doi: 10.1145/1008731.1008732. URL https://doi.org/10.1145/1008731.1008732 .Luca Becchetti, Stefano Leonardi, Alberto Marchetti-Spaccamela, and Kirk Pruhs. Semi-clairvoyant scheduling. Theor. Comput. Sci. , 324(2-3):325–335, 2004. doi: 10.1016/J.TCS.2004. 05.023. URL https://doi.org/10.1016/j.tcs.2004.05.023 .Ziyad Benomar and Vianney Perchet. Non-clairvoyant scheduling with partial predictions. In 
+
+Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings 
+
+27 of Machine Learning Research , pages 3506–3538. PMLR, 2024. URL https://proceedings. mlr.press/v235/benomar24a.html .Ziyad Benomar, Romain Cosson, Alexander Lindermayr, and Jens Schl¨ oter. Non-clairvoyant scheduling with progress bars. In Advances in Neural Information Process-ing Systems 38: Annual Conference on Neural Information Processing Systems 2025, NeurIPS 2025 , 2025. URL https://papers.nips.cc/paper_files/paper/2025/hash/ 868f2266086530b2c71006ea1908b14a-Abstract-Conference.html .Chandra Chekuri, Rajeev Motwani, B. Natarajan, and Clifford Stein. Approximation techniques for average completion time scheduling. SIAM J. Comput. , 31(1):146–166, 2001. doi: 10.1137/ S0097539797327180. URL https://doi.org/10.1137/S0097539797327180 .Qingyun Chen, Sungjin Im, and Aditya Petety. Online scheduling via gradient descent for weighted flow time minimization. In Yossi Azar and Debmalya Panigrahi, editors, Proceedings of the 2025 Annual ACM-SIAM Symposium on Discrete Algorithms, SODA 2025, New Orleans, LA, USA, January 12-15, 2025 , pages 3802–3841. SIAM, 2025a. doi: 10.1137/1.9781611978322.128. URL 
+
+https://doi.org/10.1137/1.9781611978322.128 .Zixi Chen, Yinyu Ye, and Zijie Zhou. Adaptively robust LLM inference optimization under pre-diction uncertainty. CoRR , abs/2508.14544, 2025b. doi: 10.48550/ARXIV.2508.14544. URL 
+
+https://doi.org/10.48550/arXiv.2508.14544 .Ilan Reuven Cohen, Izack Cohen, and Iyar Zaks. A theoretical and empirical study of job scheduling in cloud computing environments: The weighted completion time minimization problem with capacitated parallel machines. Ann. Oper. Res. , 338(1):429–452, 2024. doi: 10.1007/S10479-023-05613-X. URL https://doi.org/10.1007/s10479-023-05613-x .J. G. Dai, Tianze Deng, Yueying Li, and Tianyi Peng. Throughput-optimal scheduling algorithms for LLM inference and AI agents. CoRR , abs/2504.07347, 2025. doi: 10.48550/ARXIV.2504. 07347. URL https://doi.org/10.48550/arXiv.2504.07347 .Leah Epstein and Rob van Stee. Lower bounds for on-line single-machine scheduling. Theor. Comput. Sci. , 299(1-3):439–450, 2003. doi: 10.1016/S0304-3975(02)00488-7. URL https:// doi.org/10.1016/S0304-3975(02)00488-7 .Yiding Feng, Zonghan Yang, and Yuhao Zhang. Competitive non-clairvoyant kv-cache scheduling for LLM inference. CoRR , abs/2601.22996, 2026. doi: 10.48550/ARXIV.2601.22996. URL 
+
+https://doi.org/10.48550/arXiv.2601.22996 .Yichao Fu, Siqi Zhu, Runlong Su, Aurick Qiao, Ion Stoica, and Hao Zhang. Efficient LLM scheduling by learning to rank. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, 
+
+Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, Decem-ber 10 - 15, 2024 , 2024. URL http://papers.nips.cc/paper_files/paper/2024/hash/ 6c8985579293e0209bdaa4f21bb1d237-Abstract-Conference.html .28 Leslie A. Hall, Andreas S. Schulz, David B. Shmoys, and Joel Wein. Scheduling to minimize average completion time: Off-line and on-line approximation algorithms. Math. Oper. Res. , 22(3):513– 544, 1997. doi: 10.1287/MOOR.22.3.513. URL https://doi.org/10.1287/moor.22.3.513 .Sungjin Im, Janardhan Kulkarni, and Kamesh Munagala. Competitive algorithms from competitive equilibria: Non-clairvoyant scheduling under polyhedral constraints. J. ACM , 65(1):3:1–3:33, 2018. doi: 10.1145/3136754. URL https://doi.org/10.1145/3136754 .Sungjin Im, Ravi Kumar, Mahshid Montazer Qaem, and Manish Purohit. Non-clairvoyant scheduling with predictions. ACM Trans. Parallel Comput. , 10(4):19:1–19:26, 2023. doi: 10.1145/3593969. URL https://doi.org/10.1145/3593969 .Sven J¨ ager, Guillaume Sagnol, Daniel Schmidt genannt Waldschmidt, and Philipp Warode. Com-petitive kill-and-restart and preemptive strategies for non-clairvoyant scheduling. Math. Pro-gram. , 210(1):457–509, 2025. doi: 10.1007/S10107-024-02118-8. URL https://doi.org/10. 1007/s10107-024-02118-8 .Sven J¨ ager, Alexander Lindermayr, and Nicole Megow. The power of proportional fairness for nonclairvoyant polytope scheduling. SIAM J. Comput. , 55(2):247–279, 2026. doi: 10.1137/ 25M1763974. URL https://doi.org/10.1137/25M1763974 .Patrick Jaillet, Jiashuo Jiang, Konstantina Mellou, Marco Molinaro, Chara Podimata, and Zi-jie Zhou. Online scheduling for llm inference with kv cache constraints. arXiv preprint arXiv:2502.07115 , 2025. URL https://arxiv.org/abs/2502.07115 .Klaus Jansen and Malin Rau. Closing the gap for single resource constraint scheduling. In Petra Mutzel, Rasmus Pagh, and Grzegorz Herman, editors, 29th Annual European Symposium on Algorithms, ESA 2021, Lisbon, Portugal (Virtual Conference), September 6-8, 2021 , volume 204 of LIPIcs , pages 53:1–53:15. Schloss Dagstuhl - Leibniz-Zentrum f¨ ur Informatik, 2021. doi: 10.4230/LIPICS.ESA.2021.53. URL https://doi.org/10.4230/LIPIcs.ESA.2021.53 .Klaus Jansen and Guochuan Zhang. Maximizing the total profit of rectangles packed into a rectangle. Algorithmica , 47(3):323–342, 2007. doi: 10.1007/S00453-006-0194-5. URL https: //doi.org/10.1007/s00453-006-0194-5 .Li Kong, Qi Qi, Yinyu Ye, and Zijie Zhou. Geometry-aware online scheduling for llm serving: From theoretical bound to system practice. arXiv preprint arXiv:2606.22327 , 2026. Adam Kurpisz and Silvan Suter. Improved approximations for translational packing of con-vex polygons. In Inge Li Gørtz, Martin Farach-Colton, Simon J. Puglisi, and Grzegorz Her-man, editors, 31st Annual European Symposium on Algorithms, ESA 2023, Amsterdam, The Netherlands, September 4-6, 2023 , volume 274 of LIPIcs , pages 76:1–76:14. Schloss Dagstuhl - Leibniz-Zentrum f¨ ur Informatik, 2023. doi: 10.4230/LIPICS.ESA.2023.76. URL https: //doi.org/10.4230/LIPIcs.ESA.2023.76 .Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention. In Jason Flinn, Margo I. Seltzer, Peter Druschel, Antoine Kauf-mann, and Jonathan Mace, editors, Proceedings of the 29th Symposium on Operating Systems 
+
+29 Principles, SOSP 2023, Koblenz, Germany, October 23-26, 2023 , pages 611–626. ACM, 2023. doi: 10.1145/3600006.3613165. URL https://doi.org/10.1145/3600006.3613165 .Shi Li. Scheduling to minimize total weighted completion time via time-indexed linear programming relaxations. SIAM J. Comput. , 49(4), 2020. doi: 10.1137/17M1156332. URL https://doi.org/ 10.1137/17M1156332 .Andrea Lodi, Silvano Martello, and Michele Monaci. Two-dimensional packing problems: A survey. 
+
+Eur. J. Oper. Res. , 141(2):241–252, 2002. doi: 10.1016/S0377-2217(02)00123-6. URL https: //doi.org/10.1016/S0377-2217(02)00123-6 .Sasha Luccioni, Yacine Jernite, and Emma Strubell. Power hungry processing: Watts driving the cost of AI deployment? In The 2024 ACM Conference on Fairness, Accountability, and Transparency, FAccT 2024, Rio de Janeiro, Brazil, June 3-6, 2024 , pages 85–99. ACM, 2024. doi: 10.1145/3630106.3658542. URL https://doi.org/10.1145/3630106.3658542 .Rajeev Motwani, Steven J. Phillips, and Eric Torng. Non-clairvoyant scheduling. Theor. Comput. Sci. , 130(1):17–47, 1994. doi: 10.1016/0304-3975(94)90151-1. URL https://doi.org/10.1016/ 0304-3975(94)90151-1 .Reiner Pope, Sholto Douglas, Aakanksha Chowdhery, Jacob Devlin, James Bradbury, Jonathan Heek, Kefan Xiao, Shivani Agrawal, and Jeff Dean. Efficiently scaling transformer infer-ence. In Dawn Song, Michael Carbin, and Tianqi Chen, editors, Proceedings of the Sixth Conference on Machine Learning and Systems, MLSys 2023, Miami, FL, USA, June 4-8, 2023 . mlsys.org, 2023. URL https://proceedings.mlsys.org/paper_files/paper/2023/ hash/c4be71ab8d24cdfb45e3d06dbfca2780-Abstract-mlsys2023.html .Haoran Qiu, Weichao Mao, Archit Patke, Shengkun Cui, Saurabh Jha, Chen Wang, Hubertus Franke, Zbigniew T. Kalbarczyk, Tamer Basar, and Ravishankar K. Iyer. Efficient interactive LLM serving with proxy model-based sequence length prediction. CoRR , abs/2404.08509, 2024. doi: 10.48550/ARXIV.2404.08509. URL https://doi.org/10.48550/arXiv.2404.08509 .Wayne E. Smith. Various optimizers for single-stage production. Naval Research Logistics Quar-terly , 3(1-2):59–66, 1956. doi: 10.1002/nav.3800030106. URL https://doi.org/10.1002/nav. 3800030106 .A. Steinberg. A strip-packing algorithm with absolute performance bound 2. SIAM J. Com-put. , 26(2):401–409, 1997. doi: 10.1137/S0097539793255801. URL https://doi.org/10.1137/ S0097539793255801 .Jovan Stojkovic, Chaojie Zhang, ´I˜ nigo Goiri, Esha Choukse, Haoran Qiu, Rodrigo Fonseca, Josep Torrellas, and Ricardo Bianchini. TAPAS: thermal- and power-aware scheduling for LLM in-ference in cloud platforms. In Lieven Eeckhout, Georgios Smaragdakis, Katai Liang, Adrian Sampson, Martha A. Kim, and Christopher J. Rossbach, editors, Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2, ASPLOS 2025, Rotterdam, Netherlands, 30 March 2025 - 3 April 2025 ,pages 1266–1281. ACM, 2025a. doi: 10.1145/3676641.3716025. URL https://doi.org/10. 1145/3676641.3716025 .30 Jovan Stojkovic, Chaojie Zhang, ´I˜ nigo Goiri, Josep Torrellas, and Esha Choukse. Dynamollm: Designing LLM inference clusters for performance and energy efficiency. In IEEE International Symposium on High Performance Computer Architecture, HPCA 2025, Las Vegas, NV, USA, March 1-5, 2025 , pages 1348–1362. IEEE, 2025b. doi: 10.1109/HPCA61900.2025.00102. URL 
+
+https://doi.org/10.1109/HPCA61900.2025.00102 .Biao Sun, Ziming Huang, Hanyu Zhao, Wencong Xiao, Xinyi Zhang, Yong Li, and Wei Lin. Llumnix: Dynamic scheduling for large language model serving. In Ada Gavrilovska and Douglas B. Terry, editors, 18th USENIX Symposium on Operating Systems Design and Implementation, OSDI 2024, Santa Clara, CA, USA, July 10-12, 2024 , pages 173–191. USENIX Association, 2024. URL https://www.usenix.org/conference/osdi24/presentation/sun-biao .Rob van Stee and Johannes A. La Poutr´ e. Minimizing the total completion time on-line on a single machine, using restarts. J. Algorithms , 57(2):95–129, 2005. doi: 10.1016/J.JALGOR.2004.10.001. URL https://doi.org/10.1016/j.jalgor.2004.10.001 .Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Informa-tion Processing Systems 30 , pages 5998–6008, 2017. URL https://proceedings.neurips.cc/ paper_files/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf .Meixuan Wang, Yinyu Ye, and Zijie Zhou. LLM serving optimization with variable prefill and decode lengths. CoRR , abs/2508.06133, 2025. doi: 10.48550/ARXIV.2508.06133. URL https: //doi.org/10.48550/arXiv.2508.06133 .Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soojeong Kim, and Byung-Gon Chun. Orca: A distributed serving system for transformer-based generative models. In Marcos K. Aguilera and Hakim Weatherspoon, editors, 16th USENIX Symposium on Operating Systems Design and Implementation, OSDI 2022, Carlsbad, CA, USA, July 11-13, 2022 , pages 521–538. USENIX Association, 2022. URL https://www.usenix.org/conference/osdi22/presentation/yu .Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark W. Barrett, and Ying Sheng. Sglang: Efficient execution of structured language model programs. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, De-cember 10 - 15, 2024 , 2024. URL http://papers.nips.cc/paper_files/paper/2024/hash/ 724be4472168f31ba1c9ac630f15dec8-Abstract-Conference.html .Zangwei Zheng, Xiaozhe Ren, Fuzhao Xue, Yang Luo, Xin Jiang, and Yang You. Response length perception and sequence scheduling: An llm-empowered LLM inference pipeline. In Al-ice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine, editors, Advances in Neural Information Processing Systems 36: Annual Conference on Neu-ral Information Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, Decem-ber 10 - 16, 2023 , 2023. URL http://papers.nips.cc/paper_files/paper/2023/hash/ ce7ff3405c782f761fac7f849b41ae9a-Abstract-Conference.html .31 A Clairvoyant Scheduling Guarantees 
+
+The clairvoyant benchmark has three useful forms. Area-order greedy is nearly optimal when every job is small compared with the memory budget. For general instances, splitting jobs by full rectangle width and combining the two resulting schedules gives a constant approximation. A direct rectangle packing argument gives a smaller constant by using a known strip packing guarantee as a black box. The schedules below reserve the full rectangle width of each active job: 
+
+ℓi ≜ si + oi,
+
+i.e., reserving the full rectangle of each job. 
+
+A.1 Large-Memory Case 
+
+The large-memory case is a KV-cache analogue of the small-demand WSVF guarantee for capaci-tated machines [Cohen et al., 2024, Theorem 1]. 
+
+Algorithm 5: Clairvoyant Area-Order Greedy ( Greedy )
+
+Input: Job set J and memory budget M . 
+
+> 1
+
+Order the jobs in J as π(1) , . . . , π (|J | ) so that Aπ(1) ≤ · · · ≤ Aπ(|J | ); 
+
+> 2
+
+B ← ∅ and q ← 1;  
+
+> 3
+
+for round t = 0 , 1, 2, . . . until ( q > |J | and B = ∅) do  
+
+> 4
+
+while q ≤ |J | and P 
+
+> i∈B
+
+ℓi + ℓπ(q) ≤ M do  
+
+> 5
+
+Start job π(q) and add it to B; 
+
+> 6
+
+q ← q + 1;  
+
+> 7
+
+Process every job in B for one round, and remove completed jobs from B;
+
+Theorem 4 (Bounded-width area-order greedy) . Fix ε ∈ (0 , 1) . Suppose that every job in J
+
+satisfies 
+
+ℓi ≤ εM. 
+
+Then the schedule produced by Greedy satisfies 
+
+Greedy (J ) ≤
+
+
+
+1 + 21 − ε
+
+
+
+Opt (J ).
+
+Proof. Let Sπ(r) be the start time of job π(r). Before time Sπ(r), if job π(r) has not yet been admitted, then the next unstarted job has reserved width at most εM . Thus, after the greedy admission step in each such round, the active reserved width is larger than (1 − ε)M . All active jobs before time Sπ(r) belong to {π(1) , . . . , π (r − 1) }. Therefore, 
+
+Sπ(r) ≤ 1(1 − ε)M
+
+> r−1
+
+X
+
+> q=1
+
+ℓπ(q)oπ(q).
+
+Since job π(r) completes oπ(r) rounds after it starts, 
+
+Cπ(r) ≤ oπ(r) + 1(1 − ε)M
+
+> r−1
+
+X
+
+> q=1
+
+ℓπ(q)oπ(q).
+
+32 Summing over all ranks gives 
+
+Greedy (J ) ≤ X
+
+> i∈J
+
+oi + 1(1 − ε)M
+
+> n
+
+X
+
+> q=1
+
+(n − q)ℓπ(q)oπ(q).
+
+For every job i,
+
+ℓioi = sioi + o2 
+
+> i
+
+≤ 2Ai.
+
+Hence 
+
+Greedy (J ) ≤ X
+
+> i∈J
+
+oi + 2(1 − ε)M
+
+> n
+
+X
+
+> q=1
+
+(n − q)Aπ(q).
+
+Since π is the nondecreasing area order, Lemmas 1 and 3 give 
+
+Greedy (J ) ≤
+
+
+
+1 + 21 − ε
+
+
+
+Opt (J ).
+
+Corollary 2 (Large-memory area-order greedy) . If max i∈J ℓi = o(M ), then the clairvoyant area-order schedule in Theorem 4 is a (3 + o(1)) -approximation. Equivalently, 
+
+Greedy (J ) ≤ (3 + o(1)) Opt (J ).
+
+A.2 General Case via Black-Box Meta-Scheduling 
+
+For a general clairvoyant instance, view each job as a rectangle with width ℓi and height oi. The jobs are separated by rectangle width. The small-width part uses Greedy with the true full widths. The large-width part uses the same Greedy routine on an auxiliary instance in which every job reserves rectangle width M . The two schedules are merged by the black-box meta-scheduler of Section 6.1. 
+
+Algorithm 6: Clairvoyant Width-Splitting Scheduler ( Clairvoyant-Mix )
+
+Input: Job set J , memory M , and threshold λ ∈ (0 , 1).  
+
+> 1
+
+Set J≤λ ← { i ∈ J : ℓi ≤ λM }; 
+
+> 2
+
+Set J>λ ← J \ J ≤λ; 
+
+> 3
+
+Let J M>λ be J>λ with reserved rectangle width M for each job;  
+
+> 4
+
+Run Algorithm 3 with sub-schedulers Greedy (J≤λ) and Greedy (J M>λ ); 
+
+Lemma 12 (Full-width auxiliary greedy call) . For λ = 1 /2, the auxiliary instance J M>λ defined in Algorithm 6 satisfies 
+
+Greedy (J M>λ ) ≤ 4 Opt (J>λ ).
+
+Proof. Set m ≜ |J >λ |. Let π(1) , . . . , π (m) be the nondecreasing true area order of J>λ . In the auxiliary instance, every job reserves M and has area key M o i. Thus Greedy runs one job at a time in nondecreasing oi. This order has no larger total completion time than the sequential schedule that follows the order π, so 
+
+Greedy (J M>λ ) ≤
+
+> m
+
+X
+
+> r=1
+
+(m − r + 1) oπ(r).
+
+33 For every i ∈ J >λ ,
+
+Ai ≥ ℓioi
+
+2 > M o i
+
+4 .
+
+It follows that 
+
+Greedy (J M>λ ) ≤ 4
+
+M
+
+> m
+
+X
+
+> r=1
+
+(m − r + 1) Aπ(r) ≤ 4 Opt (J>λ ),
+
+where the last inequality follows from Lemma 1 applied to J>λ .
+
+Theorem 5. The schedule produced by Clairvoyant-Mix satisfies 
+
+Clairvoyant-Mix (J ) ≤ 28 Opt (J ).
+
+Proof. For λ = 1 /2, the same proof as Theorem 4 gives 
+
+Greedy (J≤λ) ≤ 5 Opt (J≤λ),
+
+and Lemma 12 gives 
+
+Greedy (J M>λ ) ≤ 4 Opt (J>λ ).
+
+The branch-dependent bound in Lemma 10 gives a factor of 5 for the first branch and a factor of 7 for the second branch. Since Algorithm 6 places the small-width branch first, it gives 
+
+Clairvoyant-Mix (J ) ≤ 5Greedy (J≤λ) + 7 Greedy (J M>λ ).
+
+Together with Lemma 2, this implies 
+
+Clairvoyant-Mix (J ) ≤ 25 Opt (J≤λ) + 28 Opt (J>λ ) ≤ 28 Opt (J ).
+
+This proves the theorem. 
+
+A.3 General Case with Direct Rectangle-Packing 
+
+This subsection gives a second clairvoyant bound using a stronger geometric primitive. The previous two subsections use area-order scheduling directly; here we call a strip packing algorithm as a black box, which gives a stronger makespan guarantee for each stage. The conversion from stage makespan guarantees to total completion time follows the doubling framework of the single-machine capacitated scheduling algorithm of [Cohen et al., 2024, Theorem 7.1]. Two simplifications apply in the present unweighted rectangle instance: 
+
+• The knapsack selection step for weighted rectangles becomes the exact prefix after sorting by rectangle area. 
+
+• For rectangles with width at most M , height at most L, and total area at most M L , the 2-approximation algorithm by Steinberg [1997] packs them in height at most 2 L.These two changes give an 8-approximation for the rectangle instance, improving the 12 + ε factor from the corresponding framework of Cohen et al. [2024]. The conversion from KV-cache jobs to rectangles loses another factor of 2 against the area lower bound, yielding the 16-approximation below. 34 Algorithm 7: Clairvoyant Rectangle-Packing Scheduler ( PackAndSchedule )
+
+Input: Job set J and memory M . 
+
+> 1
+
+for stage r = 0 , 1, 2, . . . until all jobs have completed do  
+
+> 2
+
+Let Er ← { i ∈ J : oi ≤ 2r}, ordered by nondecreasing ℓioi; 
+
+> 3
+
+Let Cr be the longest prefix of Er whose total rectangle area is at most M 2r; 
+
+> 4
+
+Pack the rectangles {(ℓi, o i) : i ∈ C r} in a M -width, 2 r+1 -height strip by Steinberg’s algorithm [Steinberg, 1997];  
+
+> 5
+
+Run the packed schedule ; // Completed jobs are treated as dummy jobs. 
+
+Theorem 6. The schedule produced by PackAndSchedule satisfies 
+
+PackAndSchedule (J ) ≤ 16 Opt (J ).
+
+Proof. After stage r, the algorithm has completed at least |C r| jobs by time 2
+
+> r
+
+X
+
+> q=0
+
+2q < 4 · 2r.
+
+The optimal schedule completes at most |C r| jobs by time 2 r−1. To see that, let C⋆r be the jobs completed by an optimal schedule by that time. Every job in C⋆r has oi ≤ 2r, and these jobs have total rectangle area at most X
+
+> i∈C ⋆r
+
+ℓioi ≤ 2 X
+
+> i∈C ⋆r
+
+Ai ≤ M 2r.
+
+By the maximality of the prefix Cr, this implies |C ⋆r | ≤ |C r|.For ranks |C r−1|+1 , . . . , |C r| with r ≥ 0 (using the convention C−1 = ∅), the algorithm completes these ranks by time less than 4 · 2r, while the optimal schedule cannot complete these ranks before time 2 r−2. Summing over all ranks gives PackAndSchedule (J ) ≤ 16 Opt .
+
+Remark 4. The same argument improves the single-machine weighted capacitated scheduling bound of [Cohen et al., 2024, Theorem 7.1] from 12+ ε to 8+ ε. It keeps their resource-augmented knapsack step, adds the natural scale eligibility condition on processing times ( Er in Algorithm 7), and replaces the factor-3 packing step based on Jansen and Zhang [2007] by Steinberg’s factor-2 strip packing theorem. 
+
+# B Complete Non-Clairvoyant Rectangle Strip Scheduling 
+
+The rectangle strip guarantee in Theorem 2 assumes a useful width range. This section removes that assumption by mixing two rectangle strip schedulers through the black-box meta-scheduler. 
+
+Theorem 7. For every rectangle strip instance with wi ≤ M for all i ∈ J , there is a non-clairvoyant scheduling algorithm whose total completion time is within a constant factor of the optimal clairvoyant total completion time: 
+
+RectMix (J ) = O(1) · Opt rect (J ).
+
+35 Algorithm 8: Complete Rectangle Strip Scheduler ( RectMix )
+
+Input: Rectangle job set J , widths {wi}i∈J , memory M , and threshold λ ∈ (0 , 1).  
+
+> 1
+
+Set J≤λ ← { i ∈ J : wi ≤ λM }; 
+
+> 2
+
+Set J>λ ← { i ∈ J : wi > λM }; 
+
+> 3
+
+Run the black-box meta-scheduler with Rect on J≤λ and Rect on J>λ ;
+
+Proof. Run Algorithm 8 with λ = ( √149 − 11) /2. By Theorem 2, the two branch ratios are 4 + 81 − λ and 4 + 8
+
+λ .
+
+By Lemma 10, the first branch loses a factor of 5 and the second branch loses a factor of 7. Hence 
+
+RectMix (J ) ≤ 5
+
+
+
+4 + 81 − λ
+
+
+
+Opt rect (J≤λ) + 7 
+
+
+
+4 + 8
+
+λ
+
+
+
+Opt rect (J>λ ).
+
+The chosen λ makes both coefficients equal to 72+4 √149. Since J≤λ and J>λ partition J , Lemma 2 gives the theorem. 
+
+# C Competitive Ratio for the Response-heavy Scheduler 
+
+This appendix proves the explicit constant used in Theorem 3. For the rest of the appendix, fix 
+
+α = 2 and a response-heavy job set J ; for every fixed α > 1, the same argument gives the stated 
+
+Oα(1) bound. Let L ≜ ⌈log 2 M ⌉. Let τ−1 = 0 and define the phase classes 
+
+Jr = {i ∈ J : τr−1 < o i ≤ τr}, nr = |J r|, N≥r =
+
+> L
+
+X
+
+> q=r
+
+nq, N>r =
+
+> L
+
+X
+
+> q=r+1
+
+nq
+
+for r = 0 , 1, . . . , L . Let τ 0 ≜ 1 and τ r ≜ τr−1 for r ≥ 1. Then every job i ∈ J r satisfies 
+
+oi ≥ τ r, τr ≤ 2τ r.
+
+Lemma 13 (Phase efficiency) . For every phase r,
+
+τr
+
+kr
+
+≤ 72 · τ 2
+
+> r
+
+M .
+
+Proof. Write τ = τr and k = kr. If τ > M/ 2, then k = 1, and the claim follows from M < 2τ .Assume τ ≤ M/ 2. Then the proxy prompt is ¯ sr = τ . If k = 1, the maximality of k implies that 
+
+k = 2 is infeasible. Thus 
+
+Peak (2 , τ, τ ) = 2 τ + 3τ + 2 − gcd( τ, 2) 2 > M. 
+
+If τ is even, this gives M < 7τ / 2. If τ is odd, then Peak (2 , τ, τ ) = (7 τ + 1) /2 is an integer, so 
+
+M ≤ (7 τ − 1) /2 < 7τ / 2. In both cases, τ ≤ (7 /2) τ 2/M .It remains to consider k ≥ 2. By maximality, k + 1 is infeasible. Using gcd( τ, k + 1) ≥ 1, 
+
+M < Peak (k + 1 , τ, τ ) ≤ τ (k + 1) + τ (k + 1) + τ + k
+
+2 = 3kτ + 4 τ + k
+
+2 ≤ 7kτ 
+
+2 .
+
+The last inequality uses k ≥ 2 and τ ≥ 1. Rearranging gives the claim. 36 Define the class-area lower-bound quantity 
+
+ALB ≜
+
+> L
+
+X
+
+> r=0
+
+τ 2
+
+> r
+
+ nr(nr + 1) 2 + nrN>r 
+
+
+
+.
+
+Lemma 14 (Class-area lower bound) . The optimum satisfies 
+
+Opt (J ) ≥ ALB 
+
+2M .
+
+Proof. For every class r and every job i ∈ J r, response dominance gives 
+
+Ai ≥ o2
+
+> i
+
+2 ≥ τ 2
+
+> r
+
+2 .
+
+By Lemma 1, the lower-bound expression is 1
+
+M
+
+> |J |
+
+X
+
+> ℓ=1
+
+(|J | − ℓ + 1) Aπ(ℓ),
+
+where π orders jobs by nondecreasing area. This expression is the sum of all job areas plus, for every unordered pair of jobs, the smaller area in that pair, divided by M . Its diagonal and within-class pairs from class r contribute at least τ 2 
+
+> r
+
+nr(nr + 1) /(4 M ). The pairs with one job in class r and one job in a later class contribute at least τ 2 
+
+> r
+
+nrN>r /(2 M ). Summing these contributions over all classes gives ALB /(2 M ). 
+
+Theorem 3. For every fixed α > 1, the scheduler Response satisfies 
+
+Response (J ) = Oα(1) Opt (J )
+
+on every response-heavy instance J . In particular, for α = 2 ,
+
+Response (J ) ≤ 236 3 Opt (J ) ≈ 78 .67 Opt (J ).
+
+Proof. Let Dr be the actual elapsed time of the SPS call in phase r. By the start-offset rule of 
+
+SPS , the last start time in an SPS call on at most N≥r jobs is less than τrN≥r/k r, so 
+
+Dr ≤ τr + τr
+
+kr
+
+N≥r.
+
+By Lemma 9, every job in classes r, r + 1 , . . . , L is unfinished before phase r, so 
+
+Response (J ) ≤
+
+> L
+
+X
+
+> r=0
+
+DrN≥r ≤
+
+> L
+
+X
+
+> r=0
+
+τrN≥r +
+
+> L
+
+X
+
+> r=0
+
+τr
+
+kr
+
+N 2
+
+> ≥r
+
+.
+
+For the linear term, geometric growth gives Pℓr=0 τr ≤ 4τ ℓ for every class ℓ. Therefore 
+
+> L
+
+X
+
+> r=0
+
+τrN≥r =
+
+> L
+
+X
+
+> ℓ=0
+
+nℓℓX
+
+> r=0
+
+τr ≤ 4
+
+> L
+
+X
+
+> ℓ=0
+
+nℓτ ℓ ≤ 4 X
+
+> i∈J
+
+oi ≤ 4 Opt (J ).
+
+37 Set c = 7 /2. By Lemma 13, 
+
+> L
+
+X
+
+> r=0
+
+τr
+
+kr
+
+N 2 
+
+> ≥r
+
+≤ cM
+
+> L
+
+X
+
+> r=0
+
+τ 2 
+
+> r
+
+N 2
+
+> ≥r
+
+.
+
+Expanding over ordered pairs of jobs and charging each pair to the smaller response class gives 
+
+> L
+
+X
+
+> r=0
+
+τ 2 
+
+> r
+
+N 2 
+
+> ≥r
+
+≤ 16 3
+
+> L
+
+X
+
+> ℓ,s =0
+
+nℓnsτ 2min {ℓ,s } ≤ 32 3 ALB .
+
+The first inequality uses Pℓr=0 τ 2 
+
+> r
+
+≤ (16 /3) τ 2 
+
+> ℓ
+
+for every class ℓ. The second inequality compares ordered pairs with the definition of ALB : within a class, n2 
+
+> ℓ
+
+≤ nℓ(nℓ + 1), and between two different classes the ordered-pair count is twice the unordered-pair count. Combining the linear and quadratic bounds gives 
+
+Response (J ) ≤ 4 Opt (J ) + 112 3M ALB .
+
+By Lemma 14, ALB ≤ 2M Opt (J ). Hence 
+
+Response (J ) ≤
+
+
+
+4 + 224 3
+
+
+
+Opt (J ) = 236 3 Opt (J ) ≈ 78 .67 Opt (J ).
+
+Lemma 15 (Response subset control) . Fix a response-heavy set R∗ and a deterministic order used by Response . For each i ∈ R ∗, let CR 
+
+> i
+
+be the completion time of i in Response (R∗). Then, for every J ′ ⊆ R ∗ and every i ∈ J ′, job i completes in Response (J ′) by time CR 
+
+> i
+
+.Proof. Fix any job i ∈ J ′, and let r be the first phase with τr ≥ oi. Run Response (J ′) using the order induced by the fixed order on R∗. By Lemma 9, job i completes in phase r in both 
+
+Response (J ′) and Response (R∗). For every phase q < r , whether a job is considered in that phase depends only on its prompt length, response length, and the cap sequence. Thus the jobs considered in the run on J ′ form a subsequence of the jobs considered in the run on R∗. For every remaining job in this subsequence, its rank is no larger than its rank in the run on R∗. Since the 
+
+SPS start offset is ⌊jτ q/k q⌋ for rank j, each remaining job starts no later in the run on J ′ than in the run on R∗. The real running time of every remaining job in phase q is unchanged, so the duration of phase q in the run on J ′ is no larger than the duration of phase q in the run on R∗.The same subsequence property holds inside phase r: the rank of job i in the run on J ′ is at most its rank in the run on R∗, so the SPS start offset of job i is no later in the run on J ′ than in the run on R∗. After job i starts in phase r, the remaining time until completion is oi in both runs. Combining these components gives the claim. 
+
+# D Alternative Objectives 
+
+This appendix gives two extensions of the meta-scheduling framework. 
+
+• Section D.1 shows that the same algorithm is also constant-competitive for makespan. 38 • Section D.2 extends the routing framework to total completion time with online arrivals. For online arrivals, the natural latency objective is total flow time. Under (oblivious) adversarial arrivals, however, online KV-cache scheduling admits an Ω( √n) lower bound on the competitive ratio for total flow time, even in the identical-prompt special case [Jaillet et al., 2025, Feng et al., 2026]. Total completion time is the closest feasible alternative: for a fixed arrival instance, the two objectives induce the same optimal schedules. Online completion-time objectives have also been studied in classical scheduling [Epstein and van Stee, 2003, van Stee and Poutr´ e, 2005]. 
+
+D.1 Makespan 
+
+For a job set J ′ ⊆ J , let Opt span (J ′) be the optimal clairvoyant makespan for scheduling exactly the jobs in J ′. For a schedule produced by an algorithm Alg , let Makespan [Alg (J ′)] denote its makespan. 
+
+Lemma 16 (Makespan lower bounds) . For every J ′ ⊆ J ,
+
+Opt span (J ′) ≥ max   
+
+> i∈J ′
+
+oi, Opt span (J ′) ≥ 1
+
+M
+
+X 
+
+> i∈J ′
+
+Ai.
+
+The first bound is the processing requirement of the longest job. The second follows because all memory-time areas of jobs must be supplied. We use the branch sets and capped small instance from Section 6.2. 
+
+Proposition 4 (Branch makespan bounds) . Set Λ = M/ 4 and α = 2 . Then 
+
+Makespan [Rect (L)] , Makespan 
+
+h
+
+Rect ( bS)
+
+i
+
+, Makespan [Response (R∗)] 
+
+are all O(1) · Opt span (J ).Proof. For either rectangle branch instance J ′, Lemma 5 implies, after taking the maximum over jobs in J ′,
+
+Makespan Rect (J ′) = O max   
+
+> i∈J ′
+
+pi + 1
+
+M
+
+X 
+
+> i∈J ′
+
+ARect 
+
+> i
+
+!
+
+,
+
+using the same width-range conditions as in the proofs of Propositions 2 and 3. For the large branch, ARect  
+
+> i
+
+≤ 4Ai. For the prompt-heavy branch, the capped rectangle area is at most 2 Ai.Thus both rectangle branch makespans are O(1) · Opt span (J ) by Lemma 16. For the response-heavy branch, the phase-duration estimate used in the proof of Theorem 3, summed over geometric response caps, gives 
+
+Makespan [Response (R∗)] = O max  
+
+> i∈R ∗
+
+oi + 1
+
+M
+
+X
+
+> i∈R ∗
+
+o2
+
+> i
+
+!
+
+.
+
+Here the geometric caps bound the linear contribution by the largest response length, and the phase-efficiency term contributes the quadratic area term. Since every job in R∗ is response-heavy, 
+
+o2 
+
+> i
+
+≤ 2Ai. Another application of Lemma 16 completes the proof. The following theorem gives the makespan extension. 39 Theorem 8. For every feasible batch KV-cache scheduling instance with arbitrary prompt lengths and arbitrary response lengths, there is a fully non-clairvoyant scheduling algorithm whose makespan is within a constant factor of the optimal clairvoyant makespan: 
+
+Makespan [Alg (J )] = O(1) · Opt span (J ).
+
+Proof. Set Λ = M/ 4 and α = 2, and run the routing meta-scheduler Route in Algorithm 4. Let 
+
+T = max 
+
+
+
+max  
+
+> i∈L
+
+CL 
+
+> i
+
+, max  
+
+> i∈S
+
+CP 
+
+> i
+
+, max  
+
+> i∈R ∗
+
+CR
+
+> i
+
+
+
+.
+
+By the subset-control discussion in Section 6.2, every current branch call completes or certifies its remaining jobs within the corresponding reference bound. Choose the first stage r with 2 r ≥ T .In this stage, the prompt-heavy branch call completes all remaining jobs in P∗ and certifies all remaining jobs in R∗. The certified jobs then move to R, and the following response-heavy branch call completes them; the large branch call completes all large jobs. Thus all jobs finish by the end of the stage. The total time through that stage is O(2 r) = O(T ). The same bounds used in Proposition 4 give T = O(1) · Opt span (J ), which proves the theorem. 
+
+D.2 Total Completion Time with Online Arrivals 
+
+Each job i now has an arrival time ai ∈ N. Before time ai, job i is not visible to the scheduler. At time ai, its prompt length si becomes known, while its response length oi is still unknown until completion. Let Opt arr (J ) be the optimal total completion time of a clairvoyant schedule that knows all jobs and response lengths in advance, but may process job i only after time ai.
+
+Lemma 17 (Online-arrival lower bounds) .
+
+Opt arr (J ) ≥ Opt (J ), Opt arr (J ) ≥ X
+
+> i∈J
+
+(ai + oi) .
+
+The first bound follows by removing arrival constraints. The second follows because job i cannot complete before time ai + oi.The online scheduler uses the same pool convention: newly arrived jobs enter either L or P,certified but unfinished jobs move to R, and completed jobs are removed from their branch pools. The following theorem gives the online-arrival extension. 
+
+Theorem 9. For every feasible online-arrival KV-cache scheduling instance with arbitrary prompt lengths, arbitrary response lengths, and arbitrary arrival times, there is an online non-clairvoyant scheduling algorithm whose total completion time is within a constant factor of the optimal clair-voyant total completion time among schedules that process each job only after its arrival: 
+
+RouteOnline (J ) = O(1) · Opt arr (J ).
+
+Proof. Set Λ = M/ 4 and α = 2, and run the online-arrival routing meta-scheduler in Algorithm 9. The online arrival constraint only delays the time at which a job can enter the routing process. A job arriving at time ai is admitted at the start of the first stage that begins at or after ai; by the doubling schedule, the elapsed time before that stage is O(ai). After this prefix, the same routing calculation as in the batch proof applies to job i, using the reference bounds CL 
+
+> i
+
+, C P 
+
+> i
+
+, C R 
+
+> i
+
+as in 40 Algorithm 9: Online-Arrival Routing Meta-Scheduler ( RouteOnline )
+
+Input: Memory M and prompt cutoff Λ. 
+
+Online Arrival: Job i becomes visible at time ai and reveals its prompt length si. 
+
+> 1
+
+L ← ∅ ; // large branch  
+
+> 2
+
+P ← ∅ ; // prompt-heavy branch  
+
+> 3
+
+R ← ∅ ; // response-heavy branch  
+
+> 4
+
+for stage r = 0 , 1, 2, . . . do 
+
+// Admit new jobs.  
+
+> 5
+
+for each newly arrived job that has not been assigned to a branch do  
+
+> 6
+
+if si > Λ then  
+
+> 7
+
+Add i to L; 
+
+> 8
+
+else  
+
+> 9
+
+Add i to P;
+
+// Run current doubling stage.  
+
+> 10
+
+Run a fresh copy of the prompt-heavy branch scheduler on P for 2 r rounds;  
+
+> 11
+
+Move every newly certified job from P to R; 
+
+> 12
+
+Run a fresh copy of the response-heavy branch scheduler on R for 2 r rounds;  
+
+> 13
+
+Run a fresh copy of the large branch scheduler on L for 2 r rounds; the proof of Theorem 1. The current branch calls are on subsets of the corresponding reference instances, so the same subset arguments apply. Thus 
+
+CRouteOnline  
+
+> i
+
+= O(ai + CL 
+
+> i
+
+) for every i ∈ L ,CRouteOnline  
+
+> i
+
+= O(ai + CP 
+
+> i
+
+) for every i ∈ P ∗,CRouteOnline  
+
+> i
+
+= O(ai + CP 
+
+> i
+
++ CR 
+
+> i
+
+) for every i ∈ R ∗.
+
+Summing over all jobs gives the same three branch sums as in the proof of Theorem 1, plus the arrival term P 
+
+> i∈J
+
+ai. The branch sums are bounded by O(1) · Opt (J ), while the arrival term is bounded by Lemma 17 and Opt (J ) ≤ Opt arr (J ). Therefore RouteOnline (J ) = O(1) · Opt arr (J ). 41
