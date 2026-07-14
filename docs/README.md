@@ -6,43 +6,37 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-13
-- 运行时间：2026-07-13 20:30:17 UTC
+- 最新运行日期：2026-07-14
+- 运行时间：2026-07-14 21:28:59 UTC
 - 运行状态：成功
-- 本次总论文数：7
+- 本次总论文数：5
 - 精读区：4
-- 速读区：3
+- 速读区：1
 
 ### 今日简报（AI）
-今日聚焦两篇9.0高分论文，分别探索块稀疏注意力与KV缓存驱动的多智能体过程奖励建模。  
-最值得精读的方向：COBS通过累积量阶稀疏突破注意力瓶颈，KV-PRM借助缓存传输实现高效过程奖励建模，两者在长序列计算和分布式推理中表现亮眼。  
-建议普通读者优先精读这两篇，结合速读列表中TileLens的二维内存布局思路，可更全面理解高效Transformer与内存优化前沿。
-- 详情：[/202607/13/README](/202607/13/README)
+今日收录5篇论文，精读4篇，其中《MemDecay》和《AAFLOW+》均获9.0高分，聚焦KV缓存优化与高效推理。
+最值得关注的方向：区域感知KV缓存淘汰策略（MemDecay）和零拷贝分布式KV缓存编排（AAFLOW+），两者均面向LLM Agent与多Agent工作流。
+建议读者优先精读这两篇高分论文，关注其如何通过缓存管理提升推理效率，尤其对部署Agent系统有帮助。
+- 详情：[/202607/14/README](/202607/14/README)
 
 ### 精读区论文标签
-1. [COBS: Cumulant Order Block Sparse Attention](/202607/13/2607.09052v1-cobs-cumulant-order-block-sparse-attention)  
+1. [MemDecay: Region-Aware KV Cache Eviction for Efficient LLM Agent Inference](/202607/14/2607.10582v1-memdecay-region-aware-kv-cache-eviction-for-efficient-llm-agent-inference)  
    标签：评分：9.0/10、query:llm-kv-cache
-   evidence：缓解大语言模型KV缓存读取瓶颈
-2. [KV-PRM: Efficient Process Reward Modeling via KV-Cache Transfer for Multi-Agent Test-Time Scaling](/202607/13/2607.09153v1-kv-prm-efficient-process-reward-modeling-via-kv-cache-transfer-for-multi-agent-test-time-scaling)  
+   evidence：面向LLM智能体的区域感知KV缓存驱逐策略
+2. [[AAFLOW+] Stateful Operator Abstraction with Zero-Copy Distributed KV Cache Orchestration for Multi-Agent Workflows](/202607/14/2607.10987v1-aaflow-stateful-operator-abstraction-with-zero-copy-distributed-kv-cache-orchestration-for-multi-agent-workflows)  
    标签：评分：9.0/10、query:llm-kv-cache
-   evidence：KV-PRM直接利用LLM生成阶段的KV缓存加速过程奖励模型
-3. [Attention to Detail: Evaluating Energy, Performance, and Accuracy Trade-offs Across vLLM Configurations](/202607/13/2607.09172v1-attention-to-detail-evaluating-energy-performance-and-accuracy-trade-offs-across-vllm-configurations)  
-   标签：评分：9.0/10、query:llm-kv-cache
-   evidence：vLLM配置中的前缀缓存研究
-4. [General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing](/202607/13/2607.09248v1-general-non-clairvoyant-kv-cache-scheduling-via-regime-aware-routing)  
+   evidence：面向多智能体工作流的有状态分布式KV缓存编排
+3. [Remembering Distinct Items, Not Tokens: A Learnable Dirichlet-Process Cache Between State-Space Models and Attention](/202607/14/2607.09889v1-remembering-distinct-items-not-tokens-a-learnable-dirichlet-process-cache-between-state-space-models-and-attention)  
    标签：评分：8.0/10、query:llm-kv-cache
-   evidence：LLM推理中KV缓存调度及内存预算
+   evidence：稀疏键值缓存，仅存储不同项，减少内存占用
+4. [FlashAccel: Leveraging High-Bandwidth Flash for High-Throughput LLM Inference](/202607/14/2607.10186v1-flashaccel-leveraging-high-bandwidth-flash-for-high-throughput-llm-inference)  
+   标签：评分：8.0/10、query:llm-kv-cache
+   evidence：利用高带宽闪存扩展LLM推理中KV缓存容量
 
 ### 速读区论文标签
-1. [TileLens: Efficiently Using Large-Granularity Memory Systems with Transparent Two-Dimensional Memory Layout](/202607/13/2607.04031v1-tilelens-efficiently-using-large-granularity-memory-systems-with-transparent-two-dimensional-memory-layout)  
+1. [Context by Distinct Information: An Auditable Dirichlet-Process Working Memory for Long, Redundant Context Streams](/202607/14/2607.10441v1-context-by-distinct-information-an-auditable-dirichlet-process-working-memory-for-long-redundant-context-streams)  
    标签：评分：7.0/10、query:llm-kv-cache
-   evidence：通过二维布局优化LLM推理内存系统，减少读放大问题，间接提升KV缓存效率
-2. [Sparse Delta Memory: Scaling the State of Linear RNNs through Sparsity](/202607/13/2607.07386v1-sparse-delta-memory-scaling-the-state-of-linear-rnns-through-sparsity)  
-   标签：评分：7.0/10、query:llm-kv-cache
-   evidence：线性RNN的稀疏键值记忆，可应用于KV缓存压缩
-3. [BlockServe: Block-Grained Continuous Batching for High-Throughput Diffusion LLM Serving](/202607/13/2607.08930v1-blockserve-block-grained-continuous-batching-for-high-throughput-diffusion-llm-serving)  
-   标签：评分：6.0/10、query:llm-kv-cache
-   evidence：面向扩散LLM服务的块粒度调度与双缓存并行解码
+   evidence：按新颖性分配的缓存，以不同信息为单位而非令牌
 
 
 <div class="dpr-home-promo-card">
