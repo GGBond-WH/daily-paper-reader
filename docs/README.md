@@ -6,37 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-14
-- 运行时间：2026-07-14 21:28:59 UTC
+- 最新运行日期：2026-07-15
+- 运行时间：2026-07-15 21:32:36 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：4
+- 本次总论文数：4
+- 精读区：3
 - 速读区：1
 
 ### 今日简报（AI）
-今日收录5篇论文，精读4篇，其中《MemDecay》和《AAFLOW+》均获9.0高分，聚焦KV缓存优化与高效推理。
-最值得关注的方向：区域感知KV缓存淘汰策略（MemDecay）和零拷贝分布式KV缓存编排（AAFLOW+），两者均面向LLM Agent与多Agent工作流。
-建议读者优先精读这两篇高分论文，关注其如何通过缓存管理提升推理效率，尤其对部署Agent系统有帮助。
-- 详情：[/202607/14/README](/202607/14/README)
+今日精选2篇高分KV缓存压缩研究，各有突破。两篇9分论文分别显示查询可见性会颠覆压缩排名，以及联合张量与JL残差可实现近乎无损压缩。建议关注这些技术在实际长上下文场景中的效果与部署可行性。
+- 详情：[/202607/15/README](/202607/15/README)
 
 ### 精读区论文标签
-1. [MemDecay: Region-Aware KV Cache Eviction for Efficient LLM Agent Inference](/202607/14/2607.10582v1-memdecay-region-aware-kv-cache-eviction-for-efficient-llm-agent-inference)  
+1. [How Query Visibility Changes KV-Cache Compression Rankings: A Matched-Budget Audit](/202607/15/2607.11942v1-how-query-visibility-changes-kv-cache-compression-rankings-a-matched-budget-audit)  
    标签：评分：9.0/10、query:llm-kv-cache
-   evidence：面向LLM智能体的区域感知KV缓存驱逐策略
-2. [[AAFLOW+] Stateful Operator Abstraction with Zero-Copy Distributed KV Cache Orchestration for Multi-Agent Workflows](/202607/14/2607.10987v1-aaflow-stateful-operator-abstraction-with-zero-copy-distributed-kv-cache-orchestration-for-multi-agent-workflows)  
+   evidence：在相同预算下审计KV缓存压缩方法，研究查询可见性影响
+2. [A JoLT for the KV Cache: Near-Lossless KV Cache Compression via Joint Tucker and JL-Residual Allocation for LLMs](/202607/15/2607.12550v1-a-jolt-for-the-kv-cache-near-lossless-kv-cache-compression-via-joint-tucker-and-jl-residual-allocation-for-llms)  
    标签：评分：9.0/10、query:llm-kv-cache
-   evidence：面向多智能体工作流的有状态分布式KV缓存编排
-3. [Remembering Distinct Items, Not Tokens: A Learnable Dirichlet-Process Cache Between State-Space Models and Attention](/202607/14/2607.09889v1-remembering-distinct-items-not-tokens-a-learnable-dirichlet-process-cache-between-state-space-models-and-attention)  
+   evidence：通过Tucker分解和JL残差分配进行KV缓存压缩
+3. [AVQ-Attention: Adaptive Vector-Quantized Attention](/202607/15/2607.12789v1-avq-attention-adaptive-vector-quantized-attention)  
    标签：评分：8.0/10、query:llm-kv-cache
-   evidence：稀疏键值缓存，仅存储不同项，减少内存占用
-4. [FlashAccel: Leveraging High-Bandwidth Flash for High-Throughput LLM Inference](/202607/14/2607.10186v1-flashaccel-leveraging-high-bandwidth-flash-for-high-throughput-llm-inference)  
-   标签：评分：8.0/10、query:llm-kv-cache
-   evidence：利用高带宽闪存扩展LLM推理中KV缓存容量
+   evidence：自适应向量量化注意力的键压缩
 
 ### 速读区论文标签
-1. [Context by Distinct Information: An Auditable Dirichlet-Process Working Memory for Long, Redundant Context Streams](/202607/14/2607.10441v1-context-by-distinct-information-an-auditable-dirichlet-process-working-memory-for-long-redundant-context-streams)  
-   标签：评分：7.0/10、query:llm-kv-cache
-   evidence：按新颖性分配的缓存，以不同信息为单位而非令牌
+1. [LiteTopK: Exploiting the Curse of Dimensionality for a Fused Indexer-TopK Kernel in Long-Context Sparse Attention](/202607/15/2607.11976v1-litetopk-exploiting-the-curse-of-dimensionality-for-a-fused-indexer-topk-kernel-in-long-context-sparse-attention)  
+   标签：评分：6.0/10、query:llm-kv-cache
+   evidence：长上下文稀疏注意力核
 
 
 <div class="dpr-home-promo-card">

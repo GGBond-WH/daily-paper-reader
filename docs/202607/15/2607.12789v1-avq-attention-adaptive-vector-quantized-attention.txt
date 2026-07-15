@@ -1,0 +1,1122 @@
+Title: AVQ-Attention: Adaptive Vector-Quantized Attention
+
+URL Source: https://arxiv.org/pdf/2607.12789v1
+
+Published Time: Wed, 15 Jul 2026 12:02:28 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# AVQ-Attention: Adaptive Vector-Quantized Attention 
+
+Winfried van den Dool 1,2, Patrick Forré 3,4, Amir Habibian 5, Yuki M. Asano 6,and Max Welling 2 
+
+> 1
+
+QUVA Lab, University of Amsterdam, The Netherlands 
+
+w.v.s.o.vandendool@uva.nl  
+
+> 2
+
+AMLab, Informatics Institute, University of Amsterdam, The Netherlands  
+
+> 3
+
+AI4Science Lab, University of Amsterdam, The Netherlands  
+
+> 4
+
+Korteweg-de Vries Institute for Mathematics, University of Amsterdam, The Netherlands  
+
+> 5
+
+Qualcomm AI Research, Amsterdam, The Netherlands  
+
+> 6
+
+FunAI Lab, University of Technology Nuremberg, Germany 
+
+Abstract. The O(N 2) complexity of attention over N tokens remains a computational bottleneck in transformer models. Vector-Quantized (VQ) attention reduces this to O(M N ) by representing keys with M
+
+codewords, but applies uniform codebook capacity regardless of where attention mass concentrates: high-attention regions of key space may be coarsely approximated while low-attention regions waste representa-tional capacity. We propose Adaptive Vector-Quantized (AVQ) Atten-tion, which adaptively allocates codebook capacity based on attention importance. Starting from a small set of codewords, our method identifies the most important codes during the forward pass and refines them with pre-learned child codewords, achieving fine-grained quantization where it matters most while maintaining coarse quantization elsewhere. We de-velop an implementation using custom Triton kernels that enables the full adaptive refinement process, including importance scoring, child code-word insertion, and parent contribution replacement, to be carried out within the tiled computation paradigm of Flash Attention with minimal overhead. Our approach maintains O(M N ) complexity while achieving improved accuracy-efficiency trade-offs compared to fixed-codebook VQ-attention. 
+
+Keywords: Efficient Attention · Vector Quantization · Adaptive Code-book 
+
+## 1 Introduction 
+
+Attention mechanisms have become the cornerstone of modern deep learning, enabling transformers [33] to capture rich interactions between input tokens. However, this expressiveness comes at a computational cost: computing atten-tion between all token pairs requires O(N 2) operations for sequences of length N ,making long-sequence processing increasingly prohibitive as models and datasets arXiv:2607.12789v1 [cs.LG] 14 Jul 2026 2 W. van den Dool et al. 1 VQ assignment 2 Codeword attention     
+
+> and refine attention
+> 3 Top-parents spawn children
+> low attention high attention inference key token pretrained codeword
+
+Fig. 1: key-space visualization of Adaptive VQ-Attention. Small dots represent infer-ence key tokens, colored by how much attention they receive from a given query block; large squares represent pre-trained codewords. (1) Keys are assigned to their nearest codeword via vector quantization. (2) Per-codeword importance is computed from the attention mass each codeword receives. (3) The top-P most important parents are selected and their pre-learned children are spawned, refining codebook resolution in high-attention regions while leaving low-attention regions at the coarser parent level. 
+
+scale. Flash Attention [7] addressed the O(N 2) memory bandwidth bottleneck through tiling strategies that keep intermediate results in fast SRAM. While this speeds up training and inference on longer sequences, the fundamental com-putational complexity remains quadratic. Unlike memory traffic, reducing com-putational cost without approximation is fundamentally impossible: N unique tokens communicating pairwise inherently generate N 2 interactions. The chal-lenge therefore becomes how to best trade approximation error for computational efficiency. Various approaches have explored this trade-off, from sparse attention patterns that limit which tokens interact [1, 4, 29] to token merging methods that reduce the number of tokens processed [2]. These methods generally modify the trans-former’s structure by dropping or restricting token interactions. Vector-quantized attention offers an alternative by clustering keys into M representative code-words where M < N implies reducing complexity to O(M N ). This approach has shown promise [19], but introduces a new challenge: the codebook must be chosen in advance, applying uniform quantization quality across all regions of the key space. During inference, regions receiving high attention mass may suffer from coarse approximation, while low-attention regions waste representa-tional capacity on unnecessary precision. This challenge parallels a well-studied problem in quantization research. Traditional adaptive quantization methods al-locate more representational capacity, i.e. bitwidth, to important features while applying coarser quantization elsewhere. These techniques have proven effective across various domains, from image compression to neural network quantization, by concentrating limited resources where they matter most [9, 36, 37]. Inspired by adaptive quantization techniques, we propose Adaptive Vector Quan-tized (AVQ) Attention. Attention naturally provides an importance signal: by AVQ-Attention: Adaptive Vector-Quantized Attention 3
+
+measuring how much attention mass each cluster in key space receives during the forward pass, we obtain a direct importance measure—without the need to design one separately, as in standard adaptive quantization. We use this signal to dynamically allocate codebook capacity where it matters most. Concretely, we start from a set of parent codewords and compute VQ-Attention while ex-tracting per-codeword importance scores. The top-P most important parents are then refined with their pre-learned child codewords, creating finer quantization in high-attention regions of key space while leaving low-attention regions at the coarser parent level. This refinement adapts dynamically to each input, concen-trating codebook capacity based on where that specific input’s attention mass falls (see Fig. 1). Implementing this adaptive refinement efficiently within Flash Attention’s tiled framework is non-trivial: the attention weights needed to determine per-codeword importance scores are never materialized—they only exist momentarily at the tile level and are immediately consumed. However, we show that Flash Atten-tion’s incremental computation can in fact synergize with our approach: just as Flash Attention builds up attention over blocks of keys via online softmax, AVQ-Attention first computes attention over parent codewords, then incrementally refines it with blocks of children. A geometric constraint on the codebook—each parent equals the mean of its children—allows parent contributions to be re-covered directly from the child logits already being computed, enabling efficient in-register correction without revisiting parent codewords. We show that this maintains O(M N ) complexity matching standard VQ-attention while enabling adaptive allocation. We experimentally validate AVQ-Attention on image classification (ImageNet-1k), semantic segmentation (ADE20K), and high-resolution image generation (Stable Diffusion). We demonstrate improved accuracy-efficiency trade-offs over fixed-codebook VQ-attention and competitiveness with a range of existing efficient-attention methods. Moreover, we show that (A)VQ-attention can be applied post-hoc to pretrained transformers and fine-tuned in a small number of epochs, analogous to quantization-aware training for model compression. In summary, our contributions include the following. 
+
+– A hierarchical VQ-codebook with a constrained parent-child structure, and a training procedure that learns the codebook end-to-end. 
+
+– A Flash Attention-compatible mechanism that efficiently increments refine-ments of the attention output. 
+
+– Custom Triton [31] kernels that improve VQ-attention wall-clock perfor-mance by fusing operations and minimizing memory traffic, applicable to both flat and adaptive codebooks. 
+
+– A linear complexity attention variant combining these techniques to dynam-ically allocate compute capacity based on attention importance, adapting to each input at inference time. We validate this experimentally, demon-strating improved accuracy-efficiency trade-offs compared to fixed-codebook VQ-attention. 4 W. van den Dool et al. 
+
+## 2 Related Work 
+
+Adaptive quantization allocates representational capacity unevenly based on im-portance, applying higher precision where it matters most [36, 37]. While these methods typically require a separate mechanism to estimate importance, in the attention setting we can use attention weights directly, alleviating the need for sensitivity analysis [37], learned metrics [30], or auxiliary models [9]. This insight has also been used to guide mixed-precision KV-cache quantization, allocating higher bitwidth to tokens receiving more attention [40]. However, adaptivity in the context of VQ-attention can be significantly more effective: rather than vary-ing the precision of N token interactions, VQ-attention reduces the number of interactions itself from N to M codewords, directly addressing the complexity bottleneck. 
+
+Vector-Quantization has been explored as a means to reduce the quadratic complexity of attention by clustering keys into a smaller set of representative codewords. By attending over codewords rather than individual keys, vector-quantized (VQ) attention reduces computational complexity from O(N 2) to 
+
+O(M N ), where M ≪ N is the codebook size. Prior work on VQ-attention [19] demonstrates that this approach can achieve favorable efficiency–accuracy trade-offs, but relies on a fixed codebook that applies uniform quantization quality across the key space. We build most directly on this line of work, extending VQ-attention in two directions. First, we implement VQ-attention using custom Triton kernels compatible with Flash Attention’s tiled computation, minimiz-ing memory traffic. Prior VQ-attention work targets the long-context regime where N ≫ M and the O(M N ) ≪ O (N 2) complexity gap alone provides large speedups. We first identify opportunities to fuse the sequential steps of VQ-attention into kernels that keep memory bandwidth low, widening the gap with standard attention at large N as the codebook grows. Additionally, it makes VQ-attention competitive already at moderate sequence lengths where the com-plexity gap is less pronounced and memory bandwidth plays a more significant role. Second, and more centrally, we replace the fixed codebook with an adap-tive one that dynamically allocates additional codewords to regions of the key space receiving high attention mass, improving approximation quality where it matters most. 
+
+Clustered attention approximates full attention by grouping queries into clus-ters and computing attention once per cluster centroid, achieving linear complex-ity [35]. This assumes queries within a cluster produce similar attention patterns. Our approach clusters keys rather than queries, so every query retains its own attention pattern over the compressed codeword set. Token merging (ToMe) merges similar tokens into aggregated representations, either permanently re-ducing the token count and compounding the approximation across layers [2], or requiring per-block unmerging to restore the full token set [3]. Moreover, finding merge candidates requires computing pairwise token similarities, which is itself quadratic. AVQ-Attention: Adaptive Vector-Quantized Attention 5
+
+Sparse attention methods reduce the quadratic cost of attention by restricting computation to a subset of token–token interactions, whether through fixed pat-terns [1, 4], content-based routing [29], locality-sensitive hashing [16], attention-derived selection [39], KV-cache eviction [17], or hierarchical key selection for long-context inference [14, 23]. In contrast, our method preserves dense atten-tion semantics: all keys contribute through their codeword, effectively replacing a binary keep-or-discard decision with a graduated one where less important regions receive coarser approximation rather than being removed entirely. 
+
+Linear and low-rank attention methods replace the softmax kernel with a de-composable feature map, enabling O(N ) complexity via associativity of matrix multiplication [15]. Low-rank methods such as Linformer [38] project keys and values to a lower-dimensional space. Both families modify the attention mecha-nism itself, whereas our approach preserves standard softmax attention. 
+
+## 3 Preliminaries 
+
+3.1 Self-Attention 
+
+Standard scaled dot-product attention [33] computes outputs as weighted aver-ages of value vectors, where weights are determined by query-key similarities: 
+
+Yi =
+
+PNj=1 exp( QiK⊤ 
+
+> j
+
+)Vj
+
+PNl=1 exp( QiK⊤ 
+
+> l
+
+) (1) where Qi, K j , V j ∈ Rd are query, key, and value vectors for tokens i and j. This formulation requires O(N 2d) operations to compute all query-key dot products. It is common to scale key-query dot products by 1/√d; we omit this for clarity. 
+
+3.2 Vector-Quantized Attention 
+
+VQ-attention reduces complexity by replacing keys with quantized represen-tations from a codebook {Ca}Ma=1 where M ≪ N . Each key is assigned to its nearest codeword (with slight abuse of notation, we use a both as the assignment function and as a codeword index): 
+
+ˆKj = Ca(Kj ), where a(Kj ) = arg min  
+
+> a
+
+∥Ca − Kj ∥2 (2) We can rewrite attention by grouping keys that map to the same codeword. Define: 
+
+na = |{ j : a(Kj ) = a}| , ¯Va = X 
+
+> j:a(Kj)= a
+
+Vj (3) as the count and total aggregated value for codeword a. Then 
+
+Yi ≈
+
+PMa=1 exp( QiC⊤ 
+
+> a
+
+) ¯Va
+
+PMa=1 exp( QiC⊤ 
+
+> a
+
+)na
+
+, (4) 6 W. van den Dool et al. 
+
+where the approximation error comes solely from key quantization. Indeed, the equivalence to quantized-key attention follows from regrouping the sums: 
+
+X
+
+> j
+
+exp( QiK⊤ 
+
+> j
+
+)Vj ≈ X
+
+> j
+
+exp( Qi ˆK⊤ 
+
+> j
+
+)Vj
+
+= X
+
+> a
+
+X 
+
+> j:a(Kj)= a
+
+exp( QiC⊤ 
+
+> a
+
+)Vj
+
+= X
+
+> a
+
+exp( QiC⊤ 
+
+> a
+
+) ¯Va
+
+and similarly for the denominator. 
+
+3.3 Flash Attention 
+
+Flash Attention [6, 7] computes attention without materializing the full N ×
+
+N matrix exp( QK ⊤), instead processing tiles that fit in on-chip SRAM. The algorithm maintains running numerators and denominators, scaled by a running maximum for numerical stability [24]. As we will see, this incremental structure synergizes naturally with our adaptive refinement. We adopt tile-level notation for the following sections: I and J denote contiguous index sets for query and key (or codeword) tiles respectively, with each tile assumed to fit in SRAM. Rewriting Eq. (1), the actual computation on hardware more closely resembles: 
+
+AIJ = exp( QI K⊤ 
+
+> J
+
+)
+
+XI (J) = AIJ VJ
+
+ZI (J) = X
+
+> j∈J
+
+AIj 
+
+YI =
+
+P 
+
+> J
+
+XI (J)
+
+P 
+
+> J
+
+ZI (J) .
+
+## 4 Method 
+
+4.1 Hierarchical Codebook 
+
+We describe the single-head, single-layer case; multi-head attention maintains one codebook per head. The codebook consists of M parent codewords {Cj }Mj=1 ,each with C children {Cj,c }C
+
+> c=1
+
+, giving M (1 + C) codewords in total, as children supplement rather than replace their parents. 
+
+Training. All codewords are learned via online k-means [22] with exponential moving averages (EMA) [25]. At each training step, keys are first quantized to their nearest parent, and parent centroids are updated via EMA. Each parent’s assigned keys are then further quantized among its C children, with the parent itself remaining as an option—keys that are already well-represented by the parent need not move to a child. Child centroids are updated via EMA on their respectively assigned keys (see Fig. 2). AVQ-Attention: Adaptive Vector-Quantized Attention 7Hierarchical codebook in key-space Constrained Online K-means      
+
+> Parent VQ
+> ,
+> Child VQ
+> ,
+> Parent EMA
+> ×
+> Child EMA
+> ×
+> Projection
+> training batch key token codeword
+> 12345
+
+Fig. 2: Hierarchical codebook in key space, illustrating the five online learning steps. 
+
+Left: An incoming training batch (gray dots) arrives at the existing codebook. 1 ○ Keys are assigned to the nearest parent codeword (thick Voronoi boundaries), then 2 ○ further quantized to child codewords within each parent’s cell (thin boundaries). Right: Zoom into one parent’s cell showing the codebook update. 3 ○ The parent updates its position via EMA over all keys in its cell. 4○ Each child updates independently via count-weighted EMA. 5○ Children are projected to restore the constraint Cp = 1
+
+> C
+
+P 
+
+> c
+
+Cp,c ;heavier children (larger nc) resist displacement more (Sec. A). 
+
+Parent-child constraint. We impose the constraint that each parent equals the mean of its children: 
+
+Cp = 1
+
+C
+
+> C
+
+X
+
+> c=1
+
+Cp,c  (5) Since the unconstrained EMA updates on children will generally violate this, we project child positions back onto the constraint surface after each update via a closed-form mass-weighted projection (see Sec. A). This constraint is central to our method: it enables efficient removal of parent attention contributions at inference time, as we show in Sec. 4.3. At inference, all codeword positions are fixed. 
+
+4.2 Vector Quantization for (A)VQ-Attention 
+
+Before computing attention, each key must be assigned to a codeword. Unlike standard vector quantization, which only requires assignments, the vector quan-tization step in VQ-attention must additionally aggregate the values and counts per codeword ( ¯Va and na in Eq. (3)), since these serve as the inputs to the sub-sequent attention computation. We compute both assignments and aggregates 8 W. van den Dool et al. BLOCK_N = 32 
+
+> (25 tiles)
+> BLOCK_N = 64
+> (13 tiles)
+> BLOCK_N = 128
+> (7 tiles)
+
+Fig. 3: Spatial locality of query tiles under Gilbert curve reordering [34] on a 28 ×28 
+
+patch grid. Tokens are reordered along a Gilbert space-filling curve (gray line) so that contiguous tiles (colored regions) form spatially compact 2D regions, regardless of tile size. Since each tile independently selects which parents to refine, spatial compactness ensures that queries sharing a refinement decision attend to similar regions. 
+
+for the full codebook tree in a single fused kernel pass over the keys. Each key is first assigned to its nearest parent among M0 root codewords. Then, it is compared against only the C children of its assigned parent, and reassigned if a child is closer than the (cached) parent distance. At each level, the key’s value is scattered to the assigned codeword, accumulating ¯Va and na.The tree structure makes this efficient: the cost per key is O(M0 + C) distance computations, yielding a codebook with Mtotal = M0(1+ C) codewords. One may be tempted to defer the computation of child codeword aggregates until after the most important parents have been identified, computing only for children that will actually be used. However, precomputing the full tree brings two key advantages: 
+
+– Reduced HBM traffic. The subsequent attention kernel can remain fully fused: after computing attention over parent codewords and determining importance, child aggregates are immediately available, and the kernel can proceed to refine without interrupting to perform additional vector quan-tization. This avoids writing and re-reading intermediate accumulators to global memory. 
+
+– Per-query-tile amortization and adaptivity . The precomputed aggre-gates are shared across all query tiles, amortizing the VQ cost. Each tile may then independently select different parents for refinement, making the method adaptive not only per input, but per query tile. To ensure that queries within a tile attend to similar spatial regions, we reorder tokens along a Gilbert space-filling curve [34], a generalization of the Hilbert curve to non-power-of-two grids. This produces spatially compact tiles regardless of tile size, allowing different regions of the input to refine different parts of the codebook (see Fig. 3, Sec. H). AVQ-Attention: Adaptive Vector-Quantized Attention 9
+
+Algorithm 1 VQ Precompute kernel. 
+
+Input: K, V ∈ RBH ×N ×D , C ∈ RH×Mtotal ×D with Mtotal = M0(1 + C)
+
+Output: ¯V ∈ RBH ×Mtotal ×D , n ∈ RBH ×Mtotal 
+
+1: Initialize ¯V = 0 , n = 0 
+
+2: for each (bh, Block N ) in parallel do  ▷ Separate GPU programs 3: k = K[bh, Block N ] ▷ [Block N , D ], stays in registers 4: v = V [bh, Block N ] ▷ [Block N , D ], stays in registers 
+
+// Parent assignment (tiled over M0 if codebook exceeds SRAM) 
+
+5: cp = C[h, 0 : M0] ▷ [M0, D ], loaded into SRAM 6: d = ∥k − cp∥2 ▷ [Block N , M 0] pairwise 7: a = arg min( d, axis =1) ; dbest = min( d, axis =1)  ▷ [Block N ] each 8: ¯V [bh, a] += v; n[bh, a] += 1  ▷ Atomic add 
+
+// Child assignment — children of parent m at C[h, M 0 + mC : M0 + ( m+1) C]
+
+9: c0 = M0 + a · C  ▷ [Block N ] first-child index per key 10: dchild = full (Block N , ∞); c∗ = c0
+
+11: for c = 0 , . . . , C − 1 do 
+
+12: ccode = C[h, c0 + c] ▷ [Block N , D ]
+
+13: dc = ∥k − ccode ∥2 ▷ [Block N ]
+
+14: where dc < dchild : dchild = dc, c∗ = c0 + c
+
+15: end for 
+
+16: where dchild < dbest : ¯V [bh, c∗] += v; n[bh, c∗] += 1  ▷ Masked atomic add 17: end for 
+
+VQ-attention introduces several sequential operations — quantization, value ag-gregation, and attention — with intermediate results passing through global memory. While O(M N ) complexity guarantees asymptotic efficiency, we im-prove wall-clock performance by fusing quantization and value aggregation into a single kernel that keeps each key in registers across both parent and child as-signment. Each key’s value is then scattered directly to its assigned codeword’s accumulator via atomic operations at the tile level. The reduced memory traf-fic becomes increasingly important as N and M grow, and additionally allows VQ-attention to compete with Flash Attention already at moderate sequence lengths where the complexity gap alone is insufficient. While we present this for AVQ-attention, the fused VQ kernel is equally an improvement for standard VQ-attention. We provide pseudocode in Algorithm 1. 
+
+4.3 Computing (A)VQ-Attention with Flash Attention 
+
+Tiled VQ-attention. The VQ-attention formulation maps directly to Flash At-tention’s tiling strategy. Continuing with the notation from Sec. 3.3, we replace 
+
+KJ with CJ , so that indices J and j now refer to codewords rather than keys. We write ¯Vj = P  
+
+> k:a(Kk)= j
+
+Vk for the aggregated values per codeword. The key difference from standard attention is that each codeword represents nj keys, so the denominator accumulates counts rather than row sums: 10 W. van den Dool et al. 
+
+AIJ = exp( QI C⊤ 
+
+> J
+
+)
+
+XI (J) = AIJ ¯VJ
+
+ZI (J) = AIJ nJ
+
+¯XI = X
+
+> J
+
+XI (J), ¯ZI = X
+
+> J
+
+ZI (J)
+
+YI = ¯XI / ¯ZI
+
+(6) where nj denotes the count of keys quantized to codeword Cj . The accumulators 
+
+¯XI and ¯ZI are built up incrementally across tiles using the online softmax trick for numerical stability, as in Flash Attention. We leave the subtraction of a stable maximum in the exponent implicit throughout the text; the pseudocode in Algorithm 2 shows the full computation and Sec. D discusses the choice of running maximum in the presence of codeword counts. 
+
+Codeword importance. We can use AIJ and the accumulated denominator ¯ZI to extract per-codeword importance scores. We define importance for each query tile I as: 
+
+wj (I) = X
+
+> i∈I
+
+Aij · nj
+
+¯Zi
+
+(7) where ¯Zi is the i-th element of ¯ZI . Importance is thus computed from the de-nominator that the online softmax accumulation already maintains, at minimal extra cost. When M0 is small enough that all codewords fit in SRAM, ¯Zi is exact after a single pass; for larger M0 requiring tiling over codewords, an approximate denominator can be used (see Sec. B). 
+
+Child spawning. For each query tile I, the top-P parents by importance are selected for refinement. For each selected parent, its C (contiguous) children are looked up in the codebook tree. Child aggregated values ¯Vc and counts nc are im-mediately available, having been precomputed by the VQ kernel (Algorithm 1). Together with the child codewords Cp,c loaded from the codebook, this provides everything needed for child attention. 
+
+Child attention. When children are added, some keys shift from their originally assigned parent to a closer child codeword. The parent’s aggregated values ¯Vp
+
+and counts np no longer fully represent these keys, so its contribution in the accu-mulators ¯XI and ¯ZI must be corrected. Crucially, we want to avoid recomputing the parent logits Sip := QiC⊤ 
+
+> p
+
+for two reasons: it would cost extra FLOPs, and it would require keeping parent codewords in SRAM while processing children. We structure the computation as a tiled Flash Attention pass where the first tile(s) consist of parents and subsequent tiles consist of children. To correct the parent contribution without revisiting it, we exploit the parent-child constraint (Eq. (5)): since Cp = 1
+
+> C
+
+P 
+
+> c
+
+Cp,c , we have 
+
+Sip = QiC⊤ 
+
+> p
+
+= 1
+
+C
+
+> C
+
+X
+
+> c=1
+
+QiC⊤ 
+
+> p,c
+
+= 1
+
+C
+
+> C
+
+X
+
+> c=1
+
+Sic  (8) AVQ-Attention: Adaptive Vector-Quantized Attention 11 
+
+so parent logits are recovered directly from the child logits already being com-puted. Since children are stored contiguously in the codebook, the sum in Eq. (8) reduces over adjacent entries in a register tile and adds negligible cost. We then define the correcting attention :
+
+∆A ic = exp( Sic ) − exp( Sip ) (9) Updating the accumulators with ∆A in place of A implicitly removes the parent’s contribution for keys that moved to children and replaces it with their respective child’s attention weight (derivation in Sec. C). This requires only a single dot product per parent tile. Pseudocode for the full fused attention kernel is given in Algorithm 2. 
+
+Algorithm 2 Flash AVQ-Attention kernel. 
+
+Input: Q ∈ RBH ×N ×D , C ∈ RH×Mtotal ×D , ¯V ∈ RBH ×Mtotal ×D , n ∈ RBH ×Mtotal 
+
+Output: Y ∈ RBH ×N ×D
+
+1: for each (bh, Block N ) in parallel do  ▷ Separate GPU programs 2: q = Q[bh, Block N ] ▷ [Block N , D ], stays in registers 3: c = C[h, 0 : M0]; ¯v = ¯V [bh, 0 : M0]; n = n[bh, 0 : M0] ▷ Into SRAM 4: s = q c ⊤ ▷ [Block N , M 0] logits 5: m = max j: nj >0 s:,j  ▷ Stable max (empty codes excluded) 6: A = exp( s − m); A:,j = 0 ∀ j : nj =0 
+
+7: ¯x = A ¯v; ¯z = P 
+
+> j
+
+A:,j · nj
+
+8: wj = P 
+
+> i
+
+Aij nj / ¯zi ▷ [M0] importance (Eq. (7)) 
+
+// Top-P selection and child refinement 
+
+9: S = top-P(w) ▷ Selected parent indices 10: for each selected parent p ∈ S do  ▷ Optionally in ⌈P /Block P ⌉ tiles 11: Load cc, ¯vc, nc for children of p
+
+12: sc = q c ⊤ 
+
+> c
+
+▷ [Block N , C] child logits 
+
+// Online softmax merge 
+
+13: m′ = max  m, max c: nc>0 s:,c 
+
+
+
+14: ¯x = ¯ x · exp( m − m′); ¯z = ¯ z · exp( m − m′); m = m′
+
+// Parent correction via Eq. (8) 15: sp = 1
+
+> C
+
+P 
+
+> c
+
+sc ▷ Recover parent logits from children 16: Ac = exp( sc − m); Ap = exp( sp − m)
+
+17: ∆A = Ac − Ap; ∆A:,c = 0 ∀ c : nc=0 
+
+18: ¯x += ∆A ¯vc; ¯z += P 
+
+> c
+
+∆A:,c · nc
+
+19: end for 
+
+20: Y [bh, Block N ] = ¯ x / ¯z
+
+21: end for 
+
+Summary. The full AVQ-attention forward pass consists of two fused kernels (Fig. 4): VQ Precompute (Algorithm 1) and Flash Attention (Algorithm 2). Table 1 compares per-step costs with flat VQ-attention. 12 W. van den Dool et al. 
+
+> Cp
+> K
+> V
+
+VQ p
+
+> np
+> ¯Vp
+
+Attn p
+
+VQ c
+
+> nc
+> ¯Vc
+
+Attn c  
+
+> Cc
+> Y
+> Q
+> Kernel 1 Kernel 2
+> 1○2○
+
+Fig. 4: AVQ-Attention inference pipeline. Kernel 1 (VQ Precompute): keys and values are quantized against the parent codebook Cp, producing aggregated values ¯Vp and counts np. Child quantization reuses parent assignments 1○, so each key is compared only against the C children of its assigned parent. Kernel 2 (Flash Attention): Attn p
+
+computes attention over parent codewords and extracts importance. The online softmax accumulators and per-tile importance scores are carried forward 2○ to Attn c, which refines the top-P most important parents with child attention using correcting attention weights. 
+
+Table 1: Complexity comparison: flat VQ-attention ( M codewords) vs. AVQ-attention (M0 parents, C children per parent, P parents refined). 
+
+Step VQ-Attention AVQ-Attention 
+
+VQ assignment O(N M D ) O(N (M0 + C)D)
+
+Value aggregation O(N D ) O(N D )
+
+(Parent) Attention O(N M D ) O(N M 0D)
+
+Child attention — O(N PC D)
+
+Total FLOPs O(N M D ) O(N (M0 + PC )D)
+
+Codebook resolution M M0(1 + C)
+
+## 5 Experiments and Results 
+
+Starting from pretrained transformers, we replace attention layers with (A)VQ-attention and fine-tune for a small number of epochs. We evaluate on image clas-sification (ImageNet-1k [8]) using a ViT-Base [10] ( N =785 tokens, 85.8% top-1) and semantic segmentation (ADE20K [41]) using DPT-Large [27] ( N =901 to-kens, 49.0% mIoU). Full training details are in Sec. F. Figure 5 reports task performance vs. attention kernel time under identical training conditions. On both tasks, AVQ-attention consistently outperforms flat VQ-attention at compa-rable cost, confirming that adaptive codebook allocation improves the accuracy– efficiency trade-off. We further analyze codebook properties and attention-mass concentration in Sec. H. AVQ-Attention: Adaptive Vector-Quantized Attention 13 0.05 0.10 0.15 0.20 0.25         
+
+> Kernel time (ms)
+> 79.0
+> 79.5
+> 80.0
+> 80.5
+> 81.0
+> 81.5
+> 82.0
+> 82.5
+> 83.0
+> 83.5
+> Top-1 Accuracy (%)
+> 64
+> 128
+> 192
+> 256
+> 512
+> 32/8/4
+> 32/8/8
+> 64/8/8
+> 128/8/4
+> 64/16/8
+> 64/8/16
+> 128/16/8
+> ViT-Base / ImageNet-1k
+> 0.05 0.10 0.15 0.20 0.25 0.30 0.35 0.40
+> Kernel time (ms)
+> 38
+> 39
+> 40
+> 41
+> 42
+> 43
+> 44
+> 45
+> Mean IoU (%)
+> 64
+> 128
+> 192 256
+> 512
+> 32/8/4
+> 32/8/8
+> 64/8/8
+> 128/8/4
+> 128/8/8
+> 64/12/16
+> DPT-Large / ADE20K
+> VQ-Attention
+> AVQ-Attention
+
+Fig. 5: Task performance vs. attention kernel time (ms) for VQ-attention (blue, la-beled by M ) and AVQ-attention (red, labeled by M0/P/C). Left: Top-1 accuracy on ImageNet-1k ( N =785 ). Right: Mean IoU on ADE20K ( N =901 ). AVQ achieves higher quality than VQ at comparable cost on both tasks. 
+
+5.1 Scaling Analysis 
+
+The efficiency advantages of (A)VQ-attention grow with sequence length. To validate the complexity analysis from Tab. 1, we benchmark wall-clock kernel time across sequence lengths; Fig. 6 in the Appendix confirms the predicted lin-ear scaling with both N and the number of codewords (setup details in Sec. E). Table 2 reports absolute wall-clock times for the larger configurations most rel-evant to long-sequence deployment, including an unfused VQ baseline to iso-late the speedup from fusing the VQ precompute step. At N =65 ,536 , our fused AVQ-attention configurations are 81 –127 × faster than Flash Attention. For flat VQ-attention, comparing against the unfused baseline shows that fusing the VQ precompute step alone provides a ∼2× speedup. 
+
+5.2 Elastic Inference via Top-P Adjustment 
+
+Since P can be changed at inference time without retraining, a single model can trade speed for accuracy. Table 6 shows this for M0=64 , C=8 , trained with full spawning ( P=M0). We also report capture: the fraction of true attention weight falling on keys assigned to the selected P parents. At P=16 , capture exceeds 82% on both tasks and performance is within 0.3% of the maximum, explaining the diminishing returns at higher P.
+
+5.3 Comparison Across Efficient-Attention Methods 
+
+We compare against several representative efficient-attention methods (Tab. 3). AVQ reaches the highest mIoU at comparable kernel cost, confirming it is com-petitive as a drop-in replacement for the attention layer. 14 W. van den Dool et al. 
+
+Table 2: Wall-clock kernel time (ms) vs. sequence length N (B=4 , H =12 , D=64 ). For fair comparison, all methods use flash-attention-style kernels for the attention step; “unfused VQ” uses torch.compile ’d PyTorch only for VQ precompute, so the speedup to our fused rows isolates the contribution of fusing the VQ precompute step. AVQ configs denoted M0/P/C. Setup details in Sec. E. 
+
+Configuration N =1k N =4k N =16k N =64k 
+
+Baselines 
+
+Flash-Attn ( O(N 2)) 0.21 3.11 49.6 847 VQ-attn (unfused VQ) M =256 0.35 1.29 5.16 20.7 VQ-attn (unfused VQ) M =512 0.61 2.31 9.28 37.4 
+
+Ours (fused kernels) 
+
+VQ-attn M =256 0.18 0.66 2.62 10.6 VQ-attn M =512 0.30 1.10 4.40 17.9 AVQ-attn 64 /8/8 0.13 0.43 1.65 6.67 AVQ-attn 64 /16 /8 0.16 0.51 1.99 7.95 AVQ-attn 128 /8/8 0.17 0.60 2.37 9.46 AVQ-attn 128 /16 /8 0.21 0.67 2.59 10.4 
+
+Table 3: ADE20K (DPT-L); mIoU ± std from 3 seeds. All methods use an identical 30-epoch recipe to give each the chance to saturate (Sec. F). †not FA-compatible. 
+
+Method mIoU (%) Kernel (ms) 
+
+Flash Attention-v2 (baseline) 49.0 0.313 AVQ ( M0=32 , P=8 , C=8 ) 43.33 ± 0.12 0.116 Flat VQ ( M =128 ) 42.70 ± 0.08 0.103 Flat VQ ( M =192 ) 43.04 ± 0.05 0.164 Swin (window 7) [21] 42.90 ± 0.09 0.108 NATTEN (window 5) [11] 40.99 ± 0.21 0.126 Linformer ( k=64 ) [38] 38.80 0.139 Performer ( r=256 ) [5] 25.29 0.54 †
+
+5.4 High-Resolution Diffusion 
+
+We evaluate AVQ-attention in the Stable Diffusion 1.5 (SD1.5) UNet [28] fol-lowing the distillation setup of LinFusion [20]. We adopt the same distillation objective, data, and hyperparameters, training for 50k steps (half of their 100k). As the UNet’s inner-most self-attention blocks operate on only N ≤256 tokens, exact attention is already trivially cheap and a marginal part of the cost, leav-ing little to gain from replacing it. We therefore apply AVQ only to the five outer (level-0) blocks ( N =4096 ) and for one experiment also to the five level-1 blocks ( N =1024 ). Using ScaleCrafter [12] we further test the models on un-seen 1024 2 inference resolutions, making AVQ-attention handle token numbers up to N ≈16 k. We report FID [13] and CLIP score [26] on COCO [18] under LinFusion’s evaluation protocol in Table 4. AVQ-Attention: Adaptive Vector-Quantized Attention 15                                                       
+
+> Table 4: SD1.5 on COCO under the LinFusion protocol; FID, CLIP, and UNet forward time per denoising step. †additionally replaces the five level-1 ( N=1 k) blocks.
+> 512 2(train) 1024 2(w/ ScaleCrafter)
+> Method FID ↓CLIP ↑ms FID ↓CLIP ↑ms SD1.5 (FA-v2) 12.75 0.318 44.37 41.03 0.292 213.43 LinFusion (Mamba) 12.52 0.318 43.70 36.37 0.295 141.57 ToMe-SD ( r=0 .5)12.40 0.317 41.99 43.00 0.290 163.30
+> AVQ (ours)
+> M32P8C8 12.50 0.319 39.09 35.39 0.297 133.48 M64P16C8 12.51 0.320 39.50 35.65 0.296 135.06 M128P32C8 12.55 0.319 40.23 35.51 0.297 138.16 M64P16C8 ( +L1) †12.48 0.320 39.41 36.29 0.297 128.59
+
+## 6 Discussion and Conclusion 
+
+We have presented AVQ-attention, an adaptive extension of vector-quantized at-tention that dynamically allocates codebook capacity to regions of key space re-ceiving high attention mass. By combining a hierarchical codebook with importance-driven refinement, AVQ-attention achieves better task performance than flat VQ-attention at comparable cost. The experiments validate AVQ-attention as a general-purpose attention mechanism rather than targeting benchmark-specific performance: we take pretrained transformers, replace their attention layers, and fine-tune for only a few epochs. Our focus was on the controlled comparison be-tween AVQ, VQ and other efficient attention types, and given the promise of (A)VQ-attention as a competitive layer type, we leave the design of efficient end-to-end transformer architectures around it as future research. Some train-ing choices remain lightly explored. For instance, the optimal M0, P, and C
+
+likely vary across layers — some layers may need far fewer codewords (Sec. H) — making per-layer configuration an attractive direction. AVQ-attention facili-tates this by exposing informative measures such as captured attention mass and quantization error. The latter could additionally serve as a refinement criterion alongside importance, prioritizing parents whose children differ most from the parent representation. Together, these signals could enable efficient architecture search without full retraining. Beyond per-layer tuning, deeper hierarchies are a natural next step: each additional depth adds only PC codes to the attention cost while multiplying codebook resolution by C, potentially yielding exponential resolution growth for linear cost. 
+
+## Acknowledgements 
+
+This work is financially supported by Qualcomm Technologies Inc., the Univer-sity of Amsterdam, and the allowance Top consortia for Knowledge and Innova-tion from the Netherlands Ministry of Economic Affairs and Climate Policy. 16 W. van den Dool et al. 
+
+## References 
+
+1. Beltagy, I., Peters, M.E., Cohan, A.: Longformer: The long-document transformer. arXiv preprint 2004.05150 (2020), https://arxiv.org/abs/2004.05150 
+
+2. Bolya, D., Fu, C.Y., Dai, X., Zhang, P., Feichtenhofer, C., Hoffman, J.: Token merg-ing: Your vit but faster. In: International Conference on Learning Representations (ICLR) 2023 (2022), https://arxiv.org/abs/2210.09461 , oral presentation 3. Bolya, D., Hoffman, J.: Token merging for fast stable diffusion. arXiv preprint 
+
+2303.17604 (2023), https://arxiv.org/abs/2303.17604 
+
+4. Child, R., Gray, S., Radford, A., Sutskever, I.: Generating long sequences with sparse transformers. arXiv preprint 1904.10509 (2019), https://arxiv.org/abs/ 1904.10509 
+
+5. Choromanski, K., Likhosherstov, V., Dohan, D., Song, X., Gane, A., Sarlós, T., Hawkins, P., Davis, J., Mohiuddin, A., Kaiser, Ł., Belanger, D., Colwell, L., Weller, A.: Rethinking attention with Performers. In: ICLR (2021), https://arxiv.org/ abs/2009.14794 
+
+6. Dao, T.: FlashAttention-2: Faster attention with better parallelism and work par-titioning. In: ICLR (2024), https://arxiv.org/abs/2307.08691 
+
+7. Dao, T., Fu, D.Y., Ermon, S., Rudra, A., Ré, C.: Flashattention: Fast and memory-efficient exact attention with io-awareness. In: Advances in Neural Information Processing Systems. vol. 35 (2022), https://arxiv.org/abs/2205.14135 
+
+8. Deng, J., Dong, W., Socher, R., Li, L.J., Li, K., Fei-Fei, L.: ImageNet: A large-scale hierarchical image database. In: CVPR. pp. 248–255 (2009) 9. van den Dool, W., Zhdanov, M., Asano, Y.M., Welling, M.: Adaptive mesh-quantization for neural PDE solvers. arXiv preprint 2511.18474 (2025), https: //arxiv.org/abs/2511.18474 
+
+10. Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., Zhai, X., Unterthiner, T., Dehghani, M., Minderer, M., Heigold, G., Gelly, S., Uszkoreit, J., Houlsby, N.: An image is worth 16x16 words: Transformers for image recognition at scale. In: ICLR (2021), https://arxiv.org/abs/2010.11929 
+
+11. Hassani, A., Walton, S., Li, J., Li, S., Shi, H.: Neighborhood attention transformer. In: CVPR (2023), https://arxiv.org/abs/2204.07143 
+
+12. He, Y., Yang, S., Chen, H., Cun, X., Xia, M., Zhang, Y., Wang, X., He, R., Chen, Q., Shan, Y.: ScaleCrafter: Tuning-free higher-resolution visual generation with diffusion models. In: ICLR (2024), https://arxiv.org/abs/2310.07702 
+
+13. Heusel, M., Ramsauer, H., Unterthiner, T., Nessler, B., Hochreiter, S.: GANs trained by a two time-scale update rule converge to a local nash equilibrium. In: NeurIPS (2017), https://arxiv.org/abs/1706.08500 
+
+14. Hooper, C., Kim, S., Mohammadzadeh, H., Maheswaran, M., Zhao, S., Paik, J., Mahoney, M.W., Keutzer, K., Gholami, A.: Squeezed attention: Accelerating long context length LLM inference. In: Proc. Annual Meeting of the Association for Computational Linguistics (ACL) (2025), https://arxiv.org/abs/2411.09688 
+
+15. Katharopoulos, A., Vyas, A., Pappas, N., Fleuret, F.: Transformers are RNNs: Fast autoregressive transformers with linear attention. In: ICML (2020), https: //arxiv.org/abs/2006.16236 
+
+16. Kitaev, N., Kaiser, Ł., Levskaya, A.: Reformer: The efficient transformer. In: ICLR (2020), https://arxiv.org/abs/2001.04451 
+
+17. Li, Y., Huang, Y., Yang, B., Venkitesh, B., Locatelli, A., Ye, H., Cai, T., Lewis, P., Chen, D.: Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems 37 , 22947–22970 (2024) AVQ-Attention: Adaptive Vector-Quantized Attention 17 18. Lin, T.Y., Maire, M., Belongie, S., Hays, J., Perona, P., Ramanan, D., Dollár, P., Zitnick, C.L.: Microsoft COCO: Common objects in context. In: ECCV (2014), 
+
+https://arxiv.org/abs/1405.0312 
+
+19. Lingle, L.D.: Transformer-vq: Linear-time transformers via vector quantization. In: International Conference on Learning Representations. vol. 2024, pp. 6121–6150 (2024) 20. Liu, S., Yu, W., Tan, Z., Wang, X.: LinFusion: 1 GPU, 1 minute, 16K image. arXiv preprint arXiv:2409.02097 (2024), https://arxiv.org/abs/2409.02097 
+
+21. Liu, Z., Lin, Y., Cao, Y., Hu, H., Wei, Y., Zhang, Z., Lin, S., Guo, B.: Swin Trans-former: Hierarchical vision transformer using shifted windows. In: ICCV (2021), 
+
+https://arxiv.org/abs/2103.14030 
+
+22. Lloyd, S.P.: Least squares quantization in PCM. IEEE Transactions on Information Theory 28 (2), 129–137 (1982) 23. Mao, Y., Wang, Q., Ester, M., Li, K.: IceCache: Memory-efficient KV-cache man-agement for long-sequence LLMs. In: ICLR (2026), https://arxiv.org/abs/2604. 10539 
+
+24. Milakov, M., Gimelshein, N.: Online normalizer calculation for softmax. arXiv preprint arXiv:1805.02867 (2018), https://arxiv.org/abs/1805.02867 
+
+25. van den Oord, A., Vinyals, O., Kavukcuoglu, K.: Neural discrete representation learning. In: NeurIPS (2017), https://arxiv.org/abs/1711.00937 
+
+26. Radford, A., Kim, J.W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sas-try, G., Askell, A., Mishkin, P., Clark, J., Krueger, G., Sutskever, I.: Learning transferable visual models from natural language supervision. In: ICML (2021), 
+
+https://arxiv.org/abs/2103.00020 
+
+27. Ranftl, R., Bochkovskiy, A., Koltun, V.: Vision transformers for dense prediction. In: ICCV. pp. 12179–12188 (2021), https://arxiv.org/abs/2103.13413 
+
+28. Rombach, R., Blattmann, A., Lorenz, D., Esser, P., Ommer, B.: High-resolution image synthesis with latent diffusion models. In: CVPR (2022), https://arxiv. org/abs/2112.10752 
+
+29. Roy, A., Saffar, M., Vaswani, A., Grangier, D.: Efficient content-based sparse atten-tion with routing transformers. Transactions of the Association for Computational Linguistics 9, 53–68 (2021) 30. Tang, C., Ouyang, K., Wang, Z., Zhu, Y., Ji, W., Wang, Y., Zhu, W.: Mixed-precision neural network quantization via learned layer-wise importance. In: Euro-pean Conference on Computer Vision (ECCV) (2022) 31. Tillet, P., Kung, H.T., Cox, D.: Triton: An intermediate language and compiler for tiled neural network computations. In: Proceedings of the 3rd ACM SIGPLAN In-ternational Workshop on Machine Learning and Programming Languages (MAPL). pp. 10–19 (2019) 32. Vali, M.H., Bäckström, T., Solin, A.: Diveq: Differentiable vector quantization using the reparameterization trick. arXiv preprint arXiv:2509.26469 (2025) 33. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.N., Kaiser, Ł., Polosukhin, I.: Attention is all you need. In: NeurIPS. pp. 5998–6008 (2017), 
+
+https://arxiv.org/abs/1706.03762 
+
+34. Červený, J.: Gilbert: Generalized Hilbert (“Gilbert”) space-filling curve for rect-angular domains of arbitrary (non-power of two) sizes. https://github.com/ jakubcerveny/gilbert (2018), gitHub repository 35. Vyas, A., Katharopoulos, A., Fleuret, F.: Fast transformers with clustered atten-tion. In: Advances in Neural Information Processing Systems (NeurIPS) (2020), 
+
+https://arxiv.org/abs/2007.04825 , arXiv:2007.04825 18 W. van den Dool et al. 36. Wallace, G.K.: The JPEG still picture compression standard. Communications of the ACM 34 (4), 30–44 (1991) 37. Wang, K., Liu, Z., Lin, Y., Lin, J., Han, S.: HAQ: Hardware-aware automated quantization with mixed precision. In: IEEE Conference on Computer Vision and Pattern Recognition (CVPR). pp. 8612–8620 (2019) 38. Wang, S., Li, B.Z., Khabsa, M., Fang, H., Ma, H.: Linformer: Self-attention with linear complexity. arXiv preprint arXiv:2006.04768 (2020), https://arxiv.org/ abs/2006.04768 
+
+39. Yuan, J., Gao, H., Dai, D., Luo, J., Zhao, L., Zhang, Z., Xie, Z., Wei, Y., Wang, L., Xiao, Z., et al.: Native sparse attention: Hardware-aligned and natively trainable sparse attention. In: Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). pp. 23078–23097 (2025) 40. Zhang, Z., Sheng, Y., Zhou, T., Chen, T., Zheng, L., Cai, R., Song, Z., Tian, Y., Ré, C., Barrett, C., Wang, Z., Chen, B.: H 2O: Heavy-hitter oracle for efficient generative inference of large language models. In: Advances in Neural Information Processing Systems (NeurIPS) (2023) 41. Zhou, B., Zhao, H., Puig, X., Fidler, S., Barriuso, A., Torralba, A.: Scene parsing through ADE20K dataset. In: CVPR. pp. 633–641 (2017) AVQ-Attention: Adaptive Vector-Quantized Attention 19 
+
+## A Codeword Clustering During Training 
+
+During training, we maintain codebook positions through exponential moving averages (EMA) while enforcing the parent-child constraint Cp = 1
+
+> C
+
+PC 
+
+> c=1
+
+Cp,c .This section describes how we update codewords when new data arrives at time 
+
+t + 1 .
+
+Dual representation for codewords. Let p be a parent with C children. For each child c, we maintain two representations. 
+
+– Unconstrained EMA statistics : (Sc, N c) accumulate keys assigned to child c via standard EMA, tracking where it would naturally cluster without constraints. These define unconstrained means Mc = Sc/N c.
+
+– Constrained positions : Cp,c are the actual codeword positions used for quantization and attention, derived from the unconstrained statistics while satisfying the constraint Cp = 1
+
+> C
+
+P 
+
+> c
+
+Cp,c .The unconstrained statistics (Sc, N c) preserve the full EMA history of where data naturally lies, while the constrained positions enforce the geometric relationship with the parent. 
+
+Parent update and child adjustment. When new keys arrive at time t + 1 , we update each code’s EMA statistics: 
+
+S(t+1)  
+
+> x
+
+= λS (t) 
+
+> x
+
++ (1 − λ) X
+
+> k:ˆk=C(t)
+> x
+
+k (10) 
+
+N (t+1)  
+
+> x
+
+= λN (t) 
+
+> x
+
++ (1 − λ)|{ k : ˆk = C(t) 
+
+> x
+
+}|  (11) where λ is the EMA decay rate. For parents we use no constraints and set 
+
+C(t+1)  
+
+> p
+
+= M (t+1)  
+
+> p
+
+= S(t+1)  
+
+> p
+
+/N (t+1)  
+
+> p
+
+directly. However, updating children using the same direct C(t+1)  
+
+> c
+
+= M (t+1)  
+
+> c
+
+would violate the parent-child constraint. To restore the constraint with minimal disruption, we solve the mass-weighted least-squares problem: 
+
+min 
+
+> Cp, 1,...,C p, C
+> C
+
+X
+
+> c=1
+
+Nc∥Mc − Cp,c ∥2
+
+subject to: 1
+
+C
+
+> C
+
+X
+
+> c=1
+
+Cp,c = Cp
+
+Via Lagrange multipliers, this yields a closed-form projection. Defining the con-straint residual δ(t+1) = P 
+
+> c
+
+M (t+1)  
+
+> c
+
+−C C(t+1)  
+
+> p
+
+and the harmonic weight σ(t+1) =
+
+P 
+
+> c
+
+1/N (t+1)  
+
+> c
+
+:
+
+C(t+1)  
+
+> p,c
+
+= M (t+1)  
+
+> c
+
+− δ(t+1) 
+
+N (t+1)  
+
+> c
+
+· σ(t+1)  (12) 20 W. van den Dool et al. 
+
+Each child is pulled toward the constraint surface by an amount inversely pro-portional to its mass—heavier children (larger Nc) resist displacement more. These adjusted positions are used when children receive new data in the next step, while maintaining the constraint with the updated parent. 
+
+## B Computing Importance with Tiled Codewords 
+
+When M0 is too large for all codewords to fit in SRAM, the attention pass must tile over codewords. Computing importance wj (Eq. (7)) in this setting presents a challenge: the denominator ¯Zi = P 
+
+> j′
+
+Aij ′ nj′ is only available after processing all codeword tiles, but we want to extract importance within each tile to avoid recomputing logits, and reduce it across queries within each tile to save memory. We address this by using an approximate denominator based on count-based extrapolation. Let t denote a tile index set for codewords, with t ≤ J meaning tile t is processed before or at tile J. After processing tiles up to J, the partial denominator P 
+
+> t≤J
+
+ZI (t) accounts for only those keys whose parent codewords have been visited. Let Nseen (J) = P
+
+> t≤J
+
+P 
+
+> j∈t
+
+nj be the total number of keys whose codewords have been processed so far. We extrapolate to the full key count: 
+
+˜ZI (J) := NNseen (J)
+
+X
+
+> t≤J
+
+ZI (t) (13) where N is the total number of keys. Codeword importance is then computed as in Eq. (7), but with the approximate denominator: 
+
+wj (I) = X
+
+> i∈I
+
+Aij · nj
+
+˜Zi(J) , j ∈ J,  (14) where J is the codeword tile containing j. After all codeword tiles are processed for a given query tile I, it has importance scores for all M0 codewords and inde-pendently selects its top-P parents for refinement. In our experimental settings, all relevant codebook sizes already fit within a single SRAM tile. To evaluate the approximation nonetheless, we train AVQ models with M0=256 , C=8 and force tiling into two tiles of 128 codewords each at evaluation time. Table 5 reports the fraction of true attention mass captured by the top-P parents selected via three methods: tiled importance (using the approximate denominator Eq. (13)), non-tiled importance (exact denominator from a single pass over all codewords), and exact selection (computing the full N ×N attention matrix and selecting the 
+
+P parents whose assigned keys receive the most true attention mass). 
+
+## C Correcting Attention Derivation 
+
+We show that updating the online softmax accumulators with the correcting attention ∆A ic = Aic − Aip correctly replaces the parent’s contribution with finer-grained child contributions. AVQ-Attention: Adaptive Vector-Quantized Attention 21 
+
+Table 5: Top-P capture (% of true attention mass) for M0=256 , C=8 with tile size 128. Tiled importance uses the count-based extrapolated denominator; non-tiled uses the exact denominator; exact selects the P parents with highest true attention mass, computed from the full attention matrix. 
+
+Dataset P Tiled Non-tiled Exact 
+
+ImageNet (ViT-Base) 24 71.6% 75.9% 80.1% ImageNet (ViT-Base) 32 77.7% 82.0% 85.5% ADE20K (DPT-Large) 24 80.0% 83.2% 84.3% ADE20K (DPT-Large) 32 85.9% 88.6% 89.4% 
+
+Let parent p have np assigned keys with aggregated values ¯Vp. After refinement, each child c receives nc keys with aggregated values ¯Vc; the remaining keys stay with the parent: 
+
+¯Vstay = ¯Vp −
+
+> C
+
+X
+
+> c=1
+
+¯Vc, nstay = np −
+
+> C
+
+X
+
+> c=1
+
+nc. (15) The initial attention pass included the parent’s contribution Aip ¯Vp in the nu-merator accumulator. The correct post-refinement contribution is Aip ¯Vstay +P 
+
+> c
+
+Aic ¯Vc, so the required correction is: 
+
+X
+
+> c
+
+Aic ¯Vc + Aip ¯Vstay − Aip ¯Vp = X
+
+> c
+
+Aic ¯Vc − Aip 
+
+X
+
+> c
+
+¯Vc. (16) Since Aip is constant across children, this factorizes into a single dot product: 
+
+X
+
+> c
+
+ Aic − Aip 
+
+ ¯Vc = X
+
+> c
+
+∆A ic ¯Vc (17) The denominator correction P 
+
+> c
+
+∆A ic nc follows identically. Thus the full cor-rection for both accumulators is computed with one dot product of ∆A against the child aggregates, without needing to load the parent codeword Cp, its ag-gregated values ¯Vp, or counts np, and without computing or storing the parent logits QiC⊤ 
+
+> p
+
+separately. 
+
+## D Numerical Stability of Online Softmax in VQ-Attention 
+
+The online softmax maintains a running maximum mi and computes all attention weights as exp( Sij −mi). The choice of mi does not affect the final result (it can-cels between numerator and denominator), but it controls numerical precision. In AVQ-attention, the refinement round introduces child codewords that may have zero assigned keys ( nc = 0 ). Since empty codewords are not constrained by any assigned keys, their logits Sic = QiC⊤ 
+
+> c
+
+can lie far from the populated region of key space. If such a codeword sets the running maximum to a value much 22 W. van den Dool et al. 
+
+larger than the previous maximum, the rescaling factor exp( mold − mnew ) could underflow to zero, destroying all previously accumulated attention information — even though the empty codeword contributes nothing to the output ( ¯Vc = 0 ,
+
+nc = 0 ). A natural idea is to redefine the logits as S′ 
+
+> ij
+
+= QiC⊤ 
+
+> j
+
++ ln nj , so that empty codewords ( nj = 0 , ln 0 = −∞ ) are automatically excluded from the maximum. However, this complicates the parent logit recovery in Eq. (8): without folded counts, parent logits are recovered as a simple average of child logits Sip =
+
+> 1
+> C
+
+P 
+
+> c
+
+Sic , which reduces over adjacent register entries at negligible cost. With modified logits, the counts must first be subtracted out: Sip = 1
+
+> C
+
+P
+
+> c
+
+(S′ 
+
+> ic
+
+−ln nc)+ ln np, requiring per-child counts alongside the logits. A simpler solution is to restrict the running maximum to non-empty codewords: 
+
+mi = max    
+
+> j:nj>0
+
+Sij  (18) This requires only a masked comparison (one bit per codeword) rather than an extra floating-point value per codeword. Empty codewords contribute nothing (both ¯Vj = 0 and nj = 0 ), but their attention weights exp( Sij −mi) may overflow in reduced precision since Sij can exceed mi. We therefore zero out Aij for empty codewords in the parent pass and ∆A ic for empty children in the refinement pass, preventing floating-point artifacts ( ∞ × 0 = NaN). 
+
+## E Benchmark Details 
+
+All wall-clock kernel times reported in the paper (Fig. 5, Tab. 2, Tab. 6, and Tab. 3) are measured on a single NVIDIA RTX 3090 (Ampere, SM 8.6, 24 GB) at batch size B=4 and head dimension D=64 , with H=12 heads for ViT-Base/ImageNet and H=16 for DPT-Large/ADE20K. The synthetic-length sweep in Tab. 2 uses N ∈ { 1024 , 4096 , 16384 , 65536 } (H=12 ). VQ and AVQ timings in-clude both the VQ precompute kernel and the attention kernel, launched via our fused two-kernel pipeline. Flash Attention uses PyTorch’s scaled_dot_product_attention 
+
+with the Flash Attention 2 backend. These kernel timings use Triton’s do_bench 
+
+utility (100 ms warmup, 200 ms measurement window, median reported), aver-aged over 3 independent runs. The per-denoising-step UNet times in Tab. 4 instead time the full UNet forward with CUDA graphs, on the same RTX 3090 at batch size B=2 .Figure 6 plots our VQ and AVQ kernel times against effective codebook size at each N , empirically confirming the predicted linear scaling with both N and codebook size. 
+
+## F Training Details 
+
+ImageNet-1k. We use a ViT-Base backbone (patch size 8, 224 ×224 input, N =785 
+
+tokens including class token) pretrained on ImageNet-21k [10]. All 12 atten-tion layers are replaced with (A)VQ-attention. We fine-tune for 4 epochs using AVQ-Attention: Adaptive Vector-Quantized Attention 23 10 2      
+
+> VQ codes per key ( Mor M0+C)
+> 10 1
+> 10 0
+> 10 1
+> time (ms)
+> VQ precompute
+> 10 2
+> Attn codes per query ( Mor M0+PC )
+> 10 1
+> 10 0
+> 10 1
+> Attention
+> VQ-attn
+> AVQ-attn
+> linear trend
+> N=64k
+> N=16k
+> N=4k
+> N=1k
+
+Fig. 6: Empirical verification of the complexity analysis in Tab. 1. Kernel time vs. ef-fective codebook size on log-log axes for VQ-attention (blue) and AVQ-attention (red), at four sequence lengths N (light to dark). Gray dashed lines indicate slope 1 (linear scaling). All kernels scale linearly with N (equidistant lines on the log scale for equal 4×
+
+increases in N ) and linearly with the number of codes, confirming O(( M0+C)N D ) for VQ precompute and O(( M0+PC )N D ) for attention. The precompute kernels appear slightly sub-linear in the number of codes; this is a fixed per-kernel overhead (launch cost, memory setup) that is amortized as the codebook grows. 
+
+AdamW with learning rate 10 −5, constant schedule with 1 epoch linear warmup, per-device batch size 64, and FP16 mixed precision. Data augmentation follows standard practice: RandomResizedCrop and RandomHorizontalFlip for training, Resize and CenterCrop for evaluation. Learnable key normalization (LayerNorm) stabilizes the key space and improves codebook training. The EMA decay is 
+
+λ = 0 .99 and the commitment loss weight is β = 0 .25 . For flat VQ-attention, we sweep codebook sizes M ∈ { 64 , 128 , 256 , 512 }. For AVQ-attention, children are initialized at scale 0.1 around their parent (i.e., Cp,c = Cp + 0 .1 · ϵ, ϵ ∼ N (0 , I )). Queries are reordered along a Gilbert space-filling curve for spatial tile locality. 
+
+ADE20K. We use DPT-Large [27] (pretrained on ADE20K, 480 ×480 input, 
+
+N =901 tokens) and replace all attention layers. We fine-tune for 10 epochs using AdamW with learning rate 10 −5, constant schedule with 10% linear warmup, per-device batch size 8, and FP16 mixed precision. The EMA decay warms up from 0.9 to 0.99 over the first 2 epochs (cosine schedule). All other VQ hyperparameters match the ImageNet setting. We select the best checkpoint by validation mIoU. 
+
+Efficient-attention comparison. For Tab. 3, all methods—including (A)VQ— use a common 30-epoch ADE20K recipe, otherwise identical to the above. The longer schedule, together with dead-code handling for VQ (Sec. G), lifts the 24 W. van den Dool et al.                                           
+
+> Table 6: Elastic inference ( M0=64 ,C=8 ): a single model trained with P=M0evaluated at varying P. Capture denotes the fraction of true attention weight on keys assigned to the selected Pparents. Eval P4812 16 24 32
+> ADE20K ( N=901 ,H=16 )
+> mIoU (%) 41.44 42.24 42.33 42.42 42.49 42.48 Capture (%) 49.7 68.0 78.5 85.3 93.1 97.0 Kernel ms 0.14 0.16 0.18 0.20 0.24 0.28
+> ImageNet ( N=785 ,H=12 )
+> Acc (%) 79.23 81.16 81.69 82.04 82.22 82.29 Capture (%) 47.5 65.4 75.8 82.7 91.0 95.6 Kernel ms 0.10 0.11 0.13 0.14 0.17 0.20
+
+(A)VQ numbers relative to the 10-epoch main experiments, so the values in Tab. 3 form a separate controlled comparison and are not directly comparable to Fig. 5. 
+
+## G Alternative VQ Training Methods 
+
+We learn the codebook with EMA-based online k-means (Sec. 4), a simple choice that we do not claim to be optimal. Codebook learning is largely orthogonal to the attention mechanism, so improvements developed for vector quantization in other settings transfer directly to (A)VQ-attention. We briefly explored replac-ing the straight-through estimator with a differentiable quantizer (DiVeQ [32]) and per-batch dead-code handling that reassigns nearest keys to underused code-words. Both improved results in our setting. We nonetheless report the simpler EMA recipe throughout for consistency; we expect the accuracy–efficiency trade-offs we present to be conservative, with room for orthogonal advances in vector quantization to improve them further. 
+
+## H Results Analysis 
+
+Below we report several supporting analyses of the trained AVQ models. 
+
+Elastic inference. Table 6 reports task performance, top-P capture, and kernel time for a single AVQ model ( M0=64 , C=8 ) trained at P=M0 and evaluated across a range of P.
+
+Per-head attention-mass concentration. Figure 7 reports top-P capture—the fraction of true attention mass on the keys assigned to a head’s P selected parents—for every attention head of the trained AVQ model ( M0=64 , C=8 ,evaluated at P=8 ). Capture varies considerably across heads within a layer on both backbones, and the head-mean is higher in the later layers. AVQ-Attention: Adaptive Vector-Quantized Attention 25 0 2 4 6 8 10        
+
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Top- capture (attention mass)  ImageNet (ViT-B, H=12)
+> min--max across heads
+> per head
+> head mean
+> 036912 15 18 21
+> Layer
+> ADE20K (DPT-L, H=16)
+
+Fig. 7: Per-head top-P capture (fraction of true attention mass on the P=8 selected parents) for AVQ-attention ( M0=64 , C=8 ), by layer: min–max across heads (shaded), individual heads (points), and the head mean (line). Left: ImageNet (ViT-Base, H=12 ;the final layer attends only from the CLS query). Right: ADE20K (DPT-Large, 
+
+H=16 ). 
+
+Per-layer codebook analysis. All experiments in this paper apply the same code-book configuration ( M0, C) uniformly across all attention layers. To investigate whether this is efficient, we run inference on our trained AVQ models and mea-sure the per-layer commitment loss E∥k − ˆk∥2, the mean squared distance between each key and its assigned codeword. Table 7 reports this for two code-book sizes on each dataset. Commitment loss varies 3–4 × across layers, with a consistent pattern across both datasets and codebook sizes: low in early layers, peaking in the middle layers (4–6), and decreasing again toward the end. In DPT-Large, the second half of the network (layers 12–23) has markedly lower commitment loss than the first half—below 5 throughout at M0=128 . Layer 0 combines low commitment loss with low codebook utilization (59–69% active ratio at M0=64 ). 
+
+Spatial reordering ablation. As described in Sec. 4, we reorder queries along a Gilbert space-filling curve so that contiguous tiles form spatially compact 2D regions. Since each tile independently selects which P parents to refine, spatial coherence ensures that queries sharing a refinement decision attend to similar parts of the image. We ablate this by evaluating a trained model ( M0=64 , P=16 ,
+
+C=8 ) under three query orderings— Gilbert (training configuration), raster (no reordering, tiles are thin horizontal strips), and random (destroys all locality)— and three tile sizes (Tab. 8). On ADE20K, Gilbert reordering improves mIoU by ∼0.2 percentage points over raster order across all tile sizes; on ImageNet, Gilbert and raster perform iden-tically ( ∼82 .0% ). In the ImageNet runs the final layer computes attention only for the CLS query, so patch-token ordering does not affect its parent selection. Random permutation is clearly harmful in both settings ( −1.8% accuracy on Im-ageNet, −0.8% mIoU on ADE20K). We observe no meaningful difference across tile sizes at the current sequence lengths. 26 W. van den Dool et al. 
+
+Table 7: Per-layer commitment loss E[∥k − ˆk∥2] for AVQ-attention ( C=8 ). Higher val-ues may indicate that the codebook provides insufficient resolution for that layer’s key distribution. This metric depends only on the codebook geometry and is independent of P.
+
+> ImageNet (ViT-Base)
+
+Layer M0=64 M0=128 
+
+0 8.0 7.2 1 13.5 11.6 2 23.1 23.0 3 21.9 22.9 4 23.8 25.0 5 27.2 30.1 6 24.4 27.8 7 22.4 26.6 8 19.8 24.1 9 16.9 22.5 10 14.6 21.2 11 9.0 14.7 
+
+> ADE20K (DPT-Large)
+
+Layer M0=64 M0=128 Layer M0=64 M0=128 
+
+0 6.9 4.7 12 11.5 4.7 1 10.5 5.1 13 8.8 3.3 2 15.0 7.3 14 6.5 2.3 3 20.0 10.8 15 6.3 2.2 4 24.3 14.6 16 6.7 2.4 5 21.1 11.9 17 7.3 2.6 6 22.0 12.4 18 6.0 2.0 7 22.8 12.3 19 4.3 1.3 8 21.8 12.5 20 4.6 1.3 9 17.3 8.3 21 5.2 1.4 10 18.1 9.4 22 6.2 1.7 11 14.1 6.1 23 5.9 1.6 
+
+Table 8: Effect of query reordering on AVQ-attention ( M0=64 , P=16 , C=8 ) for Im-ageNet classification (accuracy %) and ADE20K segmentation (mIoU %). Random results averaged over 2 seeds. ImageNet (acc. %) ADE20K (mIoU %) 
+
+Ordering 32 64 128 32 64 128 Gilbert 82.04 82.03 82.08 42.40 42.35 42.37 Raster 82.07 82.00 82.02 42.16 42.20 42.15 Random 80.18 80.20 80.22 41.37 41.39 41.40 
+
+Codebook utilization. A practical concern with VQ-attention is codebook uti-lization: as M grows, some codewords attract few or no keys. We measure this via the active ratio : the fraction of codewords whose assignment count over the full validation set exceeds 1% of the fair-share count Nval /M total (e.g., 
+
+0.01 ×50 ,000 ×785 /128 ≈ 3,000 for ImageNet at M =128 ), averaged across heads and layers. Table 9 reports active ratios for flat VQ-attention at varying M and for AVQ-attention across several configurations, under identical training settings. Flat VQ exhibits a clear downward trend in utilization as M grows: at M =512 ,nearly 10% of codewords fall below the active threshold. AVQ maintains sub-stantially higher utilization at much larger total codebook sizes: at Mtotal =576 ,AVQ achieves 97% utilization, and even at Mtotal =1152 it retains over 95%— better than flat VQ at M =256 . The hierarchical structure naturally encourages AVQ-Attention: Adaptive Vector-Quantized Attention 27 
+
+Table 9: Codebook active ratio for flat VQ and AVQ under identical training settings. Flat VQ utilization degrades as M grows, while AVQ maintains high utilization even at much larger total codebook sizes. The active ratio measures what fraction of code-words receive key assignments, forming the pool of codewords available for attention. In AVQ-attention, each query attends to only a subset of this pool, with different queries selecting different subsets. 
+
+Method Mtotal Active ratio 
+
+Flat VQ, M =64 64 97.6% Flat VQ, M =128 128 95.7% Flat VQ, M =256 256 93.4% Flat VQ, M =512 512 90.4% AVQ, 64 /8/8 576 97.0% AVQ, 64 /16 /8 576 97.0% AVQ, 128 /8/8 1152 95.4% AVQ, 128 /16 /8 1152 95.5% 
+
+full codebook usage: children are initialized near their parent, placing them in regions of key space where keys already concentrate.

@@ -1,0 +1,345 @@
+Title: How Query Visibility Changes KV-Cache Compression Rankings: A Matched-Budget Audit
+
+URL Source: https://arxiv.org/pdf/2607.11942v1
+
+Published Time: Wed, 15 Jul 2026 11:59:44 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# How Query Visibility Changes KV-Cache Compression Rankings: A Matched-Budget Audit 
+
+Daming Luo daming.luo@student.uts.edu.au University of Technology Sydney 
+
+Christy Liang Jie.Liang@uts.edu.au University of Technology Sydney 
+
+Junyu Xuan Junyu.Xuan@uts.edu.au University of Technology Sydney 
+
+## Abstract 
+
+KV-cache compression methods are predominantly evaluated with the query appended to the context before compression—a query-aware protocol. Yet the economic case for a compressed KV cache is reuse : compress a document once, answer many future questions against it. In that deployment, compression must happen query-agnostic —before any question is seen. We present a matched-budget audit of six published compression methods against three trivial baselines on three open 7–9B models (144,300 paired evaluations on RULER-8192; 40,800 on LongBench; 50,000-resample paired bootstrap throughout). Everything is held fixed—model, compression ratio, instances, decoding—except the scoring rule. Three findings. (1) Query visibility changes the rankings: under the agnostic protocol, of the five audited methods that share a common attention backend, only KeyDiff beats a best-of-3 trivial baseline consistently (31/36 cells), and the most widely deployed method, SnapKV, loses to “keep the start and the recent window” on average ( −0.066 ). (2) The per-method drop between the two protocols is ordered consistently with how visible the question is to each method’s scoring signal, legible in its source code: from ∆ =+ 0.198 for SnapKV (the question sits inside its 64-token observation window) down to ∆=+ 0.011 for KeyDiff (its score contains no query term at all). We advance this as a mechanistic hypothesis—ordinal evidence over six methods, not a fitted law. Under that reading, query-aware scores partly measure query relevance rather than the information importance that cache reuse requires. (3) The audit surfaced two reproducible methodological hazards: an attention-backend confound —swapping 
+
+sdpa for eager on an uncompressed model shifts RULER accuracy by −0.29 , larger than most method-vs-baseline gaps, which forces us to withdraw any ranking claim about the one method (H2O) that requires the eager backend—and a tokenizer-dependent benchmark length : RULER’s nominal “8192” overflows gemma-2’s positional budget by up to 30%, silently zeroing 7 of 13 subtasks even without compression. We release the audit harness, all per-instance records, and the paired statistics. 
+
+## 1 Introduction 
+
+Long-context inference is memory-bound: the KV cache of an 8B model at 128k tokens exceeds the weights themselves. A large literature therefore prunes the cache—score every cached token, evict the bottom fraction—and reports that 50–90% of the cache can be dropped with little accuracy loss. Most of that evidence is collected under one quiet convenience: the benchmark question is placed in (or after) the context before compression runs, so the compressor’s scoring pass sees the question . We call this the 1arXiv:2607.11942v1 [cs.LG] 11 Jul 2026 query-aware protocol. It matches a deployment in which every question re-reads and re-compresses the document—a deployment in which the KV cache buys almost nothing, because the dominant cost being amortised (prefill) is paid again per question. The setting that makes a compressed cache economically interesting is the opposite one: compress once, query many times —a contract interrogated by dozens of questions, a codebase queried all day. There, compression is necessarily query-agnostic : the question does not exist yet when eviction happens. The concern itself is not new. SCBench (Li et al., 2025) documents, across a KV-cache lifecycle benchmark, that query-dependent long-context methods degrade when the query is unavailable, and a recent line of methods is explicitly designed query-agnostic (Kim et al., 2025; Chari & Van Durme, 2025; Devoto et al., 2025). What the literature does not yet provide is a measurement : how large each published method’s dependence on query visibility is, isolated from every other variable. This paper asks that narrow, auditable question: 
+
+Under a matched budget, how much of each published method’s reported gain survives the move from query-aware to query-agnostic compression—and does the size of the drop track how the method’s scoring signal uses the question? 
+
+We answer it with an audit, not a new method. Six published presses (SnapKV, H2O, TOVA, ExpectedAtten-tion, AdaKV, KeyDiff) are run against three trivial baselines (random eviction, key-norm, StreamingLLM’s “start + recent window”) and a full-cache anchor, with model, ratio, instances and decoding held identical; only the press varies. Both protocols are run over the full grid, so the agnostic →aware delta is a within-model, within-instance paired contrast—the cleanest contrast the question admits. 
+
+Contributions. 
+
+1. A matched-budget audit protocol with trivial-baseline anchoring, exact per-instance pairing, enforced coverage checks, and a best-of-selection debias—plus two hazards we hit that any such audit must control: attention-backend mixing (§6.2) and dedup keys that omit the backend (§3.4). 2. A quantitative measurement of query dependence : per-method agnostic →aware deltas across three models under one unified protocol (§4.2), together with a mechanistic reading—the deltas are ordered consistently with the visibility of the question in each method’s score() implementation— which we state as a hypothesis supported by ordinal evidence over six methods, not as a fitted law (§5). 3. The deployment-protocol picture : under query-agnostic compression on RULER, of the five backend-comparable methods only the query-independent one (KeyDiff) beats the best-of-3 trivial baseline (31/36 cells, +0 .171 ), while SnapKV averages below it (13/36, −0.066 ); a LongBench check shows the picture survives on natural text in validity but not in exclusivity —other methods catch up or overtake (§4–6.1). 4. Two reproducible evaluation hazards : an attention-backend confound (eager vs. sdpa shifts pooled RULER accuracy by −0.221 , larger than most method-vs-baseline gaps; it removes H2O from our ranking conclusions) and tokenizer-dependent benchmark length (RULER’s nominal 8192 overflows gemma-2’s positional budget by up to 30%, silently zeroing 7 of 13 subtasks with no compression at all) (§6.2–6.3). We emphasise what this paper is not. It is not a new compression method, not an endorsement of KeyDiff, and not a claim that query-aware papers are wrong on their own terms—we reproduce SnapKV’s query-aware gain ( +0 .132 ). Nor is it the first observation that query visibility matters: Li et al. (2025) make that point qualitatively. It is the controlled, per-method quantification of the effect, and a documentation of what such an audit must hold fixed to be valid. 22 Background and related work 
+
+KV-cache eviction. H2O (Zhang et al., 2023) keeps “heavy hitters” by accumulated attention mass; SnapKV (Li et al., 2024) scores tokens by attention from the last 64 positions (an “observation window”); TOVA (Oren et al., 2024) uses the final token’s attention; AdaKV (Feng et al., 2025) reallocates a SnapKV-style budget per-head; ExpectedAttention (Devoto et al., 2025) scores by an analytic estimate of future query attention; KeyDiff (Park et al., 2025) departs from attention entirely and keeps tokens whose key vectors are angular outliers from the mean key direction. StreamingLLM (Xiao et al., 2024)—retain sink + recent window—is here demoted to a trivial baseline , alongside random eviction and the key-norm heuristic of Devoto et al. (2024), which retains low -norm keys (low key norm correlates with high attention). All presses as implemented in NVIDIA kvpress 0.5.4 (NVIDIA, 2025). 
+
+Shared-context evaluation and SCBench. The closest prior work is SCBench (Li et al., 2025), which evaluates long-context methods across a full KV-cache lifecycle (multi-turn and multi-request modes) and reports qualitatively that query-dependent compression—SnapKV in particular—struggles when the query is not visible at compression time. Our audit is narrower and, on that single point, sharper: we hold model, budget, instances and decoding fixed, pair every record, anchor against trivial baselines, and measure the per-method agnostic →aware delta with bootstrap confidence intervals—turning the qualitative warning into a quantity attributable to each scoring rule. The two efforts are complementary: SCBench varies the workload; we isolate the protocol variable. 
+
+Query-agnostic compression methods. A recent line of work designs for the reuse setting directly: KVzip (Kim et al., 2025) scores KV pairs by their contribution to reconstructing the context, Compactor (Chari & Van Durme, 2025) uses query-agnostic approximate leverage scores, and ExpectedAttention (Devoto et al., 2025) integrates over a modelled future-query distribution. Of these, ExpectedAttention is in our audit; KVzip’s multi-pass compression procedure does not fit a single-pass matched-budget harness, and Compactor is not implemented in the audited kvpress release (both are natural extensions, §7). Our results support this line’s motivation while adding a caution it inherits: on our grid the analytically query-agnostic ExpectedAttention still loses to a keep-start-plus-recent baseline (§4.2), so query-agnostic design does not by itself guarantee agnostic-protocol wins —which is what an audit is for. 
+
+## 3 The audit 
+
+3.1 Design principle: one variable 
+
+A cell of the audit fixes (model, benchmark axis, compression ratio, protocol arm) and varies only the press. Within a cell every press answers the same 650 instances with the same decoding (greedy, fixed 
+
+max_new_tokens ) at the same cache budget (uniform compression ratio r ∈ { 0.25 , 0.5, 0.75 , 0.9}). A Full-Cache anchor ( r=0 ) calibrates each cell’s headroom. 
+
+3.2 Presses and baselines 
+
+Six real presses: SnapKV, H2O (ObservedAttention), TOVA, ExpectedAttention, AdaKV, KeyDiff. Three 
+
+trivial presses: Random, Knorm (keep lowest-norm keys), StreamingLLM (keep first nsink + recent window). The comparison target throughout is best-of-3 trivial : the max of the three trivial scores per cell . This is deliberately adversarial to the real methods—a method that cannot beat the best of three near-zero-cost rules has no deployment case—and we correct the residual best-of-selection bias in §4.4. Empirically the best trivial is StreamingLLM in 27/36 agnostic cells, Knorm in 8, Random in 1: “beats best-of-3 trivial” in practice means “beats keep-start-plus-recent”. 
+
+3.3 Benchmarks, models, protocols 
+
+RULER-8192 (Hsieh et al., 2024): 13 subtasks, 650 instances, grouped into three axes—retrieval (needle variants), aggregation (CWE/FWE), multi-hop (VT/QA). LongBench (Bai et al., 2024) (16 English tasks 3Table 1: FullCache anchor scores per model and axis (agnostic arm, r=0). These delimit the headroom available to any press in the cells below them. 
+
+Model Retrieval Aggregation Multi-hop 
+
+Llama-3.1-8B 1.000 0.964 0.825 Qwen2.5-7B 0.993 0.948 0.753 R1-Distill-Qwen-7B 0.667 0.624 0.285 
+
+× 50 instances) serves as the natural-text robustness check (§6.1). Models: Llama-3.1-8B-Instruct (Meta), Qwen2.5-7B-Instruct (Alibaba), DeepSeek-R1-Distill-Qwen-7B (reasoning-tuned; shares Qwen lineage—it contributes statistical, not architectural, diversity, which we state as a limitation). A fourth lineage (gemma-2-9b) was disqualified by the benchmark itself (§6.3). 
+
+Protocol arms. Query-aware : the question is visible to the press’s scoring pass. Query-agnostic : the context is compressed first; the question is appended after eviction. Both arms share everything else, so per-instance differences within (model, press, ratio) isolate the protocol. 
+
+Scale. RULER grid: 3 models × 2 arms × (1 anchor + 9 presses × 4 ratios) × 650 instances = 144,300 records, zero errors, zero holes (coverage enforced programmatically; 331 OOM holes detected and refilled during the run). LongBench adds 40,800 records; the backend control (§6.2) adds 600. 
+
+3.4 Statistics—and two pitfalls 
+
+All contrasts are paired per instance (B= 50 ,000 bootstrap resamples); cross-model “rank flip” probabilities use joint instance-aligned resampling. Two operational pitfalls we hit deserve documentation because they silently corrupt audits of this shape. (i) Dedup keys must include the attention backend. Ours was (model, press, ratio, task, instance); when H2O—which requires eager attention—was backfilled, trivial-baseline cells were skipped as “already done”, leaving zero non-H2O eager rows and an unmeasured confound we later had to control explicitly (§6.2). (ii) Coverage must be asserted, not assumed : our checker compares the exact instance set per press per cell and is what surfaced the 331 OOM holes. 
+
+## 4 Results on RULER 
+
+4.1 Anchors 
+
+FullCache scores (agnostic arm) delimit each model’s headroom (Table 1). R1-Distill’s low anchors (it spends its budget reasoning, not retrieving) produce floor effects that matter in §4.5. 
+
+4.2 Headline: the protocol decides who wins 
+
+Table 2 and Figure 1 give the per-press verdict vs the best-of-3 trivial baseline over the 36 cells (3 models ×
+
+3 axes × 4 ratios); “wins” = positive mean paired gap in the cell. Read column by column: under the aware protocol four of the five backend-comparable methods beat the trivial baselines—the literature’s picture, which we reproduce (SnapKV +0 .132 ). Under the agnostic protocol the picture inverts: among the audited methods only KeyDiff survives , and SnapKV—the most widely adopted method in this family—averages below “keep the start and the recent window”. 
+
+4.3 Where the wins live 
+
+KeyDiff’s advantage concentrates exactly where compression is hardest and the stakes highest—retrieval at high ratios (Table 3). The single sharpest cell (Qwen2.5-7B, retrieval, r=0.9, anchor 0.993) is shown 4Table 2: Per-press verdict vs the best-of-3 trivial baseline over 36 cells. ∆ is the protocol effect (aware −
+
+agnostic mean gap). †H2O runs on the eager backend while every other row runs on sdpa ; §6.2 shows the backend alone shifts scores by more than H2O’s deficit, so we make no ranking claim about H2O—the row is reported for completeness only. 
+
+Query-agnostic Query-aware Press wins mean gap wins mean gap ∆
+
+KeyDiff 31/36 +0 .171 33/36 +0 .183 +0 .011 
+
+TOVA 21/36 +0 .095 33/36 +0 .198 +0 .103 
+
+AdaKV 16/36 −0.018 28/36 +0 .154 +0 .172 
+
+ExpectedAttention 14/36 −0.051 15/36 −0.027 +0 .024 
+
+SnapKV 13/36 −0.066 25/36 +0 .132 +0 .198 
+
+H2O † 4/36 −0.133 9/36 −0.112 +0 .021 −0.2 −0.1 0.0 0.1 0.2 0.3        
+
+> mean paired gap vs. best-of-3 trivial baseline (36 cells)
+> KeyDi ff
+> TOVA
+> AdaKV
+> ExpectedAttention
+> SnapKV
+> H2O †
+> +0.171 +0.183
+> +0.095 +0.198
+> -0.018 +0.154
+> -0.051 -0.027
+> -0.066 +0.132
+> -0.133 -0.112
+> query-agnostic (deployment)
+> query-aware (literature)
+> +0.011
+> +0.103
+> +0.172
+> +0.024
+> +0.198
+> +0.021
+> Δ
+
+Figure 1: The protocol flip. Each press’s mean paired gap vs the best-of-3 trivial baseline over all 36 cells, under the deployment protocol (query-agnostic, blue) and the literature’s protocol (query-aware, green); the right margin gives the per-press protocol effect ∆. KeyDiff barely moves; SnapKV and AdaKV swing from losing to winning on the strength of seeing the question. †backend-confounded (§6.2). in Figure 2: KeyDiff 0.663, TOVA 0.260, StreamingLLM 0.100, AdaKV 0.093, ExpectedAttention 0.090, SnapKV 0.077, Knorm 0.003, H2O 0.003, Random 0.000. The same cell under the aware protocol: SnapKV recovers to 0.230 and TOVA to 0.500—seeing the question is worth 3× to SnapKV. KeyDiff is not “secretly not compressing”: on Llama retrieval its score falls monotonically 0.940 → 0.817 →
+
+0.727 → 0.677 across r = 0 .25 → 0.9. It pays for compression; it just evicts better. 
+
+4.4 Group-level verdict, leave-one-out, and selection debias 
+
+Best-of-6-real vs best-of-3-trivial: real wins 34/36 (agnostic). But this comparison is load-bearing on one method: leave-one-out removes any single press and real still wins 34/36—except KeyDiff, whose removal collapses the verdict to 25/36. In the aware arm, removing any press leaves 34/36: four methods can carry it. The agnostic-arm “real methods win” story is a one-method story. Best-of-6 vs best-of-3 is also structurally biased toward the larger roster. Debiasing by expectation over all (63
+
+) = 20 matched best-of-3 subsets: agnostic 34 → 29 /36 ; aware 34 → 34 /36 . The conclusion is unchanged but honest: the agnostic-arm margin is thinner than the raw best-of comparison suggests. 5Table 3: Per-axis mean gap vs the best-of-3 trivial baseline (12 cells per entry: 3 models × 4 ratios), agnostic arm. Parentheses give cells won.                                                
+
+> Press Retrieval Aggregation Multi-hop
+> KeyDiff +0 .249 (12/12) +0 .201 (11/12) +0 .064 (8/12) TOVA +0 .115 (7/12) +0 .124 (8/12) +0 .047 (6/12) AdaKV −0.021 (4/12) −0.042 (5/12) +0 .009 (7/12) ExpectedAttention −0.067 (4/12) −0.116 (2/12) +0 .030 (8/12) SnapKV −0.092 (3/12) −0.088 (3/12) −0.018 (7/12) H2O †−0.232 (0/12) −0.129 (2/12) −0.037 (2/12) KeyDi ff TOVA Streaming-
+> LLM*
+> AdaKV Expected-
+> Attention
+> SnapKV Knorm* H2O †Random*
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0      
+
+> score
+> FullCache anchor 0.993
+> 0.66 0.67
+> 0.26
+> 0.50
+> 0.10 0.09 0.09
+> 0.23
+> 0.09 0.08 0.08
+> 0.23
+> query-agnostic
+> query-aware
+
+Figure 2: The single sharpest cell (Qwen2.5-7B / retrieval / r=0.9). With 90% of the cache evicted on a task the uncompressed model solves (anchor 0.993, dashed), SnapKV and AdaKV triple their score when the question is visible during compression; KeyDiff’s score does not depend on it. *trivial baseline; 
+
+> †
+
+backend-confounded (§6.2). 
+
+4.5 Cross-model consistency (and a headline we retracted) 
+
+An earlier snapshot of this audit (3–5 real presses, 331 unfilled OOM holes) showed cross-model rank flips with probability 1.000 on two axes—models disagreeing on whether real methods beat trivial ones. Completing the roster and the holes killed that finding: flip probabilities on retrieval and aggregation drop to 0.000–0.252, and the four remaining flip cells are all contributed by R1-Distill in cells where its gap is within noise of zero (e.g. −0.007 )—a floor effect (its multi-hop anchor is 0.285), not an architecture effect. We report this retraction because an audit framework that cannot kill its author’s favourite finding is not an audit. 
+
+## 5 A mechanistic hypothesis: the delta tracks query visibility 
+
+Why does the protocol move SnapKV by +0 .198 but KeyDiff by +0 .011 ? A candidate answer is legible in each press’s scoring function (kvpress 0.5.4): the measured deltas are ordered consistently with how visible the question is to each scoring signal (Table 4, Figure 3). We are explicit about the strength of this evidence: six methods give six correctly ordered points—an empirical ordering , not a fitted quantitative law. We advance it as a mechanistic hypothesis; the manipulations that would test it directly (varying observation-window content continuously, injecting mismatched questions at compression time) are outside this audit’s scope. 6Table 4: Each press’s scoring signal, the visibility of the question inside it, and the measured protocol effect 
+
+∆. The measured ordering of ∆ is consistent with the question’s visibility, read from source; with six methods this is ordinal evidence for a hypothesis, not a fitted law. 
+
+Press Scoring signal (source) Question’s visibility ∆
+
+SnapKV attention from last 64 tokens (pooled) fills the window +0 .198 
+
+AdaKV SnapKV’s scorer, head-adaptive same window +0 .172 
+
+TOVA attention from the last token 1 noisy query token +0 .103 
+
+ExpectedAttention analytic future-query estimate not directly observed +0 .024 
+
+H2O attention summed over all ∼8,200 positions ≈0.4% of the sum +0 .021 
+
+KeyDiff − cos( ki, ¯k); no query term zero +0 .011 0.00 0.05 0.10 0.15 0.20    
+
+> Δ= (aware gap) −(agnostic gap)
+
+SnapKV 
+
+AdaKV 
+
+TOVA 
+
+ExpectedAttention 
+
+H2O †
+
+KeyDi ff           
+
+> +0.198 question fi lls the 64-token observation window
+> +0.172 same window, head-adaptive budget
+> +0.103 a single fi nal query token (noisier)
+> +0.024 analytic future-query estimate; question unobserved
+> +0.021 question ≈0.4% of an 8,200-position sum
+> +0.011 no query term in the score at all
+
+Figure 3: The agnostic →aware delta per method, ordered. The ordering is consistent with the weight the question carries in each method’s scoring signal, read from the score() implementations; we treat this correspondence as a mechanistic hypothesis (§5). The hypothesis: ∆ grows with the fraction of the scoring signal contributed by the question. Under this reading, methods whose observation window is “the end of the context” are not measuring which tokens are important; they are measuring which tokens are relevant to whatever happens to sit at the end —in query-aware evaluation, the answer key itself. Remove the answer key (agnostic arm) and the window contains the tail of the document, which has no privileged relation to a question that arrives later. KeyDiff survives because it never asks . Its criterion—keep tokens whose key vectors point away from the bulk—is a query-independent notion of informativeness: repetitive filler produces tightly clustered keys; content that is unusual produces outliers. Whether that is the right notion is a benchmark-dependent question (§6.1); that it is protocol-immune is a theorem of its formula. We conjectured (and the attention-sink literature supports) a mechanism for H2O’s weakness—accumulated attention concentrates on early sink tokens, so H2O approximately recomputes StreamingLLM’s hard-coded rule at eager-attention prices—but per §6.2 we can no longer present H2O’s measured rank as evidence for it. 
+
+## 6 Robustness checks and negative results 
+
+6.1 Natural text: KeyDiff keeps its validity, loses its monopoly 
+
+RULER’s haystack is pathologically repetitive, which maximises exactly the key-outlierness KeyDiff scores. Prediction registered before the experiment: KeyDiff’s edge should shrink on natural prose. On LongBench (16 tasks, both ratios, agnostic), KeyDiff vs the best-of-3 trivial baseline: 7Table 5: LongBench (natural text, agnostic): KeyDiff’s mean gap vs the best-of-3 trivial baseline. 
+
+Model r = 0 .5 r = 0 .75 
+
+Llama-3.1-8B +0 .019 +0 .055 
+
+Qwen2.5-7B +0 .072 +0 .088 
+
+R1-Distill −0.011 −0.017 0.0 0.1   
+
+> KeyDi ff
+> TOVA
+> SnapKV
+> ExpectedAttention
+> AdaKV
+> +0.055
+> +0.038
+> +0.004
+> +0.016
+> +0.004
+> Llama-3.1-8B
+> 0.0 0.1
+> +0.088
+> +0.105
+> +0.084
+> +0.078
+> +0.073
+> Qwen2.5-7B
+> 0.0 0.1
+> -0.017
+> -0.006
+> -0.009
+> +0.001
+> -0.006
+> R1-Distill-7B
+> gap vs. best-of-3 trivial baseline
+
+Figure 4: On natural text KeyDiff stays ahead of the trivial baselines on the two healthy-anchor models—but is no longer alone (agnostic, r=0.75 shown). Unlike on RULER, the other real presses (gray) catch up or overtake. Its validity survives: positive on both healthy-anchor models (4/6 cells; R1’s LongBench scores sit near floor throughout, Table 5). Its exclusivity does not: on natural text other real presses catch up or pass it (Qwen r=0.75 : TOVA +0 .105 > KeyDiff +0 .088 ; Qwen r=0.5: ExpectedAttention +0 .084 > KeyDiff +0 .072 ;Figure 4). RULER inflated KeyDiff’s uniqueness, not its effectiveness. Our claim is therefore the weaker, better-supported one: KeyDiff is the only audited method that is query-independent and effective on both benchmark families —not “the best method”. LongBench is run in the agnostic arm only, by design: the question it exists to answer—whether KeyDiff’s agnostic-arm win is an artefact of RULER’s synthetic haystack—lives entirely in that arm, while the aware-arm picture is established on the full RULER grid (§4.2). 
+
+6.2 The attention-backend confound: a ranking withdrawn 
+
+H2O needs explicit attention weights, hence the eager backend; everything else ran sdpa . To bound the confound we re-ran FullCache , KeyDiff and StreamingLLM under eager on Qwen2.5-7B (agnostic; 
+
+r ∈ { 0.25 , 0.9}; 10 subtasks; 600 records exactly paired to their sdpa twins): pooled score (eager ) − score (sdpa ) = −0.221 , 95% CI [−0.255 , −0.188] .The CI excludes zero and its magnitude exceeds H2O’s entire measured deficit ( −0.133 ). Most striking, the uncompressed FullCache row falls 0.897 → 0.611 (−0.286 )—on a model with no logit softcap, where the two backends are mathematically equivalent. The divergence is numerical, not semantic: fp16 accumulation-order differences flip an early greedy argmax and the retrieval transcript derails. Its sign does not mean “eager is worse”; it means the two backends diverge chaotically at 8k context under greedy decoding. Consequences. (i) We withdraw the ranking claim for H2O : its deficit is observationally inseparable from a backend term larger than itself. (ii) The within-sdpa comparisons—everything else in this paper—are unaffected: the backend is held fixed there by construction. (iii) The general lesson is the paper’s thesis in 8−0.4 −0.3 −0.2 −0.1 0.0            
+
+> paired score(eager) −score(sdpa), 95% bootstrap CI
+> FullCache (no compression)
+> KeyDiff, r= 0.25
+> StreamingLLM, r= 0.25
+> KeyDiff, r= 0.9
+> StreamingLLM, r= 0.9
+> Pooled ( n= 600)
+> H2O's entire measured deficit ( −0.133)
+> -0.286
+> -0.259
+> -0.200
+> -0.323
+> -0.037
+> -0.221
+
+Figure 5: The backend control. Paired eager −sdpa deltas with 95% bootstrap CIs; every row is the same model, instances and budget with only the attention kernel changed. The pooled effect—and even the uncompressed FullCache row—exceeds H2O’s entire deficit (red dashed). miniature: matched-budget means matching everything, including the attention kernel . Any audit that mixes backends across arms carries a hidden ∼0.2 confound, and nothing in standard logs will disclose it. The control is measured on one model and arm; the three longest subtasks are excluded because eager’s O(L2)
+
+fp32 softmax exhausts 48 GB at L ≈ 11 k (all three axes remain covered), and we state both scope limits explicitly. 
+
+6.3 The tokenizer-length trap: a model disqualified by the benchmark 
+
+We attempted a fourth lineage (gemma-2-9b, max_position_embeddings = 8192). RULER’s nominal “8192” is counted in a reference tokenizer; gemma’s tokenizer renders the same contexts as up to ∼10 ,600 tokens, overrunning its positional budget on 7 of 13 subtasks (350/650 instances, including all three niah_single ). On those subtasks gemma’s uncompressed FullCache scores 0.000 while scoring 0.907–0.925 on the six that fit. This is not a harness bug—the model cannot hold the benchmark—and no standard log line reports it. 
+
+Observation: benchmark nominal lengths are tokenizer-dependent; any RULER-8192 result for gemma-2 in the literature was produced under silent RoPE extrapolation. (A separate, real transformers bug— sdpa silently dropping gemma’s attn_logit_softcapping —was verified but is not the cause; the eager backend reproduces the zeros. All 4,932 invalid rows were quarantined, not deleted.) 
+
+## 7 Limitations 
+
+1. Two benchmark families, one context length. RULER-8192 + LongBench; real pressure lives at 32k–128k, where the “recent window” fraction shrinks and we expect (but have not measured) the trap to sharpen. 2. Architectural diversity is thin : R1-Distill shares Qwen lineage; the Google lineage was disqualified (§6.3). The headline is protocol-internal (each model vs itself), which does not require cross-model diversity, but the ranking claims would benefit from it. 3. Six methods, kvpress implementations. KVzip (Kim et al., 2025) (multi-pass compression, incompatible with the single-pass harness), Compactor (Chari & Van Durme, 2025) (not in kvpress 0.5.4) and PyramidKV (upstream tensor bug at 0.5.4) are absent, and conclusions are about the audited implementations. Extending the audit to purpose-built query-agnostic methods is the most direct follow-up. 4. H2O’s rank is unresolved (§6.2)— deliberately, because resolving it requires an all-eager re-audit that the backend divergence itself shows would measure the backend as much as the method. 95. Uniform-ratio budgets. Head- or layer-adaptive budget allocation under an agnostic protocol is the natural next question (we detect the trap; we do not yet detect, at inference time, which allocation a given input needs). 6. The mechanism claim is ordinal. Six methods give six correctly ordered points; establishing the visibility hypothesis quantitatively requires a continuous query-sensitivity measure (e.g. counterfactual-query selection overlap, graded query exposure at compression time), which we leave to future work. 
+
+## 8 Conclusion 
+
+Under a matched budget, a substantial part of what the audited methods’ query-aware scores measure is access to the question—an input that cache reuse, the very deployment that motivates compression, cannot provide. The dependence does not look incidental: across the six audited methods its size is ordered by the question’s visibility in each scoring signal, legible in source code, and the one method with no query term is the one whose performance the protocol cannot touch—an ordering we advance as a mechanistic hypothesis awaiting direct manipulation. An audit built to be adversarial to its own conclusions—trivial baselines, paired statistics, leave-one-out, selection debias, backend controls—overturned its author’s first headline, withdrew a ranking, and disqualified a model; what survived is correspondingly harder to explain away. We release the harness, the 185,700 paired records, and the statistics pipeline. 
+
+Broader impact statement 
+
+This work audits evaluation practice; its main societal effect is to make deployment decisions about KV-cache compression better calibrated, reducing wasted compute and overclaimed capability. We identify no direct negative applications. 
+
+## References 
+
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , 2024. Vivek Chari and Benjamin Van Durme. Compactor: Calibrated query-agnostic KV cache compression with approximate leverage scores. arXiv preprint arXiv:2507.08143 , 2025. Alessio Devoto, Yu Zhao, Simone Scardapane, and Pasquale Minervini. A simple and effective L2 norm-based strategy for KV cache compression. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pp. 18476–18499, 2024. Alessio Devoto, Maximilian Jeblick, and Simon Jégou. Expected attention: KV cache compression by estimating attention from future queries distribution. arXiv preprint arXiv:2510.00636 , 2025. Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S. Kevin Zhou. Ada-KV: Optimizing KV cache eviction by adaptive budget allocation for efficient LLM inference. In Advances in Neural Information Processing Systems , volume 38, 2025. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. RULER: What’s the real context size of your long-context language models? In First Conference on Language Modeling , 2024. Jang-Hyun Kim, Jinuk Kim, Sangwoo Kwon, Jae W. Lee, Sangdoo Yun, and Hyun Oh Song. KVzip: Query-agnostic KV cache compression with context reconstruction. In Advances in Neural Information Processing Systems , volume 38, 2025. Yucheng Li, Huiqiang Jiang, Qianhui Wu, Xufang Luo, Surin Ahn, Chengruidong Zhang, Amir H. Abdi, Dongsheng Li, Jianfeng Gao, Yuqing Yang, and Lili Qiu. SCBench: A KV cache-centric analysis of long-context methods. In International Conference on Learning Representations , 2025. 10 Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. SnapKV: LLM knows what you are looking for before generation. In Advances in Neural Information Processing Systems , volume 37, 2024. NVIDIA. kvpress: LLM KV cache compression made easy. https://github.com/NVIDIA/kvpress , 2025. Version 0.5.4. Matanel Oren, Michael Hassid, Yossi Adi, and Roy Schwartz. Transformers are multi-state RNNs. In 
+
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pp. 18724–18741, 2024. Junyoung Park, Dalton Jones, Matthew Morse, Raghavv Goel, Mingu Lee, and Chris Lott. KeyDiff: Key similarity-based KV cache eviction for long-context LLM inference in resource-constrained environments. 
+
+arXiv preprint arXiv:2504.15364 , 2025. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In International Conference on Learning Representations , 2024. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen. H2O: Heavy-hitter oracle for efficient generative inference of large language models. In Advances in Neural Information Processing Systems , volume 36, 2023. 
+
+## A Reproducibility 
+
+• Grid : 3 models × 2 arms × (FullCache + 9 presses ×{ 0.25 , 0.5, 0.75 , 0.9}) × 650 RULER instances = 144,300 records; LongBench 16 × 50 × 8 presses (+anchor) ×{ 0.5, 0.75 }× 3 models = 40,800; backend control 600. 
+
+• Decoding : greedy; per-task max_new_tokens ; R1-Distill’s <think> block force-closed (otherwise it burns the token budget and never answers—scoring all methods to zero uniformly). 
+
+• Scoring : QA tasks—any-gold-substring match; others—recall of gold strings. 
+
+• Statistics : per-instance paired bootstrap B= 50 ,000 ; CRC-based seeds (Python hash() is salted per process and irreproducible); cross-model flips by joint instance-aligned resampling. 
+
+• Compute : single RTX 3090 48 GB (rented), ∼US$15 total; a brief H800 comparison measured only 
+
+1.67 × (sdpa) / 1.13 × (eager) speedup at 5× the price. 
+
+• Data hygiene : 331 OOM holes detected by coverage assertion and refilled; 4,932 invalid gemma rows quarantined with checksums; all raw JSONL retained. 
+
+## B Per-axis results, query-aware arm 
+
+11 Table 6: Per-axis mean gap vs the best-of-3 trivial baseline (12 cells per entry), aware arm. Compare Table 3. 
+
+> †
+
+backend-confounded; no ranking claim (§6.2). 
+
+Press Retrieval Aggregation Multi-hop 
+
+KeyDiff +0 .262 (12/12) +0 .213 (11/12) +0 .073 (10/12) TOVA +0 .269 (12/12) +0 .174 (10/12) +0 .151 (11/12) AdaKV +0 .181 (8/12) +0 .130 (9/12) +0 .152 (11/12) ExpectedAttention −0.033 (4/12) −0.098 (2/12) +0 .050 (9/12) SnapKV +0 .144 (8/12) +0 .101 (6/12) +0 .152 (11/12) H2O † −0.213 (0/12) −0.109 (2/12) −0.013 (7/12) 
+
+12

@@ -1,0 +1,69 @@
+{
+  "label": "2026-07-15",
+  "date": "2026-07-15",
+  "generated_at": "2026-07-15T21:32:42",
+  "count": 4,
+  "papers": [
+    {
+      "paper_id": "202607/15/2607.11942v1-how-query-visibility-changes-kv-cache-compression-rankings-a-matched-budget-audit",
+      "section": "deep",
+      "title_en": "How Query Visibility Changes KV-Cache Compression Rankings: A Matched-Budget Audit",
+      "authors": "Daming Luo, Christy Liang, Junyu Xuan",
+      "date": "2026-07-11",
+      "pdf": "https://arxiv.org/pdf/2607.11942v1",
+      "score": "9.0",
+      "evidence": "在相同预算下审计KV缓存压缩方法，研究查询可见性影响",
+      "tldr": "KV缓存压缩方法通常采用查询可见（query-aware）协议评估，但实际部署中压缩需在查询前完成（query-agnostic）。本文对六种方法及三种简单基线进行匹配预算审计，在三个7-9B模型上使用RULER-8192等数据集比较。结果发现查询可见性显著改变排名：仅KeyDiff一致优于最佳基线（31/36单元格），而广泛使用的SnapKV平均落后于“保留开头和近期窗口”基线（-0.066）。性能下降幅度与查询可见性成正比，SnapKV因查询位于其64词观察窗口内下降最大（Delta=+0.198），KeyDiff因无查询项下降最小（+0.011）。贡献在于揭示评估协议对排名的影响，建议未来采用查询不可知协议。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "KV-cache compression methods are predominantly evaluated with the query appended to the context before compression -- a query-aware protocol. Yet the economic case for a compressed KV cache is reuse: compress a document once, answer many future questions against it. In that deployment, compression must happen query-agnostic -- before any question is seen. We present a matched-budget audit of six published compression methods against three trivial baselines on three open 7-9B models (144,300 paired evaluations on RULER-8192; 40,800 on LongBench; 50,000-resample paired bootstrap throughout). Everything is held fixed -- model, compression ratio, instances, decoding -- except the scoring rule. Three findings. (1) Query visibility changes the rankings: under the agnostic protocol, of the five audited methods that share a common attention backend, only KeyDiff beats a best-of-3 trivial baseline consistently (31 of 36 cells), and the most widely deployed method, SnapKV, loses to \"keep the start and the recent window\" on average (-0.066). (2) The per-method drop between the two protocols is ordered consistently with how visible the question is to each method's scoring signal, legible in its source code: from Delta=+0.198 for SnapKV (the question sits inside its 64-token observation window) down to Delta=+0.011 for KeyDiff (its score contains no query term at all).",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/15/2607.12550v1-a-jolt-for-the-kv-cache-near-lossless-kv-cache-compression-via-joint-tucker-and-jl-residual-allocation-for-llms",
+      "section": "deep",
+      "title_en": "A JoLT for the KV Cache: Near-Lossless KV Cache Compression via Joint Tucker and JL-Residual Allocation for LLMs",
+      "authors": "Rahul Krishnan, Volker Schulz",
+      "date": "2026-07-14",
+      "pdf": "https://arxiv.org/pdf/2607.12550v1",
+      "score": "9.0",
+      "evidence": "通过Tucker分解和JL残差分配进行KV缓存压缩",
+      "tldr": "KV缓存是长上下文Transformer推理的主要内存瓶颈。现有低秩与量化方法未利用缓存的三阶张量结构。本文提出JoLT方法，对token和特征轴进行部分Tucker分解，并用JL旋转低比特残差恢复截断能量，通过拉格朗日对偶联合分配秩和比特宽。在Mistral-7B和LLaMA-2-13B上实现2-3倍近无损压缩，Frobenius误差相对于跨层SVD和4比特量化降低约一个数量级，且提出FlashJoLT变体加速5-13倍。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "The key-value (KV) cache has become the dominant memory cost of transformer inference. It grows with batch size, context length, and depth, and at long context it, rather than the model weights, sets the ceiling on throughput. Two families of methods reduce it. Low-rank methods factor two-dimensional slices of the cache, either per-head matrices or cross-layer feature blocks, and quantization methods lower the bit-width of every entry. Neither family exploits the fact that the cache at a layer is naturally a third-order tensor whose three axes, the heads, the tokens, and the features, carry very different amounts of redundancy. We take this tensor view directly. Our method, JoLT, applies a partial Tucker decomposition that compresses only the token and feature axes while leaving the head and layer axes intact, and then restores the energy that truncation discards with a Johnson-Lindenstrauss (JL) rotated low-bit residual. A single Lagrangian dual allocates the Tucker ranks and the residual bit-widths together, per layer group and separately for keys and values, under one byte budget. The result is a near-lossless 2-3x compression: perplexity, GSM8K accuracy, and RULER needle-in-a-haystack retrieval all stay at or within statistical noise of the uncompressed baseline on both a grouped-query-attention model (Mistral-7B-v0.3) and a multi-head-attention model (LLaMA-2-13B). At 2x, JoLT reconstructs the cache to relative Frobenius error 0.009 (K) and 0.006 (V) on both architectures, roughly an order of magnitude below cross-layer SVD and 4-bit quantization. A randomized-SVD variant, FlashJoLT, delivers a 5-13x compression-time speedup at matched quality.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/15/2607.12789v1-avq-attention-adaptive-vector-quantized-attention",
+      "section": "deep",
+      "title_en": "AVQ-Attention: Adaptive Vector-Quantized Attention",
+      "authors": "Winfried van den dool, Patrick Forré, Amir Habibian, Yuki M. Asano, Max Welling",
+      "date": "2026-07-14",
+      "pdf": "https://arxiv.org/pdf/2607.12789v1",
+      "score": "8.0",
+      "evidence": "自适应向量量化注意力的键压缩",
+      "tldr": "注意力机制的O(N^2)复杂度是Transformer计算瓶颈。现有向量量化(VQ)注意力将键量化为M个码字降至O(MN)，但均匀分配码本容量导致高注意力区域粗糙、低注意力区域浪费。本文提出自适应向量量化(AVQ)注意力，前向传播中识别重要码字并用预学习子码字细化，在保持O(MN)复杂度下实现粗粒度和细粒度自适应量化。实验证明相比固定码本VQ-注意力，AVQ取得更好精度效率权衡，为高效注意力提供新思路。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "The $\\mathcal{O}(N^2)$ complexity of attention over $N$ tokens remains a computational bottleneck in transformer models. Vector-Quantized (VQ) attention reduces this to $\\mathcal{O}(MN)$ by representing keys with $M$ codewords, but applies uniform codebook capacity regardless of where attention mass concentrates: high-attention regions of key space may be coarsely approximated while low-attention regions waste representational capacity. We propose Adaptive Vector-Quantized (AVQ) Attention, which adaptively allocates codebook capacity based on attention importance. Starting from a small set of codewords, our method identifies the most important codes during the forward pass and refines them with pre-learned child codewords, achieving fine-grained quantization where it matters most while maintaining coarse quantization elsewhere. We develop an implementation using custom Triton kernels that enables the full adaptive refinement process, including importance scoring, child codeword insertion, and parent contribution replacement, to be carried out within the tiled computation paradigm of Flash Attention with minimal overhead. Our approach maintains $\\mathcal{O}(MN)$ complexity while achieving improved accuracy-efficiency trade-offs compared to fixed-codebook VQ-attention.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/15/2607.11976v1-litetopk-exploiting-the-curse-of-dimensionality-for-a-fused-indexer-topk-kernel-in-long-context-sparse-attention",
+      "section": "quick",
+      "title_en": "LiteTopK: Exploiting the Curse of Dimensionality for a Fused Indexer-TopK Kernel in Long-Context Sparse Attention",
+      "authors": "Ziqi Yin, Jianyang Gao, Peiqi Yin, Jiangneng Li, Gao Cong",
+      "date": "2026-07-13",
+      "pdf": "https://arxiv.org/pdf/2607.11976v1",
+      "score": "6.0",
+      "evidence": "长上下文稀疏注意力核",
+      "tldr": "在长上下文稀疏注意力中，Indexer-TopK操作是计算分数并选择前k个候选的关键，但现有GPU内核（如DSA）存在全局内存访问量大、同步开销和内存开销高等问题。本文利用高维空间的“维度诅咒”（距离集中在窄范围），提出LITETOPK融合内核：通过采样估计分数范围，在线分箱，维持紧近似阈值并仅写回有希望候选，减少I/O和内存开销，同时保持精确TopK正确性。实验表明，LITETOPK在GLM 5.2预填充阶段加速1.2倍且内存更低，有效提升了稀疏注意力效率。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Indexer-TopK, the operation to compute the scores and select the top-k candidates, is widely used by sparse attention kernels in large language models and vector retrieval in recommendation systems and vector databases. However, existing GPU-based Indexer-TopK kernels like DeepSeek Sparse Attention (DSA) remain inefficient due to excessive global memory traffic, costly synchronization, and prohibitive memory overhead. In this work, we exploit the curse of dimensionality in high-dimensional spaces, where distances between high-dimensional vectors tend to concentrate within a narrow range, to design LITETOPK, a novel and efficient fused Indexer-TopK kernel. LITETOPK first samples a small subset of data to estimate query-data score ranges, then uses these estimates to partition candidate results into bins online. This organization allows the LITETOPK kernel to maintain a tight approximate threshold, write back only promising candidates, reduce unnecessary I/O, substantially lower memory overhead, and still preserve exact Top-k correctness. Experimental results show that LITETOPK accelerates the prefill stage of GLM 5.2 by 1.2x in real-world deployment scenarios while incurring lower memory overhead.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

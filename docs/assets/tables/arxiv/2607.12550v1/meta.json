@@ -1,0 +1,114 @@
+{
+  "version": 2,
+  "extractor": "papercropper",
+  "tables": [
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-001.webp",
+      "caption": "",
+      "page": 0,
+      "index": 1,
+      "width": 1653,
+      "height": 185,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-002.webp",
+      "caption": "",
+      "page": 0,
+      "index": 2,
+      "width": 1101,
+      "height": 265,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-003.webp",
+      "caption": "",
+      "page": 0,
+      "index": 3,
+      "width": 898,
+      "height": 498,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-004.webp",
+      "caption": "",
+      "page": 0,
+      "index": 4,
+      "width": 1027,
+      "height": 344,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-005.webp",
+      "caption": "",
+      "page": 0,
+      "index": 5,
+      "width": 807,
+      "height": 262,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-006.webp",
+      "caption": "",
+      "page": 0,
+      "index": 6,
+      "width": 1281,
+      "height": 263,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-007.webp",
+      "caption": "",
+      "page": 0,
+      "index": 7,
+      "width": 1300,
+      "height": 143,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-008.webp",
+      "caption": "",
+      "page": 0,
+      "index": 8,
+      "width": 632,
+      "height": 300,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-009.webp",
+      "caption": "",
+      "page": 0,
+      "index": 9,
+      "width": 1020,
+      "height": 382,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-010.webp",
+      "caption": "",
+      "page": 0,
+      "index": 10,
+      "width": 1093,
+      "height": 383,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-011.webp",
+      "caption": "",
+      "page": 0,
+      "index": 11,
+      "width": 654,
+      "height": 377,
+      "label": "Table"
+    },
+    {
+      "url": "assets/tables/arxiv/2607.12550v1/table-012.webp",
+      "caption": "",
+      "page": 0,
+      "index": 12,
+      "width": 487,
+      "height": 338,
+      "label": "Table"
+    }
+  ]
+}
