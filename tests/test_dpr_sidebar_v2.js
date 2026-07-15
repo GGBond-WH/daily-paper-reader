@@ -74,6 +74,20 @@ function cssRule(css, selector) {
   return css.slice(start + 1, end);
 }
 
+function panelHeaderCounts(html, panel) {
+  const start = html.indexOf('dpr-sidebar-panel-header-' + panel);
+  assert.ok(start >= 0, panel + ' panel header should exist');
+  const end = html.indexOf('<div class="dpr-sidebar-panel-content">', start);
+  assert.ok(end > start, panel + ' panel content should follow header');
+  const header = html.slice(start, end);
+  const unread = /dpr-sidebar-day-unread">([^<]+)/.exec(header);
+  const total = /dpr-sidebar-day-total">([^<]+)/.exec(header);
+  return {
+    unread: unread ? Number(unread[1]) : NaN,
+    total: total ? Number(total[1]) : NaN,
+  };
+}
+
 function createClassList(initial = []) {
   const values = new Set(initial);
   return {
@@ -139,6 +153,21 @@ const unorderedSidebar = `
   * 2026-06-25 <!--dpr-date:20260625-->
     * 精读区
       * <a class="dpr-sidebar-item-link" href="#/202606/25/new" data-sidebar-item="{&quot;title&quot;:&quot;New Daily&quot;,&quot;published&quot;:&quot;2026-06-25T02:00:00Z&quot;}">New Daily</a>
+`;
+
+const rangeDailySidebar = `
+* Daily Papers
+  * 2026-07-06 <!--dpr-date:20260706-->
+    * 精读区
+      * <a class="dpr-sidebar-item-link" href="#/202607/06/today" data-sidebar-item="{&quot;title&quot;:&quot;Today Paper&quot;,&quot;tags&quot;:[{&quot;kind&quot;:&quot;query&quot;,&quot;label&quot;:&quot;data&quot;}]}">Today Paper</a>
+  * 2026-06-27 ~ 2026-07-06 <!--dpr-date:20260627-20260706-->
+    * 精读区
+      * <a class="dpr-sidebar-item-link" href="#/20260627-20260706/range-data" data-sidebar-item="{&quot;title&quot;:&quot;Range Data Paper&quot;,&quot;tags&quot;:[{&quot;kind&quot;:&quot;query&quot;,&quot;label&quot;:&quot;data&quot;}]}">Range Data Paper</a>
+    * 速读区
+      * <a class="dpr-sidebar-item-link" href="#/20260627-20260706/range-robot" data-sidebar-item="{&quot;title&quot;:&quot;Range Robot Paper&quot;,&quot;tags&quot;:[{&quot;kind&quot;:&quot;query&quot;,&quot;label&quot;:&quot;robot&quot;}]}">Range Robot Paper</a>
+  * 2017-06-12
+    * 精读区
+      * <a class="dpr-sidebar-item-link" href="#/201706/12/attention" data-sidebar-item="{&quot;title&quot;:&quot;Attention Paper&quot;}">Attention Paper</a>
 `;
 
 function testSidebarNavigationContract() {
@@ -249,6 +278,8 @@ function testAxisTabsRenderUnreadCounts() {
   assert.ok(html.includes('<span class="dpr-sidebar-axis-tab-unread">0</span>/<span class="dpr-sidebar-axis-tab-total">1</span>'));
   assert.ok(html.includes('data-axis-section-toggle="daily:tag:20260624:__all__" aria-expanded="false" data-unread="1"'));
   assert.ok(!html.includes('dpr-sidebar-axis-section-dot'));
+  assert.deepEqual(panelHeaderCounts(html, 'daily'), { unread: 1, total: 2 });
+  assert.deepEqual(panelHeaderCounts(html, 'conference'), { unread: 0, total: 1 });
 
   assert.equal(typeof tools.buildAxisViewForMode, 'function');
   const updatedDateView = tools.buildAxisViewForMode(model, 'daily', 'date', {
@@ -366,6 +397,52 @@ function testDailyCalendarTagViewFiltersActiveDateByKeyword() {
   const fallbackView = tools.buildDailyCalendarTagView(model, '20260624', 'missing-tag', {}, '202606');
   assert.equal(fallbackView.activeKey, '__all__');
   assert.deepEqual(fallbackView.groups[0].papers.map((paper) => paper.title), ['Paper A', 'Paper B']);
+}
+
+function testDailyRangeReportsStayReachableFromCalendarEndDate() {
+  const sidebar = loadSidebarForTest('#/20260627-20260706/range-data');
+  const tools = sidebar.__test;
+  const model = tools.parseSidebar(rangeDailySidebar);
+
+  assert.deepEqual(model.daily.map((day) => day.dateKey), [
+    '20260706',
+    '20260627-20260706',
+    '20170612',
+  ]);
+  assert.deepEqual(tools.collectReportHrefsFromModel(model), [
+    '#/202607/06/README',
+    '#/20260627-20260706/README',
+    '#/201706/12/README',
+  ]);
+
+  const view = tools.buildDailyCalendarTagView(model, '', '__all__', {}, '');
+  assert.equal(view.activeDateKey, '20260706');
+  assert.deepEqual(view.groups.map((group) => [group.key, group.label, group.papers.length]), [
+    ['20260706:__all__', '2026-07-06', 1],
+    ['20260627-20260706:__all__', '2026-06-27 ~ 2026-07-06', 2],
+  ]);
+  const activeCalendarDay = view.calendar.days.find((day) => day.dateKey === '20260706');
+  assert.equal(activeCalendarDay.totalCount, 3);
+  assert.equal(activeCalendarDay.unreadCount, 3);
+  assert.equal(activeCalendarDay.isActive, true);
+
+  const tagView = tools.buildDailyCalendarTagView(model, '20260706', 'data', {}, '202607');
+  assert.deepEqual(tagView.groups.map((group) => [group.key, group.papers.map((paper) => paper.title)]), [
+    ['20260706:data', ['Today Paper']],
+    ['20260627-20260706:data', ['Range Data Paper']],
+  ]);
+  assert.equal(tagView.calendar.days.find((day) => day.dateKey === '20260706').totalCount, 2);
+
+  const html = tools.renderBodyHtml(model, {
+    expandedGroups: { conference: false, daily: true },
+    dailyViewMode: 'date',
+    activeDailyDate: '',
+    activeDailyMonth: '',
+    readMap: {},
+  });
+  assert.ok(html.includes('Range Data Paper'));
+  assert.ok(html.includes('Range Robot Paper'));
+  assert.ok(html.includes('data-axis-section="20260627-20260706:__all__"'));
 }
 
 function testDailyCalendarPlacementToggleKeepsControlRowFixedAboveLayers() {
@@ -998,6 +1075,8 @@ function testSidebarStickyHierarchyCssContract() {
   assert.ok(/z-index:\s*16/i.test(sectionHeaderRule));
   assert.ok(/isolation:\s*isolate/i.test(sectionHeaderRule));
   assert.ok(/background:\s*var\(--dpr-sidebar-sticky-mask-bg\)/i.test(sectionHeaderRule));
+  const dailySectionHeaderRule = cssRule(css, '.dpr-sidebar-panel.is-expanded.dpr-sidebar-group-daily .dpr-sidebar-axis-section-header');
+  assert.ok(/top:\s*var\(--dpr-sidebar-sticky-axis-top\)/i.test(dailySectionHeaderRule));
 
   const panelHeaderMaskRule = cssRule(css, '.dpr-sidebar-panel.is-expanded > .dpr-sidebar-panel-header::before');
   assert.ok(/content:\s*""/i.test(panelHeaderMaskRule));
@@ -1115,7 +1194,7 @@ function testAxisSectionsAreExpandable() {
   assert.ok(/class="[^"]*dpr-sidebar-axis-section-conference[^"]*is-expanded[^"]*"/.test(expandedHtml));
 }
 
-function testPanelCountsUseFullModel() {
+function testPanelCountsUseVisibleAxisSlice() {
   const sidebar = loadSidebarForTest('#/202606/24/paper-a');
   const tools = sidebar.__test;
   const model = tools.parseSidebar(sampleSidebar);
@@ -1141,8 +1220,8 @@ function testPanelCountsUseFullModel() {
       'conference/neurips-2024/paper-c': 'good',
     },
   });
-  assert.ok(html.includes('<span class="dpr-sidebar-day-unread">1</span>/<span class="dpr-sidebar-day-total">2</span>'));
-  assert.ok(html.includes('<span class="dpr-sidebar-day-unread">2</span>/<span class="dpr-sidebar-day-total">3</span>'));
+  assert.deepEqual(panelHeaderCounts(html, 'conference'), { unread: 0, total: 1 });
+  assert.deepEqual(panelHeaderCounts(html, 'daily'), { unread: 1, total: 2 });
 }
 
 function testSearchResultsComeFromFullModel() {
@@ -1477,6 +1556,7 @@ testHyphenatedConferenceMarkerParsing();
 testAxisTabsRenderUnreadCounts();
 testDailyCalendarViewUsesMonthGridAndActiveDateOnly();
 testDailyCalendarTagViewFiltersActiveDateByKeyword();
+testDailyRangeReportsStayReachableFromCalendarEndDate();
 testDailyCalendarPlacementToggleKeepsControlRowFixedAboveLayers();
 testConferenceAndDailyAxisTogglesRenderBesidePanelTitles();
 testDailyCalendarInPlaceRefreshUsesActiveDailyTag();
@@ -1498,7 +1578,7 @@ testTopLevelPanelsDefaultExpanded();
 testActivePaperCanForceOpenTopLevelPanel();
 testPanelHeaderClickOnlyChangesSidebarViewState();
 testAxisSectionsAreExpandable();
-testPanelCountsUseFullModel();
+testPanelCountsUseVisibleAxisSlice();
 testSearchResultsComeFromFullModel();
 testSearchNoResultsShowsEmptyState();
 testUnreadResultsComeFromFullModel();

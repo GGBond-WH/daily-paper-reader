@@ -95,20 +95,60 @@
       })
       .join('');
   }
-  function formatDateLabel(yyyymmdd) {
+  function pad2(n) {
+    var v = Number(n);
+    return v < 10 ? '0' + v : String(v);
+  }
+  function normalizeDailyDateKey(value) {
+    var s = String(value || '').trim();
+    if (!s) return '';
+    var compactRange = s.match(/^(\d{8})\s*-\s*(\d{8})$/);
+    if (compactRange) return compactRange[1] + '-' + compactRange[2];
+    var labelRange = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*(?:~|至|到|—|–|-)\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (labelRange) {
+      return labelRange[1] + pad2(labelRange[2]) + pad2(labelRange[3]) + '-' +
+        labelRange[4] + pad2(labelRange[5]) + pad2(labelRange[6]);
+    }
+    var compact = s.match(/^(\d{8})$/);
+    if (compact) return compact[1];
+    var label = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (label) return label[1] + pad2(label[2]) + pad2(label[3]);
+    return '';
+  }
+  function isDailyRangeKey(dateKey) {
+    return /^\d{8}-\d{8}$/.test(String(dateKey || ''));
+  }
+  function isDailySingleDateKey(dateKey) {
+    return /^\d{8}$/.test(String(dateKey || ''));
+  }
+  function dailyRangeEndDateKey(dateKey) {
+    var s = String(dateKey || '');
+    return isDailyRangeKey(s) ? s.slice(9, 17) : '';
+  }
+  function dailyCalendarAnchorDateKey(dateKey) {
+    var normalized = normalizeDailyDateKey(dateKey) || String(dateKey || '');
+    if (isDailySingleDateKey(normalized)) return normalized;
+    if (isDailyRangeKey(normalized)) return dailyRangeEndDateKey(normalized);
+    return '';
+  }
+  function formatCompactDateLabel(yyyymmdd) {
     var s = String(yyyymmdd || '');
     if (/^\d{8}$/.test(s)) {
       return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
     }
     return s;
   }
-  function pad2(n) {
-    var v = Number(n);
-    return v < 10 ? '0' + v : String(v);
+  function formatDateLabel(value) {
+    var normalized = normalizeDailyDateKey(value);
+    if (isDailyRangeKey(normalized)) {
+      return formatCompactDateLabel(normalized.slice(0, 8)) + ' ~ ' + formatCompactDateLabel(normalized.slice(9, 17));
+    }
+    if (isDailySingleDateKey(normalized)) return formatCompactDateLabel(normalized);
+    return String(value || '');
   }
   function monthKeyFromDateKey(dateKey) {
-    var s = String(dateKey || '');
-    return /^\d{8}$/.test(s) ? s.slice(0, 6) : '';
+    var anchor = dailyCalendarAnchorDateKey(dateKey);
+    return anchor ? anchor.slice(0, 6) : '';
   }
   function normalizeMonthKey(monthKey) {
     var s = String(monthKey || '');
@@ -142,6 +182,14 @@
     var s = normalizeMonthKey(monthKey);
     if (!s) return '';
     return s + pad2(dayNumber);
+  }
+  function dailyDateKeyFromHref(href) {
+    var s = String(href || '');
+    var range = s.match(/#?\/(\d{8}-\d{8})(?:\/|$)/);
+    if (range) return range[1];
+    var daily = s.match(/#?\/(\d{6})\/(\d{2})(?:\/|$)/);
+    if (daily) return daily[1] + daily[2];
+    return '';
   }
   function paperIdFromHref(href) {
     var s = String(href || '');
@@ -238,6 +286,9 @@
     if (typeof value === 'number' && isFinite(value)) return value;
     var s = String(value == null ? '' : value).trim();
     if (!s) return 0;
+    var normalized = normalizeDailyDateKey(s);
+    if (isDailyRangeKey(normalized)) return timestampFromDateLike(dailyRangeEndDateKey(normalized));
+    if (isDailySingleDateKey(normalized)) s = normalized;
     var compact = s.match(/^(\d{4})(\d{2})(\d{2})$/);
     if (compact) return Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]));
     var yearOnly = s.match(/^(\d{4})$/);
@@ -507,14 +558,16 @@
         i += 1;
         while (i < lines.length && !/^\*\s/.test(lines[i])) {
           var dayLine = lines[i];
-          var markerMatch = dayLine.match(/<!--dpr-date:(\d+)-->/);
+          var markerMatch = dayLine.match(/<!--dpr-date:([^>]+?)-->/);
           if (/^\s{2}\*\s/.test(dayLine) && !/^\s{4}/.test(dayLine)) {
             var dayLink = parseTopLink(dayLine);
             var rawLabel = dayLine.replace(/^\s{2}\*\s+/, '').replace(/<!--.*?-->/g, '').trim();
-            var dateKey = markerMatch ? markerMatch[1] : rawLabel;
+            var dateKey = normalizeDailyDateKey(markerMatch ? markerMatch[1] : rawLabel) ||
+              dailyDateKeyFromHref(dayLink && dayLink.href) ||
+              rawLabel;
             var day = {
               dateKey: dateKey,
-              dateLabel: (dayLink && dayLink.label) || rawLabel || (markerMatch ? formatDateLabel(markerMatch[1]) : ''),
+              dateLabel: (dayLink && dayLink.label) || rawLabel || formatDateLabel(dateKey),
               reportHref: dayReportHrefFromKey(dateKey, dayLink && dayLink.href),
               papers: [],
             };
@@ -643,8 +696,11 @@
       });
     });
     model.conferences = sortByTimestampDesc(model.conferences, conferenceSortTimestamp);
-    // 日报按日期倒序
+    // 日报按日期倒序；区间日报按结束日期归位，保证最近的区间报告不会从日历里“消失”。
     model.daily.sort(function (a, b) {
+      var at = timestampFromDateLike(a && a.dateKey);
+      var bt = timestampFromDateLike(b && b.dateKey);
+      if (bt !== at) return bt - at;
       return String(b.dateKey).localeCompare(String(a.dateKey));
     });
 
@@ -984,12 +1040,18 @@
     var byDate = {};
     var dateKeys = [];
     (model && model.daily || []).forEach(function (day) {
-      if (!day || !/^\d{8}$/.test(String(day.dateKey || ''))) return;
-      byDate[day.dateKey] = day;
-      dateKeys.push(day.dateKey);
+      var anchor = day && dailyCalendarAnchorDateKey(day.dateKey);
+      if (!anchor) return;
+      if (!byDate[anchor]) {
+        byDate[anchor] = { records: [], papers: [] };
+        dateKeys.push(anchor);
+      }
+      byDate[anchor].records.push(day);
+      byDate[anchor].papers = byDate[anchor].papers.concat(day.papers || []);
     });
     var fallbackActive = dateKeys[0] || '';
-    var active = activeDateKey && byDate[activeDateKey] ? activeDateKey : fallbackActive;
+    var requestedActive = dailyCalendarAnchorDateKey(activeDateKey);
+    var active = requestedActive && byDate[requestedActive] ? requestedActive : fallbackActive;
     var month = normalizeMonthKey(activeMonthKey) || monthKeyFromDateKey(active) || monthKeyFromDateKey(fallbackActive);
     var days = [];
     var weekdays = ['一', '二', '三', '四', '五', '六', '日'];
@@ -1015,7 +1077,9 @@
       days.push({
         blank: false,
         dateKey: dateKey,
-        label: day && day.dateLabel || formatDateLabel(dateKey),
+        label: day && day.records && day.records.length > 1
+          ? formatDateLabel(dateKey) + '（含区间日报）'
+          : (day && day.records && day.records[0] && day.records[0].dateLabel || formatDateLabel(dateKey)),
         dayNumber: dayNumber,
         totalCount: papers.length,
         unreadCount: unread,
@@ -1135,16 +1199,17 @@
     var map = readMap || {};
     var allKey = '__all__';
     var dateView = buildDailyDateView(model, activeDateKey, map, activeMonthKey);
-    var activeDate = dateView.activeKey || '';
-    var activeDay = null;
-    (model && model.daily || []).some(function (day) {
-      if (day && day.dateKey === activeDate) {
-        activeDay = day;
-        return true;
+    var activeDate = dailyCalendarAnchorDateKey(dateView.activeKey) || dateView.activeKey || '';
+    var activeRecords = [];
+    (model && model.daily || []).forEach(function (day) {
+      if (day && dailyCalendarAnchorDateKey(day.dateKey) === activeDate) {
+        activeRecords.push(day);
       }
-      return false;
     });
-    var papers = activeDay && activeDay.papers || [];
+    var papers = [];
+    activeRecords.forEach(function (day) {
+      papers = papers.concat(day.papers || []);
+    });
     var tabs = [];
     var seen = {};
     addTab(tabs, seen, allKey, '全部');
@@ -1158,25 +1223,30 @@
       });
     });
     var activeTag = activeTagKey && seen[activeTagKey] ? activeTagKey : allKey;
-    var filtered = activeTag
-      ? papers.filter(function (paper) {
-        if (activeTag === allKey) return true;
-        return paperTagLabels(paper).indexOf(activeTag) !== -1;
-      })
-      : papers;
-    var label = activeDay && (activeDay.dateLabel || formatDateLabel(activeDate)) || formatDateLabel(activeDate);
-    if (activeTag && activeTag !== allKey) label += ' / ' + activeTag;
+    var groups = [];
+    activeRecords.forEach(function (day) {
+      var filtered = activeTag
+        ? (day.papers || []).filter(function (paper) {
+          if (activeTag === allKey) return true;
+          return paperTagLabels(paper).indexOf(activeTag) !== -1;
+        })
+        : (day.papers || []);
+      if (!filtered.length) return;
+      var label = day && (day.dateLabel || formatDateLabel(day.dateKey)) || formatDateLabel(activeDate);
+      if (activeTag && activeTag !== allKey) label += ' / ' + activeTag;
+      groups.push({
+        key: day.dateKey + ':' + (activeTag || 'all'),
+        label: label,
+        papers: filtered,
+        unreadCount: countUnreadPapers(filtered, map),
+      });
+    });
     var calendarModel = filterDailyModelByTag(model, activeTag);
     return {
       activeKey: activeTag,
       activeDateKey: activeDate,
       tabs: tabs,
-      groups: activeDate ? [{
-        key: activeDate + ':' + (activeTag || 'all'),
-        label: label,
-        papers: filtered,
-        unreadCount: countUnreadPapers(filtered, map),
-      }] : [],
+      groups: activeDate ? groups : [],
       calendar: buildDailyCalendarView(calendarModel, activeDate, activeMonthKey, map),
     };
   }
@@ -1541,7 +1611,6 @@
       unreadResultPaperIds: vs.unreadResultPaperIds,
     };
     var viewModel = normalUnreadFilterMode ? filterModelForPaperResults(model, resultOptions) : model;
-    var summary = computeModelReadSummary(viewModel, vs.readMap);
     var renderedGroups = 0;
     if (viewModel && viewModel.conferences && viewModel.conferences.length) {
       var conferenceView = resultMode
@@ -1549,8 +1618,8 @@
         : (vs.conferenceViewMode === 'tag'
           ? buildConferenceTagView(viewModel, vs.activeConferenceTag, vs.readMap)
           : buildConferenceConfView(viewModel, vs.activeConference, vs.readMap));
-      var conferenceTotal = resultMode ? countPapersInView(conferenceView) : summary.conference.papers;
-      var conferenceUnread = resultMode ? countUnreadInView(conferenceView, vs.readMap) : summary.conference.unread;
+      var conferenceTotal = countPapersInView(conferenceView);
+      var conferenceUnread = countUnreadInView(conferenceView, vs.readMap);
       if (!resultMode || conferenceTotal > 0) {
         renderedGroups += 1;
         html.push(renderAxisGroup({
@@ -1573,8 +1642,8 @@
       var dailyView = resultMode
         ? buildDailyResultView(model, resultOptions)
         : buildDailyCalendarTagView(viewModel, vs.activeDailyDate, vs.activeDailyTag, vs.readMap, vs.activeDailyMonth);
-      var dailyTotal = resultMode ? countPapersInView(dailyView) : summary.daily.papers;
-      var dailyUnread = resultMode ? countUnreadInView(dailyView, vs.readMap) : summary.daily.unread;
+      var dailyTotal = countPapersInView(dailyView);
+      var dailyUnread = countUnreadInView(dailyView, vs.readMap);
       if (!resultMode || dailyTotal > 0) {
         renderedGroups += 1;
         html.push(renderAxisGroup({
@@ -1708,7 +1777,16 @@
     var map = readMap || vs.readMap || {};
     var axisModel = modelForUnreadNormalFilter(model, map);
     var dailyView = buildDailyCalendarTagView(axisModel, vs.activeDailyDate, vs.activeDailyTag, map, vs.activeDailyMonth);
-    var group = dailyView.groups && dailyView.groups[0];
+    var preferredDateKey = String(vs.activeDailyDate || '');
+    var group = null;
+    (dailyView.groups || []).some(function (item) {
+      if (preferredDateKey && String(item.key || '').indexOf(preferredDateKey + ':') === 0) {
+        group = item;
+        return true;
+      }
+      return false;
+    });
+    if (!group) group = dailyView.groups && dailyView.groups[0];
     return group ? axisSectionStateKey('daily', 'tag', group.key) : '';
   }
 
@@ -1929,7 +2007,6 @@
       });
     });
     $$('.dpr-sidebar-panel', state.bodyEl).forEach(function (panel) {
-      var panelKey = panel.getAttribute('data-panel');
       var header = $('.dpr-sidebar-panel-header', panel);
       var totalEl = header && $('.dpr-sidebar-day-total', header);
       var unreadEl = header && $('.dpr-sidebar-day-unread', header);
@@ -1938,11 +2015,7 @@
       papers.forEach(function (li) {
         if (li.getAttribute('data-read') === '0') unread += 1;
       });
-      var resultMode = panel.classList.contains('is-result-mode');
-      var counts = panelKey === 'conference' ? summary.conference : summary.daily;
-      if (resultMode) {
-        counts = { papers: papers.length, unread: unread };
-      }
+      var counts = { papers: papers.length, unread: unread };
       if (totalEl) totalEl.textContent = String(counts.papers);
       if (unreadEl) unreadEl.textContent = String(counts.unread);
       if (counts.unread === 0) {
