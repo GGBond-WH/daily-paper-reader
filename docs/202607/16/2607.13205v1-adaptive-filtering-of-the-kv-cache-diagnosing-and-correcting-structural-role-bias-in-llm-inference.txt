@@ -1,0 +1,260 @@
+Title: Adaptive Filtering of the KV Cache: Diagnosing and Correcting Structural-Role Bias in LLM Inference
+
+URL Source: https://arxiv.org/pdf/2607.13205v1
+
+Published Time: Thu, 16 Jul 2026 00:26:23 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# ADAPTIVE FILTERING OF THE KV CACHE: DIAGNOSING AND CORRECTING STRUCTURAL-ROLE BIAS IN LLM INFERENCE 
+
+# Soumil Mandal ∗
+
+# ServiceNow soumil.mandal@servicenow.com 
+
+ABSTRACT 
+
+Attention-based KV cache eviction (H2O and its de-scendants) compresses the memory-constrained state of a long-context model by ranking tokens on accumulated attention mass, treated here as signal energy, and keeping the heaviest. On schema-dense input streams such as nested JSON, this score acts as a non-stationary filter that dispropor-tionately retains noise: a non-content sink role (delimiters or whitespace) carries an order of magnitude more energy than any content role, and structural KEY tokens are over-retained at roughly 1.8× the rate of the answer-carrying VALUE tokens, collapsing exact-match accuracy from 88% to 0% at a 5% budget as the signal-to-noise ratio of the retained state degrades. A counterfactual experiment establishes that suppressing KEY tokens is the best deployable filter. Our retraining-free, role-conditional allocation over SnapKV’s windowed score, governed by a single tuned hyperparameter, closes 63–98% of the H2O gap at sub-20% budgets and, at higher budgets, modestly matches or exceeds full-cache accuracy—a small, seed-sensitive denoising effect (border-line significant at B=0 .50 ; not distinguishable from zero at 
+
+B=0 .30 over four seeds). A 15 MB linear role probe supplies these labels at negligible inference cost, though matching parser-level downstream accuracy remains open. 
+
+Index Terms — KV cache compression, adaptive filter-ing, signal-to-noise ratio, long-context inference, attention sinks, large language models, resource-constrained inference 
+
+1. INTRODUCTION 
+
+KV cache eviction is the dominant lever for memory and latency in long-context LLM inference. The canonical method, H2O [1], ranks tokens by accumulated attention mass and keeps a fixed fraction (the “budget”) of heavy hitters—training-free, drop-in, grounded in the observation that a few tokens receive disproportionate attention. Through a signal-processing lens, the cache is a memory-constrained 
+
+> ∗This work was carried out as an independent personal project during the author’s time at ServiceNow, and does not represent ServiceNow’s official research, products, or views.
+
+representation of a streaming signal and eviction is an adaptive filter retaining the informative components under a hard rate budget. We study a regime where this scoring assumption fails. Schema-dense long contexts —deeply nested JSON, XML, large markdown tables—are increasingly common in retrieval-augmented and structured-data agent workloads yet absent from standard KV-compression benchmarks. Here an order-of-magnitude concentration of attention mass on struc-tural tokens (delimiters, whitespace, JSON keys) decouples “attention mass” (signal energy) from “answer relevance” (information content): H2O’s heavy-hitter filter optimizes the wrong criterion, retaining high-energy structural noise, and exact-match (EM) accuracy on leaf-value QA collapses from 88% at full budget to 0% at a 5% budget. This paper makes four contributions. (i) We diagnose astructural-routing bias in H2O on schema-dense contexts: an attention-sink role accumulates roughly 30 × the mean per-token mass of any content role, and KEY tokens are over-retained at 1.8–1.9× the rate of VALUE tokens. (ii) A 
+
+counterfactual experiment that bans individual roles from retention shows that evicting every KEY token is the best de-ployable policy, while delimiters and values are both required scaffold. (iii) A composable role-conditional allocator on top of SnapKV [2] composes super-additively; at higher budgets it matches or modestly exceeds full-cache accuracy (a small, seed-sensitive effect). (iv) We replicate across four model families—the claims split into a universal core and a model-coupled residual—and study a 15 MB linear role probe as a parser substitute. 
+
+2. BACKGROUND AND RELATED WORK The H2O family. H2O [1] accumulates a heavy-hitter score 
+
+s(t) = P 
+
+> q
+
+pt(q) during prefill and keeps the top-k tokens per (layer, head). Descendants include Scissorhands [3], FastGen [4], SnapKV [2] (windowed mass over the last W
+
+queries with a 1-D max-pool over the KV axis), and Pyra-midKV [5]. Later methods refine where budget is spent—an attention-variance term (CAKE [6]), query-aware selection (Quest [7]), coarse-to-fine cascades (RocketKV [8]), one-shot arXiv:2607.13205v1 [cs.CL] 14 Jul 2026 self-attention top-k (SAGE-KV [9]), a second-order criterion (OBCache [10])—or make eviction learned (KVP [11], SideQuest [12]). Our allocator stays training-free and orthogonal: it reallocates an existing score across struc-tural roles rather than proposing a new one, extending the sink from position 0 to hundreds of distributed delimiter positions. StreamingLLM [13] adds a fixed BOS-sink slot, which [14, 15, 16] tie to massive activations and [17] casts as a geometric reference-frame effect. 
+
+Budget allocation. Ada-KV [18] and HeadKV [19] al-locate a global budget non-uniformly across attention heads ;we partition along a structural-role axis within a head, and the two could be stacked. The head view is grounded in retrieval heads [20], which CompressKV [21] uses to flag unimportant tokens. 
+
+Closest prior art. [22] diagnose an eviction bias at the granularity of instruction blocks and propose equal-rate “fair eviction.” We work at the finer granularity of structural roles and find the opposite policy direction: structural QA benefits from retention biased away from KEY tokens. Benchmarks such as LongBench [23] and RULER [24] dominate the liter-ature but do not stress deeply schema-dense leaf-value QA. 
+
+3. DIAGNOSIS: A STRUCTURAL-ROUTING BIAS Setup. We evaluate on four synthetic corpora: in-dented synthetic json (nested objects, leaf-value queries), synthetic json compact (no whites-pace), synthetic xml (same content as XML), and 
+
+wikitable (markdown tables with distractors). Accuracy is exact-match (EM) over n=50 prompts at seed 0 across budgets B ∈ { 5, 10 , 20 , 30 , 50 , 75 , 100 }% (B=100% is the no-eviction full-cache baseline). Prefill records per-(layer, head) attention mass; eviction installs a keep-mask before an explicit-scores decode path. Runs use fp16 on one 80 GB A100; ctx-16k numbers reproduce on fp32, ruling out a decode-path artifact. We first profile attention on Llama-3.1-8B-Instruct (fp16) across 604 prompts in three context buckets (8k/16k/32k), labelling each token with a structural role in {KEY, VALUE, DELIM, HEADER, PROSE, WS }
+
+(KEY/HEADER schema labels, DELIM punctuation, WS whitespace). 
+
+Mass concentration. On synthetic json , mean per-token mass on DELIM is 13 .64 , against 0.434 (KEY), 
+
+0.336 (VALUE), 0.177 (PROSE), 0.623 (WS): an order-of-magnitude structural sink (Fig. 1). As signal energy, the sink carries ∼40 × the VALUE signal’s per-token energy ( 13 .64 
+
+vs. 0.336 ), so an energy-based filter locks onto the noise floor. 
+
+Retention bias. Table 1 reports each role’s H2O reten-tion rate. The KEY-vs-VALUE ratio is 1.94 /1.79 /1.65 ×
+
+at B=5 /10 /20% on JSON, and HEADER retention on 
+
+wikitable reaches 47% at B=5% , while answer-carrying VALUE is systematically under-retained. Mass-quartile 
+
+Fig. 1. Per-role mean accumulated attention mass on 
+
+synthetic json (Llama-3.1-8B, log axis). The DELIM sink exceeds every content role by an order of magnitude; a linear axis would hide all non-DELIM roles. This is the struc-tural sink that H2O’s heavy-hitter score conflates with answer relevance. bucketing confirms the mechanism: VALUE concentrates in the bottom (lowest-mass) quartile and KEY in the top, so the scorer parks answer tokens where they are evicted first. The bias is layer-pervasive but not uniform: layer 0 inverts it (VALUE > KEY), and on wikitable layer 1 reaches a 
+
+34 × HEADER-over-VALUE mass ratio. 
+
+The sink is not the BOS sink. Splitting the sink into the BOS position and non-BOS DELIM shows that BOS is exactly StreamingLLM’s fixed slot (one position, retained almost always), whereas the operational sink is 
+
+∼674 distinct DELIM positions per prompt at text-inferable locations. A single fixed slot cannot capture a distributed, format-dependent sink; role-conditional allocation can. 
+
+A retained-state SNR estimate. The filtering language admits a coarse number. Treating attention mass as per-token energy, a retained-state SNR is the kept energy on VALUE tokens relative to structural DELIM/KEY. On the raw 
+
+synthetic json state the VALUE-to-DELIM ratio is 
+
+0.336 /13 .64 ≈ 0.025 (≈ − 16 dB): the answer already sits an order of magnitude below the structural noise floor. Since H2O retains DELIM and KEY at higher rates than VALUE (Table 1), eviction pushes this ratio down as the budget tightens, and EM tracks it ( 88% → 0% as B: 100% → 5% ). Role-conditional allocation (§4.1) is thus an SNR-raising filter—capping noise roles and floor-protecting VALUE lifts the ratio, recovering EM. We report it as a directional estimator, not a formal control. 
+
+4. COUNTERFACTUAL EVICTION AND THE COMBINED METHOD Counterfactual. Correlation between mass and role does not establish causation. For each (layer, head, prompt) we se-lect the H2O top-k from a candidate set excluding all tokens of one role, then decode (Table 2). On synthetic json Table 1 . H2O retention rate per (corpus, role, budget) on Llama-3.1-8B. KEY/HEADER are over-retained and VALUE under-retained relative to the random baseline B.                            
+
+> Corpus Role B=5% B=10% B=20%
+> json KEY 0.060 0.121 0.242
+> json VALUE 0.032 0.068 0.147
+> json DELIM 0.105 0.185 0.315
+> json PROSE 0.027 0.049 0.096
+> wikitable HEADER 0.467 0.616 0.768
+> wikitable VALUE 0.051 0.101 0.200
+
+Table 2 . Counterfactual role-eviction EM on indented JSON (ctx 8k, n=50 ). Each No-X condition evicts every token of role X and fills the rest by mass. No-KEY reaches the full-cache baseline ( 0.88 ) using less budget; No-DELIM is uni-formly catastrophic.                         
+
+> BAll (H2O) No-DELIM No-KEY No-VALUE 0.20 0.00 0.00 0.14 0.00 0.30 0.00 0.00 0.32 0.00 0.50 0.14 0.00 0.82 0.00 0.75 0.48 0.00 0.88 0.28 1.00 0.88 0.88 0.88 0.88
+
+ctx 8k ( n=50 ), H2O collapses to 0% below B=0 .5, whereas 
+
+No-KEY recovers to 0.82 at B=0 .5 and hits the 0.88 ceiling at B=0 .75 , using strictly less candidate budget. No-DELIM 
+
+and No-VALUE collapse to 0% at every sub-1.0 budget, so delimiters and values are both required scaffold even though delimiters carry no schema-level answer. The retention or-dering is therefore DELIM ≈ VALUE ≫ KEY, inverting the naive “keys index, values are content” reading. 
+
+SnapKV mechanism. SnapKV replaces P 
+
+> q
+
+pt(q) with a windowed sum over the last W queries, then a 1-D max-pool (kernel 7) over the KV axis. At W =64 , windowed mass alone closes 81% of the H2O gap at B=0 .5; adding the pool closes 100% at ctx 16k. The pool down-weights isolated 
+
+high-mass tokens (single sinks) and up-weights content clus-ters , so SnapKV’s gain is largely implicit sink suppression, not recency. Sweeping k ∈ { 3, 5, 7, 11 , 15 }, EM rises mono-tonically in k at binding budgets ( 0.06 → 0.54 at B=0 .05 ), so the default k=7 is conservative here; disabling the pool collapses low-budget EM to 0.16 .
+
+4.1. The combined method 
+
+The two findings address orthogonal failure modes—position bias (the sink) and content bias (KEY over-retention)—so we compose them into a single role-conditional allo-cator (Algorithm 1, Fig. 2): score by windowed mass, smooth with the SnapKV max-pool, then keep the top-
+
+⌈αr B n kv ⌉ tokens within each role bucket r of each (layer, head)—redistributing slack from saturated buckets— 
+
+Algorithm 1 Role-conditional KV allocation (per layer, per head).                                      
+
+> Require: roles r(t);budget B;window W=64 ;kernel k=7 ;weights α
+> 1: s(t)←P
+> q∈last Wpt(q)▷windowed mass (SnapKV)
+> 2: ˜s(t)←MaxPool k
+>  s(t)▷1-D pool, KV axis
+> 3: for all role buckets rdo
+> 4: keep top-⌈αrB n kv ⌉tokens of rby ˜s
+> 5: redistribute unused budget from saturated buckets
+> 6: return keep-mask; decode through it
+> input tokens
+> role labels
+> r(t)
+> windowed + max-pool score ˜s
+> per-role top-k
+> keep-mask decode
+
+Fig. 2 . Inference pipeline of the combined method. Role labels r(t) come from a structural parser in our accuracy experiments; §6 studies replacing it with a 15 MB linear probe (currently an imperfect substitute). Scoring and pool-ing are SnapKV; the per-role top-k and keep-mask are the role-conditional allocator. and decode through the keep-mask. The role policy 
+
+α = {V :0 .70 , D :0 .20 , P :0 .05 , W :0 .05 , KEY :αKEY } is renormalized per bucket. 
+
+Hyperparameters. The method exposes one tuned knob over three diagnosis-fixed constants , not a bank of free pa-rameters. Fixed, not tuned: the window W =64 and pool kernel k=7 are SnapKV defaults (the kernel sweep above shows EM monotone in k, so k=7 is conservative), and the content-role weights {V :0 .70 , D :0 .20 , P :0 .05 , W :0 .05 } are read off the counterfactual ordering DELIM ≈VALUE ≫KEY (Table 2) rather than swept. Tuned: only αKEY ∈ [0 , 0.2] ,whose per-cell optimum is stable across all five budgets. A 
+
+±0.1 sweep of the fixed content-role weights (ctx 16k, B ∈{0.05 , 0.30 , 0.50 }, n=50 ) confirms the split is robust: EM moves by at most 4 EM points at any budget— except when a weight is driven to exactly zero. Zeroing WS costs −12 EM at B=0 .30 ; zeroing PROSE collapses EM to 0.00 at every budget, because the parser labels the question text as PROSE and evicting it removes the model’s only retrieval cue. KEY is the one role the method is designed to zero; the other three carry a strictly-positive, load-bearing floor, which the fixed point respects. 
+
+Results. Table 3 compares the combined method (αKEY =0 ) against SnapKV-only, the allocator alone, and H2O; it dominates each at every budget. At ctx 16k, B=0 .05 ,SnapKV alone closes 21% of the H2O gap and the allocator alone 0% , yet the combination closes 63% —a factor-of-three super-additivity—rising to 86% and 98% at B=10 /20% .The gain is context-robust but bounded: the combined-vs-SnapKV margin at B=5% is +0 .16 /+0 .36 /+0 .18 at ctx 8k/16k/32k, peaking near 16k. Table 3 . Combined SnapKV × role-conditional ( no-key ,
+
+αKEY =0 ) vs. its ingredients on synthetic json ctx 16k (n=50 , seed 0, full-cache baseline 0.88 ). The B≥0.30 mar-gin over the full-cache baseline is seed-sensitive (Table 4).                         
+
+> BH2O no-key SnapKV Combined
+> 0.05 0.02 0.02 0.20 0.56
+> 0.10 0.02 0.04 0.34 0.76
+> 0.20 0.00 0.18 0.70 0.86
+> 0.30 0.02 0.34 0.80 0.98
+> 0.50 0.22 0.86 0.88 0.96
+
+Fair-eviction baseline. We implement the fair-eviction rule of [22] with our structural-role partition in place of their instruction-block one (equal retention rate per role). On JSON it is worse than vanilla SnapKV (−0.18 to −0.70 
+
+EM) and loses to the best role-conditional policy in every cell. The same partition-and-allocate container thus yields opposite optima on opposite workloads: equal rate for instruction-following, retention biased away from KEY for structural QA. 
+
+Query-aware baseline (Quest). Quest [7] re-selects KV pages at every decode step; our harness makes one static post-prefill decision, so we implement a one-shot analogue matched to that regime (page-level key-bound scoring against the mean query of the same W =64 window). It trails both H2O/SnapKV and the combined method at every budget (EM 0.06 /0.28 /0.48 /0.68 at B=5 /20 /30 /50% 
+
+vs. 0.56 /0.86 /0.98 /0.96 ). Omitting Quest’s per-step re-selection, this is a lower bound , not a head-to-head comparison; a full incremental reimplementation is future work. It is consistent with our framing that query-aware selection alone does not resolve the role/content bias. 
+
+KV eviction as a quality lever (seed-sensitive). At ctx 16k, B ∈ { 0.30 , 0.50 }, the combined method reaches 
+
+0.98 and 0.96 on the seed-0 draw used elsewhere, above the full-cache baseline ( 0.88 ) by 10 and 8 EM. This margin is fragile: over three more prompt draws (Table 4, n=200 
+
+pooled/budget) it shrinks sharply. At B=0 .30 the mean is 
+
++0 .01 with a 95% CI of [−0.03 , +0 .07] straddling zero (Mc-Nemar p≈0.80 ; 7 regressions vs. 9 recoveries), so the seed-0 “zero regressions” pattern is a lucky draw, not a property. At B=0 .50 a small effect survives ( +3 .5 EM, p≈0.046 ; 1
+
+regression vs. 8). The mechanism is plausible—suppressing high-attention KEY tokens denoises the focus on the leaf VALUE—but the defensible claim is only that at higher budgets the method matches or modestly exceeds the full cache, not that eviction is a reliable quality lever below 
+
+B=0 .50 .
+
+The α family. Sweeping αKEY ∈ { 0, 0.02 , 0.05 , 0.1, 0.2},the optimum is bimodal: αKEY =0 wins on cleanly separable indented JSON at long context ( +0 .08 to +0 .42 EM over SnapKV at ctx 16k), while αKEY =0 .02 is the safe default 
+
+Table 4 . Multi-seed robustness of the over-baseline mar-gin ( ∆EM = combined method − full-cache baseline), 
+
+synthetic json ctx 16k, n=50 prompts/seed. Only seed 0 (the draw used elsewhere in this paper) shows a large mar-gin; pooled over four seeds the B=0 .30 effect is indistin-guishable from zero and the B=0 .50 effect is small and bor-derline.                      
+
+> Seed / statistic ∆EM @ B=0 .30 ∆EM @ B=0 .50
+> seed 0 +0 .10 +0 .08
+> seed 1 −0.02 +0 .02
+> seed 2 0.00 +0 .04
+> seed 3 −0.04 0.00
+> mean +0 .01 +0 .035
+> 95% CI [−0.03 ,+0 .07] [+0 .01 ,+0 .065]
+> McNemar p0.80 0.046
+
+elsewhere ( +0 .04 to +0 .44 on compact JSON and XML; near-tied on wikitable ). On compact JSON and XML, Llama’s BPE merges delimiter and key characters into single tokens, so αKEY =0 evicts merged delimiters and fails ( 0/50 
+
+EM at every budget); the soft floor αKEY =0 .02 preserves them. A precedence-flip ablation (relabelling merged tokens as DELIM) rescues compact JSON but not XML, so only the former collapse is a labeling artifact. Within each cell the best α is stable across all five budgets. 
+
+5. CROSS-MODEL GENERALIZATION 
+
+We replicate the diagnosis, counterfactual, and combined method on Mistral-7B-Instruct-v0.3 , Phi-3-mini (both SentencePiece), and Qwen2.5-7B-Instruct (a divergent tiktoken-family BPE), all on 
+
+synthetic json ctx 16k with identical prompts ( n=50 ). The claims split into a universal core and a model-coupled residual (Table 5). The KEY-over-VALUE retention bias (C1), the counter-factual KEY recovery (C2), and the max-pool mechanism (C7) hold on all four families: the C1 ratio at B=5% is 
+
+1.94 /1.82 /1.98 /1.75 ×, and No-KEY lifts EM above each model’s own full-cache baseline (Mistral 0.64 vs. 0.10 for 
+
+All at B=0 .5; Phi-3 0.62 above its 0.60 full-cache baseline; Qwen +0 .38 EM at B=0 .5). The super-additive composition (C8) and the over-baseline effect (C9), however, are full on Llama, compressed on Mistral, and absent on Phi-3 and Qwen—and C9 in particular is seed-sensitive even on Llama (Table 4), so we treat it as a qualified secondary observation, not a headline claim. The sink’s identity is tokenizer-coupled but its eviction behavior is not: the dominant per-token sink lands on a differ-ent role per family (DELIM on Llama, whitespace on Mistral, none on Phi-3, PROSE on Qwen), yet the H2O ordering DELIM ≫ KEY ≈ WS > VALUE > PROSE is identical on all four. Phi-3 is the decisive control: it shares Mistral’s tokenizer with identical char-span counts yet patterns with Qwen, falsifying a “degrades with tokenizer divergence” reading. The surviving mechanism is that SnapKV’s max-pool already cancels the KEY bias completely on Phi-3 and Qwen, leaving no residual for the no-key correction, whereas on Llama (and, smaller, Mistral) a residual remains; the low-budget combined-vs-SnapKV gain at B=5% makes it concrete: +0 .36 (Llama), +0 .24 (Mistral), +0 .00 (Qwen). The bias predates instruction tuning: the non-instruct 
+
+Llama-3.1-8B base reproduces the diagnosis at near-identical magnitude (DELIM sink mass 13 .54 ; C1 ratio 
+
+1.91 × at B=5% ), so it is a property of the pretrained transformer, not an alignment artifact. Accuracy claims stay scoped to instruct models, as the base floors at 0.00 EM even at full budget (a capability floor, not a refutation). The αKEY =0 binary collapse on merged-token corpora is itself Llama-specific ( α=0 stays functional at 0.32 –0.50 EM on Mistral and Qwen), confirming the soft floor αKEY =0 .02 
+
+as the safe cross-model default. 
+
+Role-density boundary. The policy gain is bounded by role density. On wikitable the over-attended role is HEADER at only 1.6% of tokens (vs. JSON KEY at 
+
+∼42% ), and all five α curves bunch in a 0.55 –0.66 EM band indistinguishable from SnapKV: excluding 1.6% of tokens frees too little budget to matter. The diagnosis (the No-DELIM catastrophe) still replicates, so it is the policy gain, not the phenomenon, that is density-bounded. 
+
+Table 5 . Claim × model-family partition. ✓ replicates; ×
+
+does not; ◦ partial. The top three rows are the universal core; C8/C9 are the model-coupled residual.                         
+
+> Claim Llama Mistral Phi-3 Qwen C1: over-retains KEY vs. VALUE ✓✓✓✓
+> C2: ban-KEY recovers accuracy ✓✓✓✓
+> C7: max-pool load-bearing ✓✓✓✓
+> C8: super-additive comp. ✓✓××
+> C9: over-baseline lever ✓✓××
+
+6. DEPLOYMENT: A LINEAR ROLE PROBE 
+
+The method needs per-token role labels, supplied by a struc-tural parser in every experiment above. Toward parser-free deployment we train a multinomial logistic regression over a 5-token window of token IDs (current ±2): ∼3.85M pa-rameters ( ∼15 MB at fp32), trained in 8.6 s on 200 prompts. 
+
+In isolation it labels roles near-perfectly (held-out accuracy 
+
+0.9952 , KEY F1 0.9991 ). 
+
+But the probe is not a drop-in replacement. Swapping probe for parser labels in the combined method drops downstream EM by 18 –32 points at ctx 16k ( 0.98 → 0.66 
+
+at B=0 .30 ). The cause is identifiable: as a purely local classifier the probe has no notion of which block a token sits in, so it labels the question’s path reference (e.g. 
+
+... 83.delta 26... ) as KEY on token shape, whereas the parser’s block-level dispatch scopes that free-form text as PROSE. Under αKEY =0 these mislabeled question tokens get zero budget and are evicted—deleting the model’s only retrieval cue (the same failure as zeroing PROSE, §4.1). Near-perfect isolated F1 thus does not imply deployment readiness; adding a block/segment feature is the natural fix, left to future work. 
+
+Systems cost. Probe inference is negligible— 
+
+0.04 s/prompt vs. 1.94 s for the parser, under 1% of a
+
+32 -token decode. The SnapKV/H2O windowed-attention recorder is a real one-time cost (∼12 .9 s/prompt at ctx 16k). We claim no measured memory or latency savings: to isolate the accuracy effect of an exact keep-pattern, our harness masks attention to evicted keys rather than compacting the KV tensors, so peak memory is flat across 
+
+B ∈ { 0.05 , . . . , 1.0} (<0.1% ) and decode is no faster. The 
+
+1−B reduction holds mechanically for any top-k scheme in a compacting implementation, but we do not demonstrate it here. 
+
+7. CONCLUSION 
+
+Attention-mass scoring conflates signal energy (high on structural sinks) with information content (high on answer-relevant tokens), so heavy-hitter eviction is a filter matched to the wrong criterion. The contribution is three composable pieces: a diagnostic for why recency-based methods help (implicit sink avoidance), an isolation of which part of SnapKV does the work (the max-pool over the KV axis, not the recency floor), and a role-conditional allocator that fits on any score under a single tuned hyperparameter (three role weights fixed by the diagnosis). Together they close most of the H2O gap on schema-dense QA and compose super-additively; at higher budgets the method matches or modestly exceeds full-cache accuracy, a small, seed-sensitive effect (§4.1). It is retraining-free and, partitioning budget along the role axis within a head, complementary to head-axis allocators (Ada-KV [18], HeadKV [19]). Limitations: arole-density floor on sparse-role corpora (e.g. wikitable); the seed-sensitive over-baseline margin; a masking-based harness that isolates accuracy but does not realize the 
+
+1−B memory/latency benefit; a Quest comparison that omits per-step re-selection (a lower bound); and fp16-only runs. Adding block-context features to the probe (a naive local-window probe transfers imperfectly downstream), extending to 4-bit KV quantization, and validating on real schema-dense corpora (RAG, API logs, LongBench-style table QA) are future work. 8. REFERENCES 
+
+[1] Zhenyu Zhang et al., “H2O: Heavy-hitter oracle for ef-ficient generative inference of large language models,” in Advances in Neural Information Processing Systems (NeurIPS) , 2023. [2] Yuhong Li et al., “SnapKV: LLM knows what you are looking for before generation,” in Advances in Neural Information Processing Systems (NeurIPS) , 2024. [3] Zichang Liu et al., “Scissorhands: Exploiting the per-sistence of importance hypothesis for LLM KV cache compression at test time,” in Advances in Neural Infor-mation Processing Systems (NeurIPS) , 2023. [4] Suyu Ge et al., “Model tells you what to discard: Adap-tive KV cache compression for LLMs,” in International Conference on Learning Representations (ICLR) , 2024. [5] Zefan Cai et al., “PyramidKV: Dynamic KV cache compression based on pyramidal information funnel-ing,” arXiv:2406.02069 , 2024. [6] Ziran Qin, Yuchen Cao, Mingbao Lin, Wen Hu, Shixuan Fan, Ke Cheng, Weiyao Lin, and Jianguo Li, “CAKE: Cascading and adaptive KV cache eviction with layer preferences,” in International Conference on Learning Representations (ICLR) , 2025. [7] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han, “Quest: Query-aware sparsity for efficient long-context LLM inference,” in 
+
+International Conference on Machine Learning (ICML) ,2024. [8] Payman Behnam, Yaosheng Fu, Ritchie Zhao, Po-An Tsai, Zhiding Yu, and Alexey Tumanov, “RocketKV: Accelerating long-context LLM inference via two-stage KV cache compression,” in International Conference on Machine Learning (ICML) , 2025. [9] Guangtao Wang, Shubhangi Upasani, Chen Wu, Dar-shan Gandhi, Jonathan Li, Changran Hu, Bo Li, and Urmish Thakker, “LLMs know what to drop: Self-attention guided KV cache eviction for efficient long-context inference,” arXiv:2503.08879 , 2025. [10] Yuzhe Gu, Xiyu Liang, Jiaojiao Zhao, and Enmao Diao, “OBCache: Optimal brain KV cache pruning for effi-cient long-context LLM inference,” arXiv:2510.07651 ,2025. [11] Luca Moschella, Laura Manduchi, and Ozan Sener, “Learning to evict from key-value cache,” 
+
+arXiv:2602.10238 , 2026. [12] Sanjay Kariyappa and G. Edward Suh, “SideQuest: Model-driven KV cache management for long-horizon agentic reasoning,” arXiv:2602.22603 , 2026. [13] Guangxuan Xiao et al., “Efficient streaming language models with attention sinks,” in International Confer-ence on Learning Representations (ICLR) , 2024. [14] Mingjie Sun, Xinlei Chen, J. Zico Kolter, and Zhuang Liu, “Massive activations in large language models,” in 
+
+Conference on Language Modeling (COLM) , 2024. [15] Xiangming Gu, Tianyu Pang, Chao Du, Qian Liu, Fengzhuo Zhang, Cunxiao Du, Ye Wang, and Min Lin, “When attention sink emerges in language models: An empirical view,” in International Conference on Learn-ing Representations (ICLR) , 2025. [16] Federico Barbero, ´Alvaro Arroyo, Xiangming Gu, Christos Perivolaropoulos, Michael Bronstein, Petar Veliˇ ckovi´ c, and Razvan Pascanu, “Why do LLMs at-tend to the first token?,” arXiv:2504.02732 , 2025. [17] Valeria Ruscio, Umberto Nanni, and Fabrizio Silvestri, “What are you sinking? A geometric approach on atten-tion sink,” in Advances in Neural Information Process-ing Systems (NeurIPS) , 2025. [18] Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S. Kevin Zhou, “Ada-KV: Optimizing KV cache evic-tion by adaptive budget allocation for efficient LLM in-ference,” in Advances in Neural Information Processing Systems (NeurIPS) , 2025. [19] Yu Fu, Zefan Cai, Abedelkadir Asi, Wayne Xiong, Yue Dong, and Wen Xiao, “Not all heads matter: A head-level KV cache compression method with integrated re-trieval and reasoning,” in International Conference on Learning Representations (ICLR) , 2025. [20] Wenhao Wu, Yizhong Wang, Guangxuan Xiao, Hao Peng, and Yao Fu, “Retrieval head mechanistically explains long-context factuality,” arXiv:2404.15574 ,2024. [21] Xiaolin Lin, Jingcun Wang, Olga Kondrateva, Yiyu Shi, Bing Li, and Grace Li Zhang, “CompressKV: Seman-tic retrieval heads know what tokens are not important before generation,” arXiv:2508.02401 , 2025. [22] A. Chen, A. Geh, A. Grover, G. Van den Broeck, and A. Israel, “The pitfalls of KV cache compression,” 
+
+arXiv:2510.00231 , 2025. [23] Yushi Bai et al., “LongBench: A bilingual, multitask benchmark for long context understanding,” in Annual Meeting of the Association for Computational Linguis-tics (ACL) , 2024. [24] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg, “RULER: What’s the real context size of your long-context language models?,” in Conference on Language Modeling (COLM) , 2024.

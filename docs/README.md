@@ -6,32 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-15
-- 运行时间：2026-07-15 21:32:36 UTC
+- 最新运行日期：2026-07-16
+- 运行时间：2026-07-16 20:57:43 UTC
 - 运行状态：成功
-- 本次总论文数：4
+- 本次总论文数：3
 - 精读区：3
-- 速读区：1
+- 速读区：0
 
 ### 今日简报（AI）
-今日精选2篇高分KV缓存压缩研究，各有突破。两篇9分论文分别显示查询可见性会颠覆压缩排名，以及联合张量与JL残差可实现近乎无损压缩。建议关注这些技术在实际长上下文场景中的效果与部署可行性。
-- 详情：[/202607/15/README](/202607/15/README)
+今天精读两篇9.0高分论文，聚焦LLM高效隐私推理与MiMo-V2.5全流水线优化。  
+重点关注边缘-云协同推理的隐私保护方案及混合滑动窗口注意力极致效率提升。  
+建议深入阅读这两篇论文的架构设计与实验对比，尤其关注隐私与效率的平衡点。
+- 详情：[/202607/16/README](/202607/16/README)
 
 ### 精读区论文标签
-1. [How Query Visibility Changes KV-Cache Compression Rankings: A Matched-Budget Audit](/202607/15/2607.11942v1-how-query-visibility-changes-kv-cache-compression-rankings-a-matched-budget-audit)  
+1. [Efficient and Privacy Aware Edge Cloud Collaborative Inference for Large Language Models](/202607/16/2607.13093v1-efficient-and-privacy-aware-edge-cloud-collaborative-inference-for-large-language-models)  
    标签：评分：9.0/10、query:llm-kv-cache
-   evidence：在相同预算下审计KV缓存压缩方法，研究查询可见性影响
-2. [A JoLT for the KV Cache: Near-Lossless KV Cache Compression via Joint Tucker and JL-Residual Allocation for LLMs](/202607/15/2607.12550v1-a-jolt-for-the-kv-cache-near-lossless-kv-cache-compression-via-joint-tucker-and-jl-residual-allocation-for-llms)  
+   evidence：基于端点认证KV缓存的边云协同推理
+2. [Full-Pipeline Inference Optimization for MiMo-V2.5 Series: Pushing Hybrid SWA Efficiency to the Limit](/202607/16/2607.13095v1-full-pipeline-inference-optimization-for-mimo-v25-series-pushing-hybrid-swa-efficiency-to-the-limit)  
    标签：评分：9.0/10、query:llm-kv-cache
-   evidence：通过Tucker分解和JL残差分配进行KV缓存压缩
-3. [AVQ-Attention: Adaptive Vector-Quantized Attention](/202607/15/2607.12789v1-avq-attention-adaptive-vector-quantized-attention)  
-   标签：评分：8.0/10、query:llm-kv-cache
-   evidence：自适应向量量化注意力的键压缩
+   evidence：系统的KVCache优化，包括逐层预取和SWA感知前缀缓存树
+3. [Adaptive Filtering of the KV Cache: Diagnosing and Correcting Structural-Role Bias in LLM Inference](/202607/16/2607.13205v1-adaptive-filtering-of-the-kv-cache-diagnosing-and-correcting-structural-role-bias-in-llm-inference)  
+   标签：评分：9.0/10、query:llm-kv-cache
+   evidence：自适应过滤纠正基于注意力KV缓存驱逐中的结构角色偏差
 
 ### 速读区论文标签
-1. [LiteTopK: Exploiting the Curse of Dimensionality for a Fused Indexer-TopK Kernel in Long-Context Sparse Attention](/202607/15/2607.11976v1-litetopk-exploiting-the-curse-of-dimensionality-for-a-fused-indexer-topk-kernel-in-long-context-sparse-attention)  
-   标签：评分：6.0/10、query:llm-kv-cache
-   evidence：长上下文稀疏注意力核
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">

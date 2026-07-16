@@ -1,0 +1,54 @@
+{
+  "label": "2026-07-16",
+  "date": "2026-07-16",
+  "generated_at": "2026-07-16T20:57:49",
+  "count": 3,
+  "papers": [
+    {
+      "paper_id": "202607/16/2607.13093v1-efficient-and-privacy-aware-edge-cloud-collaborative-inference-for-large-language-models",
+      "section": "deep",
+      "title_en": "Efficient and Privacy Aware Edge Cloud Collaborative Inference for Large Language Models",
+      "authors": "Yi Li, Chen Li, Jiexiong Liu",
+      "date": "2026-07-14",
+      "pdf": "https://arxiv.org/pdf/2607.13093v1",
+      "score": "9.0",
+      "evidence": "基于端点认证KV缓存的边云协同推理",
+      "tldr": "端侧大模型推理面临延迟、资源与隐私的三难困境。本文提出基于端点认证KV缓存的边缘-云协同框架，本地处理预处理与轻量计算，云端负责解码与验证，数据经量化与AES-GCM加密。相比基线分割推理，每令牌延迟降低46.1%，下行负载降低67.4%，性能接近全云推理，实现隐私保护下的高效协作。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "On-device LLM inference faces a trilemma of response latency, limited hardware resources and user privacy. Full cloud inference delivers strong computing power but exposes user prompts and dialogue data, while standalone on-device inference is unfeasible for most consumer and embedded edge devices. This paper presents a privacy-centric edge-cloud collaborative LLM inference framework built on endpoint-authenticated KV cache. Local endpoints handle input preprocessing, embedding computation, adaptive feature optimization, KV cache authentication, speculative decoding and low-dimensional model head calculation, while the cloud conducts authenticated decoder inference, KV cache management, token verification and high-dimensional vocabulary projection. Endpoints fuse partial outputs, apply language-adaptive masking and sample target tokens. All transmitted data and truncated logits are quantized and AES-GCM encrypted for privacy, with core lightweight modules, draft parameters and cache access policies kept local to avoid leakage. The framework supports heterogeneous devices including CPU-only, GPU-equipped and embedded devices via optimized streaming, batching and quantized ONNX deployment. Evaluations demonstrate that the framework reduces per-token latency by up to 46.1\\% and downlink payloads by up to 67.4\\% over baseline split inference, retaining comparable performance to full cloud inference.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/16/2607.13095v1-full-pipeline-inference-optimization-for-mimo-v25-series-pushing-hybrid-swa-efficiency-to-the-limit",
+      "section": "deep",
+      "title_en": "Full-Pipeline Inference Optimization for MiMo-V2.5 Series: Pushing Hybrid SWA Efficiency to the Limit",
+      "authors": "Xiaomi MiMo Team, Anqi Liu, Aoxin Ma, Bo Chen, Bo Yang, Chen Wang, Chen Zhang, Chengda Tang, Chengwei Wang, Chiheng Lou, Depeng Yan, Fuli Luo, Gang Wang, Hailin Zhang, Jiale Sun, Kang Zhou, Rui Huang, Shaohui Liu, Shen Huang, Shijie Cao, Shuaishuai Fan, Tianling Zhou, Xiangwei Deng, Xueyang Xie, Xuli Wang, Yingchun Lai, Yu Yang, Yuan Zhang, Zhen Tang, Zhonghua Deng, Zihan Jiang",
+      "date": "2026-07-14",
+      "pdf": "https://arxiv.org/pdf/2607.13095v1",
+      "score": "9.0",
+      "evidence": "系统的KVCache优化，包括逐层预取和SWA感知前缀缓存树",
+      "tldr": "MiMo-V2.5模型采用Hybrid SWA、稀疏MoE和多模态编码器，虽能减少计算和KV缓存，但生产部署面临工程挑战。本文系统优化KVCache（层级预取、SWA感知前缀缓存树、专用放置），构建RDMA优化的GCache分布式缓存，设计KVCache亲和性路由器，并优化多模态输入。最终实现严格O(W)存储、高缓存命中率，减少计算且保持负载均衡，首个在产线中高效覆盖Hybrid SWA+MoE+多模态的LLM服务系统。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "We present a full-pipeline inference optimization for the MiMo-V2.5 model family, which combines Hybrid Sliding Window Attention (Hybrid SWA), sparse Mixture-of-Experts (MoE), and multimodal encoders. While Hybrid SWA can ideally reduce both attention compute and KVCache storage significantly compared to Full Attention, realizing these gains in production requires substantial engineering effort. We systematically optimize the KVCache system with layerwise prefetch, SWA-aware prefix cache trees, and specialized placement strategies, achieving strict $O(W)$ SWA storage and high cache hit rates. We further build GCache, a high-performance distributed cache infrastructure with RDMA-optimized networking, and develop a KVCache-affinity router to reduce computation while preserving load balancing. We also optimize for multimodal inputs, including GPU image preprocessing, parallel video decoding, and multimodal cache sharing. Together, these optimizations constitute the first large-scale LLM serving system in production that efficiently covers the Hybrid SWA + MoE + multimodal composite architecture.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/16/2607.13205v1-adaptive-filtering-of-the-kv-cache-diagnosing-and-correcting-structural-role-bias-in-llm-inference",
+      "section": "deep",
+      "title_en": "Adaptive Filtering of the KV Cache: Diagnosing and Correcting Structural-Role Bias in LLM Inference",
+      "authors": "Soumil Mandal",
+      "date": "2026-07-14",
+      "pdf": "https://arxiv.org/pdf/2607.13205v1",
+      "score": "9.0",
+      "evidence": "自适应过滤纠正基于注意力KV缓存驱逐中的结构角色偏差",
+      "tldr": "基于注意力质量的KV缓存淘汰方法在处理嵌套JSON等模式密集型输入时，会过度保留分隔符等结构角色token（约1.8倍于内容token），导致准确率从88%骤降至0%。本文提出无需重训练的角色条件分配方法，通过线性角色探测器（15MB）调整不同角色的保留权重，在低预算时填补63-98%的性能差距，高预算时甚至超越全缓存准确率。该方法揭示了结构角色偏差问题，为长上下文推理提供了轻量级优化方案。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Attention-based KV cache eviction (H2O and its descendants) compresses the memory-constrained state of a long-context model by ranking tokens on accumulated attention mass, treated here as signal energy, and keeping the heaviest. On schema-dense input streams such as nested JSON, this score acts as a non-stationary filter that disproportionately retains noise: a non-content sink role (delimiters or whitespace) carries an order of magnitude more energy than any content role, and structural KEY tokens are over-retained at roughly 1.8x the rate of the answer-carrying VALUE tokens, collapsing exact-match accuracy from 88% to 0% at a 5% budget as the signal-to-noise ratio of the retained state degrades. A counterfactual experiment establishes that suppressing KEY tokens is the best deployable filter. Our retraining-free, role-conditional allocation over SnapKV's windowed score, governed by a single tuned hyperparameter, closes 63-98% of the H2O gap at sub-20% budgets and, at higher budgets, modestly matches or exceeds full-cache accuracy -- a small, seed-sensitive denoising effect (borderline significant at B=0.50; not distinguishable from zero at B=0.30 over four seeds). A 15 MB linear role probe supplies these labels at negligible inference cost, though matching parser-level downstream accuracy remains open.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}
