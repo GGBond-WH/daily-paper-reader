@@ -1,0 +1,695 @@
+Title: PReM: Learning What to Preserve and When to Refresh for Context Compression
+
+URL Source: https://arxiv.org/pdf/2607.14327v1
+
+Published Time: Fri, 17 Jul 2026 00:15:24 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# PReM : Learning What to Preserve and When to Refresh for Context Compression 
+
+Bohan Yu ∗, Lei Shen ∗† , Chenxi Zhou, Chen Han, Junlin Liu, Wenbo Su, Yu Cheng, Bo Zheng 
+
+Alibaba Group 
+
+yibo.bohanyu@gmail.com shenl15@tsinghua.org.cn 
+
+Abstract 
+
+Efficient long-context inference is not only about reducing memory cost, but also about keeping useful contextual evi-dence accessible as generation proceeds. However, existing compression-oriented approaches, such as key-value (KV) cache compression and context compression, often either make an early decision about which contextual information to keep or rely on an external compressor. Such designs make it difficult to adapt the compressed context to the ev-idence needed by later reasoning steps. This paper intro-duces PReM ( Preserve and Re fresh Memory), a context-compression framework that maintains the long context as the model’s internal layer-wise KV memory and learns what to preserve and when to refresh it. Specifically, PReM uses a dedicated memory layer to make memory-selection decisions, and a special memory token ⟨m⟩ to trigger refreshes during generation. To train this behavior, PReM introduces Phase-Separated Refresh Training , aligning memory selection with memory-conditioned generation while preserving continuity across refreshes. Experiments with 32K-token contexts show that PReM outperforms strong baselines under both 16 × and 32 × compression, while maintaining a favorable balance be-tween answer quality and inference efficiency. 
+
+1 Introduction 
+
+Long-context inference has become a natural way to use large language models (LLMs) for knowledge-intensive tasks: a model receives a large collection of contextual evidence and generates task-specific outputs from it (OpenAI 2024; Zhao et al. 2026). However, the inference cost grows quickly as the context expands (Dao et al. 2022). Long inputs enlarge the key-value (KV) cache (Pope et al. 2022) maintained by every attention layer, while each generated token must attend to this enlarged cache, substantially increasing decoding la-tency (Kwon et al. 2023). This creates a tension between efficiency and evidence access: reducing the cost of long-context inference should not make the model lose access to the contextual evidence needed during generation. Existing approaches to efficient long-context inference, such as KV-cache compression and context compression, ease this tension only partially. KV-cache methods (Zhang et al. 2023; Xiao et al. 2024; Li et al. 2024; Cai et al. 2025;  
+
+> ∗
+
+Equal contribution.  
+
+> †
+
+Corresponding author. 
+
+Yu and Chai 2025; Qin et al. 2025) reduce the cached states used during attention by retaining different subsets of KV states, often guided by positional, layer-wise, or attention-based properties. Context-compression methods shorten the input before generation, either in text space (Jiang et al. 2024; Pan et al. 2024; Hwang et al. 2025a) or through learned soft memory tokens (Ge et al. 2024; Zhang et al. 2025a; Tang et al. 2026). Despite their effectiveness, these methods still face two limitations. (1) Static evidence retention. They typically make an early decision about which contextual in-formation to retain and reuse the compressed representation throughout generation. However, different reasoning steps, especially in multi-hop tasks, may depend on different con-textual evidence, so this early decision may preserve irrel-evant information while discarding evidence needed later. 
+
+(2) Decoupled evidence selection. Methods that rely on an external compressor (Jiang et al. 2024; Hwang et al. 2025b; Tang et al. 2026) perform compression separately from gen-eration, introducing additional computation and making ev-idence selection less directly tailored to the needs of each reasoning step. Taken together, these limitations suggest that effective compression should go beyond reducing context size: it should preserve useful contextual evidence and re-fresh it whenever later reasoning requires different evidence .To address this gap, we propose PReM ( Preserve and 
+
+Re fresh Memory), a context-compression framework for inference-time generation that learns what contextual evi-dence to preserve and when to refresh it. The key idea is to maintain the long context as compressed memory that can be refreshed according to the model’s current generation state and step-specific evidence needs. Instead of relying on an ex-ternal compressor, PReM instantiates this memory within the LLM itself, using cached layer-wise KV states as the memory representation. This KV memory is partitioned into chunks, and PReM uses a dedicated memory layer to make memory-selection decisions. Specifically, selected chunks are pre-served at token-level granularity, while unselected chunks are compressed into averaged KV representatives. At infer-ence time, the question provides the initial signal for memory selection before answer generation. To make refresh for later reasoning steps controllable by the model itself, PReM fur-ther introduces a special memory token ⟨m⟩ as an explicit internal refresh signal. Whenever ⟨m⟩ is emitted, the mem-ory layer uses its hidden state to reselect chunks relevant arXiv:2607.14327v1 [cs.CL] 15 Jul 2026 to the current step, and this updated selection refreshes the compressed memory in other layers. Because each refresh changes the KV memory seen by subsequent tokens, train-ing must condition each generation step on the refreshed memory state. PReM therefore uses Phase-Separated Re-fresh Training , splitting each step into a memory-selection 
+
+phase and a memory-conditioned generation phase with sep-arate forward passes and losses. The former is supervised to identify step-specific evidence chunks, whose selection refreshes the compressed memory, while the latter trains au-toregressive generation under the resulting memory state. An additional boundary-aware objective connects separated phases and adjacent steps. Through this design, PReM dy-namically preserves the evidence needed by each reasoning step and learns to refresh memory at appropriate moments. Experiments with 32K-token contexts show that PReM substantially improves both answer quality and computa-tional efficiency. Under both 16 × and 32 × compression ra-tios, PReM outperforms eight strong methods spanning KV-cache and context compression on 3B and 7B backbones, improving average exact match and F1 by up to 10.23/12.55 points over the strongest baseline. Its gains over full-context prompting indicate that learned memory selection can be more effective than exposing the base model to the entire 32K context. Notably, the 3B PReM model even outperforms re-leased 7B soft context-compression baselines, showing that learned preservation and refresh can compensate for smaller backbone scale. Efficiency analyses further show that PReM reduces peak memory while maintaining competitive infer-ence latency, demonstrating a favorable balance between per-formance and efficiency. Our contributions are summarized as follows: 
+
+• This paper formulates context compression as a learned memory preservation and refresh problem, leading to PReM, a context-compression framework that maintains long context as internal KV memory without an external compressor. 
+
+• PReM uses a dedicated memory layer and a special mem-ory token ⟨m⟩ to dynamically select, preserve, and re-fresh context memory, and introduces phase-separated refresh training to align step-specific memory selection with memory-conditioned generation. 
+
+• Experiments with 32K-token contexts show that PReM outperforms strong KV-cache and context-compression baselines under 16 × and 32 × compression while main-taining favorable inference efficiency. 
+
+2 Related Work 
+
+KV-Cache Compression KV-cache compression reduces the memory and attention cost of autoregressive inference by retaining only part of the cached KV states. Existing methods exploit different properties of the cache, such as heavy-hitter tokens (Zhang et al. 2023), attention sinks (Xiao et al. 2024), layer-wise cache allocation (Yang et al. 2024b; Cai et al. 2025), recent attention patterns (Li et al. 2024), or adaptive cache eviction (Qin et al. 2025; Yu and Chai 2025; Li, Lou, and Li 2026). These methods mainly operate on the cache produced during inference and aim to preserve useful past states under a fixed memory budget. PReM shares the goal of reducing KV memory cost, but differs in two aspects: it compresses an external long-context memory represented as layer-wise KV states, and it learns step-specific memory selection from the model’s internal hidden states rather than relying only on generic cache heuristics. 
+
+Context Compression Context-compression methods re-duce long-context cost by shortening the input before gener-ation. Text-space compressors select or rewrite informative tokens and passages before feeding them to the downstream model (Jiang et al. 2024; Pan et al. 2024; Hwang et al. 2025a; Zhao et al. 2025; Chirkova et al. 2025), while soft-memory methods encode the context into compact learned tokens or activations (Mu, Li, and Goodman 2023; Ge et al. 2024; Zhang et al. 2025a; Li, Su, and Collier 2025; Yu, Huang, and Liu 2026; Tang et al. 2026). These approaches can sub-stantially reduce the effective input length, but many of them perform compression once before generation or depend on a separate compressor, which can separate the compressed representation from the model’s evolving generation state. PReM instead keeps context memory inside the LLM as KV states and refreshes it through the generated memory token ⟨m⟩. This allows compression to be conditioned on the current reasoning step and trained jointly with memory-conditioned generation. 
+
+3 Preserve-and-Refresh Context Compression 
+
+3.1 Motivation 
+
+Different reasoning steps may depend on different contextual evidence, so an initially selected memory can become stale as generation proceeds. PReM therefore uses the hidden state of ⟨m⟩ to refresh memory during generation. Because this refresh operates over layer-wise KV memory whose inter-nal representations vary across depths, this raises a second design question: which layer provides a more suitable rep-resentation for memory selection? We answer this with a layer-wise diagnostic that applies the memory selection loss defined in Section 3.2 to each candidate layer; this loss trains the model to identify evidence chunks needed at each rea-soning step. Across Qwen (Qwen et al. 2025) backbones of different scales, as shown in Figure 1 (bottom right), this loss decreases unevenly: middle and late layers often learn mem-ory selection faster, while early layers exhibit slower loss reduction. This suggests that layer-wise KV memory is not equally suitable for evidence selection at all depths, motivat-ing PReM to designate a middle-to-late layer as the memory layer to control memory selection. 
+
+3.2 PReM 
+
+As shown in Figure 1 (left), PReM formulates context com-pression as learned updates over layer-wise context memory stored as cached KV states in the LLM: the model decides what to preserve and when to refresh it. PReM realizes this with two internal mechanisms: a dedicated memory layer that controls memory selection, and a special memory token 
+
+⟨m⟩ that serves as the refresh signal. ...                         
+
+> Context
+> Layer-Wise KV Memory
+> (Precomputed or Extracted Online)
+> LLM
+> Question /
+> Layers
+> Memory
+> Layer
+> Layers
+> Average-Pooled KV Memory
+> Refresh
+> Refresh
+> Preserve-and-Pool
+> Top-K Chunk Selection
+> Token-Level Granularity KV Memory
+> Next
+> Token
+> KV
+> Concat Chunk-Level
+> Scoring
+> Memory Preservation & Refresh Triggered
+> ...
+> Memory Selection
+> Memory-Conditioned Generation
+> [ Question ][][]··· []
+> Generation Process
+> Step 0
+> Answer
+> Step 1
+> Answer
+> Final Step
+> Answer
+> ...
+> Chunk 1 Chunk 2 Chunk 3 Chunk C Chunk 4
+> ...
+> Chunk 1 Chunk 2 Chunk 3 Chunk C
+> ...
+> ...
+> Hidden
+> States
+> Compressed
+> KV Memory
+> Attention Layer Computation during
+> Memory Compression
+> Outputs
+> Chunk
+> Scoring
+> Self-Attention
+> Reuse
+> Selection
+> Attention Weight Map
+> Memory Refreshed Memory Question Generated Token
+> Memory Keys Question Keys Generated Keys
+> Question Queries Generated Queries
+
+Figure 1: Left: memory preservation and refresh in PReM. A dedicated memory layer selects evidence chunks, and PReM reuses their indices to refresh memory across other layers. When the model emits the ⟨m⟩, the memory is reselected and refreshed. Here, W cℓ denotes the selection query projection matrix, while W qℓ , W kℓ , and W vℓ denote the standard query, key, and value projection matrices. Top right: compressed KV memory is incorporated into standard attention, while ⟨m⟩ triggers memory refresh. Bottom right: average memory selection loss over each layer range during 4K-context training in Qwen models. 
+
+Context Memory Before generation, PReM encodes the long context into a layer-wise KV memory. For an LLM with 
+
+L layers and H attention heads, the KV memory at layer ℓ
+
+is represented as Mℓ = ( KMℓ , V Mℓ ), where ℓ ∈ { 1, . . . , L },
+
+KMℓ , V Mℓ ∈ RH×N ×d, N is the number of context tokens, and d is the head dimension. In implementation, these mem-ory states can be loaded from precomputed context KV states or extracted online from the current model. The KV memory will later be compressed and prepended to the KV states of the current sequence, participating in standard attention as additional key-value states, as shown in Figure 1 (top right). 
+
+Memory Selection and Refresh Memory selection is per-formed at chunk granularity. Specifically, given a chunk size 
+
+c, PReM partitions the N context memory positions into 
+
+C = ⌈N/c ⌉ contiguous chunks, where the j-th chunk is 
+
+Cj = {(j − 1) c + 1 , . . . , min( jc, N )}, for j ∈ { 1, . . . , C }.To learn this selection from internal model states, PReM uses a dedicated memory layer ℓm and adds a selection query projection matrix W cℓ to layers 1 < ℓ ≤ ℓm. This projec-tion maps the attention-layer input hidden state to a selection query with the same shape as the standard attention query, which is later used to score chunks for memory selection. Layers above ℓm do not use W cℓ ; they reuse the memory selection produced by the memory layer. The embedding-adjacent layer ℓ = 1 is excluded because the ⟨m⟩ represen-tation is still an embedding-level signal there; using it for memory selection would make the selected chunks nearly fixed rather than refresh-dependent. This layer instead pro-vides an uncompressed full-context access path. Given the question x, PReM organizes generation into 
+
+T reasoning steps: [x, y 0, ⟨m⟩, y 1, ⟨m⟩, . . . , y T −1], where 
+
+ys is the answer segment generated at step s, for s ∈{0, . . . , T − 1}. Step 0 selects memory using selection queries derived from x; for s > 0, the ⟨m⟩ token before 
+
+ys triggers a refresh and provides the selection query for the current step. Let Ps denote the corresponding query posi-tions. For chunk-level scoring at layer ℓ, PReM first aver-ages key states over the token positions within each chunk: 
+
+¯KMℓ,j = |C j |−1 P 
+
+> t∈C j
+
+KMℓ,t and ¯kMℓ,h,j denotes its head-h slice for h ∈ { 1, . . . , H }. Given the step-s selection queries q(s)
+
+> ℓ,h,p
+
+at positions p ∈ P s, PReM then computes an attention-like score for each chunk: 
+
+aℓ,s,j = 1
+
+H|P s|
+
+> H
+
+X
+
+> h=1
+
+X
+
+> p∈P s
+
+
+
+q(s)
+
+> ℓ,h,p
+
+⊤ ¯kMℓ,h,j 
+
+√d . (1) At layer ℓm, these scores produce the authoritative selection 
+
+Ss = TopK( {aℓm,s,j }Cj=1 , k ), where k is the chunk budget. Given Ss, PReM constructs the compressed memory with a preserve-and-pool rule. For j ∈ S s, it preserves all token-level KV states in the chunk, fM (s) 
+
+> ℓ,j
+
+= {(KMℓ,t , V Mℓ,t ) : t ∈ C j }.For j / ∈ S s, it replaces the chunk with one representative pair, 
+
+fM (s) 
+
+> ℓ,j
+
+= {( ¯KMℓ,j , ¯V Mℓ,j )}, where ¯V Mℓ,j = |C j |−1 P 
+
+> t∈C j
+
+V Mℓ,t .At each step, the original token-level memory remains avail-able as the source for future refreshes, while the compressed memory used for subsequent generation is replaced with a newly constructed one. Because selection is performed at chunk granularity and each refresh is triggered by a single 
+
+⟨m⟩ token, this refresh remains lightweight. For position encoding, selected chunks keep their original context po-sitions, while an unselected chunk uses its center position 
+
+pj = ( j − 1) c + ⌊(|C j | − 1) /2⌋; rotary position encoding is then applied with these positions. To propagate the memory-layer decision across depths, PReM reuses the selection Ss across layers. Before the com-putation reaches ℓm, the lower layers with selection query projections temporarily apply the compression process de-scribed above, reducing the cost of the refresh forward pass. Once Ss is produced, the memory in the lower layers is re-freshed with the memory-layer selection. Layers above ℓm
+
+skip chunk scoring and directly compress their own KV memory using Ss. Through this design, these layers share the same memory selection at each step when generating the corresponding answer segment. We denote the resulting layer-wise compressed memory used during step s by fM (s).Phase-Separated Refresh Training Refresh training fol-lows the step structure [x, y 0, ⟨m⟩, y 1, ⟨m⟩, . . . , y T −1] de-fined above, using teacher forcing over this target sequence. PReM then decomposes each step into two phases with separate forward passes: a memory-selection phase and a 
+
+memory-conditioned generation phase , as shown in Figure 1 (top left). Let z0 = x and zs = ⟨m⟩ for s > 0. The se-lection phase processes only zs, computes Ss, optimizes the memory selection loss, and refreshes all layers that maintain context memory using the reuse rule above. The generation phase then processes the teacher-forced segment ys after this refresh. This separation is necessary for training-inference consistency. At inference time, each refresh changes the KV memory used by subsequent tokens, so the answer tokens in each step should be generated under the newly refreshed memory. Accordingly, the training forward pass separates these roles: zs performs selection and refresh, while ys is generated under the resulting memory state. We next specify the memory selection loss used in the selection phase. For each step s, let Gs ⊆ { 1, . . . , C } denote the evidence chunk indices needed to generate ys. The loss trains the memory layer ℓm to rank evidence chunks above non-evidence chunks using the chunk scores {aℓm,s,j }Cj=1 .Let τ be the softmax temperature. For multiple evidence chunks, we average the one-positive contrastive losses while excluding the other positives from the denominator: 
+
+L(s)ms = − 1
+
+|G s|
+
+X
+
+> g∈G s
+
+log eaℓm,s,g /τ 
+
+eaℓm,s,g /τ + P 
+
+> j / ∈G s
+
+eaℓm,s,j /τ .
+
+(2) This objective is computed using the same query positions as memory selection: all question positions at s = 0 and the 
+
+⟨m⟩ position for s > 0.The language modeling objective must account for the boundaries introduced by the two-phase forward pass. Write the answer segment as ys = ( ys, 1, . . . , y s,n s ), where ns is the number of tokens in segment ys. The generation phase gives the ordinary within-segment cross entropy: 
+
+L(s)ans = −
+
+> ns−1
+
+X
+
+> r=1
+
+log p(ys,r +1 | z≤s, y <s , y s, ≤r , fM (s)). (3) However, because the selection phase and generation phase are forwarded separately, two autoregressive links would oth-erwise be missing: the link from zs to the first answer token, and the link from the end of ys to the next memory token. PReM therefore adds boundary cross entropy terms: 
+
+L(s)bd = − log p(ys, 1 | z≤s, y <s , fM (s))
+
+− 1s<T −1 log p(zs+1 | z≤s, y ≤s, fM (s)). (4) These boundary terms are not assigned a separate loss weight; they are merged into the normal language-modeling cross entropy so that the segmented training has the same token-level coverage as an unsegmented autoregressive pass. The second boundary term also trains the model to emit ⟨m⟩
+
+when the next step should refresh memory. The full training objective is 
+
+L = 1
+
+NLM  
+
+> T−1
+
+X
+
+> s=0
+
+
+
+L(s)ans + L(s)bd 
+
+
+
++ λms 
+
+1
+
+T 
+
+> T−1
+
+X
+
+> s=0
+
+L(s)ms , (5) where NLM is the number of supervised language-modeling tokens and λms controls the weight of memory selection supervision. 
+
+Inference Before answer generation, PReM constructs the initial compressed memory using selection queries from the input question tokens. The resulting compressed KV mem-ory is used in the standard attention computation together with the current sequence states. During decoding, ordinary tokens keep using the current compressed memory cached inside each layer. When the model generates ⟨m⟩, PReM performs a refresh step: the memory layer uses the selec-tion query of ⟨m⟩ to score all chunks and select a new top-k set. Selected chunks are preserved, unselected chunks are average-pooled, and the resulting selection refreshes the compressed memory across layers. This procedure gives the model two degrees of freedom under a fixed memory budget: it decides what to preserve by selecting chunks at each re-fresh step, and when to refresh by generating ⟨m⟩ whenever later reasoning requires different contextual evidence. PReM therefore implements context compression as a sequence of learned memory updates rather than a single pre-generation shortening operation. 
+
+4 Experiments 
+
+4.1 Experimental Setup 
+
+Models and Datasets We train PReM on the 3B and 7B variants of Qwen2.5-Instruct (Qwen et al. 2025). The main evaluation covers six benchmarks spanning single-hop and multi-hop settings, which require different numbers of reasoning steps and supporting evidence pieces: Trivi-aQA (Joshi et al. 2017), SQuAD (Rajpurkar et al. 2016), NaturalQuestions (Liu et al. 2024), 2WikiMQA (Ho et al. 2020), HotpotQA (Yang et al. 2018), and MuSiQue (Trivedi et al. 2022). Each dataset is evaluated on 500 examples sam-pled from its test or development set, and we report exact match (EM) and token-level F1. 
+
+Training We describe the training-data construction pro-cess in Appendix A.1. To build this dataset, we annotate the training splits of NaturalQuestions, 2WikiMQA, HotpotQA, and MuSiQue, yielding 32,319 examples in total. Detailed dataset statistics are provided in Appendix A.2. We add W cℓ
+
+to layers 1 < ℓ ≤ ℓm and perform full-parameter training on eight NVIDIA H20 (96GB) GPUs with a 32K-token context, top-k = 10 , a chunk size of 100, τ = 0 .05 , and λms = 0 .3.For memory layer selection, we use layer 32 for Qwen2.5-3B and layer 25 for Qwen2.5-7B. We use DeepSpeed ZeRO Stage 2 (Rajbhandari et al. 2020) with bf16 precision. The learning rate is set to 1 × 10 −6, with a per-device batch size of 1, gradient accumulation steps of 10, a warm-up ratio of 
+
+1 × 10 −2, and a weight decay of 1 × 10 −4.
+
+Baselines We compare PReM with baselines covering both KV-cache compression and context compression. 
+
+StreamingLLM (Xiao et al. 2024) preserves the initial cache and a recent sliding window, forming a fixed-position KV-cache baseline. SnapKV (Li et al. 2024) selects cached states according to attention from recent query states. 
+
+CAKE (Qin et al. 2025) performs layer-wise KV-cache Model Method TriviaQA SQuAD NaturalQuestions 2WikiMQA HotpotQA MuSiQue Avg. EM F1 EM F1 EM F1 EM F1 EM F1 EM F1 EM F1 Qwen2.5-3B-Instruct 
+
+Prompting (no-context) 0.00 0.29 0.00 0.26 3.60 5.70 5.60 6.93 3.80 5.74 0.80 3.04 2.30 3.66 Prompting 10.80 15.86 10.60 15.82 9.60 14.53 17.40 22.90 25.00 34.07 8.40 12.15 13.63 19.22 
+
+Qwen2.5-7B-Instruct 
+
+Prompting (no-context) 0.20 0.43 0.00 0.09 0.40 0.49 0.00 0.00 0.00 0.00 0.00 0.14 0.10 0.19 Prompting 21.40 24.29 18.60 21.91 20.60 25.81 23.00 28.66 31.00 39.96 16.80 21.86 21.90 27.08 
+
+16 × compression constraint Qwen2.5-3B-Instruct  SnapKV 30.00 36.58 25.00 32.41 9.20 14.35 10.60 13.04 20.20 27.55 4.40 6.75 16.57 21.78 StreamingLLM 9.40 12.47 4.20 6.35 5.80 7.00 7.20 7.83 9.80 14.12 4.00 6.48 6.73 9.04 CAKE 29.40 36.03 23.60 31.42 12.20 16.81 10.40 14.78 20.40 28.56 6.40 10.17 17.07 22.96 LongLLMLingua 25.40 28.77 17.20 21.95 11.20 15.42 12.20 14.47 21.00 28.31 7.00 9.45 15.67 19.73 LLMLingua-2-large 10.80 14.37 4.00 6.35 3.40 4.80 3.40 4.51 6.20 9.07 3.40 5.32 5.20 7.40 EXIT 25.80 31.83 28.20 32.48 11.20 15.01 11.20 14.94 35.20 45.87 15.20 20.04 21.13 26.70 PReM 20.40 24.89 17.40 21.21 32.80 37.69 37.40 42.66 30.40 39.61 20.20 25.05 26.43 31.85 Qwen2.5-7B-Instruct  SnapKV 27.20 31.47 21.00 25.98 21.80 27.47 14.60 20.55 27.00 37.91 10.00 15.58 20.27 26.49 StreamingLLM 15.80 19.15 8.20 11.77 14.80 17.78 11.00 12.23 13.00 17.63 4.40 7.67 11.20 14.37 CAKE 28.00 32.24 19.20 22.94 20.80 26.86 14.80 20.29 28.40 38.36 9.80 15.76 20.17 26.08 LongLLMLingua 33.60 38.58 25.60 30.54 14.00 17.23 15.20 18.07 26.80 34.51 11.00 16.43 21.03 25.89 LLMLingua-2-large 14.60 17.23 4.80 6.99 6.20 7.60 1.80 2.67 4.80 6.71 5.20 6.98 6.23 8.03 EXIT 31.40 35.89 27.00 30.01 13.20 17.61 12.20 15.12 38.80 48.94 24.20 29.43 24.47 29.50 PReM 31.00 36.30 26.40 31.35 38.80 47.04 45.80 51.96 39.40 52.37 26.80 33.26 34.70 42.05 32 × compression constraint Qwen2.5-3B-Instruct  SnapKV 33.00 38.86 22.40 29.97 7.60 11.77 7.80 9.21 17.20 24.55 5.00 8.00 15.50 20.39 StreamingLLM 9.00 12.35 2.60 4.86 5.20 6.90 8.00 8.30 7.20 10.31 2.40 4.46 5.73 7.86 CAKE 31.00 38.14 24.20 31.43 11.20 16.19 9.20 12.51 19.40 27.61 5.20 8.09 16.70 22.33 LongLLMLingua 24.40 29.13 12.20 16.41 8.40 12.75 9.60 11.46 14.80 22.25 5.20 7.35 12.43 16.56 LLMLingua-2-large 9.20 11.88 3.20 4.83 4.80 5.84 2.60 3.47 5.60 7.77 2.60 3.87 4.67 6.28 EXIT 31.80 37.56 30.00 35.08 14.40 18.90 8.80 11.37 31.00 39.25 14.40 19.21 21.73 26.90 PReM 16.60 22.25 19.00 22.48 33.20 39.51 35.00 39.62 26.80 36.18 18.20 24.15 24.80 30.70 Qwen2.5-7B-Instruct  SnapKV 30.80 35.76 23.40 27.64 21.40 27.87 13.40 17.52 25.20 34.01 9.60 15.16 20.63 26.33 StreamingLLM 17.40 20.39 7.80 11.51 12.80 15.97 8.60 10.53 11.80 16.58 4.40 8.49 10.47 13.91 CAKE 31.80 36.53 22.40 26.77 20.20 27.33 14.20 18.09 25.00 33.75 8.00 14.57 20.27 26.17 LongLLMLingua 32.20 36.71 23.40 28.07 14.60 19.51 12.40 15.66 25.00 31.26 9.60 13.54 19.53 24.13 LLMLingua-2-large 12.00 14.28 2.40 3.72 4.00 5.31 1.20 1.25 4.20 4.77 4.20 5.25 4.67 5.76 EXIT 38.80 43.77 33.60 37.86 13.80 17.72 9.80 12.30 35.80 45.49 17.40 23.93 24.87 30.18 PReM 25.60 32.04 25.20 29.55 39.80 46.68 42.20 48.59 37.60 48.39 28.00 35.19 33.07 40.07 
+
+Table 1: Main results using the 3B and 7B variants of Qwen2.5-Instruct as backbones. “Prompting” denotes feeding the full 32K-token context to the model without compression, while “no-context” denotes direct answering without any context. Best and second-best results per model/compression block are bold and underlined. “Avg.” denotes average scores. allocation and importance-based eviction. LongLLMLin-gua (Jiang et al. 2024), LLMLingua-2-large (Pan et al. 2024), and EXIT (Hwang et al. 2025b) are text-space com-pression baselines that use separate compressors before gen-eration. LongLLMLingua and EXIT perform query-aware context compression, while LLMLingua-2-large performs task-agnostic context compression. We also include two soft context-compression baselines, Activation Beacon (Zhang et al. 2025a) with its released Qwen2-7B-Instruct (Yang et al. 2024a) backbone and ICAE (Ge et al. 2024) with its released Mistral-7B-Instruct-v0.2 (Jiang et al. 2023) backbone, which compress the context into learned memory representations before generation. 
+
+Inference Settings The main comparison uses a 32K-token context. At evaluation time, the long context for each example is constructed from all context documents provided in the benchmark’s test or development split. For PReM, we use a chunk size of 100, with the top-20 chunks for the 16 × setting and the top-10 chunks for the 32 × setting. For other baselines, we set the target KV cache size or the target number of context tokens to 2K for 16 × and 1K for 32 ×. Detailed settings and prompt templates are provided in Appendix B. 
+
+4.2 Main Results 
+
+Table 1 summarizes the Qwen-matched comparison across datasets and compression ratios, while Table 2 reports comparisons with released-backbone baselines. (1) PReM achieves strong overall performance across compression ratios. PReM achieves the best average EM/F1 under both 16 × and 32 × compression, improving over the strongest Qwen-matched baseline by 5.30/5.15 and 10.23/12.55 points at 16 × on 3B/7B, and by 3.07/3.80 and 8.20/9.89 points at 32 ×. This shows that learned memory updates remain robust under tighter compression. (2) PReM is particularly effec-Method TriviaQA SQuAD NaturalQuestions 2WikiMQA HotpotQA MuSiQue Avg. EM F1 EM F1 EM F1 EM F1 EM F1 EM F1 EM F1 16 × compression constraint                                                                                                                  
+
+> Activation Beacon 37.00 43.75 20.40 27.37 14.40 20.80 12.20 16.06 19.60 26.96 7.40 11.20 18.50 24.36 ICAE 12.80 17.40 1.80 4.76 1.60 3.93 3.40 3.87 2.80 5.09 0.40 1.94 3.80 6.17 PReM-3B 20.40 24.89 17.40 21.21 32.80 37.69 37.40 42.66 30.40 39.61 20.20 25.05 26.43 31.85 PReM-7B 31.00 36.30 26.40 31.35 38.80 47.04 45.80 51.96 39.40 52.37 26.80 33.26 34.70 42.05 32 ×compression constraint
+> Activation Beacon 34.60 40.42 14.40 19.20 13.40 18.65 10.80 13.63 16.60 23.61 7.00 12.04 16.13 21.26 ICAE 12.00 17.94 1.20 4.48 1.40 3.63 3.00 3.65 2.40 4.95 0.80 2.23 3.47 6.15 PReM-3B 16.60 22.25 19.00 22.48 33.20 39.51 35.00 39.62 26.80 36.18 18.20 24.15 24.80 30.70 PReM-7B 25.60 32.04 25.20 29.55 39.80 46.68 42.20 48.59 37.60 48.39 28.00 35.19 33.07 40.07
+
+Table 2: Results for released-backbone soft context-compression baselines and PReM. PReM-3B and PReM-7B denote the 3B and 7B backbones of Qwen2.5-Instruct. 
+
+tive on multi-hop QA. On multi-hop benchmarks, PReM benefits from step-specific refresh; at 32 × on Qwen2.5-7B, it reaches 42.20/48.59 on 2WikiMQA and 28.00/35.19 on MuSiQue, substantially above the strongest Qwen-matched baselines. These gains suggest that refreshing memory dur-ing generation better matches step-wise evidence needs. We further provide representative case studies in Appendix C. (3) Learned compression can outperform direct long-context prompting. Even at 32 × compression, PReM outperforms direct 32K prompting by 11.17/11.48 points on Qwen2.5-3B and 11.17/12.99 points on Qwen2.5-7B. Thus, selecting a compact refreshed memory can be more effective than ex-posing the model to the full context without explicit memory-selection training. (4) PReM-3B outperforms released 7B soft context-compression baselines. As shown in Table 2, PReM-3B surpasses released 7B soft context-compression baselines, improving over Activation Beacon by 7.93/7.49 points at 16 × and 8.67/9.44 points at 32 ×. This highlights the strength of internal memory preservation even with a smaller backbone. Overall, these results show that PReM’s gains come not only from reducing context length, but from learning which memory to preserve and when to refresh it. 
+
+4.3 Analyses 
+
+Layer-wise memory selection trends generalize beyond Qwen 3B/7B. The motivation study in Section 3.1 shows that memory selection loss decreases unevenly across layers on Qwen backbones. We further run the same layer-range di-agnostic on Llama3.2-3B-Instruct (Meta 2024b), Llama3.1-8B-Instruct (Meta 2024a), and Qwen2.5-14B-Instruct (Qwen et al. 2025). As shown in Figure 2, all three models exhibit the same pattern: early layers learn the selection objective more slowly, whereas middle and late layers reduce the loss faster. This supports our design choice of using a middle-to-late layer as the memory layer for memory selection. 
+
+PReM scales efficiently with context length and refresh frequency. Figure 3 (left and middle) summarizes the in-ference cost under a 1K-token context budget and 256-token generation, with chunk size 100 and top-k = 10 for PReM. In these panels, Full KV denotes standard inference with the backbone model, while Full Mem denotes PReM using 0 250 500 750 1k         
+
+> Training Step
+> 0.8
+> 1.0
+> 1.2
+> Memory Selection Loss  Llama3.2-3B-Instruct
+> Early ( ℓ=2-10)
+> Middle ( ℓ=11-19)
+> Late ( ℓ=20-28)
+> 0250 500 750 1k
+> Training Step
+> Memory Selection Loss  Llama3.1-8B-Instruct
+> Early ( ℓ=2-12)
+> Middle ( ℓ=13-22)
+> Late ( ℓ=23-32)
+> 0250 500 750 1k
+> Training Step
+> Memory Selection Loss  Qwen2.5-14B-Instruct
+> Early ( ℓ=2-17)
+> Middle ( ℓ=18-33)
+> Late ( ℓ=34-48)
+
+Figure 2: Trends in memory selection loss averaged over the early, middle, and late layer ranges of Llama 3.2-3B-Instruct, Llama 3.1-8B-Instruct, and Qwen2.5-14B-Instruct. the full context memory without compression. All efficiency measurements are conducted on a single NVIDIA H20 GPU using a token-by-token autoregressive decoding loop, and we report the average over 20 runs for each setting. In the left panel, as context length increases from 4K to 32K, PReM keeps end-to-end latency moderate, reaching 14.83s at 32K compared with 19.50s for Full KV. External compressors add a separate pre-generation stage, which increases latency for LongLLMLingua and EXIT. In the middle panel, we evalu-ate varying numbers of generated ⟨m⟩ tokens under the 32K-token context. Because Full Mem has no refresh operation, we plot its no-refresh decoding cost as a fixed reference. With sparse refreshes, PReM decodes in 8.69–9.96s for 0–4 ⟨m⟩
+
+tokens, below the 10.70s Full Mem reference, while more fre-quent refreshes increase latency. Meanwhile, decoding peak GPU memory remains nearly constant, averaging 19.57GB, substantially below the 30.0GB Full Mem reference. Thus 
+
+⟨m⟩ exposes a controllable trade-off: the model can spend additional decoding computation to refresh context memory while retaining the memory savings of compression. 
+
+PReM learns step-specific evidence selection. Figure 4 first shows, in the top-right donut chart, that PReM uses re-fresh sparsely in the main-result evaluation: most examples generate one ⟨m⟩ token, while a small fraction generate two or more. The top-left panel evaluates 128 two-step HotpotQA examples with step-specific required-context annotations, held out from the training set. Using 100-token chunks, we report micro Recall@10. PReM’s top-10 selection is scored separately at each step and pooled over all step-level gold chunks; all baselines use a single one-shot selection pass per 4K 8K 16K 32K             
+
+> Context Length
+> 10
+> 15
+> 20
+> End-to-End Latency (s)  PReM
+> Full KV
+> SnapKV
+> StreamingLLM
+> CAKE
+> LongLLMLingua
+> LLMLingua-2-large
+> EXIT
+> 01248
+> Number of ⟨m⟩Tokens
+> 9
+> 10
+> 11
+> Decoding Latency (s)  PReM Latency
+> Full Mem Latency
+> PReM Peak GPU
+> Full Mem Peak GPU
+> ℓ2ℓ19 ℓ32 ℓ2ℓ14 ℓ25
+> 0
+> 10
+> 20
+> 30
+> 40
+> Average EM (%)
+> 3B 7B
+> Early
+> Middle
+> Late
+> F1
+> 20.0
+> 22.5
+> 25.0
+> 27.5
+> 30.0
+> Peak GPU Memory (GB)
+> 0
+> 20
+> 40
+> Average F1 (%)
+
+Figure 3: Efficiency and memory-layer analysis of PReM. 
+
+Left : end-to-end latency vs. context length. Middle : decod-ing latency and peak GPU memory vs. the number of gen-erated ⟨m⟩ tokens. Right : EM/F1 under early-, middle-, and late-layer choices for the memory layer. 16K 32K Context Length                      
+
+> 0
+> 25
+> 50
+> 75
+> Recall@10 (%)
+> 14.3 8.2
+> 27.9
+> 16.6
+> 69.4 64.3
+> 72.6 70.4
+> 73.6 70.9
+> Native Top-k
+> Qwen3-Embedding-8B
+> SnapKV
+> PReM
+> bge-m3
+> 25.1%
+> 65.5%
+> 6.5%
+> 2.9%
+> Generated ⟨m⟩Count
+> 0123+
+> 050 100 150 200 250 320
+> Chunk Index
+> Step 0
+> Step 1
+> Step
+> Step evidence Step 0 top Step 1 top
+> NQ
+> 2WikiMQA
+> HotpotQA
+> MuSiQue
+> NQ
+> 2WikiMQA
+> HotpotQA
+> MuSiQue
+> 0
+> 20
+> 40
+> 60
+> EM (%)
+> 3B 7B
+> k=5,c=200 k=10,c=100 k=20,c=50 F1
+> 0.0
+> 0.5
+> 1.0
+> Chunk Score
+> 0
+> 20
+> 40
+> 60
+> F1 (%)
+
+Figure 4: Evidence retrieval, refresh behavior, and chunk-size/top-k ablations. Top left : micro Recall@10 with 100-token chunks on 128 two-step HotpotQA examples. Top right : generated ⟨m⟩ count distribution. Bottom left : rep-resentative 32K case with selected chunks and step evidence marked. Bottom right : chunk-size/top-k ablation on 3B/7B, reporting EM and F1. example and are scored against all gold chunks. We compare PReM-7B against native top-k, SnapKV, bge-m3 (Chen et al. 2025), and Qwen3-Embedding-8B (Zhang et al. 2025b). Na-tive top-k is training-free and uses the original model atten-tion; for native top-k and SnapKV, we average layer-wise re-sults. PReM reaches 73.6%/70.9% Recall@10 at 16K/32K, substantially outperforming native top-k and SnapKV and slightly exceeding the strong retriever, Qwen3-Embedding-8B. The bottom-left qualitative case further shows different answer steps focusing on different evidence chunks. These results suggest that PReM enables adaptive, precise, step-specific memory access throughout multi-step reasoning. 
+
+4.4 Ablation Studies 
+
+Table 3 summarizes the ablation results. For the trainable variants, we use a 4K-token context, top-k = 10 , and a chunk size of 100, and train them on the same dataset as in the main results for the same number of training steps. (1) Explicit memory selection supervision is essential. The full PReM model obtains 29.05/35.35 average EM/F1 on Qwen2.5-3B and 38.35/45.40 on Qwen2.5-7B in the ablation setting. Re-moving the memory selection loss reduces performance to 9.65/13.23 and 18.50/24.04, respectively, confirming that the memory layer must be directly trained to rank useful context 
+
+Variant NQ 2WikiMQA HotpotQA MuSiQue Avg. EM F1 EM F1 EM F1 EM F1 EM F1 Qwen2.5-3B-Instruct 
+
+Full 20.20 26.02 40.00 46.43 34.20 42.85 21.80 26.08 29.05 35.35 
+
+Native top-k 7.00 10.26 4.60 6.84 7.20 9.94 2.20 4.31 5.25 7.84 w/o Lms 7.20 10.09 13.80 16.18 9.80 15.14 7.80 11.52 9.65 13.23 w/o Lbd 18.20 23.06 18.20 21.98 18.20 23.75 5.80 8.32 15.10 19.28 
+
+Qwen2.5-7B-Instruct 
+
+Full 29.00 34.59 49.80 56.96 43.60 53.85 31.00 36.20 38.35 45.40 
+
+Native top-k 13.60 19.15 7.00 9.39 18.40 23.62 4.80 8.65 10.95 15.20 w/o Lms 18.20 23.22 22.80 25.85 20.00 27.43 13.00 19.64 18.50 24.04 w/o Lbd 25.80 30.71 27.80 32.57 30.20 39.53 14.20 17.88 24.50 30.17 
+
+Table 3: Ablation results on NQ (NaturalQuestions), 2WikiMQA, HotpotQA, and MuSiQue. “w/o” denotes the exclusion of the corresponding component. chunks. (2) Learned chunk selection is not replaced by raw attention. Using native attention scores for top-k selec-tion performs substantially worse, reaching only 5.25/7.84 on 3B and 10.95/15.20 on 7B. This suggests that ordinary attention over the current sequence is not a reliable proxy for deciding which cached context memory should be preserved. 
+
+(3) Boundary modeling matters for refresh training. Re-moving the boundary loss drops performance to 15.10/19.28 on 3B and 24.50/30.17 on 7B. The degradation shows that the model benefits from explicitly training the autoregres-sive links between the memory-selection phase, the answer segment, and the next ⟨m⟩ trigger. (4) Middle and late lay-ers are better suited for memory refresh. As shown in Figure 3 (right), we train PReM with early, middle, and late memory layers under the same settings, using layers 2/19/32 for Qwen2.5-3B and layers 2/14/25 for Qwen2.5-7B. We report EM/F1 averaged over the four datasets used in this ablation. Middle and late layers outperform the early setting on both backbones, suggesting that representations from deeper layers provide better control signals for mem-ory refresh. This supports using a middle-to-late layer as the memory layer in our main experiments. (5) Moderate chunk granularity works best. Under the same training setting, we train additional PReM variants with different chunk-size/top-
+
+k choices. As shown in Figure 4 (bottom right), PReM main-tains strong performance with 50- and 100-token chunks, while the coarser 200-token setting is consistently weaker. This suggests that finer chunk granularity helps preserve step-relevant evidence for memory refresh. 
+
+5 Conclusion 
+
+This paper presents PReM, which formulates long-context compression as memory preservation and refresh. PReM maintains context as layer-wise KV memory, uses a dedicated memory layer and a memory token ⟨m⟩ for step-specific re-fresh, and trains this behavior with phase-separated refresh training. Experiments and analyses with 32K-token contexts show that PReM improves answer quality and efficiency un-der 16 × and 32 × compression, suggesting that effective con-text compression should rely on generation-coupled memory updates rather than static context shortening. References 
+
+Cai, Z.; Zhang, Y.; Gao, B.; Liu, Y.; Li, Y.; Liu, T.; Lu, K.; Xiong, W.; Dong, Y.; Hu, J.; and Xiao, W. 2025. PyramidKV: Dynamic KV Cache Compression based on Pyramidal Infor-mation Funneling. arXiv:2406.02069. Chen, J.; Xiao, S.; Zhang, P.; Luo, K.; Lian, D.; and Liu, Z. 2025. M3-Embedding: Multi-Linguality, Multi-Functionality, Multi-Granularity Text Embeddings Through Self-Knowledge Distillation. arXiv:2402.03216. Chirkova, N.; Formal, T.; Nikoulina, V.; and CLINCHANT, S. 2025. Provence: efficient and robust context pruning for retrieval-augmented generation. In The Thirteenth Interna-tional Conference on Learning Representations .Dao, T.; Fu, D. Y.; Ermon, S.; Rudra, A.; and Ré, C. 2022. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. arXiv:2205.14135. Ge, T.; Jing, H.; Wang, L.; Wang, X.; Chen, S.-Q.; and Wei, F. 2024. In-context Autoencoder for Context Compression in a Large Language Model. In Kim, B.; Yue, Y.; Chaud-huri, S.; Fragkiadaki, K.; Khan, M.; and Sun, Y., eds., Inter-national Conference on Learning Representations , volume 2024, 2591–2607. Ho, X.; Duong Nguyen, A.-K.; Sugawara, S.; and Aizawa, A. 2020. Constructing A Multi-hop QA Dataset for Comprehen-sive Evaluation of Reasoning Steps. In Scott, D.; Bel, N.; and Zong, C., eds., Proceedings of the 28th International Confer-ence on Computational Linguistics , 6609–6625. Barcelona, Spain (Online): International Committee on Computational Linguistics. Hwang, T.; Cho, S.; Jeong, S.; Song, H.; Han, S.; and Park, J. C. 2025a. EXIT: Context-Aware Extractive Com-pression for Enhancing Retrieval-Augmented Generation. arXiv:2412.12559. Hwang, T.; Cho, S.; Jeong, S.; Song, H.; Han, S.; and Park, J. C. 2025b. EXIT: Context-Aware Extractive Compression for Enhancing Retrieval-Augmented Generation. In Che, W.; Nabende, J.; Shutova, E.; and Pilehvar, M. T., eds., Findings of the Association for Computational Linguistics: ACL 2025 ,4895–4924. Vienna, Austria: Association for Computational Linguistics. ISBN 979-8-89176-256-5. Jiang, A. Q.; Sablayrolles, A.; Mensch, A.; Bamford, C.; Chaplot, D. S.; de las Casas, D.; Bressand, F.; Lengyel, G.; Lample, G.; Saulnier, L.; Lavaud, L. R.; Lachaux, M.-A.; Stock, P.; Scao, T. L.; Lavril, T.; Wang, T.; Lacroix, T.; and Sayed, W. E. 2023. Mistral 7B. arXiv:2310.06825. Jiang, H.; Wu, Q.; Luo, X.; Li, D.; Lin, C.-Y.; Yang, Y.; and Qiu, L. 2024. LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios via Prompt Compression. In Ku, L.-W.; Martins, A.; and Srikumar, V., eds., Proceed-ings of the 62nd Annual Meeting of the Association for Com-putational Linguistics (Volume 1: Long Papers) , 1658–1677. Bangkok, Thailand: Association for Computational Linguis-tics. Joshi, M.; Choi, E.; Weld, D.; and Zettlemoyer, L. 2017. TriviaQA: A Large Scale Distantly Supervised Challenge Dataset for Reading Comprehension. In Barzilay, R.; and Kan, M.-Y., eds., Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 1601–1611. Vancouver, Canada: Association for Computational Linguistics. Kwon, W.; Li, Z.; Zhuang, S.; Sheng, Y.; Zheng, L.; Yu, C. H.; Gonzalez, J. E.; Zhang, H.; and Stoica, I. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. arXiv:2309.06180. Li, J.; Lou, J.; and Li, J. 2026. IntentKV: Cross-Turn Intent-Aware KV Cache Pruning for Agent Inference. arXiv:2606.09916. Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024. SnapKV: LLM Knows What You are Looking for Before Generation. In Globerson, A.; Mackey, L.; Belgrave, D.; Fan, A.; Paquet, U.; Tomczak, J.; and Zhang, C., eds., Advances in Neural Information Processing Systems , volume 37, 22947–22970. Curran Associates, Inc. Li, Z.; Su, Y.; and Collier, N. 2025. 500xCompressor: Gen-eralized Prompt Compression for Large Language Models. In Che, W.; Nabende, J.; Shutova, E.; and Pilehvar, M. T., eds., Proceedings of the 63rd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) ,25081–25091. Vienna, Austria: Association for Computa-tional Linguistics. ISBN 979-8-89176-251-0. Liu, N. F.; Lin, K.; Hewitt, J.; Paranjape, A.; Bevilacqua, M.; Petroni, F.; and Liang, P. 2024. Lost in the Middle: How Language Models Use Long Contexts. Transactions of the Association for Computational Linguistics , 12: 157–173. Meta. 2024a. The Llama 3 Herd of Models. arXiv:2407.21783. Meta. 2024b. Llama 3.2 3B Instruct Model Card. https: //huggingface.co/meta-llama/Llama-3.2-3B-Instruct. Ac-cessed: 2026-06-21. Mu, J.; Li, X. L.; and Goodman, N. 2023. Learning to Compress Prompts with Gist Tokens. In Thirty-seventh Con-ference on Neural Information Processing Systems .OpenAI. 2024. GPT-4 Technical Report. arXiv:2303.08774. OpenAI. 2026. GPT-5.4 Model. https://developers.openai. com/api/docs/models/gpt-5.4. Pan, Z.; Wu, Q.; Jiang, H.; Xia, M.; Luo, X.; Zhang, J.; Lin, Q.; Rühle, V.; Yang, Y.; Lin, C.-Y.; Zhao, H. V.; Qiu, L.; and Zhang, D. 2024. LLMLingua-2: Data Distillation for Efficient and Faithful Task-Agnostic Prompt Compression. In Ku, L.-W.; Martins, A.; and Srikumar, V., eds., Find-ings of the Association for Computational Linguistics: ACL 2024 , 963–981. Bangkok, Thailand: Association for Com-putational Linguistics. Pope, R.; Douglas, S.; Chowdhery, A.; Devlin, J.; Brad-bury, J.; Levskaya, A.; Heek, J.; Xiao, K.; Agrawal, S.; and Dean, J. 2022. Efficiently Scaling Transformer Inference. arXiv:2211.05102. Qin, Z.; Cao, Y.; Lin, M.; Hu, W.; Fan, S.; Cheng, K.; Lin, W.; and Li, J. 2025. CAKE: Cascading and Adaptive KV Cache Eviction with Layer Preferences. In The Thirteenth International Conference on Learning Representations .Qwen; :; Yang, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Li, C.; Liu, D.; Huang, F.; Wei, H.; Lin, H.; Yang, J.; Tu, J.; Zhang, J.; Yang, J.; Yang, J.; Zhou, J.; Lin, J.; Dang, K.; Lu, K.; Bao, K.; Yang, K.; Yu, L.; Li, M.; Xue, M.; Zhang, P.; Zhu, Q.; Men, R.; Lin, R.; Li, T.; Tang, T.; Xia, T.; Ren, X.; Ren, X.; Fan, Y.; Su, Y.; Zhang, Y.; Wan, Y.; Liu, Y.; Cui, Z.; Zhang, Z.; and Qiu, Z. 2025. Qwen2.5 Technical Report. arXiv:2412.15115. Rajbhandari, S.; Rasley, J.; Ruwase, O.; and He, Y. 2020. ZeRO: Memory Optimizations Toward Training Trillion Pa-rameter Models. arXiv:1910.02054. Rajpurkar, P.; Zhang, J.; Lopyrev, K.; and Liang, P. 2016. SQuAD: 100,000+ Questions for Machine Comprehension of Text. In Su, J.; Duh, K.; and Carreras, X., eds., Pro-ceedings of the 2016 Conference on Empirical Methods in Natural Language Processing , 2383–2392. Austin, Texas: Association for Computational Linguistics. Tang, J.; Liu, S.; Zhang, Z.; Yuan, Y.; Zheng, L.; Su, W.; and Zheng, B. 2026. COMI: Coarse-to-fine Context Compression via Marginal Information Gain. arXiv:2602.01719. Trivedi, H.; Balasubramanian, N.; Khot, T.; and Sabharwal, A. 2022. MuSiQue: Multihop Questions via Single-hop Question Composition. Transactions of the Association for Computational Linguistics , 10: 539–554. Xiao, G.; Tian, Y.; Chen, B.; Han, S.; and Lewis, M. 2024. Efficient Streaming Language Models with Attention Sinks. In Kim, B.; Yue, Y.; Chaudhuri, S.; Fragkiadaki, K.; Khan, M.; and Sun, Y., eds., International Conference on Learning Representations , volume 2024, 21875–21895. Yang, A.; Yang, B.; Hui, B.; Zheng, B.; Yu, B.; Zhou, C.; Li, C.; Li, C.; Liu, D.; Huang, F.; Dong, G.; Wei, H.; Lin, H.; Tang, J.; Wang, J.; Yang, J.; Tu, J.; Zhang, J.; Ma, J.; Yang, J.; Xu, J.; Zhou, J.; Bai, J.; He, J.; Lin, J.; Dang, K.; Lu, K.; Chen, K.; Yang, K.; Li, M.; Xue, M.; Ni, N.; Zhang, P.; Wang, P.; Peng, R.; Men, R.; Gao, R.; Lin, R.; Wang, S.; Bai, S.; Tan, S.; Zhu, T.; Li, T.; Liu, T.; Ge, W.; Deng, X.; Zhou, X.; Ren, X.; Zhang, X.; Wei, X.; Ren, X.; Liu, X.; Fan, Y.; Yao, Y.; Zhang, Y.; Wan, Y.; Chu, Y.; Liu, Y.; Cui, Z.; Zhang, Z.; Guo, Z.; and Fan, Z. 2024a. Qwen2 Technical Report. arXiv:2407.10671. Yang, D.; Han, X.; Gao, Y.; Hu, Y.; Zhang, S.; and Zhao, H. 2024b. PyramidInfer: Pyramid KV Cache Compression for High-throughput LLM Inference. arXiv:2405.12532. Yang, Z.; Qi, P.; Zhang, S.; Bengio, Y.; Cohen, W.; Salakhut-dinov, R.; and Manning, C. D. 2018. HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering. In Riloff, E.; Chiang, D.; Hockenmaier, J.; and Tsujii, J., eds., 
+
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , 2369–2380. Brussels, Bel-gium: Association for Computational Linguistics. Yu, B.; and Chai, Y. 2025. EvolKV: Evolutionary KV Cache Compression for LLM Inference. In Christodoulopoulos, C.; Chakraborty, T.; Rose, C.; and Peng, V., eds., Findings of the Association for Computational Linguistics: EMNLP 2025 ,1673–1689. Suzhou, China: Association for Computational Linguistics. ISBN 979-8-89176-335-7. Yu, B.; Huang, W.; and Liu, K. 2026. SR-KI: Scalable and Real-Time Knowledge Integration into LLMs via Supervised Attention. Proceedings of the AAAI Conference on Artificial Intelligence , 40(41): 34486–34494. Zhang, P.; Liu, Z.; Xiao, S.; Shao, N.; Ye, Q.; and Dou, Z. 2025a. Long Context Compression with Activation Beacon. In Yue, Y.; Garg, A.; Peng, N.; Sha, F.; and Yu, R., eds., 
+
+International Conference on Learning Representations , vol-ume 2025, 101932–101948. Zhang, Y.; Li, M.; Long, D.; Zhang, X.; Lin, H.; Yang, B.; Xie, P.; Yang, A.; Liu, D.; Lin, J.; Huang, F.; and Zhou, J. 2025b. Qwen3 Embedding: Advancing Text Embedding and Reranking Through Foundation Models. arXiv:2506.05176. Zhang, Z.; Sheng, Y.; Zhou, T.; Chen, T.; Zheng, L.; Cai, R.; Song, Z.; Tian, Y.; Ré, C.; Barrett, C.; Wang, Z.; and Chen, B. 2023. H 2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. arXiv:2306.14048. Zhao, W. X.; Zhou, K.; Li, J.; Tang, T.; Wang, X.; Hou, Y.; Min, Y.; Zhang, B.; Zhang, J.; Dong, Z.; Du, Y.; Yang, C.; Chen, Y.; Chen, Z.; Jiang, J.; Ren, R.; Li, Y.; Tang, X.; Liu, Z.; Liu, P.; Nie, J.-Y.; and Wen, J.-R. 2026. A Survey of Large Language Models. arXiv:2303.18223. Zhao, Y.; Li, Z.; Zhao, H.; Qi, B.; and Guoming, L. 2025. DAC: A Dynamic Attention-aware Approach for Task-Agnostic Prompt Compression. In Che, W.; Nabende, J.; Shutova, E.; and Pilehvar, M. T., eds., Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 19395–19407. Vienna, Austria: Association for Computational Linguistics. ISBN 979-8-89176-251-0. 
+
+A Details of Training Dataset 
+
+A.1 Training Dataset Construction Details 
+
+Algorithm 1 summarizes the construction pipeline. The implementation first normalizes HotpotQA, 2WikiMQA, MuSiQue, and NaturalQuestions into a shared document-indexed schema. It programmatically filters examples whose answers are missing or not supported by the gold context, then builds global mappings between context text and con-text ids for later support alignment. For each instance, the gold context selected by the original support annotations, the question, and the answer are provided to gpt-5.4-2026-03-05 (OpenAI 2026) with the construction prompt shown in Figure 5. The prompt asks the annotator model to rewrite the answer into document-grounded segments and to asso-ciate each segment with its supporting context. The parsed segments are aligned back to context ids, yielding step-level support fields stored in the training data. During training, these stored supports are dynamically mapped to token po-sitions in the context memory and then to the chunk labels 
+
+Gs used by the memory selection loss. Adjacent answer seg-ments are separated by ⟨m⟩, defining the refresh boundary used by stepwise training. Table 4 provides representative processed examples with different numbers of inserted ⟨m⟩
+
+tokens. For compactness, the table shows the stepwise target sequence and omits the stored context support fields. ⟨m⟩ Tokens Dataset / Answer Question Stepwise Target                                     
+
+> 0NaturalQuestions / Tobey Who does Bo Burnham play in Rough Night ?Bo Burnham is listed as playing Tobey in Rough Night . In conclusion, the answer is Tobey . 12WikiMQA / 20 July 2019 When did Mario Merz’s wife die? Mario Merz was the husband of Marisa Merz. ⟨m⟩Marisa Merz died on 20 July 2019. Therefore, Mario Merz’s wife died on 20 July 2019 . 2MuSiQue / Copenhagen Where did the spouse of the composer of Aladdin
+> die? The composer of Aladdin is Carl Nielsen. ⟨m⟩Carl Nielsen’s spouse was Anne Marie Carl-Nielsen. ⟨m⟩Anne Marie Carl-Nielsen died in Copenhagen. In conclusion, the answer is Copenhagen . 32WikiMQA / Pink Dream Which film has the director who died earlier, Pink Dream or Bullet (1985 film) ?
+> Pink Dream was directed by Cai Chusheng. ⟨m⟩Bullet (1985 film) was directed by Bapu. ⟨m⟩Cai Chusheng died on July 15, 1968. ⟨m⟩Bapu died on August 31, 2014. Therefore, the film whose director died earlier is Pink Dream .
+
+Table 4: Representative processed training examples with zero to three inserted memory tokens. Each ⟨m⟩ marks a refresh boundary between adjacent answer segments. Algorithm 1: Stepwise Memory-Supervised Data Construc-tion                
+
+> Require: Raw QA set D={(x, a, E )}with question x, answer a, and supporting evidence E; construction prompt Pgen ; annotator model g
+> Ensure: Stepwise training set Dstep with segmented answers and step-level supports; context maps (ctx2id ,id2ctx)
+
+1: bD ← Normalize( D) {convert to a shared document-indexed schema} 
+
+2: bD ← FilterUnsupported( bD) {remove examples without valid answer or support} 
+
+3: (ctx2id , id2ctx) ← BuildContextMaps( bD)
+
+4: Dstep ← ∅ 
+
+5: for each example e = ( x, a, E ) ∈ bD do 
+
+6: B ← GoldDocs( E) {evidence documents with local DOC labels} 
+
+7: r ← g(Pgen , B, x, a ) {generate document-grounded answer segments} 
+
+8: {(ys, d s)}T −1       
+
+> s=0 ←ParseDocSegments( r){s: step index; T: number of steps; ys: answer segment; ds: local DOC label}
+
+9: {R s}T −1      
+
+> s=0 ←AlignSupport( {ds}T−1
+> s=0 , B, ctx2id ,id2ctx)
+
+10: y ← [x, y 0, ⟨m⟩, y 1, . . . , ⟨m⟩, y T −1]
+
+11: Dstep ← D step ∪ { (x, y, {(ys, Rs)}T −1 
+
+> s=0 , a )}
+
+12: end for 
+
+13: return Dstep , (ctx2id , id2ctx) 
+
+A.2 Training Data Statistics 
+
+Table 5 reports the statistics of the processed training file used in our main experiments. The final training set contains 32,319 examples. The average number of refresh-supervised steps is 2.23, with a maximum of four steps. NaturalQues-tions contributes single-step examples, while 2WikiMQA and MuSiQue provide more diverse multi-step supervision. 
+
+B Inference Settings 
+
+Table 6 summarizes the inference settings. All baselines are evaluated on the same 32K-token contexts constructed from gold documents and distractors, with random document-level placement of gold evidence, greedy decoding, and a maxi-mum generation length of 512 tokens. For consistency, con-text length is measured using the Qwen tokenizer for all meth-ods. Evaluation examples are randomly sampled from in-stances with near-zero no-context performance by Qwen2.5-7B-Instruct, where both EM and F1 are below 1 point, re-ducing reliance on parametric knowledge. Qwen-matched baselines use the boxed-answer prompt for EM/F1 extraction. For released soft context-compression baselines, namely Ac-tivation Beacon and ICAE, we use a direct-output prompt because their released checkpoints are intended for concise answer-style inference. The prompt used by PReM is shown in Figure 6, the standard boxed-answer baseline prompt is shown in Figure 7, the no-context evaluation prompt is shown in Figure 8, and the direct-output prompt for released soft context-compression baselines is shown in Figure 9. 
+
+C Case Studies 
+
+Table 7 presents three representative cases from the 32 ×
+
+Qwen2.5-7B evaluation where PReM answers correctly but LongLLMLingua, LLMLingua-2-large, and EXIT fail. These cases illustrate three typical failure modes of text-space compression: the compressed context may miss the document that directly contains the answer, keep only the first clue while dropping the document needed for the next reasoning step, or keep an early entity in a multi-hop chain while losing the later documents that connect it to the final answer. This contrast indicates that dynamic memory refresh helps avoid these evidence-loss failures. 1. Missing answer-bearing document. The compressor keeps loosely related fragments but drops the document that contains the final answer. 2. First-hop retention without target evidence. The com-pressed context preserves the first-hop entity, but removes the second document needed to answer the question. 3. Broken long evidence chain. The compressor keeps an early entity from a multi-hop question, but drops the later documents needed to connect that entity to the final an-swer. Overall, these examples show that text-space compressors can discard crucial evidence before generation begins, espe-cially when the answer depends on a small answer-bearing document or on a chain of multiple documents. By con-trast, PReM answers these cases correctly, suggesting that re-freshed KV memory helps retain useful evidence even when the required information is sparse within the 32K context. Dataset Examples Average Steps Median Steps Maximum Steps Average Documents 
+
+2WikiMQA 12,567 2.89 2.0 4 2.89 HotpotQA 7,438 2.00 2.0 2 2.00 MuSiQue 5,424 2.59 3.0 4 2.59 NaturalQuestions 6,890 1.00 1.0 1 1.00 Total 32,319 2.23 2.0 4 2.23 
+
+Table 5: Statistics of the processed stepwise training data. Average Documents counts the average number of unique gold context documents used by each example. The Total row aggregates statistics over all examples rather than averaging dataset-level rows. 
+
+Method Inference setting 
+
+PReM Chunk size 100. The 16 × setting preserves top-20 chunks, and the 32 × setting preserves top-10 chunks. SnapKV Per-layer KV budget 2,048 for 16 × and 1,024 for 32 ×. The recent-window size is 8, with max-pooling and kernel size 7 for attention-score pooling. StreamingLLM Per-layer KV budget 2,048 for 16 × and 1,024 for 32 ×. The method keeps 4 attention sink tokens and uses the remaining budget as the recent sliding window. CAKE Average per-layer KV budget 2,048 for 16 × and 1,024 for 32 ×. CAKE adaptively allocates the cache budget across layers and keeps a recent-window size of 8 per layer. Other settings follow the official Qwen defaults, with τ1 = 1 .5, τ2 = 0 .6, and γ = 200 .LongLLMLingua Text-compression target 2,048 tokens for 16 × and 1,024 tokens for 32 ×. The compressor uses the same backbone as the evaluated model, and the dynamic compression ratio is set to 0.3. LLMLingua-2-large Text-compression target 2,048 tokens for 16 × and 1,024 tokens for 32 ×. We use the released large version of LLMLingua-2 for text compression. EXIT Text-compression target 2,048 tokens for 16 × and 1,024 tokens for 32 ×. We use the released Gemma-2B-based EXIT compressor with the query-conditioned “Yes” probability. Activation Beacon Released beacon-qwen-2-7b-instruct checkpoint with beacon_ratio set to 16 or 32, together with the released adaptive minimum beacon setting, and the direct-output prompt. ICAE Released ICAE checkpoint on Mistral-7B-Instruct-v0.2, memory size 128, compression rates 16 and 32, and the direct-output prompt. 
+
+Table 6: Baseline-specific inference settings used for the main comparison. The 16 × and 32 × budgets correspond to 2K and 1K retained KV or context tokens under the 32K-token context setting.                                        
+
+> Failure type Question / answer Compressed-context failure Gold context evidence 1. Missing answer-bearing document
+> HotpotQA : Who directed the film that had “The Distance” in the soundtrack? Gold/PReM: Peter Chelsom All three text compressors remove the key answer string from the compressed context. The retained fragments are unrelated soundtrack or film snippets, and the base-lines answer unknown or not stated.
+> Evan and Jaron (album) links “The Distance” to the Serendipity soundtrack.
+> Serendipity (film) states that the film was directed by Peter Chelsom. 2. First-hop retained, target evidence dropped
+> 2WikiMQA : What is the date of birth of the director of film A Single Shot ?Gold/PReM: March 23, 1969 The compressed contexts keep A Single Shot , but drop the target biography David M. Rosenthal (director) and the date “March 23, 1969”. The baselines therefore return not provided or an empty answer.
+> A Single Shot identifies David M. Rosenthal as the director. David M. Rosenthal (direc-tor) gives his birth date as March 23, 1969. 3. Broken long evi-dence chain
+> MuSiQue : What major conflict is the country between the country that hosted the tourna-ment and the country where That Dam is from known for? Gold/PReM: one of the world’s longest-running ongoing civil wars The compressed contexts keep the anchor That Dam ,but drop the bridging and final documents Geography of Myanmar and Myanmar . The answer phrase is ab-sent; EXIT instead retains an unrelated World War II fragment.
+> 2020 AFC U-23 Championship qualifica-tion identifies Thailand as host, That Dam
+> is in Laos, Geography of Myanmar places Myanmar between Thailand and Laos, and
+> Myanmar states that the country has been in-volved in one of the world’s longest-running ongoing civil wars.
+
+Table 7: Evidence-level case studies illustrating three representative failure modes of text-space compression under 32 × com-pression: missing the answer-bearing document, retaining only first-hop evidence, and breaking a longer evidence chain. Training Data Generation Prompt 
+
+You are given a **DOCUMENT ** containing several DOCs, a
+
+**QUESTION **, and a **GOLD ANSWER **.
+
+Generate a step-by-step response based on them. 
+
+### Output requirements: 
+
+- Use **[DOC n] ** to separate each step, where **n** is the 
+
+corresponding DOC number used for that step, such as **[DOC 
+
+0] **, **[DOC 1] **, etc. 
+
+- Start a new step only when you switch to a different DOC, and 
+
+prefix that step with the corresponding [DOC n] label. 
+
+- The final line must be a **Conclusion-style ** sentence that 
+
+includes the final answer in the format **\boxed{} **.
+
+- Copy the full **GOLD ANSWER ** exactly into the boxed final 
+
+answer, without adding or omitting any characters. 
+
+- **Do not ** use the words **"DOC" ** or **"DOCUMENT" ** in 
+
+the response body except inside the required **[DOC n] ** labels. 
+
+- **Do not ** put a **[DOC n] ** label before the **Conclusion-
+
+style ** sentence. 
+
+- Follow exactly this format: 
+
+```text 
+
+[DOC 0] Step-1 Answer 
+
+[DOC 1] Step-2 Answer 
+
+[DOC 2] Step-3 Answer 
+
+... 
+
+[DOC n] Step-N Answer 
+
+Here you should summarize the answer in one sentence, and the 
+
+sentence must include the boxed final answer like \boxed{A1, 
+
+A2, ..., An}. 
+
+``` 
+
+### DOCUMENT: 
+
+{DOCUMENT} 
+
+### QUESTION: 
+
+{QUESTION} 
+
+### GOLD ANSWER: 
+
+{GOLD_ANSWER} 
+
+Step-by-step response: Figure 5: Prompt template used to construct document-grounded stepwise training targets. QA Prompt for PReM 
+
+Answer the following question based on the provided 
+
+Memory. If more evidence is needed, output < m> to 
+
+update Memory, then continue. Use <m> only when it 
+
+helps. Put your final answer within \boxed{}: 
+
+# Question 
+
+{question} 
+
+Figure 6: Prompt template used for PReM inference. QA Prompt for Baselines 
+
+# Documents 
+
+{context} 
+
+Answer the following question based on the provided 
+
+documents and put your final answer within \boxed{}: 
+
+# Question 
+
+{question} 
+
+Figure 7: Prompt template used for Qwen-matched prompt-ing, KV-cache compression, and text-compression baselines. QA Prompt for no-context Evaluation 
+
+Answer the following question based on your own 
+
+memory. Only give me the answer and do not output 
+
+any other words. 
+
+# Question 
+
+{question} 
+
+Figure 8: Prompt template for no-context evaluation. QA Prompt for Baselines (Direct Ouput) 
+
+# Documents 
+
+{context} 
+
+Answer the following question based on the provided 
+
+documents. Only give me the answer and do not output 
+
+any other words. 
+
+# Question 
+
+{question} 
+
+Figure 9: Direct-output prompt template used for released soft context-compression baselines.

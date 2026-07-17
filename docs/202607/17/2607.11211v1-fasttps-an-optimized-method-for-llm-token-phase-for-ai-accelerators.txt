@@ -1,0 +1,709 @@
+Title: FastTPS: An Optimized Method for LLM Token Phase for AI accelerators
+
+URL Source: https://arxiv.org/pdf/2607.11211v1
+
+Published Time: Tue, 14 Jul 2026 01:52:08 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# FAST TPS: A N OPTIMIZED METHOD FOR LLM T OKEN PHASE FOR AI 
+
+## ACCELERATORS 
+
+Wenzong Yang 1 Danyang Zhang 1 Kun Cao 1 Siddagangaiah, Tejus 1 Patwari, Rajeev 1 Zhanxing Pu 1
+
+Siyin Kong 1 Zijiang Yang 1 Hao Zhu 1 Sharma, Varun 1 Yue Gao 1 Tianping Li 1 Fan Yang 1 Jicheng Chen 1
+
+Yushan Chen 1 Fennian Zhao 1 Ng, Aaron 1 Delaye, Elliott 1 Sirasao, Ashish 1 Nag, Sudip 1
+
+## ABSTRACT 
+
+The popularity of large language models (LLMs) escalates an ongoing demand for effective inference. However, due to the sequential processing of tokens during the token phase in decoder-only LLMs inference, the inherent low parallelism leads to reduced throughput and suboptimal utilization of the computing units on artificial intelligence (AI) accelerators, particularly when handling long-sequence inputs that impose significant memory overhead. Recently, many reported methods have been developed as potential solutions, since they emerge with numeric deviation. This paper presents FastTPS, a high performance and low-precision loss method for accelerating the token-phase in LLM inference on general AI accelerators which includes three key components: (1) AI accelerator-enabled reloading-free KV Cache concatenation which decreases memory access overhead as well as enables full fusion of Attention, (2) high-efficiency and high-accuracy ‘RoPE’ attention based on the tiling optimized FLAT, and (3) highly-fused MLP with fine-grain pipeline scheduling. Our results confirm that FastTPS significantly alleviates memory bottlenecks in the token phase, delivering a 6× speed improvement (compared to none-fusion) on an AMD Ryzen AI 300 series NPU with BF16 precision while sustaining 93% peak memory bandwidth utilization during Phi3-mini-4k-instruct inference. 
+
+## 1 INTRODUCTION 
+
+The remarkable performance of large language models (LLMs) has been widely demonstrated across diverse ap-plications, including content generation, machine transla-tion, text classification, and conversational question answer-ing (Kalyan, 2024; Devlin et al., 2019; Ashish, 2017; Schul-man et al., 2022; Thoppilan et al., 2022; Kaddour et al., 2023). LLMs have been extensively deployed across cloud-server clusters, edge platforms, and hybrid edge-server in-frastructures (Wang et al., 2024; Moritz et al., 2018; Shoeybi et al., 2019; Rasley et al., 2020; Fu et al., 2024; Brodwin et al., 1985; Ignatov et al., 2018; Xiao et al., 2024). The context length of LLMs has been continuously extended to accommodate emerging use cases such as high-resolution image understanding and code generation. This growth leads to a quadratic increase in both computational com-plexity and memory requirements. However, the hardware development cycle has struggled to keep pace with the rapid scaling of Transformer model sizes. Consequently, opti-mizing Transformer inference on AI accelerators with con-  
+
+> 1Advanced Micro Devices, Inc., Santa Clara, California, USA. Correspondence to: Wenzong Yang <booker.yang@amd.com >,Danyang Zhang <Danyang.Zhang@amd.com >.
+
+strained computational and memory resources has emerged as a critical research challenge. Transformers, especially the decoder-only architecture, form the foundational framework for the majority of contempo-rary LLMs (Patel et al., 2024). The inference process of a decoder-only Transformer consists of two distinct phases: the prefill phase and the token phase. Among them, the token phase processes only a single token per iteration due to its autoregressive dependency. This sequential nature severely limits computational resource utilization under bandwidth constraints, regardless of whether inference is performed on single-cluster or multi-cluster GPU architec-tures or edge accelerators (Phuong & Hutter, 2022). Fur-thermore, the KV (key-value) Cache is a key component of LLM inference which requires frequent load-store oper-ations causing a serious shortage of bandwidth (Kaddour et al., 2023). Although some quantization KV Cache meth-ods can significantly reduce this overhead, a large amount of memory read and write still exists (Hooper et al., 2024). As mentioned in (Li et al., 2022a), the Transformer archi-tecture fundamentally comprises two distinct computational components: attention and multi-layer perceptions (MLPs). Emerging token phase optimization techniques for atten-tion mechanisms prominently feature model compression methodologies and numerical acceleration paradigms typi-arXiv:2607.11211v1 [cs.LG] 13 Jul 2026 FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+fied by FlashAttention (Li et al., 2022a; Yao et al., 2022; Zhu et al., 2021b; Kwon et al., 2022; Dao et al., 2022; Dao, 2023; Shah et al., 2024). Although these approaches can effec-tively curtail computational cost, their practical applicability is often constrained by quantization-induced accuracy losses and auxiliary processing burdens (Zhu et al., 2021b; Kwon et al., 2022; Golden et al., 2024), precluding deployment in high-precision scenarios (Li et al., 2022b; Zhu et al., 2021a; Kynk ¨a ¨anniemi et al., 2019). Meanwhile, the MLP submod-ule constitutes 66.7% of Transformer parameters (Li et al., 2022a), serving as the computational cornerstone of LLM performance. Despite advances in the MLP architecture simplification through component fusion (Bercovich et al., 2025), the systematic token phase optimization targeting MLP-specific computations remains remarkably underde-veloped in current literature. This paper proposes a dataflow optimization strategy, termed fast tokens per second (FastTPS), specially designed for general-purpose AI accelerators to fundamentally address the challenges associated with the token phase in LLM in-ference. It focus on the following difficulties that need to be solved in the token phase optimization: (1) low mem-ory utilization: the KV Cache concatenation process re-quires reloading of previously stored key-value pairs for each newly generated token which substantially reduces the memory efficiency of the maintained cache structure; (2) tight hardware resources: the limited parallelism of small batching in the token phase restricts the processor’s ability to fully exploit hardware computational resources under the constrained memory bandwidth conditions; (3) high accu-racy requirements: on the one hand, some applications (Li et al., 2022b; Zhu et al., 2021a; Kynk ¨a ¨anniemi et al., 2019) are sensitive to inference accuracy. On the other hand, most LLM models have been integrated with quantization (Li et al., 2022a; Yao et al., 2022), pruning (Zhu et al., 2021b; Kwon et al., 2022) and other LLM architecture optimization methods. It makes the following key contributions: 1. Global KV Cache management (GKVC). In this pa-per, we propose a global 3D static KV Cache memory management strategy for token phase which updates KV to reserved location gradually by the AI accelerator or software. Consequently, GKVC reduces the number of data transfers, alleviates bandwidth pressure, and eliminates the need for memory reorganization with ‘Concat’ operator. At the same time, it ensures the continuity of the TPS process on AI accelerator which is convenient for subsequent operations’ fusion and workflow arrangement. 2. Fused logit attention tiling for TPS (TPSFLAT). 
+
+Building upon the FLAT (Kao et al., 2023) concept, this paper introduces TPSFLAT, an optimization rotary positional embedding (‘RoPE’) attention scheme tai-lored for the TPS computation process. Without com-promising computational accuracy, TPSFLAT fuses a greater number of operators based on GKVC by tak-ing into account the specific characteristics of the TPS workflow to enhance the Operational Intensity (OI) fur-ther. In addition, to address the limitations imposed by Amdahl’s Law, we design a data tiling strategy aligned with a three-level cache mechanism, aiming to improve the parallelism of computational tasks. 3. Multi-op fusion method based on interlaced layout of gate-up weights (Fusion MLP). In the MLP block, we design an interlaced layout of gate-up weights and implement a new multi-op fusion scheduling method. That provides necessary conditions for subsequent multi-op fusion and scheduling through fine-grained matrix division and rearrangement. This approach greatly reduces the I/O overhead and improves the hardware utilization. Based on the AMD Ryzen AI 300 series NPU AI accelera-tor (Rico et al., 2024; Subramon et al., 2023; Patwari et al., 2025), we evaluate the effectiveness of the FastTPS scheme across several state-of-the-art LLMs. Experimental results demonstrate that, compared to the standard implementations of LLMs in HuggingFace (Face), FastTPS achieves more than 5x speedup. Top-down analysis shows that it introduces targeted optimizations for two critical components in LLMs: the attention block and the MLP block. They are accelerated up to 13.07x and 3.14x respectively. In terms of numerical precision, FastTPS achieves up to 10x higher accuracy com-pared to FlashAttention. This suggests it can preserve high computational precision while accelerating the LLM infer-ence. Our research demonstrates that, although the LLM token generation is inherently constrained by sequential processing, FastTPS mitigates bandwidth underutilization and approaches or increases theoretical performance limi-tation through the optimized KV Cache management and workflow. 
+
+## 2 BACKGROUND 
+
+2.1 Terminology 
+
+LLM models (GLM et al., 2024; Touvron et al., 2023b; Grattafiori et al., 2024; Abdin et al., 2024) typically include the token phase as illustrated in Figure 1, where both the attention block and the MLP block consist of multiple ker-nel operators. The attention block is primarily responsible for capturing inter-token dependencies. To enhance model capability, the sequence length is progressively increased. However, due to the presence of the nonlinear ‘Softmax’ operator, the computational complexity of attention—given by O(2 NtN d + NtN )—grows rapidly with the sequence length, making it a major performance bottleneck in current FastTPS: An Optimized Method for LLM Token Phase for AI accelerators QKT Softmax PV     
+
+> RMSNorm
+> Matmul
+> Matmul
+> siLu
+> Mul Matmul
+> Concat
+> Q
+> Concat
+> 1: Attention Block
+> 2: MLP Block
+> ...  Attention
+> Token Phase Block
+> MLP
+> RMSNorm
+> Inputs
+> Key
+> V
+> KRope
+> Rope
+> Add
+> Outputs
+> Query
+> Value
+> Transpose
+> Transpose
+> Transpose
+> Transpose
+
+Figure 1. Structural overview of the standard attention and MLP blocks. Section 1⃝ corresponds to the attention block, and Section 2⃝ corresponds to the MLP block. The change of data dimension is illustrated. 
+
+Transformer-based systems. Nt denotes the number of total tokens (KV Cache), d is the split hidden size per head and 
+
+N is the current token’s sequence length (query). On the other hand, the MLP block is a feedforward network that performs complex mappings from input to output tensors through a combination of nonlinear activations and linear transformations. As these blocks dominate the parameter count in Transformer architectures, maximizing the compu-tational efficiency of this component is essential. In this work, we primarily consider the decoder-only Trans-former executed on general-purpose AI accelerator architec-tures equipped with a three-level cache hierarchy (L1, L2, and L3). The cache capacities increase progressively from L1 to L3 (i.e., L1 < L 2 < L 3), while the corresponding access speeds decrease accordingly (i.e., L1 > L 2 > L 3). As illustrated in Figure 1, during the LLM computation, tokens are processed sequentially during the decoder-only LLM inference. The input data, the model weights, and the intermediate results are typically stored in the L3. Tokens are represented as a tensor of shape RB×N ×D , where B
+
+denotes the batch size, and D denotes the hidden size. The hidden size D can be further decomposed as D = H × d,where H is the number of attention heads. It is important to note that during the token phase, both B and N are always equal to 1, indicating that only a single token is processed at a time per sequence. The computational complexity comes to O(2 Ntd + Nt). The dataflow diagram in Figure 1 il-lustrates how a single token tensor propagates through the attention and MLP blocks during the token phase. 
+
+Algorithm 1 Standard Attention Implementation 
+
+Require: Tensors Q, K, V ∈ RB×N ×H×d, sin, cos ∈
+
+RH×(d/ 2) , Kcache , V cache ∈ RB×H×Np×d
+
+Step 1: Read Q, K, sin, cos from L3 →L1, compute RoPE, write Qrope , K rope from L3 →L1 
+
+Step 2: Read Qrope , K rope , V from L3 →L1, compute Transpose, write Qtrans , K trans , V trans from L1 →L3 
+
+Step 3: Read Ktrans , V trans , K cache , V cache from L3 →L1, compute Concat, write updated Kcache , V cache from L1 →L3 
+
+Step 4: Read Qtrans , K cache from L3 →L1, compute QK T ,write S from L1 →L3 
+
+Step 5: Read S from L3 →L1, compute Softmax, write 
+
+P from L1 →L3 
+
+Step 6: Read P, V cache from L3 →L1, compute P V , write 
+
+O from L1 →L3 
+
+Return: O ∈ RB×H×N ×d
+
+2.2 Standard Attention Implement 
+
+The standard implementation of the attention block is il-lustrated in Section 1⃝ of Figure 1. The process begins by applying a weight matrix of shape RD×D to the input token of shape RB×N ×D, resulting in the generation of three key input tensors: Q, K, and V , each with shape RB×N ×D.As shown in the standard attention block flow of the TPS architecture in Figure 1, the RoPE operator requires sinu-soidal tensors sin and cos of shape RH×(d/ 2) . Additionally, the Concat operator depends on the KV Cache tensors 
+
+Kcache , V cache ∈ RB×N ×D .The computational process described above is illustrated in the flow diagram of Figure 1 and Algorithm 1. In Step 1 and Step 2, the tensors Q and K, along with the sinusoidal tensors sin and cos , are loaded from the L3 into the L1 cache. After that, a RoPE is applied to Q and K, producing Qrope 
+
+and Krope . Then, Qrope , Krope , and V are loaded from the L3 into the L1, where Transpose operators are applied to rearrange the H and N dimensions, and the resulting tensors Qtrans , Ktrans , and Vtrans are stored back into the L3. Step 3 involves loading the Ktrans , Vtrans , and the cached ten-sors Kcache and Vcache from the L3 into the L1 to perform the KV Cache update. This is achieved by concatenating tensors along specific dimensions to form the updated Kcache and 
+
+Vcache . In Steps 4–6, Qtrans and Kcache are loaded from the L3 into the L1 to compute the QKT matrix multiplications, producing the intermediate result S. Next, S undergoes the Softmax operation, producing the result P . Then, P
+
+and Vcache are used for the final PV matrix multiplication, resulting in the output tensor O. The inputs and outputs of multiple kernels frequently shuttle between the L1 and the L3. The low efficiency of KV Cache utilization is the main FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+challenge of attention implementation: as memory reorgani-zation operators, the implementation of KV Cache Concat 
+
+relies on substantial memory usage (Kwon et al., 2023; Dan-tas et al., 2024; Guo et al., 2025; Cai et al., 2025; Liu et al., 2025; Zhao et al., 2025). It is essential to continuously im-prove the memory efficiency of KV Cache. Moreover, on AI accelerator devices, the limited memory bandwidth poses an additional challenge—particularly in the later stages of token generation, where the growing size of the KV Cache leads to increasing bandwidth pressure and potential bottle-necks. In addition, the participation of the CPU introduces synchronization operations on the AI accelerators, making it difficult to perform fine-grained scheduling of operators. Consequently, ensuring high model performance on AI ac-celerators requires not only improving memory utilization but also fine-grained optimization, making the optimization of KV Cache a significant challenge. We will optimize KV Cache management in this article. 
+
+2.3 Standard MLP Implement 
+
+The standard implementation of the MLP consists of five steps, as shown in Section 2⃝ of Figure 1: (1) RMSNorm ,which improves the gradient distribution during training and accelerates convergence (Elfwing et al., 2018); (2) Gate projection , which performs feature extraction on the input tensor for subsequent nonlinear transformations; (3) Up projection , which expands the dimensionality of the input tensor, providing more information for elementwise multi-plication; (4) SiLU activation (Kim et al., 2024), which ap-plies nonlinear transformation to the feature tensor after gate projection; and (5) Down projection , which compresses the features expanded from the hidden layer to the middle layer back to the hidden layer size for the next computation. The computation is defined as: 
+
+O = Wdown (SiLU (Wgate ht) ∗ (Wup ht)) (1) Where ht ∈ RN ×D is the normalized input tensor by the 
+
+RMSNorm function; Wgate , W up ∈ RD×K and Wdown ∈
+
+RK×D are the weight matrices for gate, up, and down pro-jections respectively; SiLU is the activation function; and 
+
+O is the output matrix after two-layer computation. The de-tails are shown in Algorithm 2. Where hgt , h ut ∈ RN ×K are the feature tensors after gate and up projections respectively; 
+
+hst ∈ RN ×K is the feature tensor after nonlinear transfor-mation by the SiLU activation function; h′ 
+
+> t
+
+∈ RN ×K is the result of elementwise multiplication between hut and hst ;and O ∈ RN ×D is the final output. MLP’s core computations are dominated by matrix mul-tiplications. However, since N = 1 , the computational parallelism decreases dramatically, leading to underutiliza-tion of matrix multiplication acceleration units. We use dataflow to mitigate this problem which can be strategically 
+
+Algorithm 2 Standard MLP Implementation 
+
+Require: Tensor input ht ∈ RN ×D ; weights Wgate , W up ∈
+
+RD×K , Wdown ∈ RK×D
+
+Step 1: Read ht and Wgate from L3 →L1, compute gate projection Wgate ht, write hgt ∈ RN ×K from L1 →L3 
+
+Step 2: Read hgt from L3 →L1, compute SiLU activation SiLU (hgt ), write hst from L1 →L3 
+
+Step 3: Read ht and Wup from L3 →L1, compute up projection Wup ht, write hut ∈ RN ×K from L1 →L3 
+
+Step 4: Read hst and hut from L3 →L1, compute element-wise multiplication h′ 
+
+> t
+
+= hut ⊙ hst , write h′ 
+
+> t
+
+∈ RN ×K
+
+from L1 →L3 
+
+Step 5: Read h′ 
+
+> t
+
+and Wdown from L3 →L1, compute down projection Wdown h′
+
+> t
+
+, write O ∈ RN ×D from L1 →L3 
+
+Return: O ∈ RN ×D
+
+organized to pipeline memory and computing operations, thereby effectively hiding the memory latency and improv-ing the overall throughput. 
+
+2.4 Operator Type and OI 
+
+As illustrated in the flow diagram of Figure 1 and the cor-responding algorithmic steps, the operators can be broadly categorized into two groups: (1) Computational operators ,which include RoPE , Matmul , Softmax , RMSNorm ,
+
+Mul , and siLu . These operators correspond to arithmetic computations. We need to maximize the degree of paral-lelism of these operators to improve computing efficiency; (2) Memory reorganization operators , represented by 
+
+Concat , which involves reading both new and cached data from memory, performing concatenation, and writing the result back to the memory. This includes KV Cache or quantization KV Cache operations. This operator is purely memory-bound and does not involve any arithmetic compu-tation. We need to improve their memory usage efficiency as much as possible to improve the bandwidth utilization. Both types of operators have a significant impact on latency and power consumption during model inference (Kim et al., 2024; Stojkovic et al., 2025; Wolters et al., 2024). To quantitatively analyze performance, we study the metric of OI which is used as a proxy to quantify the maximum potential performance of an individual operator, based on a set of hardware. The OI is defined as the number of arithmetic operations divided by the number of memory accesses. A lower OI indicates limited data reuse within the kernel and a higher likelihood of encountering memory bandwidth bottlenecks. This metric serves as an indicator of the theoretical upper bound of kernel performance on the underlying accelerator architecture. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 1
+
+> 2
+> 3
+> 12
+> 3
+> 1
+> 2
+> 3
+> 1
+> 2
+> 3
+
+Figure 2. Roofline analysis of the attention and MLP blocks for some specific Nt, where the attention block incorporates the GQA (grouped query attention) optimization. Ori refers to the original implementation before FastTPS optimization, and Opt indicates the optimized version following the application of FastTPS. For the attention block, the analysis covers scenarios where the number of tokens gradually increases. For the MLP block, both theoretical performance bounds and empirical runtime results are presented. The computation peak performance of AMD Ryzen AI 300 series NPU (Rico et al., 2024; Subramon et al., 2023; Patwari et al., 2025) is used here ( 2.84 GFLOPs). 
+
+## 3 FASTTPS IMPLEMENTATION 
+
+To optimize the token phase, this paper proposes FastTPS ,which introduces three optimization strategies targeting the attention and MLP blocks of TPS: (1) GKVC : This ap-proach ensures that the KV Cache process is entirely exe-cuted on AI accelerators, maintaining computational con-tinuity on the same hardware device. It also eliminates the need for memory reorganization operations, thereby re-ducing memory read/write operations and optimizing the KV Cache pipeline; (2) TPSFLAT : Inspired by the FLAT concept and leveraging the improved operator continuity enabled by GKVC on AI accelerators, this method designs a dataflow tailored to TPS characteristics to enable further operator fusion; (3) Fusion MLP : A strategy is adopted to enhance computational efficiency within the MLP block by means of decomposing and fusing operators as well as optimizing pipeline scheduling. All the above strategies preserve computational accuracy. The following sections provide a detailed description of the implementation of these optimization strategies. 
+
+3.1 Attention Block Implementation 
+
+Figure 3 illustrates the optimized processing pipeline of the attention block under KV Cache and TPSFLAT. Cor-responding to Figure 3, Algorithm 3 demonstrates that the proposed approach significantly reduces the number of data transfers and enhances computational continuity. A detailed 
+
+Algorithm 3 GKVC & TPSFLAT 
+
+Require: Tensors Q, K, V ∈ RB×N ×H×d, sin, cos ∈
+
+RH×(d/ 2) , KV Cache ∈ RB×H×Nr ×d; In TPS, B = 1 ,
+
+N = 1 
+
+1: Do GKVC for V when writing it from L1 →L3 after activation; get Vcache ∈ RB×H×Nt×d in L3 
+
+2: for Hi in range (0 , H, H b) do {Outer loop – L3 tile }
+
+3: Read Qb, K b ∈ RB×N ×Hb×d and Vcache b ∈
+
+RB×Hb×Nt×d from L3 →L2 
+
+4: Read sin b, cos b ∈ RHb×(d/ 2) from L3 →L2 
+
+5: for hi in range (Hi, H i + Hb, 1) do {Inner loop – L2 tile }
+
+6: Read Qi, K i ∈ RB×N ×1×d from L2 →L1 as one continuous tensor QK i ∈ R2×B×N ×1×d
+
+7: Read sin i, cos i ∈ R1×(d/ 2) from L2 →L1 
+
+8: Compute RoPE once, get QK irope ∈
+
+R2×B×N ×1×d in L1, same as two continu-ous tensors: Qirope , K irope ∈ RB×1×N ×d . In TPS, 
+
+B = 1 and N = 1, so it can be seen as 
+
+Qirope , K irope ∈ RB×(H=1) ×N ×d
+
+9: Write Kirope from L1 →L3 with GKVC to update 
+
+Kcache ∈ RB×H×Nt×d in L3 
+
+10: Read Kcache i ∈ RB×1×Nt×d from L3 →L1. 
+
+Compute QK T (Qirope , K cache i ), get Si ∈
+
+RB×1×N ×Nt in L1 
+
+11: Compute Softmax (Si), get Pi ∈ RB×1×N ×Nt in L1 
+
+12: Read Vcache i ∈ RB×1×Nt×d from L2 →L1. Com-pute P V (Pi, V cache i ), get Oi ∈ RB×1×N ×d in L1 
+
+13: Get Ob ∈ RB×Hb×N ×d in L2 
+
+14: Return: O ∈ RB×H×N ×d in L3 explanation of the implementation is as Algorithm 3. 
+
+3.1.1 Global KV Cache Management 
+
+Compared with the standard KV Cache implementations discussed in Section 2.2, GKVC ensures that TPS inference is consistently executed on AI accelerators while eliminat-ing the reliance on the Concat operator responsible for KV Cache memory reorganization. The integration of this optimization into the TPS pipeline is illustrated in Figure 3. To support this scheme, GKVC requires a pre-allocated memory region in the L3 cache for KV Cache storage, which is also known as static KV Cache (Shi et al., 2024). Given that the shape of a single K or V tensor is RB×N ×H×d,and the N dimension increases progressively during TPS inference, the maximum sequence length that can be stored in the pre-allocated memory is predetermined when B, H,and d are fixed to 1. The existing KV Cache tensors are of shape RB×H×Np×d,and the cache update proceeds by directly writing the new FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+KV Cache data into the corresponding positions in the re-maining cache space. This process can be executed either by the AI accelerator or by software. Specifically, for each iteration over the B × H dimension, denoted as hi = [0 : B × H), a vector of length d is written sequentially after a jump of: Step = h·(Np +Nr )·d+Np ·d, h = 0 , 1, 2, . . . , B ·H −1
+
+(2) Once the B × H iterations are complete, the KV Cache update is finalized. The sequence length in the cache is incremented to Nt, and Np is updated to Nt, while Nr is decremented by 1 accordingly. GKVC uses an address-jumping strategy to write into pre-allocated memory processed by AI accelerator (or software), thereby eliminating the data read/write and concatenation executed by CPU. This scheme enables the entire inference pipeline to remain on the AI accelerator, which allows subse-quent operator fusion optimization to theoretically support the fusion of more operators. 
+
+3.1.2 TPSFLAT 
+
+Based on the FLAT (Kao et al., 2023) scheme, this paper proposes a specialized dataflow strategy tailored to the char-acteristics of the attention block with RoPE in TPS, termed 
+
+TPSFLAT . As introduced in FLAT, Softmax performs normalization along a specific dimension, which imposes a minimum granularity of computation—normalization is performed whenever the input reaches the minimal compu-tation granularity, and the output is then passed to the next operator. This enables the decomposition of the computation task into multiple parallel processes with independent data flows, based on the normalization dimension of Softmax .In TPS, both the B and N dimensions are set to 1. There-fore, the computation task can be decomposed along the H
+
+dimension, resulting in a simplified tiling strategy. The inference pipeline optimized by the GKVC strategy proposed in this paper eliminates the need for the Concat 
+
+operator while maintaining the entire inference pipeline on the AI processor. With GKVC, we fuse the RoPE operator before KV Cache and inherit the fusion of L/A operators from FLAT (corresponding to QKT , Softmax , and PV in this paper). As illustrated in Algorithm 3, Steps 6 and 7, considering that Q and K share the same RoPE logic, our scheme applies the RoPE operator jointly to Q and K, al-lowing the sinusoidal tensors to be shared. This reduces operator calls. As described in Algorithm 1, the native inference pipeline executes operators sequentially. After applying TPSFLAT, only the necessary KV tensors are writ-ten back to L3 for KV Cache, while all other intermediate tensors are retained in L1 for subsequent computations. The operator fusion in TPSFLAT is demonstrated in both Fig-ure 3 and Algorithm 3, which illustrate the data flow across the L1, L2, and L3 caches. This significantly reduces the number of transfers between the L1 and L3 caches, saving transmission time and ultimately improving inference speed. Softmax          
+
+> RMSNorm
+> QKT
+> PV
+> Matmul
+> Rope
+> Transpose
+> ... ...
+> ... ...
+> VV
+> KK
+> Figure 3. Structural overview of attention blocks after GKVC and TPSFLAT optimization. The red, orange, and green areas corre-spond to the L3, L2, and L1 cache respectively. In GKVC, the KV vectors computed in the L1 cache are directly written to the pre-allocated memory locations in the L3 cache via the L2 cache, eliminating the need for a Concat operator. This strategy ensures memory without fragmentation. TPSFLAT achieves a continuous fusion of operations—including RoPE, QKT, Softmax, and
+> PV —within the L1 cache, the significantly reduces data transfer and memory access overhead between operations.
+
+3.1.3 Tiling Strategy and Execution Granularity 
+
+TPSFLAT inherits the characteristics of FLAT in terms of data dependencies and avoiding excessive on-chip tensor sizes. To enable operator fusion, this approach also requires partitioning the input data into smaller blocks along spe-cific dimensions. These blocks are then processed through nested loops to complete the full computation workload. This partitioning strategy is referred to as tiling . The tiling configuration varies across different AI accelerators. In this paper, we take the AMD Ryzen AI 300 series NPU (Rico et al., 2024; Subramon et al., 2023; Patwari et al., 2025) as an example, which is detailed in Algorithm 3. It is known that before fusion was adopted, each kernel’s execution involves input and output data accesses to the L3 cache. Consequently, each L1 access can only support the computation of a single kernel. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+In contrast, after fusion, four kernels can be executed consec-utively within the L1 cache, significantly reducing memory access frequency and improving the OI. The detailed com-putation processes after tiling are described in Appendix A, and the usages in different cache levels are analyzed in Appendix B. 
+
+3.2 Fusion MLP Implementation Inputs 
+
+> RMSNorm
+> siLu
+> Matmul
+> （down ）
+> Outputs
+> Mul
+> Matmul
+> （up ）
+> Matmul
+> （gate ）
+> ...
+> ...
+> ...
+> ...
+> ...
+> ...
+
+Figure 4. The Fusion MLP workflow, each part represents the en-tire execution process of data exchange between the L1 cache and the L3 cache. The part1 is the RMSNorm operation applied to normalize the input tensor. The part2 is the primary part of MLP which describes the methods of interlaced gate -up weights. The pipeline schedule in part2 demonstrates improvement by introduc-ing interlaced weights which eliminates the time-span due to OPs’ sequential execution. The part3 is the down projection operation served to reduce the dimension enriched by part2 for subsequent calculations. 
+
+MLP is a type of feedforward network (Geva et al., 2020; Melas-Kyriazi, 2021) that processes the complex mapping relationship from input tensors to output tensors through the combination of nonlinear functions and linear transforma-tions. The MLP (Touvron et al., 2023b;a) includes five oper-ations: gate projection, up projection, and down projection, as well as siLu operation and elewMul operation. The conventional approach is to fuse gate projection (compute-bound) and siLu operators (memory-bound) together in software graph fusion passes to reduce I/O overhead and balance computation time with I/O costs. Consequently, this produces four operators in MLP: gate siLu , up projec-tion, elewMul , and down projection. To further integrate operators and reduce I/O overhead, we propose a novel func-tion Fusion MLP including two stages: (1) fuse the gate and the up projections into a single large Matmul ; (2) fuse the combined Matmul with the siLu and elewMul oper-ators. This method reduces the number of I/Os from 7 to 2 and enables a fine-grain pipeline which can enhance compu-tational efficiency, maximize resource utilization, and bring the computing performance closer to the theoretical peak, as illustrated in Figure 2. It contains three key optimization points: 1. Interlaced layout of gate-up weights: Assuming the minimum data unit required for computation on the L1 cache is a tile block with shape [tile n, tile d] ×
+
+[tile d, tile k], we split the weight matrices Wgate , W up 
+
+along the retained dimension K into half tile blocks with shape [tile d, tile k/2] , then rearrange these blocks in the order of block Wgate and block Wup into a new tile. This method constructs a larger Matmul (blue block in part 2 of Figure 4) while providing necessary conditions for subsequent operator fusion and pipeline scheduling. 2. Operator fusion: Based on the interlaced layout of gate-up weights, the siLu and elewMul are fused with the larger Matmul to reduce memory access fre-quency between the L1, L2, and L3 caches, thereby improving OI. As described in Figure 4 part 2, the 
+
+siLu operation is executed after the gate part of the larger Matmul . Then, Mul is executed by multiply-ing the matrix generated by the siLu operation and the up projection. This fused operator is renamed to 
+
+siLu Mul . It is worth mentioning that other element-wise operators besides siLu and elewMul can also be optimized in the same way. 3. Pipeline scheduling: Pipeline scheduling is employed within the larger Matmul to increase data usage ef-ficiency. We identify weight loading as the primary performance bottleneck in the token phase of MLPs. To address this, we maximize weight reuse and overlap computation with I/O operations to mask latency. The process details are shown in Algorithm 4 and Fig-ure 4. In Algorithm 4, the input tensor is ht ∈ RN ×D ,
+
+Wgu ∈ RD×2K , and Wdown ∈ RK×D , where ht is the input tensor normalized by RMSNorm , and Wgu is the new weight matrix formed by interlacing the gate and up weight matri-ces. The dimensions tile n ∈ { 1, N }, tile k ∈ { 1, 2K}, and tile d ∈ { 1, D } represent the minimum tile block dimensions required for a single core matrix multiplication in the L1 cache. The quantities x, y, and z denote the number of tile n,tile k, and tile d tiles that can be loaded or stored between the L3 cache and L2 cache, respectively. These parame-ters can be adjusted dynamically based on the data transfer bandwidth, computational bandwidth, and the L2 cache ca-pacity, thereby achieving the optimal partition strategy. See Appendix C for more descriptions. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+Algorithm 4 MLP Implementation 
+
+Require: Tensors in L3: ht ∈ RN ×D , Wgu ∈ RD×2K ,
+
+Wdown ∈ RK×D , hsm  
+
+> t
+
+∈ RN ×K , O ∈ RN ×D ; tile dimensions tile n ∈ { 1, N }, tile k ∈ { 1, 2K}, tile d ∈{1, D }
+
+1: Do RMSNorm for the input to get hidden states ht
+
+2: for n = 1 to ⌈N/ (x · tile n)⌉ k = 1 to ⌈2K/ (y · tile k)⌉
+
+3: for d = 1 to ⌈D/ (z · tile d)⌉
+
+4: Load data hnkd t , W nkd  
+
+> gu
+
+from L3 →L2 
+
+5: for i = 1 to x · y
+
+6: for all z
+
+7: Load hit ∈ Rtile n×tile d and W i 
+
+> gu
+
+∈ Rtile d×tile k
+
+from L2 →L1 
+
+8: Compute fused gate-up projection: W i
+
+> gu
+
+hit
+
+9: Accumulate to get hgu i 
+
+> t
+
+∈ Rtile n×tile k
+
+10: Accumulate to get hgu nk  
+
+> t
+
+∈ Rx·tile n×y·tile k
+
+11: Compute siLu Mul (hgu nk  
+
+> t
+
+) to get hsm nk  
+
+> t
+
+∈
+
+Rx·tile n×y·(tile k /2) 
+
+12: Store hsm nk  
+
+> t
+
+from L2 →L3 
+
+13: Load hsm  
+
+> t
+
+and Wdown from L3 →L1 
+
+14: Compute Wdown hsm  
+
+> t
+
+to get output O
+
+15: Store O from L1 →L3 
+
+## 4 EXPERIMENTS 
+
+In this section, we evaluate the inference latency speedup achieved through optimizations on two key computational components of Transformer architectures: (1) the atten-tion block (Section 4.1) and (2) the MLP block (Sec-tion 4.2), as implemented on the AMD Ryzen AI 300 series NPU (Rico et al., 2024; Subramon et al., 2023; Patwari et al., 2025) of several state-of-the-art LLMs, in-cluding ChatGLM3-6B (ChatGLM) (GLM et al., 2024), Llama2-7B (Llama2) (Touvron et al., 2023b), Llama3-8B-instruct (Llama3) (Grattafiori et al., 2024), Llama3.2-1B (Llama3.2) (Grattafiori et al., 2024) and Phi3-mini-4k-instruct (Phi3) (Abdin et al., 2024), using standard model implementations from the HuggingFace. We further ex-amine the performance of these LLMs on this hardware platform (Section 4.3). In these tests, the CPU overhead wasn’t taken into consideration. Finally, we analyze the OI and numerical accuracy characteristics – the primary optimization targets of our proposed method (Section 4.4). 
+
+4.1 Faster Attention Block 
+
+The models and their configurations presented in Table 1 were evaluated. Among these, ChatGLM and Llama3 have been specifically optimized using GQA (Ainslie et al., 2023), a technique designed to mitigate the memory bandwidth overhead associated with KV Cache loading. In this imple-mentation, GQA operates by broadcasting each query head’s computation to its corresponding group of key and value 
+
+Table 1. Model configurations used in our test.                                 
+
+> Model L3 GLM L2 P3 L3.2 Q. Heads 32 32 32 32 32 KV Heads 8232 32 32 Head Dim 128 128 128 96 64 Max N2k/4k 2k/4k 2k 2k 2k MLP K14336 13696 11008 8192 8192
+
+heads, thereby reducing the memory access requirements while maintaining computational accuracy. Figure 5 presents the latency performance of various trans-former models, with numerical annotations above the green bars indicating the percentage reduction in TPSFLAT la-tency relative to the attention baseline. The attention mech-anism involves KV Cache concatenation (processed by the CPU) and subsequent computations on the AI accelera-tor which leads to low OI. Our proposed TPSFLAT op-timizations eliminate these overheads—KV Cache ‘Con-cat‘ (66% ∼82%, light orange in Figure 5) and calculation costs (18% ∼34%, dark orange in Figure 5) respectively— delivering significant performance gains, as described in Section 4. The largest latency reduction is 93% for Llama3(4096), with 80% ∼92% improvements across other models. Computational costs are reduced by 40% ∼64% across all models. Notably, Llama3, Llama2, and ChatGLM share identical architectural configurations at the same max N, differing only in their query head counts. The observed latency disparity among these models is limited to 7.2%, demonstrating that our GQA implementation introduces negligible computational overhead. 
+
+Figure 5. Latency of different models in Table 1 of attention and TPSFLAT. The orange bar and green bar are the latency of attention and TPSFLAT respectively. Besides, attention shows the latency ratio of KV Cache ‘Concat‘ (light orange) and other operations (dark orange). The number above the green bar represents the reduction in latency achieved by TPSFLAT. 
+
+Empirical analysis reveals a quadratic relationship between latency and sequence length ( Nt), as evidenced by the domi-nant O(2 Ntd) complexity of KV Cache ‘Concat‘ operations in attention implementations. By implementing GKVC, we eliminate the ‘Concat‘ overhead, enabling significant per-formance acceleration as N increases. To quantify this relationship, we performed systematic benchmarking across varying sequence lengths. As illustrated in Figure 6, the acceleration ratio exhibits a monotonic increase with Nt
+
+(optimized 70% ∼90%) for Llama2, confirming superior FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+performance gains for extended sequence processing. The KV Cache ‘Concat‘ overhead increases as max sequence length increases.  
+
+> Figure 6. Latency reduction rate of different max sequence lengths for Llama2.
+
+Conversely, the observed latency reduction exhibits a clear correlation with head dimensionality ( d). This stems from the fact that reducing d significantly decreases KV Cache concatenation overhead and the computational cost of ‘BMM1‘, while ‘BMM2‘, ‘RoPE‘, and ‘Softmax‘ opera-tions remain largely unaffected. In the original implementa-tion, large d values result in substantial KV Cache partici-pation, whereas this contribution diminishes for smaller d.Notably, our TPSFLAT (GKVC) approach eliminates KV Cache participation entirely. Consequently, while accelera-tion initially shows a slight decline for very small d values (due to other fixed costs), it subsequently increases. This non-monotonic trend aligns with empirical observations for Phi3 and Llama3.2 compared to Llama2, thereby validating our method’s effectiveness in optimizing high-dimensional attention mechanisms. 
+
+4.2 MLP Block with Better Speed 
+
+We conducted a comprehensive analysis of the MLP block latency across five transformer models detailed in Table 1. As illustrated in Figure 7, our experiments revealed sig-nificant latency reductions through MLP fusion: Llama3, ChatGLM, Llama2 and Phi3 demonstrated speedups ex-ceeding 20% compared to their unfused counterparts while Llama3.2 achieved a remarkable 68% reduction in MLP la-tency. The significant performance improvements are driven by Fusion MLP’s reduction of data movement, in contrast to the original MLP’s implementation. The observed speedup ratio correlates closely with the input data proportion rel-ative to the total read operations, approximated by the for-mula: ∼ K+3 D 
+
+> 3KD +4 K+4 D
+
+where K and D correspond to the description in Algorithm 4 in Section 3.2. This relation-ship quantitatively explains the varying speedup magnitudes across different model architectures. 
+
+4.3 The Speedup of FastTPS on LLMs 
+
+To date, we have separately evaluated the optimization ef-fects of FastTPS on the attention block and MLP block. However, the practical significance of these optimizations within the actual LLM architecture remains to be systemat-              
+
+> Figure 7. The latency of original MLP (orange bars) and Fusion MLP (green bars). The number above the green bar is the improve-ment ratio from Fusion MLP to original MLP.
+> Table 2. The proportion of attention and MLP block for different models. MODEL LLAMA 3.2 LLAMA 2PHI 3ATTENTION BLOCK (%) 18.28 42.27 49.35 MLP BLOCK (%) 36.34 24.31 20.82
+
+ically assessed. As demonstrated in Table 2, the computa-tional contributions of these blocks vary significantly across models: the attention block accounts for approximately 18 ∼49% of the total operations, while the MLP block con-stitutes 21 ∼36% of the total operations. These findings suggest that FastTPS would yield particularly substantial performance improvements in these model architectures. The experimental results, summarized in Table 3, report the measured TPS with and without FastTPS. The table also shows the FastTPS speedup and the theoretical maxi-mum performance (calculated as the weight data divided by full memory bandwidth). Among the models tested, Phi3 achieves the highest acceleration of 6.0 ×, attributed to its largest attention block and MLP block participation. No-tably, the models achieve an average accelerator-resource utilization of 86% (with Phi3 reaching an exceptional 93%), demonstrating FastTPS’s effectiveness in real-world LLM deployments. FastTPS has been integrated with AMD NPU and evaluated in comparison with other NPUs available in the industry. As presented in Tables 5-8 in Appendix A.4 , the results indicate that during the bandwidth-limited token generation phase, the AMD NPU achieves superior performance on certain models despite its lower memory bandwidth. 
+
+4.4 OI and Accuracy OI Improvement — The OI of both attention and MLP blocks remains in a low-performance region due to the token-by-token iteration inherent in the token phase. As illustrated in Figure 2, we present the roofline analysis for these blocks in the Llama2 model. For the attention block, we implement several key optimiza-tions in TPSFLAT: (1) eliminate high-overhead data move-ment operations in KV Cache management by redesigning the memory access pattern; (2) integrate ‘Softmax‘ and FastTPS: An Optimized Method for LLM Token Phase for AI accelerators                       
+
+> Table 3. Latency and TPS ratios with and without FastTPS.
+> Model L3.2 L2 P3 Theoretical TPS (ms) 37.86 15.56 18.97 TPS w/o FastTPS (ms) 12.21 2.34 2.95 TPS with FastTPS (ms) 32.27 12.41 17.60 w/o FastTPS Ratio (%) 32.24 15.05 15.58 FastTPS Ratio (%) 85.22 79.74 92.77 Speedup 2.64 ×5.30 ×5.95 ×
+
+‘Matmul‘ operations through TPSFLAT fusion, shifting the memory synchronization point from the L3 to the L1 cache; (3) combine two ‘RoPE‘ operations into a single calculation to further reduce computational overhead. These optimiza-tions collectively minimize data I/O operations and signifi-cantly enhance OI. As shown in Figure 2, the yellow-scatter region (within the yellow circle) represents the OI before TPSFLAT optimization (GQA Ori.), while the red-scatter region (within the red circle) demonstrates the improved OI after optimization (GQA Opt.) by 3x. For the MLP block, our optimization effectively reduces the computation unit wastage. Consequently, the Fusion MLP block achieves performance much closer to the theoretical maximum compared to the eager execution baseline (as shown in the dashed circle of Figure 2, where the purple star is much closer to the theoretical performance than the yellow star). We found the performance of MLP is restricted by the movement of weight data (vastly exceeds input) which is inevitable. 
+
+Accuracy Stability — We adopt the results of attention im-plemented in PyTorch with float data type as the baseline and simulate the behavior of FastTPS attention using bfloat16. The maximum discrepancy between FastTPS and the base-line is illustrated in Figure 8. Our analysis reveals that the accuracy of FastTPS improves with increasing sequence length as the ‘Softmax‘ outputs become more uniform, caus-ing the maximum value of V to approach 0.5. In contrast, FlashAttention exhibits a significant accuracy degradation as sequence length grows in Ref. (Shah et al., 2024). More-over, FastTPS achieves an order-of-magnitude higher accu-racy ( ∼1e−3) compared to FlashAttention ( ∼1e−2) (Golden et al., 2024). Notably, the primary source of precision loss in FastTPS stems from the truncation of output data rather than the FastTPS algorithm itself. 
+
+## 5 DISCUSS AND FUTURE WORKS 
+
+5.1 Compatibility with Other Hardware 
+
+In this work, we evaluate FastTPS on an NPU, though the framework is readily adaptable to GPUs, TPUs (Jouppi et al., 2017), and ASICs (Du et al., 2015; Chen et al., 2014a;b; Liu et al., 2015). Our attention mechanism builds  
+
+> Figure 8. Maximum error as sequence length of TPSFLAT. The error decreases as sequence length increases. The largest maximum error is less than 0.22%.
+
+upon FLAT (Kao et al., 2023) which has been validated on NVIDIA Tesla T4, and the KV Cache management and tiling strategies can be directly integrated without ad-ditional computational overhead. Meanwhile, our MLP dataflow optimization primarily involves storage reorgani-zation. Given the shared memory hierarchy and the hard-ware architecture with GPUs, our approach is expected to yield performance gains on GPUs. Similarly, other AI ac-celerators—such as the DianNao family (Du et al., 2015; Chen et al., 2014a;b; Liu et al., 2015) and TPUs (Jouppi et al., 2017)—can achieve substantial performance improve-ments when integrated with FastTPS, despite their complex memory hierarchies which can be abstracted into a three-level cache structure (L1/L2/L3). Future work will explore broader applicability across different accelerators. 
+
+5.2 Compatibility with Acceleration Algorithm 
+
+As discussed in the introduction, numerous studies have explored Transformer model compression techniques, in-cluding quantization and distillation. Notably, FastTPS introduces low precision loss and remains fully compatible with these optimization methods, enabling seamless integra-tion without performance trade-offs. This exceptional com-patibility facilitates straightforward adoption across popular deep learning frameworks such as PyTorch and TensorFlow, allowing developers to easily extend these platforms with FastTPS capabilities. We plan to integrate these algorithms with FastTPS in the future. 
+
+## 6 CONCLUSION 
+
+This work tackles the pressing issue of low parallelism and low data usage efficiency of Transformer token phase on the general AI accelerators, especially for long sequence length. By introducing FastTPS with layout-aware KV Cache management, data tiling for reusing and fine-grain pipeline scheduling in both attention block and MLP block, we improved attention OI by 3x and brought MLP closer to the theoretical limit of bandwidth usage (1.3x than original data). The method shows strong compatibility with recent FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+compression techniques such as GQA. Besides, FastTPS can be implemented on a variety of models and achieve more than 6x acceleration with little loss of accuracy, un-locking a practical route for deploying resource-efficient Transformer inference. 
+
+## REFERENCES 
+
+Abdin, M., Aneja, J., Behl, H., Bubeck, S., Eldan, R., Gunasekar, S., Harrison, M., Hewett, R. J., Javaheripi, M., Kauffmann, P., et al. Phi-4 technical report. arXiv preprint arXiv:2412.08905 , 2024. Ainslie, J., Lee-Thorp, J., De Jong, M., Zemlyanskiy, Y., Lebr ´on, F., and Sanghai, S. Gqa: Training generalized multi-query transformer models from multi-head check-points. arXiv preprint arXiv:2305.13245 , 2023. Ashish, V. Attention is all you need. Advances in neural information processing systems , 30:I, 2017. Bercovich, A., Dabbah, M., Puny, O., Galil, I., Geifman, A., Geifman, Y., Golan, I., Karpas, E., Levy, I., Moshe, Z., et al. Ffn fusion: Rethinking sequential computation in large language models. arXiv preprint arXiv:2503.18908 ,2025. Brodwin, D. R., Erickson, W., Kaplan, J., and Rappaport, W. Artificial inteiligence on personal computers. In Man-aging Requirements Knowledge, International Workshop on , pp. 461–461. IEEE Computer Society, 1985. Cai, Z., Xiao, W., Sun, H., Luo, C., Zhang, Y., Wan, K., Li, Y., Zhou, Y., Chang, L.-W., Gu, J., et al. R-kv: Redundancy-aware kv cache compression for training-free reasoning models acceleration. arXiv preprint arXiv:2505.24133 , 2025. Chen, T., Du, Z., Sun, N., Wang, J., Wu, C., Chen, Y., and Temam, O. Diannao: A small-footprint high-throughput accelerator for ubiquitous machine-learning. 
+
+ACM SIGARCH Computer Architecture News , 42(1):269– 284, 2014a. Chen, Y., Luo, T., Liu, S., Zhang, S., He, L., Wang, J., Li, L., Chen, T., Xu, Z., Sun, N., et al. Dadiannao: A machine-learning supercomputer. In 2014 47th Annual IEEE/ACM International Symposium on Microarchitecture , pp. 609– 622. IEEE, 2014b. Dantas, P. V., Sabino da Silva Jr, W., Cordeiro, L. C., and Carvalho, C. B. A comprehensive review of model com-pression techniques in machine learning. Applied Intelli-gence , 54(22):11804–11844, 2024. Dao, T. Flashattention-2: Faster attention with bet-ter parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. Dao, T., Fu, D., Ermon, S., Rudra, A., and R ´e, C. Flashat-tention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. Devlin, J., Chang, M.-W., Lee, K., and Toutanova, K. Bert: Pre-training of deep bidirectional transformers for lan-guage understanding. In Proceedings of the 2019 confer-ence of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers) , pp. 4171–4186, 2019. Du, Z., Fasthuber, R., Chen, T., Ienne, P., Li, L., Luo, T., Feng, X., Chen, Y., and Temam, O. Shidiannao: Shifting vision processing closer to the sensor. In Proceedings of the 42nd annual international symposium on computer architecture , pp. 92–104, 2015. Elfwing, S., Uchibe, E., and Doya, K. Sigmoid-weighted linear units for neural network function approximation in reinforcement learning. Neural networks , 107:3–11, 2018. Face, H. Hugging face – the ai community building the future. FastFlow Labs. Lfm-2 benchmark results. https: //fastflowlm.com/docs/benchmarks/ lfm2_results/ , 2026. Accessed February, 2026. Fu, Y., Xue, L., Huang, Y., Brabete, A.-O., Ustiugov, D., Patel, Y., and Mai, L. {ServerlessLLM }:{Low-Latency }
+
+serverless inference for large language models. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , pp. 135–153, 2024. Geva, M., Schuster, R., Berant, J., and Levy, O. Transformer feed-forward layers are key-value memories. arXiv preprint arXiv:2012.14913 , 2020. Gihon, A. Lunar lake architecture session. In 2024 IEEE Hot Chips 36 Symposium (HCS) . IEEE Computer Society, 2024. GLM, T., Zeng, A., Xu, B., Wang, B., Zhang, C., Yin, D., Zhang, D., Rojas, D., Feng, G., Zhao, H., et al. Chatglm: A family of large language models from glm-130b to glm-4 all tools. arXiv preprint arXiv:2406.12793 , 2024. Golden, A., Hsia, S., Sun, F., Acun, B., Hosmer, B., Lee, Y., DeVito, Z., Johnson, J., Wei, G.-Y., Brooks, D., et al. Is flash attention stable? arXiv preprint arXiv:2405.02803 ,2024. Grattafiori, A., Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Vaughan, A., et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., et al. Deepseek-r1: In-centivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. Hooper, C., Kim, S., Mohammadzadeh, H., Mahoney, M. W., Shao, Y. S., Keutzer, K., and Gholami, A. Kvquant: Towards 10 million context length llm infer-ence with kv cache quantization. Advances in Neural Information Processing Systems , 37:1270–1303, 2024. Ignatov, A., Timofte, R., Chou, W., Wang, K., Wu, M., Hart-ley, T., and Van Gool, L. Ai benchmark: Running deep neural networks on android smartphones. In Proceedings of the European Conference on Computer Vision (ECCV) Workshops , pp. 0–0, 2018. Jetson AI Lab. Ai benchmarks archive. https: //www.jetson-ai-lab.com/archive/ benchmarks.html , 2026. Accessed February, 2026. Jouppi, N. P., Young, C., Patil, N., Patterson, D., Agrawal, G., Bajwa, R., Bates, S., Bhatia, S., Boden, N., Borchers, A., et al. In-datacenter performance analysis of a tensor processing unit. In Proceedings of the 44th annual inter-national symposium on computer architecture , pp. 1–12, 2017. Kaddour, J., Harris, J., Mozes, M., Bradley, H., Raileanu, R., and McHardy, R. Challenges and applications of large language models. arXiv preprint arXiv:2307.10169 ,2023. Kalyan, K. S. A survey of gpt-3 family large language models including chatgpt and gpt-4. Natural Language Processing Journal , 6:100048, 2024. Kao, S.-C., Subramanian, S., Agrawal, G., Yazdanbakhsh, A., and Krishna, T. Flat: An optimized dataflow for mitigating attention bottlenecks. In Proceedings of the 28th ACM International Conference on Architectural Sup-port for Programming Languages and Operating Systems, Volume 2 , pp. 295–310, 2023. Kim, T., Wang, Y., Chaturvedi, V., Gupta, L., Kim, S., Kwon, Y., and Ha, S. Llmem: Estimating gpu memory usage for fine-tuning pre-trained llms. arXiv preprint arXiv:2404.10933 , 2024. Kwon, W., Kim, S., Mahoney, M. W., Hassoun, J., Keutzer, K., and Gholami, A. A fast post-training pruning frame-work for transformers. Advances in Neural Information Processing Systems , 35:24101–24116, 2022. Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J., Zhang, H., and Stoica, I. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th sym-posium on operating systems principles , pp. 611–626, 2023. Kynk ¨a ¨anniemi, T., Karras, T., Laine, S., Lehtinen, J., and Aila, T. Improved precision and recall metric for assess-ing generative models. Advances in neural information processing systems , 32, 2019. Li, Y., Xu, S., Zhang, B., Cao, X., Gao, P., and Guo, G. Q-vit: Accurate and fully quantized low-bit vision trans-former. Advances in neural information processing sys-tems , 35:34451–34463, 2022a. Li, Y., Yuan, G., Wen, Y., Hu, J., Evangelidis, G., Tulyakov, S., Wang, Y., and Ren, J. Efficientformer: Vision trans-formers at mobilenet speed. Advances in Neural Informa-tion Processing Systems , 35:12934–12949, 2022b. Liu, D., Chen, T., Liu, S., Zhou, J., Zhou, S., Teman, O., Feng, X., Zhou, X., and Chen, Y. Pudiannao: A poly-valent machine learning accelerator. ACM SIGARCH Computer Architecture News , 43(1):369–381, 2015. Liu, X., Tang, Z., Chen, H., Dong, P., Li, Z., Zhou, X., Li, B., Hu, X., and Chu, X. Can llms maintain fundamental abilities under kv cache compression? arXiv preprint arXiv:2502.01941 , 2025. Melas-Kyriazi, L. Do you even need attention? a stack of feed-forward layers does surprisingly well on imagenet. 
+
+arXiv preprint arXiv:2105.02723 , 2021. MLCommons. Mlcommons training benchmarks. https: //mlcommons.org/benchmarks/training/ ,2026. Accessed February, 2026. Moritz, P., Nishihara, R., Wang, S., Tumanov, A., Liaw, R., Liang, E., Elibol, M., Yang, Z., Paul, W., Jordan, M. I., et al. Ray: A distributed framework for emerging {AI }
+
+applications. In 13th USENIX symposium on operating systems design and implementation (OSDI 18) , pp. 561– 577, 2018. Patel, P., Choukse, E., Zhang, C., Shah, A., Goiri, ´I., Maleki, S., and Bianchini, R. Splitwise: Efficient generative llm inference using phase splitting. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architec-ture (ISCA) , pp. 118–132. IEEE, 2024. Patwari, R., Sirasao, A., and Das, D. Forecasting llm in-ference performance via hardware-agnostic analytical modeling. arXiv preprint arXiv:2508.00904 , 2025. Phuong, M. and Hutter, M. Formal algorithms for trans-formers. arXiv preprint arXiv:2207.09238 , 2022. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+Rasley, J., Rajbhandari, S., Ruwase, O., and He, Y. Deep-speed: System optimizations enable training deep learn-ing models with over 100 billion parameters. In Proceed-ings of the 26th ACM SIGKDD international conference on knowledge discovery & data mining , pp. 3505–3506, 2020. Rico, A., Pareek, S., Cabezas, J., Clarke, D., Ozgul, B., Barat, F., Fu, Y., M ¨unz, S., Stuart, D., Schlangen, P., et al. Amd xdna™ npu in ryzen™ ai processors. IEEE Micro ,2024. Schulman, J., Zoph, B., Kim, C., Hilton, J., Menick, J., Weng, J., Uribe, J. F. C., Fedus, L., Metz, L., Pokorny, M., et al. Chatgpt: Optimizing language models for dialogue. OpenAI blog , 2(4), 2022. Shah, J., Bikshandi, G., Zhang, Y., Thakkar, V., Ramani, P., and Dao, T. Flashattention-3: Fast and accurate attention with asynchrony and low-precision. Advances in Neural Information Processing Systems , 37:68658–68685, 2024. Shi, L., Zhang, H., Yao, Y., Li, Z., and Zhao, H. Keep the cost down: A review on methods to optimize llm’s kv-cache consumption. arXiv preprint arXiv:2407.18003 ,2024. Shoeybi, M., Patwary, M., Puri, R., LeGresley, P., Casper, J., and Catanzaro, B. Megatron-lm: Training multi-billion parameter language models using model paral-lelism. arXiv preprint arXiv:1909.08053 , 2019. Stojkovic, J., Zhang, C., Goiri, ´I., Torrellas, J., and Choukse, E. Dynamollm: Designing llm inference clusters for performance and energy efficiency. In 2025 IEEE In-ternational Symposium on High Performance Computer Architecture (HPCA) , pp. 1348–1362. IEEE, 2025. Subramon, M., Kramer, D., and Paul, I. Amd ryzen™ 7040 series: Technology overview. In 2023 IEEE Hot Chips 35 Symposium (HCS) , pp. 1–27. IEEE Computer Society, 2023. Thoppilan, R., De Freitas, D., Hall, J., Shazeer, N., Kul-shreshtha, A., Cheng, H.-T., Jin, A., Bos, T., Baker, L., Du, Y., et al. Lamda: Language models for dialog appli-cations. arXiv preprint arXiv:2201.08239 , 2022. Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A., Lacroix, T., Rozi `ere, B., Goyal, N., Hambro, E., Azhar, F., et al. Llama: Open and efficient foundation lan-guage models. arXiv preprint arXiv:2302.13971 , 2023a. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 ,2023b. Wang, Y., Yang, C., Lan, S., Zhu, L., and Zhang, Y. End-edge-cloud collaborative computing for deep learning: A comprehensive survey. IEEE Communications Surveys & Tutorials , 26(4):2647–2683, 2024. Wolters, C., Yang, X., Schlichtmann, U., and Suzumura, T. Memory is all you need: An overview of compute-in-memory architectures for accelerating large language model inference. arXiv preprint arXiv:2406.08413 , 2024. Xiao, J., Huang, Q., Chen, X., and Tian, C. Under-standing large language models in your pockets: Per-formance study on cots mobile devices. arXiv preprint arXiv:2410.03613 , 2024. Yao, Z., Yazdani Aminabadi, R., Zhang, M., Wu, X., Li, C., and He, Y. Zeroquant: Efficient and affordable post-training quantization for large-scale transformers. Ad-vances in neural information processing systems , 35: 27168–27183, 2022. Zhao, C., Deng, C., Ruan, C., Dai, D., Gao, H., Li, J., Zhang, L., Huang, P., Zhou, S., Ma, S., et al. Insights into deepseek-v3: Scaling challenges and reflections on hardware for ai architectures. In Proceedings of the 52nd Annual International Symposium on Computer Architec-ture , pp. 1731–1745, 2025. Zhu, C., Ping, W., Xiao, C., Shoeybi, M., Goldstein, T., Anandkumar, A., and Catanzaro, B. Long-short trans-former: Efficient transformers for language and vision. 
+
+Advances in neural information processing systems , 34: 17723–17736, 2021a. Zhu, M., Tang, Y., and Han, K. Vision transformer pruning. 
+
+arXiv preprint arXiv:2104.08500 , 2021b. 
+
+## A TPSFLAT D ETAILED COMPUTATION 
+
+## PROCESS AFTER TILING 
+
+TPSFLAT adopts a two-level tiling strategy: an outer loop and an inner loop. The outer loop corresponds to data tiling from the L3 to the L2, while the inner loop handles tiling from the L2 to the L1. In this paper, we define the compu-tation performed in each iteration at the L1 level as an ‘L1 tile,’ at the L2 level as an ‘L2 tile,’ and at the L3 level as an ‘L3 tile’ which corresponds to the inference task for a single token. As described in Algorithm 3, the outer loop initially partitions the computation along the H dimension, dividing all H heads into smaller groups of Hb. The inner loop further splits each Hb group into individual head-level computations. Ultimately, each core completes the full at-tention computation for a single head’s data within the L1 cache. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+Steps 2–4. In the initial stage of data transfer from L3 to L2,the tensors Q, K, Vcache , sin , and cos are partitioned along the H dimension into smaller blocks of size Hb. This results in corresponding sub-tensors: Qb, Kb, Vcache,b , sin b, and 
+
+cos b.
+
+HHb
+
+× (Qb, K b) = Tiling L3 Tile (Q, K ) (3) where (Qb, K b) ∈ R HHb ×(B×N ×Hb×d) (4) 
+
+HHb
+
+× Vcache b = Tiling L3 Tile (Vcache b ) (5) where Vcache b ∈ R HHb ×(B×Hb×Nt×d) (6) 
+
+HHb
+
+× (sin b, cos b) = Tiling L3 Tile (sin, cos ) (7) 
+
+Steps 5–7. Subsequently, during the transfer from the L2 to the L1, the data is further partitioned along the H dimension, with each block corresponding to a single head (i.e., H=1). This results in the sub-tensors Qi, Ki, Vcache i , sin i, and 
+
+cos b. Notably, Qi and Ki are stored in contiguous buffers upon being loaded into the L1. As a result, they can be treated as a single unified tensor, denoted as QK i:
+
+Hb × (Qi, K i) = Tiling L2 Tile (Qb, K b) (8) 
+
+(Qi, K i) ∈ RHb×(B×N ×1×d) (9) 
+
+Hb × Vcache i = Tiling L2 Tile (Vcache b ) (10) 
+
+Vcache i ∈ RHb×(B×1×Nt×d) (11) 
+
+Hb × (sin i, cos i) = Tiling L2 Tile (sin b, cos b) (12) 
+
+(sin i, cos i) ∈ RHb×(1 × d  
+
+> 2)
+
+(13) 
+
+Qi, K i → QK i (14) 
+
+QK i ∈ R2×(B×N ×(H=1) ×d) (15) 
+
+Step 8. Next, the sequence of fused kernel computations begins on the L1 cache. The first operation is the RoPE 
+
+operator which produces the output tensor QK i rope . Since the input to RoPE is the concatenated vector QK i, com-posed of Qi and Ki, the output can be directly interpreted as two physically contiguous tensors: Qi rope and Ki rope .Furthermore, because H = 1 , the H and N dimensions can be interchanged without altering the data layout. 
+
+QK i rope = Rope (QK i, sin i, cos i) → Qi rope , K i rope 
+
+(16) 
+
+(Qi rope , K i rope ) ∈ RB×N ×(H=1) ×d (17) 
+
+Qi rope , K i rope → RB×(H=1) ×N ×d (18) 
+
+Steps 9–10. Subsequently, the tensor Ki rope is written back from the L1 to the L3 via the L2, updating the KV Cache and producing the new K cache . Then, the corresponding 
+
+Kcache i is fetched from the L3 back into the L1. This tensor is then used together with Qi rope to perform the 
+
+QKT computation, resulting in the intermediate attention score tensor Si:L3 → L2 → L1 : Kcache i ∈ RB×(H=1) ×Nt×d (19) 
+
+Si = QKT (Qi rope , K cache i ) (20) 
+
+Si ∈ RB×(H=1) ×N ×Nt (21) 
+
+Pi = Softmax (Si) (22) 
+
+Pi ∈ RB×(H=1) ×N ×Nt (23) 
+
+Step 12. Next, the tensor Vcache i is retrieved from the KV Cache in the L3 and loaded into the L1. It is then used together with Pi to perform the PV computation, producing the output tensor Oi which is subsequently written back to the L3 via the L2: L2 → L1 : Vcache i ∈ RB×(H=1) ×Nt×d (24) 
+
+Oi = PV (Pi, V cache i ) (25) 
+
+Oi ∈ RB×(H=1) ×N ×d (26) 
+
+Steps 13–14. Finally, the iterative computation is completed. The intermediate outputs Oi are first aggregated within the L2 to form the partial result Ob. Subsequently, these results are further accumulated and propagated to the L3, yielding the final output O of the attention block. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+Table 4. Cache usage across different levels.                  
+
+> Cache Type L1 L2 L3 Buffer Req. O(N d ) + Ntd+N N t+dO(HbN d ) + HbNtd+HbdO(BN D ) + BN tD+Hd
+
+## B CACHE USAGE IN FASTFLAT 
+
+Given that the cache sizes decrease progressively from the L3 to the L2 and then to the L1, we adopt a two-level tiling strategy: from the L3 to the L2, and from the L2 to the L1. This hierarchical tiling design provides strong adaptability, allowing the approach to accommodate variations in both hardware resources and model sizes by adjusting the tiling granularity at each level. Specifically, the tiling strategy can be parameterized in terms of the buffer requirements at each cache level. In our scheme, the granularity of partitioning along the H dimension determines the buffer occupancy in the L1 and L2. As shown in Table 4, the table summa-rizes the data volume required at each cache level: L3 cache must store the full input and output token tensors O(BN D ),the KV Cache O(BN tD), and the sinusoidal components required for RoPE O(BN tD). The L2 cache holds sub-blocks of the input and output token tensors O(HbN d ), sub-blocks of the KV Cache O(HbNtd), and the corresponding 
+
+RoPE sine and cosine sub-blocks O(Hbd). The L1 cache requires further partitioning of the input/output tokens, KV Cache, and RoPE -related data, with corresponding data volumes of O(N d ), O(Ntd), and O(d), respectively. Addi-tionally, temporary intermediate variables are needed, with a data volume of O(N N t).
+
+## C MLP I MPLEMENTATION DETAILS 
+
+Steps 1–4. These steps outline the data transfer strate-gies from the L3 cache to the L2 cache of the MLP tiling. Each iteration can load hnkd t ∈ R(x∗tile n),x (z∗tile d) and 
+
+W nkd gu ∈ R(z∗tile d),(y∗z∗tile k ) from the L3 cache to the L2 cache through the outer loop approach. Steps 5–9: These steps outline the data transfer strategies from the L2 cache to the L1 cache of the MLP tiling. Each it-eration can load hit ∈ Rtile n×tile d and W ki 
+
+> gu
+
+∈ Rtile d×tile k
+
+from the L2 cache to the L1 cache through the inner-loop approach. This step pertains to the gate-up projection fu-sion part of the MLP tiling strategy. It performs matrix multiplication on the tile blocks loaded into L1 cache by Step 7, then accumulates the results in the inner loop to obtain hgu i 
+
+> t
+
+∈ Rtile n×tile k .
+
+hgu i 
+
+> t
+
+=
+
+> D/tile D
+
+X
+
+> count =1
+
+wigu hit (27) Steps 10–11: These steps reduce all hgu i 
+
+> t
+
+to get hgu nk  
+
+> t
+
+, fol-lowed by the fused “siLu” multiplication part of the MLP tiling strategy. The tensor hgu nk  
+
+> t
+
+∈ Rx×tile n×y×tile k is processed by the fused operator “siLu Mul” after inner-loop accumulation to obtain hsm nk  
+
+> t
+
+∈ Rx×tile n×y×tile k ,as shown in Equation (30). Concretely, we first com-pute the “siLu” of the first half of the gate tensor hgnk  
+
+> t
+
+∈
+
+Rx×tile n×[0 , y ·tile k /2] , then perform elementwise multi-plication with the other half from the up part hunk  
+
+> t
+
+∈
+
+Rx×tile n×[y·tile k /2, y ·tile k ] to obtain the fused “siLu Mul” result, as described in Equation (31). 
+
+hsm nk  
+
+> t
+
+= siLu Mul  hgu nk 
+
+> t
+
+ (28) 
+
+hsm nk  
+
+> t
+
+= siLu( hgnk  
+
+> t
+
+) ∗ hunk  
+
+> t
+
+(29) Step 12: The step outlines the data transfer strategy from the L2 cache to the L3 cache of the MLP tiling. When the quantity of computational units in the L2 cache ready to be written back reaches the threshold for a single write-back operation to the L3 cache, the hsm nk  
+
+> t
+
+units in the L2 will be written back to the L3 cache at one time. Steps 13–15: These steps pertain to the down-projection part of the MLP tiling strategy. This section will not be elaborated in detail since this feature is outside the scope of our optimization. 
+
+O = Wdown hsm t (30) 
+
+## D OTHER BENCHMARKS 
+
+FastTPS has been integrated into the AMD software stack and benchmarked against Intel’s solution using the MLPerf workload suite (MLCommons, 2026). Evaluations were conducted on the AMD Ryzen AI 400 series Gorgon Point 2 NPU platform, which provides a sustained memory band-width of 80 GBPs, and on the Intel Lunar Lake NPU plat-form (Gihon, 2024), which offers a bandwidth of 102 GBPs. The comparative performance results are summarized in Table 5. Besides, the speeds are compared with the Nvidia Nano (Jet-son AI Lab, 2026) and FastFlowLM (FastFlow Labs, 2026) on specific prompt length and token length for some models, see Table 6 and Table 7. FastTPS: An Optimized Method for LLM Token Phase for AI accelerators 
+
+Table 5. Token per second for 3 models on AMD and Intel NPU respectively for MLPerf benchmark. 
+
+Category (Llama3.2) AMD TPS LNL TPS AMD/LNL 
+
+Content Gen 27.12 24.69 1.10 Creative Writing 25.06 25.93 0.97 Summarization, Light 23.34 22.28 1.05 Summarization, Moderate 22.27 19.83 1.12 Code Generation 20.94 20.15 1.04 
+
+Category (Llama2) AMD TPS LNL TPS AMD/LNL 
+
+Content Gen 16.89 22.11 0.76 Creative Writing 15.79 19.28 0.82 Summarization, Light 14.94 17.16 0.87 Summarization, Moderate 14.48 17.08 0.85 Code Generation 13.78 14.84 0.93 
+
+Category (Llama3) AMD TPS LNL TPS AMD/LNL 
+
+Content Gen 16.16 17.76 0.91 Creative Writing 15.92 18.99 0.84 Summarization, Light 15.15 19.97 0.76 Summarization, Moderate 15.47 19.33 0.80 Code Generation 15.27 18.92 0.81 
+
+Table 6. Input seq = 2048, output = 128, compared with Nvidia Nano (102 GBPs) and AMD Ryzen AI 400 series Gorgon Point 2. 
+
+Category AMD TPS Nano TPS AMD/Nano 
+
+Llama 3.1 8B 10.79 14.00 0.77 Llama 3.2 3B 21.60 27.70 0.78 Qwen2.5 7B 10.49 14.20 0.74 
+
+Table 7. Max sequence = 1k/2k/4k of LFM2 1.2B/2.6B with Fast-FlowLM; AMD platform: Ryzen AI 400 series Krackan Point. 
+
+Max Sequence (LFM2 1.2B) AMD TPS FastFlowLM AMD/FFL 
+
+1k 63.02 61.3 1.03 2k 62.32 60.5 1.03 4k 62.17 57.5 1.08 
+
+Max Sequence (LFM2 2.6B) AMD TPS FastFlowLM AMD/FFL 
+
+1k 32.87 30.3 1.08 2k 32.73 29.9 1.09 4k 31.96 29.0 1.10

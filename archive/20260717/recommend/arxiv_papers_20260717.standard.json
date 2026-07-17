@@ -1,0 +1,299 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-17T21:15:23.651373+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 5,
+    "deep_cap": 6,
+    "deep_selected": 5,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2607.14327v1",
+      "source": "arxiv",
+      "title": "PReM: Learning What to Preserve and When to Refresh for Context Compression",
+      "abstract": "Efficient long-context inference is not only about reducing memory cost, but also about keeping useful contextual evidence accessible as generation proceeds. However, existing compression-oriented approaches, such as key-value (KV) cache compression and context compression, often either make an early decision about which contextual information to keep or rely on an external compressor. Such designs make it difficult to adapt the compressed context to the evidence needed by later reasoning steps. This paper introduces PReM (Preserve and Refresh Memory), a context-compression framework that maintains the long context as the model's internal layer-wise KV memory and learns what to preserve and when to refresh it. Specifically, PReM uses a dedicated memory layer to make memory-selection decisions, and a special memory token <m> to trigger refreshes during generation. To train this behavior, PReM introduces Phase-Separated Refresh Training, aligning memory selection with memory-conditioned generation while preserving continuity across refreshes. Experiments with 32K-token contexts show that PReM outperforms strong baselines under both 16x and 32x compression, while maintaining a favorable balance between answer quality and inference efficiency.",
+      "authors": [
+        "Bohan Yu",
+        "Lei Shen",
+        "Chenxi Zhou",
+        "Chen Han",
+        "Junlin Liu",
+        "Wenbo Su",
+        "Yu Cheng",
+        "Bo Zheng"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI"
+      ],
+      "published": "2026-07-15T19:46:10+00:00",
+      "link": "https://arxiv.org/pdf/2607.14327v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "addresses KV cache compression via learnable preserve-and-refresh mechanism",
+      "llm_evidence_cn": "通过可学习的保留和刷新机制处理KV缓存压缩",
+      "llm_evidence": "通过可学习的保留和刷新机制处理KV缓存压缩",
+      "canonical_evidence": "通过可学习的保留和刷新机制处理KV缓存压缩",
+      "llm_tldr_en": "PReM proposes a context compression framework that treats long context as layer-wise KV memory and learns when to preserve or refresh to adapt to reasoning needs, outperforming static KV cache compression baselines.",
+      "llm_tldr_cn": "现有KV缓存压缩方法常过早决定保留哪些上下文，难以适应后续推理。PReM提出保持上下文为模型内部逐层KV记忆，并学习何时保留何时刷新的框架。实验表明，PReM在多种长上下文推理任务上优于静态压缩基线，并能动态调整缓存内容以匹配推理需求。这项工作为KV缓存压缩提供了可适应的新思路。",
+      "llm_tldr": "现有KV缓存压缩方法常过早决定保留哪些上下文，难以适应后续推理。PReM提出保持上下文为模型内部逐层KV记忆，并学习何时保留何时刷新的框架。实验表明，PReM在多种长上下文推理任务上优于静态压缩基线，并能动态调整缓存内容以匹配推理需求。这项工作为KV缓存压缩提供了可适应的新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.14695v1",
+      "source": "arxiv",
+      "title": "Reflex: Real-Time VLA Control through Streaming Inference",
+      "abstract": "Flow matching Vision-Language-Action (VLA) models promise precise continuous control, but their iterative denoising nature introduces fundamental incompatibilities with real-time robotics: global timestep injection invalidates KV-caching, forcing a choice between slow $O(N^2)$ re-computation or mathematically incorrect cache reuse. We present \\textbf{Reflex}, a framework that enables \\textit{real-time streaming inference} for flow matching policies by exploiting the \\textit{Timestep-Invariance Property} -- that perception encoders are functionally independent of the denoising loop. Reflex partitions the attention context into static, sliding, and dynamic regions, enabling $O(1)$ incremental cache updates while preserving full-batch-equivalent attention outputs for fixed inputs. To ensure stability under continuous high-frequency inference, we introduce \\textit{AdaRMSNorm}, an adaptive normalization layer that prevents BFloat16 numerical collapse by gating on flow phase. We further maximize throughput through an \\textit{async pipeline} that decouples visual encoding from action generation, combined with \\textit{operator fusion} that reduces kernel overhead. On LIBERO and Kinetix benchmarks, Reflex achieves a 2.58$\\times$ inference speedup and 50Hz stable streaming, reducing reaction latency by up to 54\\% and enabling efficient deployment without performance degradation.",
+      "authors": [
+        "Yuanchun Guo",
+        "Bingyan Liu"
+      ],
+      "primary_category": "cs.RO",
+      "categories": [
+        "cs.RO"
+      ],
+      "published": "2026-07-16T07:56:43+00:00",
+      "link": "https://arxiv.org/pdf/2607.14695v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV-cache optimization for real-time streaming inference in flow matching policies",
+      "llm_evidence_cn": "针对流匹配策略的实时流式推理中KV缓存优化",
+      "llm_evidence": "针对流匹配策略的实时流式推理中KV缓存优化",
+      "canonical_evidence": "针对流匹配策略的实时流式推理中KV缓存优化",
+      "llm_tldr_en": "Reflex enables real-time streaming inference for flow matching policies by exploiting timestep-invariance, partitioning attention context for O(1) incremental KV cache updates.",
+      "llm_tldr_cn": "Reflex框架利用时间步不变性，将注意力上下文划分为静态、滑动和动态区域，实现了O(1)增量KV缓存更新，从而支持流匹配策略的实时流式推理，解决了全局时间步注入导致KV缓存失效的问题。",
+      "llm_tldr": "Reflex框架利用时间步不变性，将注意力上下文划分为静态、滑动和动态区域，实现了O(1)增量KV缓存更新，从而支持流匹配策略的实时流式推理，解决了全局时间步注入导致KV缓存失效的问题。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.15105v1",
+      "source": "arxiv",
+      "title": "Long-Context Fine-Tuning with Limited VRAM",
+      "abstract": "Parameter-efficient fine-tuning reduces model and optimizer memory, but dense attention still makes long training sequences expensive. We combine Hierarchical Global Attention (HGA) with segment-wise backpropagation and tiered KV storage. Only the active segment remains differentiable in VRAM; older KV is detached into RAM or NVMe, and HGA loads a bounded set of exact historical tokens for each query block. On Qwen3-8B with 4-bit QLoRA and PG19, dense training on a 16 GB Quadro RTX 5000 fits 2,048 tokens but fails at 4,096, whereas HGA reaches 16,384 tokens with 15.28 GB peak VRAM. Under evaluation the same adapter runs through 131,072 tokens on this card; VRAM is not constant but grows gently with the resident chunk summaries, so RAM and NVMe capacity set the practical limit beyond these lengths. At the shared 2K training length, HGA-trained and dense-trained adapters obtain 2.7405 and 2.7383 nat under the same dense-attention readout, while the stock model obtains 2.9541. At this boundary HGA training is already marginally faster (217.75 vs. 207.02 tokens/s), and the HGA-to-dense throughput ratio improves from 1K to 2K; because HGA keeps the attended historical set per token approximately constant while dense work per token grows, we expect this lead to widen as context grows. Dense attention is used for the main quality and retrieval comparisons so that they measure the learned weights and remain compatible with standard generation frameworks. HGA can also be used for retrieval and generation; an optimized production-grade serving implementation is under development.",
+      "authors": [
+        "Vladimir Fedosov",
+        "Aleksandr Sazhin",
+        "Artemiy Grinenko",
+        "Frank Woernle"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-16T15:16:06+00:00",
+      "link": "https://arxiv.org/pdf/2607.15105v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "tiered KV storage and hierarchical global attention for long-context fine-tuning with limited VRAM",
+      "llm_evidence_cn": "分层KV存储和层级全局注意力机制，在有限显存下实现长上下文微调",
+      "llm_evidence": "分层KV存储和层级全局注意力机制，在有限显存下实现长上下文微调",
+      "canonical_evidence": "分层KV存储和层级全局注意力机制，在有限显存下实现长上下文微调",
+      "llm_tldr_en": "Combines hierarchical global attention with tiered KV storage to enable long-context fine-tuning on limited VRAM by offloading older KV.",
+      "llm_tldr_cn": "参数高效微调减少了模型和优化器内存，但密集注意力使长训练序列开销大。本文结合层级全局注意力（HGA）与分段反向传播和分层KV存储：仅活跃段保留可微显存，旧KV卸载到RAM或NVMe，HGA为每个查询块加载有限的历史令牌。在16GB显存上将训练长度扩展到16K令牌，推理长度达131K。",
+      "llm_tldr": "参数高效微调减少了模型和优化器内存，但密集注意力使长训练序列开销大。本文结合层级全局注意力（HGA）与分段反向传播和分层KV存储：仅活跃段保留可微显存，旧KV卸载到RAM或NVMe，HGA为每个查询块加载有限的历史令牌。在16GB显存上将训练长度扩展到16K令牌，推理长度达131K。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.14431v1",
+      "source": "arxiv",
+      "title": "Smarter and Cheaper at Once: Byte-Exact KV-Cache Grafting Turns a Frozen Small Model into a Verified-Knowledge Flywheel",
+      "abstract": "We report a way to make a frozen small language model both more capable and dramatically cheaper at once, without changing any weights. Verified knowledge is deposited once as a byte-exact key-value (KV) state artifact and later restored, by graft, into a fresh inference context. The restore is bit-exact: under a pinned deterministic configuration, the grafted logits are byte-for-byte identical to a fresh computation (SHA-256 equality), with zero KL divergence and 100% argmax agreement over fifty samples. We show that own-position graft is the unique numerically exact operating point on a model with floating-point rotary encoding, and we verify byte-exactness on two model scales (12B, 31B) and two GPU targets, one through a pre-registered replay. On AIME 2025, a frozen Gemma-4-12B moves from 80.0% to 93.3% once a verified solution library is grafted, above its own 77.5% and its 31B sibling's 89.2% published anchors. On the recurring case, eight problems the base model never solves within a 401,026-token budget are answered from cached verified solutions in 61 total decode tokens, a factor of 6,574 fewer tokens and about 8,700x less energy; the capability claim proper rests on held-out transfer (7 of 7 at 31B). The same byte-exact store widens usable context from 32,768 to 2,854,766 tokens at zero extra accelerator memory, and moves byte-identical between machines of the same architecture. We describe the system at the behavior level; the engine is proprietary, and every reported number is backed by committed input and output hashes so the scoring can be re-checked without it.",
+      "authors": [
+        "Sietse Schelpe"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI",
+        "cs.LG",
+        "cs.PF"
+      ],
+      "published": "2026-07-15T23:55:48+00:00",
+      "link": "https://arxiv.org/pdf/2607.14431v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Byte-exact KV-cache grafting for frozen models",
+      "llm_evidence_cn": "字节精确的KV缓存嫁接使冻结模型更强大",
+      "llm_evidence": "字节精确的KV缓存嫁接使冻结模型更强大",
+      "canonical_evidence": "字节精确的KV缓存嫁接使冻结模型更强大",
+      "llm_tldr_en": "Proposes KV-cache grafting: storing verified knowledge as exact KV states and restoring them in inference, achieving byte-exact logits and enabling a small frozen model to outperform without weight changes.",
+      "llm_tldr_cn": "本文提出KV缓存嫁接技术：将验证过的知识以字节精确的KV状态形式保存，在推理时注入到上下文中。实验证明，在确定性配置下，嫁接的logits与从头计算完全一致（SHA-256相等）。该方法在不改变权重的情况下，使冻结的小模型在特定任务上变得更强大且成本更低。",
+      "llm_tldr": "本文提出KV缓存嫁接技术：将验证过的知识以字节精确的KV状态形式保存，在推理时注入到上下文中。实验证明，在确定性配置下，嫁接的logits与从头计算完全一致（SHA-256相等）。该方法在不改变权重的情况下，使冻结的小模型在特定任务上变得更强大且成本更低。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.14898v1",
+      "source": "arxiv",
+      "title": "FlashDecoder: Real-Time Latent-to-Pixel Streaming Decoder with Transformers",
+      "abstract": "Real-time video generation demands fast decoding as much as fast denoising, yet current latent video diffusion models rely on 3D convolutional decoders that are slow and memory-intensive at high resolutions or for long video. We introduce FlashDecoder, a fast, memory-efficient pure-Transformer video decoder that decodes latents to pixels frame by frame. At each step, the current frame attends only to a fixed-size window of past frames through a rolling KV cache. The fixed temporal window keeps decoding fast and memory bounded regardless of video length, enabling constant-latency streaming. Because frames are processed sequentially, temporal causality is enforced without explicit attention masks, enabling training at resolutions up to 1080p and matching the reconstruction quality of convolutional decoders. On the Wan2.1 and Wan2.2 latent spaces, FlashDecoder matches each convolutional decoder in reconstruction quality (e.g., 41.55dB vs. 41.49dB PSNR at 1080p) while decoding 3.6x-4.7x faster with up to 11x less memory on a single H100 GPU. With architecture-aware inference optimizations, the speedup widens to 12x.",
+      "authors": [
+        "Minguk Kang",
+        "Suha Kwak"
+      ],
+      "primary_category": "cs.CV",
+      "categories": [
+        "cs.CV",
+        "cs.AI"
+      ],
+      "published": "2026-07-16T12:16:12+00:00",
+      "link": "https://arxiv.org/pdf/2607.14898v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Transformer inference optimization using rolling KV cache for streaming decoding",
+      "llm_evidence_cn": "使用滚动KV缓存进行流式解码的Transformer推理优化",
+      "llm_evidence": "使用滚动KV缓存进行流式解码的Transformer推理优化",
+      "canonical_evidence": "使用滚动KV缓存进行流式解码的Transformer推理优化",
+      "llm_tldr_en": "FlashDecoder uses a rolling KV cache with fixed window for real-time video decoding, achieving constant latency and bounded memory regardless of video length.",
+      "llm_tldr_cn": "FlashDecoder是一种纯Transformer视频解码器，通过滚动KV缓存使每帧仅关注固定窗口的历史帧，实现恒定延迟和与视频长度无关的有界内存占用，支持1080p分辨率的高效流式解码。",
+      "llm_tldr": "FlashDecoder是一种纯Transformer视频解码器，通过滚动KV缓存使每帧仅关注固定窗口的历史帧，实现恒定延迟和与视频长度无关的有界内存占用，支持1080p分辨率的高效流式解码。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.11211v1",
+      "source": "arxiv",
+      "title": "FastTPS: An Optimized Method for LLM Token Phase for AI accelerators",
+      "abstract": "The popularity of large language models (LLMs) escalates an ongoing demand for effective inference. However, due to the sequential processing of tokens during the token phase in decoder-only LLMs inference, the inherent low parallelism leads to reduced throughput and suboptimal utilization of the computing units on artificial intelligence (AI) accelerators, particularly when handling long-sequence inputs that impose significant memory overhead. Recently, many reported methods have been developed as potential solutions, since they emerge with numeric deviation. This paper presents FastTPS, a high performance and low-precision loss method for accelerating the token-phase in LLM inference on general AI accelerators which includes three key components: (1) AI accelerator-enabled reloading-free KV Cache concatenation which decreases memory access overhead as well as enables full fusion of Attention, (2) high-efficiency and high-accuracy 'RoPE' attention based on the tiling optimized FLAT, and (3) highly-fused MLP with fine-grain pipeline scheduling. Our results confirm that FastTPS significantly alleviates memory bottlenecks in the token phase, delivering a 6x speed improvement (compared to none-fusion) on an AMD Ryzen AI 300 series NPU with BF16 precision while sustaining 93% peak memory bandwidth utilization during Phi3-mini-4k-instruct inference.",
+      "authors": [
+        "Wenzong Yang",
+        "Danyang Zhang",
+        "Kun Cao",
+        "Tejus Siddagangaiah",
+        "Rajeev Patwari",
+        "Zhanxing Pu",
+        "Siyin Kong",
+        "Zijiang Yang",
+        "Hao Zhu",
+        "Varun Sharma",
+        "Yue Gao",
+        "Tianping Li",
+        "Fan Yang",
+        "Jicheng Chen",
+        "Yushan Chen",
+        "Fennian Zhao",
+        "Aaron Ng",
+        "Elliott Delaye",
+        "Ashish Sirasao",
+        "Sudip Nag"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-13T08:02:26+00:00",
+      "link": "https://arxiv.org/pdf/2607.11211v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "accelerates LLM token phase with low-precision loss method, reducing memory overhead",
+      "llm_evidence_cn": "针对LLM解码器token阶段加速，降低内存开销，涉及KV缓存优化",
+      "llm_evidence": "针对LLM解码器token阶段加速，降低内存开销，涉及KV缓存优化",
+      "canonical_evidence": "针对LLM解码器token阶段加速，降低内存开销，涉及KV缓存优化",
+      "llm_tldr_en": "FastTPS accelerates the token phase of LLM inference on AI accelerators with low precision loss and reduced memory overhead.",
+      "llm_tldr_cn": "LLM推理中token阶段顺序处理导致低并行度和高内存开销。FastTPS提出一种高性能低精度损失方法，通过三个关键组件加速AI加速器上的token阶段，提高吞吐量并减少计算单元闲置。",
+      "llm_tldr": "LLM推理中token阶段顺序处理导致低并行度和高内存开销。FastTPS提出一种高性能低精度损失方法，通过三个关键组件加速AI加速器上的token阶段，提高吞吐量并减少计算单元闲置。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2607.15178v1",
+      "source": "arxiv",
+      "title": "T^2MLR: Transformer with Temporal Middle-Layer Recurrence",
+      "abstract": "Transformer reasoning is limited by autoregressive decoding, which repeat edly compresses rich hidden computation through token space and makes it difficult for intermediate reasoning states to persist across time. We in troduce Transformers with Temporal Middle-Layer Recurrence (T2MLR), a transformers-based latent reasoning architecture that fuses a cached middle layer representation from the previous token directly into an earlier layer of the current token position, enabling abstract intermediate computation to persist across decoding steps with little inference overhead. Across natural-language pretraining and multi-hop reasoning finetuning, T2MLR consistently outperforms data- and parameter-matched Transformer base lines. Moreover, applying recurrence to only a localized middle-layer block (as little as 20% of the network) often outperforms full-layer recurrence. Im portantly, T2MLR does not require pretraining from scratch: retrofitting the recurrent pathway into an existing pretrained 1.7B Transformer and briefly finetuning substantially improves math reasoning, lowering the barrier to practical adoption. These results suggest that effective latent reasoning in Transformers does not require looping over all layers as in previous works, but can instead emerge more strongly from targeted middle-layer recurrence.",
+      "authors": [
+        "Ziyang Cai",
+        "Xingyu Zhu",
+        "Yihe Dong",
+        "Yinghui He",
+        "Sanjeev Arora"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI"
+      ],
+      "published": "2026-07-16T16:33:59+00:00",
+      "link": "https://arxiv.org/pdf/2607.15178v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "caches middle-layer representations across decoding steps for inference optimization",
+      "llm_evidence_cn": "跨解码步骤缓存中间层表示以优化推理",
+      "llm_evidence": "跨解码步骤缓存中间层表示以优化推理",
+      "canonical_evidence": "跨解码步骤缓存中间层表示以优化推理",
+      "llm_tldr_en": "T2MLR introduces temporal middle-layer recurrence in Transformers, caching and reusing a middle-layer representation from the previous token to improve reasoning with minimal overhead, outperforming baselines on multi-hop reasoning.",
+      "llm_tldr_cn": "自回归Transformer解码时，中间推理状态难以跨时间步持久化。T2MLR提出时域中层循环，缓存上一token的中层表示并注入当前token早期层，使抽象计算跨步持续。实验表明，T2MLR在多跳推理任务上优于等效基线，且计算开销极低。该方法展示了缓存机制在推理优化中的潜力，虽非标准KV缓存，但思路相通。",
+      "llm_tldr": "自回归Transformer解码时，中间推理状态难以跨时间步持久化。T2MLR提出时域中层循环，缓存上一token的中层表示并注入当前token早期层，使抽象计算跨步持续。实验表明，T2MLR在多跳推理任务上优于等效基线，且计算开销极低。该方法展示了缓存机制在推理优化中的潜力，虽非标准KV缓存，但思路相通。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

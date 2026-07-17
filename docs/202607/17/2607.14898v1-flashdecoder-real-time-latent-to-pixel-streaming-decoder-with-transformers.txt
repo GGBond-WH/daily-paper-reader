@@ -1,0 +1,637 @@
+Title: FlashDecoder: Real-Time Latent-to-Pixel Streaming Decoder with Transformers
+
+URL Source: https://arxiv.org/pdf/2607.14898v1
+
+Published Time: Fri, 17 Jul 2026 01:45:27 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# FlashDecoder: Real-Time Latent-to-Pixel Streaming Decoder with Transformers 
+
+# Minguk Kang 1,2 Suha Kwak 21Pika Labs 2POSTECH 
+
+# Abstract 
+
+Real-time video generation demands fast decoding as much as fast denoising, yet current latent video diffusion mod-els rely on 3D convolutional decoders that are slow and memory-intensive at high resolutions or for long video. We introduce FlashDecoder , a fast, memory-efficient pure-Transformer video decoder that decodes latents to pixels frame by frame. At each step, the current frame attends only to a fixed-size window of past frames through a rolling KV cache. The fixed temporal window keeps decoding fast and memory bounded regardless of video length, en-abling constant-latency streaming. Because frames are pro-cessed sequentially, temporal causality is enforced without explicit attention masks, enabling training at resolutions up to 1080p and matching the reconstruction quality of con-volutional decoders. On the Wan2.1 and Wan2.2 latent spaces, FlashDecoder matches each convolutional decoder in reconstruction quality (e.g., 41.55 vs. 41.49 dB PSNR at 1080p) while decoding 3.6×–4.7× faster with up to 11 ×
+
+less memory on a single H100 GPU. With architecture-aware inference optimizations, the speedup widens to 12 ×.
+
+# 1. Introduction 
+
+Latent diffusion models [45] have become the dominant framework for image [11, 28, 44] and video generation [8, 13, 41, 52, 65]. An encoder [19, 26] compresses pixels into a low-dimensional latent space where diffusion mod-els [20, 40, 50] generate content, and a decoder then recon-structs the final output pixels. By operating in latent space rather than pixel space, this design reduces computational costs by orders of magnitude, enabling scaling to billions of parameters with Diffusion Transformers (DiT) [11, 43]. However, most progress has focused on accelerating the generation stage, while the decoder that maps latents back to pixels has remained largely convolutional and compara-tively underexplored. Originally, the main inference bottleneck was iterative denoising. Since then, more efficient architectures [13, 67, Auto -regressive 
+
+Diffusion Model 
+
+Convolutional 
+
+Decoder 
+
+FlashDecoder 
+
+(Ours) 
+
+10.4 FPS 
+
+151.0 FPS 16.1 FPS 
+
+Auto -regressive 
+
+Diffusion Model  
+
+> 720p
+> “Acat jumping onto a wooden fence in a sunlit garden. ”
+
+29.6 FPS 29.6 FPS 
+
+24.8 FPS 
+
+> 720p
+
+Figure 1. VAE decoding is a major bottleneck for real-time video generation. Measured with our MotionStream [49] imple-mentation at 720p. The Wan2.2 [65] decoder consumes 64.6% of total inference time, limiting generation to 10.4 FPS. FlashDe-coder reduces this share to 16.4%, more than doubling end-to-end throughput to 24.8 FPS. 
+
+71, 83], higher-compression VAEs [1, 5, 16, 65, 72], and few-step distillation [6, 23, 25, 32, 38, 46, 47, 51, 73] have largely removed this bottleneck. But real-time streaming also requires causal frame-by-frame generation. Recent causal video generators [21, 33, 34, 49, 57, 74] are closing in on interactive frame rates. With latent generation nearing real-time speed, the bottleneck has shifted to the decoder: VAE decoding consumes over 64.6% of total inference time with the Wan2.2 decoder [65] at 720p (Figure 1). Existing video decoders are predominantly 3D causal convolutional networks [13, 27, 31, 65, 70, 79]. They re-arXiv:2607.14898v1 [cs.CV] 16 Jul 2026 construct well but are slow and memory-intensive, making real-time streaming impractical. High-resolution decoding further requires spatial-temporal tiling, which multiplies de-coder evaluations and latency. Transformer-based [63] de-coders have been explored as alternatives, but face a trade-off between streaming and quality. Causal variants [64, 66] require explicit causal masks that prevent efficient FlashAt-tention [7] usage at high resolutions, limiting reconstruc-tion fidelity. Bidirectional variants [37, 58] achieve better quality by attending across all frames, but cannot stream because each frame requires access to future frames. The limitations of both convolutional and Transformer decoders suggest four desired properties for a real-time video decoder: (1) frame-by-frame decoding without padding or blending, (2) reconstruction quality competi-tive with convolutional decoders, (3) fast inference with consistent per-frame latency and bounded memory, and (4) high-resolution and long-duration decoding without spatial-temporal tiling. Transformers can in principle provide all four: sequential processing enables frame-by-frame de-coding, self-attention captures spatial-temporal dependen-cies for high-quality reconstruction, and windowed atten-tion bounds memory and computation per frame, ensur-ing consistent latency without tiling. However, no existing Transformer-based decoder satisfies all four properties. We introduce FlashDecoder , a pure-Transformer latent-to-pixel decoder that satisfies all four properties. FlashDe-coder processes one latent frame at a time with a fixed-size rolling KV cache. The fixed temporal window keeps per-frame computation and memory bounded regardless of video length, enabling constant-latency streaming without spatial-temporal tiling. Prior causal Transformer decoders train with explicit causal masks but switch to KV caching at inference. FlashDecoder instead uses the same temporal-order processing for both training and inference, removing the need for attention masks entirely. This makes high-resolution training feasible, matching the reconstruction quality of convolutional decoders. Evaluated on the Wan2.1 and Wan2.2 [65] latent spaces, FlashDecoder matches each convolutional decoder in reconstruction quality (e.g., 41.55 vs. 41.49 PSNR at 1080p on Wan2.2) while providing 
+
+3.6×–4.7× higher throughput and up to 11 × lower memory on a single H100 GPU. With architecture-aware inference optimizations, the throughput gap widens to up to 12 ×.
+
+# 2. Related Work 
+
+2.1. Autoencoders for Visual Generation 
+
+Latent diffusion models [45] rely on learned autoencoders to compress inputs into a low-dimensional latent space. For images, autoencoders have evolved from Stable Dif-fusion VAE [45] to more efficient designs such as FLUX VAE [28] and DC-AE [5], improving compression ra-tios and reconstruction quality, with most designs primar-ily based on convolutions. For video, these spatial au-toencoders have been extended to spatiotemporal variants that compress both spatial and temporal dimensions [1, 13, 27, 31, 41, 52, 55, 58, 65, 70, 79, 82]. Dedicated video VAE works such as MagViT-v2 [76], CV-VAE [80], WF-VAE [30], VidTok [54], and VideoVAE+ [68] have further advanced reconstruction fidelity through improved architectures, loss formulations, and temporal modeling. Despite this progress, spatiotemporal decoding remains computationally expensive, particularly at high resolutions. Lightweight alternatives such as TurboVAED [84] and TAEHV [3] trade fidelity for speed, and all of the above video decoders remain convolutional. A separate line of work has begun moving away from convolutional decoders entirely. Representation Autoen-coders such as RAE [59, 81] and LV-RAE [35] pair frozen pretrained encoders (e.g., DINOv2 [42] and SigLIP 2 [60]) with Transformer decoders, achieving faster convergence and stronger generation quality than convolutional VAEs for image generation. This trend has yet to reach video, where a streaming-capable Transformer decoder would be needed. 
+
+2.2. Transformer-based Video Decoders 
+
+For video, Transformer-based decoders have been ex-plored across discrete tokenization models [64, 75], hybrid discrete-continuous VAEs [37, 66], and fully continuous la-tent VAEs [17, 58]. These designs face a fundamental trade-off in how they handle temporal attention. Causal attention, as in OmniTokenizer [66], enables streaming through KV caching but requires explicit causal masks during training, making memory-efficient high-resolution training difficult and limiting reconstruction quality. Per-frame latency also grows as temporal context accumulates. Bidirectional atten-tion, as in AToken [37] and the MAGI-1 VAE decoder [58], improves quality by attending across all frames but can-not support streaming decoding due to global temporal de-pendencies. FlashDecoder takes the causal approach but removes its key limitations: causality is enforced by pro-cessing order rather than masks, and a fixed-size window bounds memory regardless of video length, unifying train-ing and inference under the same streaming mechanism. 
+
+# 3. Method 
+
+Figure 3 illustrates the overall pipeline. We first describe the latent diffusion framework (Sec. 3.1), then detail the Trans-former backbone (Sec. 3.2), the streaming mechanism with rolling KV cache (Sec. 3.3), the temporal-first upsampling strategy (Sec. 3.4), and training objectives (Sec. 3.5). 
+
+3.1. Preliminaries: Latent Diffusion Model 
+
+FlashDecoder operates within the Latent Diffusion Model (LDM) framework [45]. A pretrained encoder E maps a (a) Wan2.2 -TAEHV 
+
+(1177.6 FPS) 
+
+(b) AToken 
+
+(28.1 FPS) 
+
+(c) Wan2.2 
+
+(16.1 FPS) 
+
+(d) FlashDecoder -XL -Opt 
+
+(151.0 FPS) 
+
+(e) Ground Truth 
+
+FlashDecoder -XL -Op t (720p, 151.0 FPS) Figure 2. Qualitative comparison of 720p reconstruction results. We compare reconstructed frames from video decoders with 4 ×
+
+temporal and 16 × spatial compression: (a) Wan2.2-TAEHV [3], (b) AToken [37], (c) Wan2.2 [65], (d) our FlashDecoder-XL-Opt, and (e) ground truth. (a) fails to synthesize fine details such as wall textures, while (b) produces blurry reconstructions. (c) and (d) yield visually comparable outputs, yet (d) achieves over 9× higher throughput (151.0 vs. 16.1 FPS). Additional comparisons are provided in the supplementary material. Tokenized latent Upsampled Pixel Gradient path Forward path K,V KV caches GT pixel Masked Pixel           
+
+> …
+> FlashDecoder
+> …
+> K,V
+> z!
+> 𝐱 #!
+> (a) Streaming Training of FlashDecoder (b) Constant -Latency Streaming Inference
+> K,V
+> …
+> …
+> …
+> …z"
+> …
+> …
+> …
+> FlashDecoder
+> …
+> …
+> K,V
+> z#z$
+> 𝐱 #"𝐱 ##𝐱 #$
+> 𝐱 "𝐱 #𝐱 $
+> Loss Loss Loss
+> Window 0
+> FlashDecoder FlashDecoder
+> Window 1
+
+Figure 3. FlashDecoder pipeline. FlashDecoder is a pure-Transformer decoder that converts video latents to pixels in a frame-by-frame manner. Each latent frame zt is linearly projected, processed by a Transformer backbone with a fixed-size rolling KV cache that stores the most recent Wfrm frames (temporal window size), temporally upsampled by factor rt via channel expansion and refinement layers, and spatially upsampled via MLP and PixelShuffle. Shown here with Wfrm =2 and rt=4 , streaming 3 latent frames into 9 output frames. (a) 
+
+Attention pattern: each frame’s Lfrm =H′×W ′ spatial tokens attend bidirectionally to each other and causally to the previous Wfrm −1
+
+frames. z0 is decoded alone; z1 attends to [z0, z1]; z2 attends to [z1, z2] after evicting z0. (b) Streaming inference: each incoming latent frame zt is projected and processed through the Transformer with the rolling KV cache, then upsampled to pixel frames. The bounded cache ensures constant per-frame latency and memory regardless of video length. 
+
+video x ∈ RB×C×T ×H×W to a latent tensor z = E(x) ∈
+
+RB×C′×T ′×H′×W ′
+
+, where (C′, T ′, H ′, W ′) are the com-pressed channel, temporal, and spatial dimensions. The dif-fusion process operates on z, and a decoder D reconstructs pixels via ˆx = D(z). FlashDecoder is agnostic to the choice of encoder; we train decoders on both the Wan2.1 and Wan2.2 [65] latent spaces and use Wan2.2 as the pri-mary example throughout. 
+
+3.2. Transformer Backbone Design 
+
+Base Architecture. The decoder is a Transformer [63] with stacked self-attention and feedforward layers. We use Grouped-Query Attention (GQA) [2], which shares key-value heads across query groups to reduce KV cache mem-ory during streaming. For stable training, we apply RM-SNorm [77] before each sublayer and normalize keys and values within attention (KV-norm) [56]. Spatiotemporal po-sition is encoded with 3D Rotary Positional Embeddings (3D-RoPE) [53], applied separately to the temporal ( T ′) and spatial ( H′ × W ′) dimensions. 
+
+Latent Projection. Each latent frame zt is flattened into 
+
+Lfrm = H′W ′ spatial tokens in raster order, and a linear layer maps the latent channels C′ to model dimension D:
+
+P = Linear C′→D (z) ∈ RB×L×D, (1) where L = T ′ · Lfrm is the total sequence length. 
+
+3.3. Streaming with Rolling KV Cache 
+
+FlashDecoder processes video latents one frame at a time while maintaining a sliding-window KV cache of fixed size 
+
+Wfrm frames. We set Wfrm =2 throughout, so each latent frame attends only to itself and the immediately preceding latent frame; the effect of this choice is ablated in Sec. 4.4. Because future frames have not yet been fed to the model, temporal causality is enforced by construction without ex-plicit attention masks. 
+
+Frame-by-Frame Processing. Given T ′ latent frames 
+
+{z0, . . . , zT ′−1}, we process them sequentially. At each timestep t: (1) the latent frame zt is projected into Lfrm 
+
+tokens via Eq. (1); (2) new key-value pairs (Knew  
+
+> t
+
+, Vnew  
+
+> t
+
+)
+
+are computed with 3D-RoPE at temporal offset t · Lfrm , ap-pended to the cache, and the oldest frame is evicted if the cache exceeds Wfrm frames; (3) current queries Qnew  
+
+> t
+
+attend to the full cache. The resulting cache shape is: 
+
+Kt, Vt ∈ RB×G×(Wfrm Lfrm )×Dh , (2) where G is the number of KV groups in GQA and Dh is the head dimension. 
+
+Attention Pattern. The resulting pattern is a sliding win-dow: within each frame, tokens attend to all Lfrm spatial positions (bidirectional); along the temporal axis, attention is restricted to the most recent Wfrm frames (causal). 
+
+Training–Inference Consistency. A distinctive property of FlashDecoder is that training and inference follow an identical streaming protocol: the model never sees more than Wfrm frames at once during either phase. Conven-tional approaches load all T ′ frames into a single for-ward pass, which requires a full-sequence causal mask that FlexAttention [29] must materialize, causing out-of-memory failures at 480p, 720p, and 1080p on an H100 80 GB GPU. FlashDecoder instead performs T ′ sequential forward passes, each attending to at most Wfrm · Lfrm tokens with standard FlashAttention [7] at per-step memory cost 
+
+O(Wfrm · Lfrm ).
+
+Complexity Analysis. The attention cost per latent frame is O(N W frm L2
+
+> frm
+
+Dh), linear in the temporal window Wfrm 
+
+and head count N , but quadratic in spatial tokens Lfrm . The KV cache memory per layer is O(B G W frm Lfrm Dh), ben-efiting from GQA’s reduced group count ( G ≪ N ). After temporal upsampling (Sec. 3.4), refinement layers operate on rt ·Lfrm tokens per frame with cache capacity rtWfrm Lfrm ,preserving the same scaling properties. 
+
+3.4. Temporal-First Upsampling Strategy 
+
+Progressive spatio-temporal upsampling is computationally prohibitive for Transformers. Spatial upsampling by factor 
+
+rs increases tokens per frame by r2 
+
+> s
+
+, resulting in O(r4 
+
+> s
+
+) at-tention cost ( 65 ,536 × for rs=16 ). Temporal upsampling by factor rt incurs only O(r2 
+
+> t
+
+) cost ( 16 × for rt=4 ), a 4,096 ×
+
+difference. We therefore adopt a temporal-first strategy: temporal upsampling via Transformer layers, followed by spatial upsampling via MLP and PixelShuffle [48]. 
+
+Step 1: Temporal Upsampling. Starting from the back-bone output Y ∈ RB×L×D (where L = T ′H′W ′), a linear layer expands channels by temporal factor rt:
+
+Ptemp = Linear D→D·rt (Y) ∈ RB×L×(D·rt). (3) Reinterpreting expanded channels as new temporal indices yields Pfull ∈ RB×(T ′rtH′W ′)×D .
+
+Step 2: Temporal Refinement. Two Transformer blocks process Pfull using the same streaming mechanism from Sec. 3.3, with expanded window size W full frm = rt · Wfrm to preserve effective temporal context. 
+
+Step 3: Spatial Upsampling. A 2-layer MLP projects features from D to C · r2 
+
+> s
+
+channels, followed by PixelShuffle [48] to produce the final output ˆx ∈
+
+RB×C×(T ′rt)×(H′rs)×(W ′rs).
+
+Algorithm 1 Streaming Video Decoding from Latent 
+
+Require: Latent z ∈ RB×C′×T ′×H′×W ′
+
+for any T ′
+
+Require: Window size Wfrm 
+
+Require: Tokens per frame Lfrm = H′W ′
+
+Require: Upsampling factors rt (temporal), rs (spatial) 
+
+Require: Backbone Transformer B
+
+Require: Temporal Refinement Transformer R 
+
+> 1:
+
+Initialize (KB, VB) ← ∅, (KR, VR) ← ∅ 
+
+> 2:
+
+Initialize output ˆx ← [ ]  
+
+> 3:
+
+for t = 0 , . . . , T ′ − 1 do  
+
+> 4:
+
+Pt ← Project (z[: , :, t : t + 1 , :, :])  
+
+> 5:
+
+▷ Backbone processing with RoPE offset t · Lfrm  
+
+> 6:
+
+Yt, (KB 
+
+> t
+
+, VB 
+
+> t
+
+) ← B (Pt, KB, VB, t ) 
+
+> 7:
+
+KB ← concat (tail (Wfrm −1) Lfrm (KB), KB 
+
+> t
+
+) 
+
+> 8:
+
+VB ← concat (tail (Wfrm −1) Lfrm (VB), VB 
+
+> t
+
+) 
+
+> 9:
+
+▷ Temporal upsampling: channel → temporal axis  
+
+> 10:
+
+Ptemp  
+
+> t
+
+← Linear D→rtD (Yt) 
+
+> 11:
+
+Pfull  
+
+> t
+
+← Reshape (Ptemp  
+
+> t
+
+) ▷ Yields rt · Lfrm tokens  
+
+> 12:
+
+▷ Temporal refinement with window rtWfrm  
+
+> 13:
+
+▷ RoPE offset t · rt · Lfrm  
+
+> 14:
+
+Yfull  
+
+> t
+
+, (KR 
+
+> t
+
+, VR 
+
+> t
+
+) ← R (Pfull  
+
+> t
+
+, KR, VR, t ) 
+
+> 15:
+
+KR ← concat (tail rt(Wfrm −1) Lfrm (KR), KR 
+
+> t
+
+) 
+
+> 16:
+
+VR ← concat (tail rt(Wfrm −1) Lfrm (VR), VR 
+
+> t
+
+) 
+
+> 17:
+
+▷ Spatial upsampling: MLP + PixelShuffle  
+
+> 18:
+
+Ft ← MLP D→Cr 2 
+
+> s
+
+(Yfull  
+
+> t
+
+) 
+
+> 19:
+
+ˆxt ← PixelShuffle (Ft, r s) 
+
+> 20:
+
+Append ˆxt to ˆx 
+
+> 21:
+
+return ˆx
+
+3.5. Training Objectives 
+
+The decoder D is trained with a combination of pixel-wise, perceptual, and adversarial losses: 
+
+Ltotal = λL1 LL1 + λLPIPS LLPIPS + λadv Ladv , (4) where LL1 is the pixel-wise L1 loss between the recon-structed video ˆx and ground truth x, LLPIPS [78] mea-sures perceptual similarity in a pretrained feature space, and Ladv [15] is computed using a 3D patch-based discrim-inator [9, 22]. L1 ensures pixel-level fidelity, LPIPS en-courages perceptually realistic outputs, and the adversarial term produces sharp high-frequency details. Hyperparame-ter values are provided in the supplementary material. Al-gorithm 1 summarizes the full streaming pipeline. 
+
+# 4. Experiments 
+
+Unless stated otherwise, all experiments use FlashDecoder trained on the Wan2.2 latent space (4 ×16 ×16). All training is conducted on a single node with 8 NVIDIA H100 GPUs. Table 1. Component ablation. We incrementally add archi-tectural and training components to a blockwise causal vanilla Transformer decoder. SW-CA: Sliding-Window Causal Attention; GQA: Grouped-Query Attention [2]; TR: Temporal Refinement; SU: Spatial Upsampling; Scale-up: model scale-up from 56.8M to 769.3M parameters; Streaming: streaming training with a rolling KV cache; Adv: adversarial training. All evaluations are per-formed on 480p videos with 17 frames for efficient ablation.                                       
+
+> Components PSNR ↑LPIPS ↓rFVD ↓FPS ↑
+> Baseline 30.30 0.16 117.77 331.4 →16.6 (a) + SW-CA 30.20 0.15 136.08 333.8 (b) + GQA 30.13 0.14 121.87 340.7 (c) + TR 31.05 0.13 86.94 260.3 (d) + SU 31.49 0.12 96.19 262.1 (e) + Scale-up 32.56 0.09 44.74 166.0 (f) + Streaming 37.52 0.05 12.29 166.0 (g) + Adv 37.08 0.05 10.77 166.0
+
+4.1. Datasets and Evaluation Protocol 
+
+Training Data. FlashDecoder is trained on joint image– video data in three stages. We use DataComp-small [12] (12.8M image–text pairs) and video data from Kinetics-600 [4] and an internal collection, with a 2:8 image-to-video sampling ratio. Stage 1 trains at 224 ×224 for fast con-vergence. Stage 2 transitions to 480p, 720p, and 1080p. Stage 3 adds adversarial training. Full details are provided in the supplementary material. 
+
+Evaluation Data. We evaluate on the UltraVideo [69] dataset (clips short 1.zip split), which provides 1,145 high-quality videos at 4K+ resolution covering di-verse content from static scenes to fast motion. Each video is first resized to 720 ×1280 using PIL bicubic interpola-tion [24, 61], then center-cropped to the target resolution (480p, 720p, or 1080p), and 25-frame clips are extracted. Unless stated otherwise, all evaluations use 25-frame clips. We re-evaluate all baselines using their official implemen-tations and checkpoints on a single H100 GPU. 
+
+Evaluation Metrics. We report PSNR for pixel-level fi-delity, LPIPS [78] for perceptual quality, and Content-Debiased FVD (rCD-FVD) [14] for temporal realism. Stan-dard FVD [62] is known to be biased toward per-frame spa-tial quality rather than temporal consistency; rCD-FVD re-moves this content bias, providing a more faithful measure of temporal coherence. We refer to rCD-FVD as rFVD for simplicity. Throughput (FPS) is measured as decoded frames per second, and Mem denotes peak GPU memory in GB during decoding. FlashDecoder uses streaming mode while other methods use their native inference modes. 
+
+4.2. Effectiveness of Each Component 
+
+Table 1 ablates each component using FlashDecoder-S (Ta-ble 5). We evaluate on 480p with 17-frame clips for fast iteration. The baseline is a vanilla Transformer with full block causal attention (no windowing). Components are added incrementally: rows (a)–(d) train for 100K iterations at 224 ×224; rows (e)–(g) add scale-up, streaming training at 480p/720p, and adversarial training, respectively. 
+
+Baseline and Streaming Efficiency. The baseline’s KV cache grows linearly with video length, collapsing through-put from 331.4 to 16.6 FPS. We additionally compare 
+
+Sliding-Window Causal Attention (SW-CA), a separate ref-erence that restricts attention to a fixed window during train-ing. SW-CA restores stable throughput (333.8 FPS) but still requires mask materialization, causing out-of-memory fail-ures at 480p and 720p. Both SW-CA and GQA increase rFVD over the baseline, indicating that limiting temporal context without dedicated temporal modeling hurts tempo-ral coherence. 
+
+Architectural Components. Among the added compo-nents, Temporal Refinement (TR) yields the largest single gain (rFVD: 121.87 →86.94), confirming that raw channel expansion alone produces temporally inconsistent frames that benefit from dedicated refinement. Spatial Upsampling (SU) improves pixel fidelity (PSNR, LPIPS) but slightly in-creases rFVD, suggesting a trade-off between spatial detail and temporal smoothness. Model scaling provides consis-tent improvements across all metrics. 
+
+Streaming Training and Adversarial Loss. The most significant jump occurs when streaming training is in-troduced (row e →f). Streaming training enables high-resolution fine-tuning at 480p and 720p, directly improving reconstruction quality by closing the domain gap between 224 ×224 pretraining and the evaluation resolution. Ad-versarial training (row f →g) trades a small PSNR decrease (37.52 →37.08) for sharper outputs (rFVD: 12.29 →10.77), a well-known characteristic of GAN-based losses [15]. 
+
+4.3. Video Reconstruction Results 
+
+Table 2 compares FlashDecoder against state-of-the-art video decoders on UltraVideo at 480p, 720p, and 1080p, grouped by compression ratio (T ×H×W). We train sepa-rate FlashDecoder-XL models for each compression group: one on the Wan2.1 encoder latent space (4 ×8×8) and one on the Wan2.2 encoder latent space (4 ×16 ×16). 
+
+Convolution-based Models. In the 4×16 ×16 group, FlashDecoder-XL closely matches Wan2.2 [65] in PSNR and LPIPS across all three resolutions while streaming Table 2. Video reconstruction benchmark. Results on UltraVideo [69] at 480p, 720p, and 1080p. We report PSNR, LPIPS [78], rFVD [14, 62], throughput (FPS), and peak GPU memory (Mem, GB). All measurements use 25-frame clips on a single H100 GPU. FlashDecoder uses streaming mode; other methods use their native inference modes. †Causal/streaming. ∗256px only.                                                                                                                                                                                                                        
+
+> Method Params (M) 480p 720p 1080p PSNR LPIPS rFVD FPS Mem PSNR LPIPS rFVD FPS Mem PSNR LPIPS rFVD FPS Mem
+> 4×8×8 Compression
+> OmniTokenizer ∗† [66] 26.9 17.25 0.20 60.40 2333.6 0.3 ––––––––––HunyuanVideo †[27] 146.1 37.84 0.05 7.67 11.1 7.2 38.65 0.05 10.25 4.8 7.3 41.93 0.05 7.74 2.1 7.6 Wan2.1 †[65] 73.3 36.63 0.04 9.91 36.0 7.3 37.43 0.04 12.43 15.9 16.4 40.36 0.05 9.94 6.9 36.8 Wan2.1-TAEHV †[3] 9.8 32.65 0.11 33.37 663.3 5.7 33.43 0.11 35.52 309.8 13.1 36.80 0.11 33.37 135.1 23.7 MAGI-1 [58] 306.5 35.08 0.14 42.24 43.8 2.3 34.82 0.15 46.23 9.3 3.8 37.02 0.17 60.52 2.0 7.1
+> FlashDecoder-XL †750.4 35.92 0.05 11.62 162.3 1.8 37.46 0.05 12.13 76.1 2.4 40.74 0.05 13.34 25.9 3.6
+> FlashDecoder-XL-Opt †750.4 35.72 0.05 12.42 449.0 1.2 37.17 0.05 14.02 152.0 1.5 40.44 0.05 14.12 43.0 2.3
+> 4×16 ×16 Compression
+> Wan2.2 †[65] 555.0 37.47 0.04 7.97 36.6 9.6 38.29 0.04 10.39 16.1 19.3 41.49 0.04 8.16 7.1 41.0 Wan2.2-TAEHV †[3] 9.9 30.16 0.21 88.54 2329.5 1.4 30.68 0.21 88.32 1177.6 3.3 33.55 0.21 88.49 524.9 7.4 AToken [37] 415.1 35.71 0.08 19.44 65.3 0.7 36.72 0.09 22.91 28.1 1.5 40.18 0.09 25.67 10.1 3.3
+> FlashDecoder-XL †769.3 37.08 0.05 10.77 166.0 1.9 38.38 0.05 12.75 76.3 2.4 41.55 0.05 12.08 25.4 3.7
+> FlashDecoder-XL-Opt †769.3 37.02 0.05 11.22 441.0 1.1 37.85 0.05 12.22 151.0 1.3 40.84 0.05 13.02 43.0 1.6
+
+3.6×–4.7× faster with up to 11 × lower peak memory. The memory gap is most pronounced at 1080p: 3.7 GB versus 41.0 GB. In the 4 ×8×8 group, FlashDecoder-XL achieves reconstruction quality comparable to Wan2.1, though it falls behind HunyuanVideo [27]. While rFVD is moderately higher than convolutional baselines in both groups, we note that these are production-level decoders likely trained with significantly more compute and data than our single-node setup. Visualizations are shown in Figure 2 and the supple-mentary material. 
+
+Transformer-based Decoders. Existing Transformer de-coders face a quality–streaming trade-off: OmniTok-enizer [66] supports streaming but at low quality, while MAGI-1 [58] and AToken [37] achieve better quality through bidirectional attention but cannot stream and de-grade in throughput with video length. FlashDecoder-XL resolves this by achieving higher reconstruction quality than both MAGI-1 and AToken while streaming at 2.5×–13 ×
+
+higher throughput, without padding or blending. 
+
+Generalization Across Latent Spaces. FlashDecoder is not tied to a specific encoder. Table 3 shows results when training on the Wan2.1 latent space, which uses 8× spa-tial compression instead of 16 ×. Because 8× compression produces 2× more spatial tokens per dimension ( 4× total), we apply PixelUnshuffle with factor 2 to the latent, fold-ing the extra spatial dimensions into channels. This yields the same spatial token count Lfrm as the 16 × setting, so the Transformer backbone operates with minimal architecture changes. FlashDecoder-XL achieves comparable quality to Wan2.1 (37.46 vs. 37.43 PSNR at 720p) with 4.8× higher throughput and 6.8× lower memory. 
+
+Table 3. Generalization across VAE latent spaces. 
+
+FlashDecoder-XL trained on different encoder latent spaces, evaluated at 720p with 25 frames. Mem denotes peak GPU memory in GB. FlashDecoder generalizes across latent spaces with comparable quality while achieving ∼5× higher throughput and up to 8× lower peak memory. Encoder Decoder PSNR ↑ LPIPS ↓ rFVD ↓ FPS ↑ Mem ↓                        
+
+> Wan2.1 Wan2.1 37.43 0.04 12.43 15.9 16.4 Wan2.1 FlashDecoder-XL 37.46 0.05 12.13 76.1 2.4 Wan2.2 Wan2.2 38.29 0.04 10.39 16.1 19.3 Wan2.2 FlashDecoder-XL 38.38 0.05 12.75 76.3 2.4
+
+Table 4. Effect of window size Wfrm . Evaluated at 720p with 25 frames using FlashDecoder-XL. Mem denotes peak GPU memory in GB. Performance is stable across window sizes; Wfrm =2 pro-vides a good trade-off between quality and memory. 
+
+Wfrm PSNR ↑ LPIPS ↓ rFVD ↓ FPS ↑ Mem ↓
+
+2 38.38 0.05 12.75 76.3 2.4 3 38.13 0.05 12.71 67.8 2.5 4 38.49 0.05 12.87 60.6 2.6 
+
+Long Video Decoding. Because the KV cache window is fixed, FlashDecoder maintains constant memory regard-less of video length. We assign RoPE positions relative to the current window rather than the absolute frame index, so positional encodings always stay within the range seen dur-ing training, enabling theoretically infinite-length decoding. Figure 4 shows per-frame PSNR on 720p videos exceeding 400 frames. FlashDecoder-XL maintains stable reconstruc-tion quality throughout. Wan2.2 also supports streaming but consumes significantly more memory per frame. Table 5. Model scaling. FlashDecoder variants trained for 150K iterations at 224 ×224 (Stage 1 only) and evaluated on UltraVideo at 480p with 17 frames for fast iteration. Numbers are not directly comparable to Table 2, which uses the full three-stage training. Mem denotes peak GPU memory in GB.                                                          
+
+> Model Depth Width ( D)Heads ( N)KV Groups ( G)Params
+> (M) PSNR ↑rFVD ↓FPS ↑Mem ↓
+> FlashDecoder-S 12 512 8256.8 30.90 89.23 254.5 0.3 FlashDecoder-B 16 768 12 3161.7 31.15 72.36 205.2 0.6 FlashDecoder-L 20 1024 16 4348.0 32.13 63.81 164.3 1.0 FlashDecoder-XL 20 1536 24 3769.3 33.81 31.00 166.0 1.9 050 100 150 200 250 300 350 400
+> Frame index
+> 34
+> 36
+> 38
+> 40
+> PSNR (dB)  Wan2.2
+> FlashDecoder-XL (ours)
+> Figure 4. Per-frame PSNR on long videos at 720p. Averaged over 40 videos ( >400 frames each) from UltraVideo. FlashDe-coder maintains stable quality with constant memory regardless of video length.
+
+4.4. Window Size Ablation 
+
+Table 4 ablates the window size Wfrm . Performance is stable across Wfrm ∈ { 2, 3, 4}, with Wfrm =2 providing the best trade-off: similar quality to Wfrm =4 with lower memory (2.4 vs. 2.6 GB) and higher throughput (76.3 vs. 60.6 FPS). This suggests that for latent decoding, attending to just one previous latent frame provides sufficient temporal context. 
+
+4.5. Scaling Analysis 
+
+Table 5 shows four FlashDecoder variants trained at 224 ×224 for 150K iterations and evaluated at 480p. All variants share the same architecture (GQA Transformer blocks with temporal refinement and PixelShuffle spatial upsampling) and differ in width ( D), depth, number of heads ( N ), and KV groups ( G). FlashDecoder-XL, the largest variant, uses D=1536 with 20 backbone blocks, 2 temporal refinement blocks, 24 attention heads, and 3 KV groups (full configuration in supplementary material). Reconstruction quality improves steadily with model size: PSNR rises from 30.90 to 33.81 and rFVD drops from 89.23 to 31.00. Throughput decreases with scale (254.5 →
+
+166.0 FPS), yet even FlashDecoder-XL comfortably main-tains real-time streaming performance at all resolutions. 
+
+4.6. Inference Optimization 
+
+FlashDecoder’s streaming architecture is particularly amenable to inference optimization because each frame-level forward pass has a fixed, data-independent compute graph. We apply four progressive optimizations, each build-ing on the previous: (1) torch.compile fuses element-wise operations (RMSNorm, SiLU, residual additions) into single GPU kernels, reducing memory bandwidth pressure; (2) CUDA graph capture eliminates per-step Python dis-patch and kernel launch overhead by replaying the entire forward pass as a single graph; (3) precomputed RoPE ta-bles and a FlashAttention-3 custom operator remove dy-namic allocations and graph breaks that would otherwise prevent end-to-end graph capture; (4) static-calibrated FP8 quantization of all MLP layers exploits H100 FP8 Tensor Cores for higher matmul throughput. The first three opti-mizations are lossless. FP8 quantization incurs a quality trade-off: PSNR drops by 0.06–0.71 dB and rFVD increases by up to 0.94 depending on resolution (Table 2). These op-timizations are complementary and stack multiplicatively. The resulting FlashDecoder-XL-Opt (Table 2) achieves up to 12 × higher throughput than Wan2.2 at 480p while using under 2 GB peak memory on the 4 ×16 ×16 latent space. 
+
+# 5. Conclusion 
+
+We introduced FlashDecoder, a pure-Transformer latent-to-pixel decoder that achieves real-time streaming by pro-cessing one frame at a time with a fixed-size rolling KV cache. Two findings stand out from our experiments. First, enforcing causality through temporal processing or-der rather than explicit masks removes the memory bar-rier to high-resolution training, enabling stable training up to 1080p. Second, this high-resolution training closes the reconstruction quality gap with convolutional decoders, a gap that has limited prior Transformer decoders. On both the Wan2.1 and Wan2.2 latent spaces, FlashDecoder-XL matches convolutional decoder reconstruction quality while delivering 3.6×–4.7× faster streaming throughput and up to 11 × lower GPU memory. With architecture-aware in-ference optimizations, the throughput gap widens to 12 ×,enabling real-time high-resolution decoding on a single GPU. A natural next step is to pair FlashDecoder with a streaming Transformer encoder and train the full VAE from scratch, potentially unlocking latent spaces better suited to Transformer-based generation and decoding. Acknowledgments 
+
+Minguk Kang is a participating researcher at POSTECH and a full-time employee at Pika Labs. We thank Joonghyuk Shin for helpful discussions and assistance with Motion-Stream experiments, and Zhicheng Sun and Cade Li for valuable discussions. This work was supported by Samsung Electronics Co., Ltd. (Samsung AI Center) and the IITP grants (RS-2022-II220290, RS-2022-II220926, RS-2019-II191906) funded by the Korea government (MSIT). 
+
+# References 
+
+[1] Niket Agarwal, Arslan Ali, Maciej Bala, Yogesh Balaji, Erik Barker, Tiffany Cai, Prithvijit Chattopadhyay, Yongxin Chen, Yin Cui, Yifan Ding, et al. Cosmos world foun-dation model platform for physical ai. arXiv preprint arXiv:2501.03575 , 2025. 1, 2 [2] Joshua Ainslie, James Lee-Thorp, Michiel De Jong, Yury Zemlyanskiy, Federico Lebr´ on, and Sumit Sanghai. Gqa: Training generalized multi-query transformer models from multi-head checkpoints. arXiv preprint arXiv:2305.13245 ,2023. 4, 6 [3] Ollin Boer Bohan. Taehv: Tiny autoencoder for hun-yuan video. https://github.com/madebyollin/ taehv , 2025. 2, 3, 7, 13, 16, 17, 18 [4] Joao Carreira, Eric Noland, Andras Banki-Horvath, Chloe Hillier, and Andrew Zisserman. A short note about kinetics-600. arXiv preprint arXiv:1808.01340 , 2018. 6, 13 [5] Junyu Chen, Han Cai, Junsong Chen, Enze Xie, Shang Yang, Haotian Tang, Muyang Li, and Song Han. Deep compres-sion autoencoder for efficient high-resolution diffusion mod-els. In International Conference on Learning Representa-tions (ICLR) , 2025. 1, 2 [6] Junsong Chen, Shuchen Xue, Yuyang Zhao, Jincheng Yu, Sayak Paul, Junyu Chen, Han Cai, Song Han, and Enze Xie. Sana-sprint: One-step diffusion with continuous-time con-sistency distillation. arXiv preprint arXiv:2503.09641 , 2025. 1[7] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher R´ e. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Conference on Neural Information Processing Systems (NeurIPS) , 2022. 2, 5 [8] DeepMind. Veo: a text-to-video generation system. https: //storage.googleapis.com/deepmind-media/ veo/Veo-3-Tech-Report.pdf , 2024. 1 [9] Patrick Esser, Robin Rombach, and Bjorn Ommer. Tam-ing transformers for high-resolution image synthesis. In 
+
+IEEE Conference on Computer Vision and Pattern Recog-nition (CVPR) , 2021. 5, 14 [10] Patrick Esser, Robin Rombach, and Bjorn Ommer. Taming transformers for high-resolution image synthe-sis. https : / / github . com / CompVis / taming -transformers , 2021. 13 [11] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas M¨ uller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling recti-fied flow transformers for high-resolution image synthesis. In International Conference on Machine Learning (ICML) ,2024. 1 [12] Samir Yitzhak Gadre, Gabriel Ilharco, Alex Fang, Jonathan Hayase, Georgios Smyrnis, Thao Nguyen, Ryan Marten, Mitchell Wortsman, Dhruba Ghosh, Jieyu Zhang, et al. Dat-acomp: In search of the next generation of multimodal datasets. In Conference on Neural Information Processing Systems (NeurIPS) , 2023. 6, 13 [13] Yu Gao, Haoyuan Guo, Tuyen Hoang, Weilin Huang, Lu Jiang, Fangyuan Kong, Huixia Li, Jiashi Li, Liang Li, Xi-aojie Li, et al. Seedance 1.0: Exploring the boundaries of video generation models. arXiv preprint arXiv:2506.09113 ,2025. 1, 2 [14] Songwei Ge, Aniruddha Mahapatra, Gaurav Parmar, Jun-Yan Zhu, and Jia-Bin Huang. On the content bias in fr´ echet video distance. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2024. 6, 7, 15 [15] Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio. Generative Adversarial Nets. In Conference on Neural Information Processing Systems (NeurIPS) , 2014. 5, 6, 13 [16] Yoav HaCohen, Nisan Chiprut, Benny Brazowski, Daniel Shalem, Dudu Moshe, Eitan Richardson, Eran Levin, Guy Shiran, Nir Zabari, Ori Gordon, et al. Ltx-video: Realtime video latent diffusion. arXiv preprint arXiv:2501.00103 ,2024. 1 [17] Philippe Hansen-Estruch, David Yan, Ching-Yao Chuang, Orr Zohar, Jialiang Wang, Tingbo Hou, Tao Xu, Sriram Vishwanath, Peter Vajda, and Xinlei Chen. Learnings from scaling visual tokenizers for reconstruction and generation. In International Conference on Machine Learning (ICML) ,2025. 2 [18] Jonathan Heek, Emiel Hoogeboom, Thomas Mensink, and Tim Salimans. Unified latents (ul): How to train your latents. 
+
+arXiv preprint arXiv:2602.17270 , 2026. 15 [19] Geoffrey E Hinton and Ruslan R Salakhutdinov. Reducing the dimensionality of data with neural networks. science ,2006. 1 [20] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising dif-fusion probabilistic models. In Conference on Neural Infor-mation Processing Systems (NeurIPS) , 2020. 1 [21] Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 , 2025. 1 [22] Phillip Isola, Jun-Yan Zhu, Tinghui Zhou, and Alexei A Efros. Image-to-image translation with conditional adver-sarial networks. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2017. 5, 13, 14 [23] Minguk Kang, Richard Zhang, Connelly Barnes, Sylvain Paris, Suha Kwak, Jaesik Park, Eli Shechtman, Jun-Yan Zhu, and Taesung Park. Distilling diffusion models into condi-tional gans. In European Conference on Computer Vision (ECCV) , 2024. 1 [24] R. Keys. Cubic convolution interpolation for digital image processing. IEEE Transactions on Acoustics, Speech, and Signal Processing , 1981. 6, 13 [25] Dongjun Kim, Chieh-Hsin Lai, Wei-Hsiang Liao, Naoki Mu-rata, Yuhta Takida, Toshimitsu Uesaka, Yutong He, Yuki Mitsufuji, and Stefano Ermon. Consistency trajectory mod-els: Learning probability flow ode trajectory of diffusion. 
+
+arXiv preprint arXiv:2310.02279 , 2023. 1 [26] Diederik P Kingma and Max Welling. Auto-encoding varia-tional bayes. arXiv preprint arXiv:1312.6114 , 2013. 1 [27] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 , 2024. 1, 2, 7, 15 [28] Black Forest Labs, Stephen Batifol, Andreas Blattmann, Frederic Boesel, Saksham Consul, Cyril Diagne, Tim Dock-horn, Jack English, Zion English, Patrick Esser, et al. Flux. 1 kontext: Flow matching for in-context image generation and editing in latent space. arXiv preprint arXiv:2506.15742 ,2025. 1, 2 [29] Junyan Li, Delin Chen, Tianle Cai, Peihao Chen, Yining Hong, Zhenfang Chen, Yikang Shen, and Chuang Gan. Flex-attention for efficient high-resolution vision-language mod-els. In European Conference on Computer Vision (ECCV) ,2024. 5 [30] Zongjian Li, Bin Lin, Yang Ye, Liuhan Chen, Xinhua Cheng, Shenghai Yuan, and Li Yuan. Wf-vae: Enhancing video vae by wavelet-driven energy flow for latent video diffusion model. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2025. 2 [31] Bin Lin, Yunyang Ge, Xinhua Cheng, Zongjian Li, Bin Zhu, Shaodong Wang, Xianyi He, Yang Ye, Shenghai Yuan, Li-uhan Chen, et al. Open-sora plan: Open-source large video generation model. arXiv preprint arXiv:2412.00131 , 2024. 1, 2 [32] Shanchuan Lin, Xin Xia, Yuxi Ren, Ceyuan Yang, Xuefeng Xiao, and Lu Jiang. Diffusion adversarial post-training for one-step video generation. In International Conference on Machine Learning (ICML) , 2025. 1 [33] Shanchuan Lin, Ceyuan Yang, Hao He, Jianwen Jiang, Yuxi Ren, Xin Xia, Yang Zhao, Xuefeng Xiao, and Lu Jiang. Autoregressive adversarial post-training for real-time inter-active video generation. arXiv preprint arXiv:2506.09350 ,2025. 1 [34] Kunhao Liu, Wenbo Hu, Jiale Xu, Ying Shan, and Shijian Lu. Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 , 2025. 1 [35] Siyu Liu, Chujie Qin, Hubery Yin, Qixin Yan, Zheng-Peng Duan, Chen Li, Jing Lyu, Chun-Le Guo, and Chongyi Li. Im-proving reconstruction of representation autoencoder. arXiv preprint arXiv:2602.08620 , 2026. 2 [36] Ilya Loshchilov and Frank Hutter. Decoupled Weight De-cay Regularization. In International Conference on Learning Representations (ICLR) , 2019. 14 [37] Jiasen Lu, Liangchen Song, Mingze Xu, Byeongjoo Ahn, Yanjun Wang, Chen Chen, Afshin Dehghan, and Yinfei Yang. Atoken: A unified tokenizer for vision. arXiv preprint arXiv:2509.14476 , 2025. 2, 3, 7, 13, 16, 17, 18 [38] Chenlin Meng, Robin Rombach, Ruiqi Gao, Diederik Kingma, Stefano Ermon, Jonathan Ho, and Tim Salimans. On distillation of guided diffusion models. In IEEE Confer-ence on Computer Vision and Pattern Recognition (CVPR) ,2023. 1 [39] Lars Mescheder, Sebastian Nowozin, and Andreas Geiger. Which Training Methods for GANs do actually Converge? In International Conference on Machine Learning (ICML) ,2018. 13, 14 [40] Alex Nichol and Prafulla Dhariwal. Improved denoising dif-fusion probabilistic models. In International Conference on Machine Learning (ICML) , 2021. 1 [41] OpenAI. Video generation models as world simula-tors. https://openai.com/research/video-generation - models - as - world - simulators ,2024. 1, 2 [42] Maxime Oquab, Timoth´ ee Darcet, Th´ eo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et al. Dinov2: Learning robust visual features without supervision. 
+
+arXiv preprint arXiv:2304.07193 , 2023. 2, 15 [43] William Peebles and Saining Xie. Scalable diffusion mod-els with transformers. In IEEE International Conference on Computer Vision (ICCV) , 2023. 1 [44] Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen. Hierarchical text-conditional image gen-eration with clip latents. arXiv preprint arXiv:2204.06125 ,2022. 1 [45] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Bj¨ orn Ommer. High-resolution image syn-thesis with latent diffusion models. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2022. 1, 2[46] Tim Salimans and Jonathan Ho. Progressive Distillation for Fast Sampling of Diffusion Models. In International Con-ference on Learning Representations (ICLR) , 2022. 1 [47] Axel Sauer, Frederic Boesel, Tim Dockhorn, Andreas Blattmann, Patrick Esser, and Robin Rombach. Fast high-resolution image synthesis with latent adversarial diffusion distillation. In SIGGRAPH Asia 2024 Conference Papers ,2024. 1 [48] Wenzhe Shi, Jose Caballero, Ferenc Husz´ ar, Johannes Totz, Andrew P Aitken, Rob Bishop, Daniel Rueckert, and Zehan Wang. Real-time single image and video super-resolution using an efficient sub-pixel convolutional neural network. In 
+
+IEEE Conference on Computer Vision and Pattern Recogni-tion (CVPR) , 2016. 5 [49] Joonghyuk Shin, Zhengqi Li, Richard Zhang, Jun-Yan Zhu, Jaesik Park, Eli Schechtman, and Xun Huang. Motion-stream: Real-time video generation with interactive motion controls. arXiv preprint arXiv:2511.01266 , 2025. 1 [50] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Ab-hishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equa-tions. arXiv preprint arXiv:2011.13456 , 2020. 1 [51] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency Models. In International Conference on Machine Learning (ICML) , 2023. 1 [52] LTX Studio. Ltx-2: The complete ai creative engine for video production. https://ltx.studio/blog/ltx-2- the- complete- ai- creative- engine- for-video-production , 2025. 1, 2 [53] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: Enhanced transformer with rotary position embedding. Neurocomputing , 2024. 4 [54] Anni Tang, Tianyu He, Junliang Guo, Xinle Cheng, Li Song, and Jiang Bian. Vidtok: A versatile and open-source video tokenizer. arXiv preprint arXiv:2412.13061 , 2024. 2 [55] Genmo Team. Mochi 1. https://github.com/ genmoai/models , 2024. 2 [56] Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, Morgane Rivi` ere, Mihir Sanjay Kale, Juliette Love, et al. Gemma: Open models based on gemini research and tech-nology. arXiv preprint arXiv:2403.08295 , 2024. 4 [57] Krea Team. Krea realtime 14b: Real-time, long-form ai video generation. Blog post, Krea AI, 2025. 1 [58] Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, WQ Zhang, Weifeng Luo, et al. Magi-1: Autoregressive video genera-tion at scale. arXiv preprint arXiv:2505.13211 , 2025. 2, 7 [59] Shengbang Tong, Boyang Zheng, Ziteng Wang, Bingda Tang, Nanye Ma, Ellis Brown, Jihan Yang, Rob Fergus, Yann LeCun, and Saining Xie. Scaling text-to-image dif-fusion transformers with representation autoencoders. arXiv preprint arXiv:2601.16208 , 2026. 2 [60] Michael Tschannen, Alexey Gritsenko, Xiao Wang, Muham-mad Ferjad Naeem, Ibrahim Alabdulmohsin, Nikhil Parthasarathy, Talfan Evans, Lucas Beyer, Ye Xia, Basil Mustafa, et al. Siglip 2: Multilingual vision-language en-coders with improved semantic understanding, localization, and dense features. arXiv preprint arXiv:2502.14786 , 2025. 2, 15 [61] P Umesh. Image processing in python. CSI Communica-tions , 23(2), 2012. 6, 13 [62] Thomas Unterthiner, Sjoerd van Steenkiste, Karol Kurach, Rapha¨ el Marinier, Marcin Michalski, and Sylvain Gelly. Fvd: A new metric for video generation. In DGS@ICLR ,2019. 6, 7, 15 [63] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-reit, Llion Jones, Aidan N Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Conference on Neural Information Processing Systems (NeurIPS) , 2017. 2, 4[64] Ruben Villegas, Mohammad Babaeizadeh, Pieter-Jan Kin-dermans, Hernan Moraldo, Han Zhang, Mohammad Taghi Saffar, Santiago Castro, Julius Kunze, and Dumitru Erhan. Phenaki: Variable length video generation from open domain textual descriptions. In International Conference on Learn-ing Representations (ICLR) , 2023. 2 [65] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianx-iao Yang, Jianyuan Zeng, Jiayu Wang, Jingfeng Zhang, Jin-gren Zhou, Jinkai Wang, Jixuan Chen, Kai Zhu, Kang Zhao, Keyu Yan, Lianghua Huang, Mengyang Feng, Ningyi Zhang, Pandeng Li, Pingyu Wu, Ruihang Chu, Ruili Feng, Shiwei Zhang, Siyang Sun, Tao Fang, Tianxing Wang, Tianyi Gui, Tingyu Weng, Tong Shen, Wei Lin, Wei Wang, Wei Wang, Wenmeng Zhou, Wente Wang, Wenting Shen, Wenyuan Yu, Xianzhong Shi, Xiaoming Huang, Xin Xu, Yan Kou, Yangyu Lv, Yifei Li, Yijing Liu, Yiming Wang, Yingya Zhang, Yi-tong Huang, Yong Li, You Wu, Yu Liu, Yulin Pan, Yun Zheng, Yuntao Hong, Yupeng Shi, Yutong Feng, Zeyinzi Jiang, Zhen Han, Zhi-Fan Wu, and Ziyu Liu. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. 1, 2, 3, 4, 6, 7, 13, 15, 16, 17, 18 [66] Junke Wang, Yi Jiang, Zehuan Yuan, Bingyue Peng, Zux-uan Wu, and Yu-Gang Jiang. Omnitokenizer: A joint image-video tokenizer for visual generation. In Conference on Neu-ral Information Processing Systems (NeurIPS) , 2024. 2, 7 [67] Enze Xie, Junsong Chen, Junyu Chen, Han Cai, Haotian Tang, Yujun Lin, Zhekai Zhang, Muyang Li, Ligeng Zhu, Yao Lu, et al. Sana: Efficient high-resolution image syn-thesis with linear diffusion transformers. arXiv preprint arXiv:2410.10629 , 2024. 1 [68] Yazhou Xing, Yang Fei, Yingqing He, Jingye Chen, Jiaxin Xie, Xiaowei Chi, and Qifeng Chen. Videovae+: Large motion video autoencoding with cross-modal video vae. In 
+
+IEEE International Conference on Computer Vision (ICCV) ,2025. 2 [69] Zhucun Xue, Jiangning Zhang, Teng Hu, Haoyang He, Yinan Chen, Yuxuan Cai, Yabiao Wang, Chengjie Wang, Yong Liu, Xiangtai Li, and Dacheng Tao. Ultravideo: High-quality uhd video dataset with comprehensive captions. arXiv preprint arXiv:2506.13691 , 2025. 6, 7 [70] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiao-han Zhang, Guanyu Feng, Da Yin, Yuxuan.Zhang, Weihan Wang, Yean Cheng, Bin Xu, Xiaotao Gu, Yuxiao Dong, and Jie Tang. Cogvideox: Text-to-video diffusion models with an expert transformer. In International Conference on Learning Representations (ICLR) , 2025. 1, 2 [71] Jingfeng Yao, Cheng Wang, Wenyu Liu, and Xinggang Wang. Fasterdit: Towards faster diffusion transformers train-ing without architecture modification. In Conference on Neu-ral Information Processing Systems (NeurIPS) , 2024. 1 [72] Jingfeng Yao, Bin Yang, and Xinggang Wang. Reconstruc-tion vs. generation: Taming optimization dilemma in latent diffusion models. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2025. 1 [73] Tianwei Yin, Micha¨ el Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and Bill Freeman. Improved distribution matching distillation for fast image synthesis. In Conference on Neural Information Processing Systems (NeurIPS) , 2024. 1 [74] Tianwei Yin, Qiang Zhang, Richard Zhang, William T Free-man, Fredo Durand, Eli Shechtman, and Xun Huang. From slow bidirectional to fast autoregressive video diffusion mod-els. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2025. 1 [75] Jiahui Yu, Xin Li, Jing Yu Koh, Han Zhang, Ruoming Pang, James Qin, Alexander Ku, Yuanzhong Xu, Jason Baldridge, and Yonghui Wu. Vector-quantized image modeling with im-proved VQGAN. In International Conference on Learning Representations (ICLR) , 2022. 2 [76] Lijun Yu, Jose Lezama, Nitesh Bharadwaj Gundavarapu, Luca Versari, Kihyuk Sohn, David Minnen, Yong Cheng, Agrim Gupta, Xiuye Gu, Alexander G Hauptmann, Boqing Gong, Ming-Hsuan Yang, Irfan Essa, David A Ross, and Lu Jiang. Language model beats diffusion - tokenizer is key to visual generation. In International Conference on Learning Representations (ICLR) , 2024. 2 [77] Biao Zhang and Rico Sennrich. Root mean square layer nor-malization. In Conference on Neural Information Processing Systems (NeurIPS) , 2019. 4 [78] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shecht-man, and Oliver Wang. The unreasonable effectiveness of deep features as a perceptual metric. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2018. 5, 6, 7, 13, 14 [79] Yifu Zhang, Hao Yang, Yuqi Zhang, Yifei Hu, Fengda Zhu, Chuang Lin, Xiaofeng Mei, Yi Jiang, Bingyue Peng, and Ze-huan Yuan. Waver: Wave your way to lifelike video genera-tion. arXiv preprint arXiv:2508.15761 , 2025. 1, 2 [80] Sijie Zhao, Yong Zhang, Xiaodong Cun, Shaoshu Yang, Muyao Niu, Xiaoyu Li, Wenbo Hu, and Ying Shan. Cv-vae: A compatible video vae for latent generative video mod-els. In Conference on Neural Information Processing Sys-tems (NeurIPS) , 2024. 2 [81] Boyang Zheng, Nanye Ma, Shengbang Tong, and Saining Xie. Diffusion transformers with representation autoen-coders. In International Conference on Learning Represen-tations (ICLR) , 2026. 2, 15 [82] Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. Open-sora: Democratizing efficient video production for all. arXiv preprint arXiv:2412.20404 , 2024. 2 [83] Lianghui Zhu, Zilong Huang, Bencheng Liao, Jun Hao Liew, Hanshu Yan, Jiashi Feng, and Xinggang Wang. Dig: Scal-able and efficient diffusion models with gated linear atten-tion. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2025. 1 [84] Ya Zou, Jingfeng Yao, Siyuan Yu, Shuai Zhang, Wenyu Liu, and Xinggang Wang. Turbo-vaed: Fast and stable transfer of video-vaes to mobile devices. arXiv preprint arXiv:2508.09136 , 2025. 2 FlashDecoder: Real-Time Latent-to-Pixel Streaming Decoder with Transformers 
+
+# Supplementary Material 
+
+This supplementary material provides training specifi-cations (Section A), inference protocols (Section B), addi-tional visual results (Section C), and limitations and future directions (Section D). 
+
+# A. Training Specifications 
+
+A.1. Dataset Details 
+
+Image Data. We utilize DataComp-small [12], compris-ing 12.8M image-text pairs. During preprocessing, we ap-ply probabilistic augmentation that randomly selects among random cropping (40%), center cropping (30%), or resizing (30%) to the target resolution. Images smaller than the tar-get resolution are filtered to prevent upsampling artifacts. 
+
+Video Data. Our video corpus combines Kinetics-600 [4] and an internal high-resolution collection of approximately 200K clips. From each video, we sample 17 consecutive frames at native frame rate. Preprocessing employs a two-stage spatial transformation: frames are first resized so that the shorter side matches the target resolution (480p, 720p, or 1080p depending on the training stage) while preserving the original aspect ratio, then cropped to the target resolu-tion using either center crop (60%) or random crop (40%). Videos below the target resolution are filtered out. All re-sizing uses anti-aliased PIL bicubic interpolation [24, 61]. 
+
+A.2. Multi-Stage Training Protocol 
+
+FlashDecoder follows a sequential three-stage training pro-tocol, with each stage building upon the previous one. Training hyperparameters are summarized in Table A. 
+
+Stage 1: Low-Resolution Pre-training. This stage es-tablishes fundamental reconstruction capabilities at reduced computational cost. We train on 224 ×224 ×17 video clips and 256 ×256 images with a 2:8 image-to-video sampling ratio to balance temporal coherence with spatial fidelity. Training proceeds for 200K iterations with batch size 16. The reconstruction objective combines L1 loss and percep-tual loss [78] with weights of 1.0 and 0.1, respectively. 
+
+Stage 2: High-Resolution Training. We transition to higher resolutions to minimize the domain gap between training and inference. The model is trained on 480p clips (480 ×832 ×17), 720p clips (720 ×1280 ×17), 1080p clips (1080 ×1920 ×17), and 512 ×512 images. This diverse res-olution mixture enables the model to handle varying spatial resolutions during inference. We reduce the learning rate by 10 × and train for 100K iterations with batch size 8. Loss weights are adjusted to 1.0 for L1 and 0.25 for perceptual loss. The perceptual loss is computed on random 224 ×224 crops to keep memory manageable at high resolutions. 
+
+Stage 3: Adversarial Post-training. To enhance fine-grained details, we introduce adversarial training using the same data configuration as Stage 2 but excluding 1080p clips due to the additional memory overhead of the dis-criminator. This stage enables the decoder to synthesize sharper high-frequency textures that reconstruction losses alone cannot capture. We extend VQGAN’s 2D PatchGAN discriminator [10, 22] to 3D for spatiotemporal processing, and train it with non-saturating logistic loss [15] and R1 reg-ularization [39]. Both the perceptual and adversarial losses are computed on random 224 ×224 crops of the decoded output. 
+
+# B. Inference Protocols 
+
+For fair comparison, we re-evaluate all baseline models us-ing their official repository implementations and released checkpoints under identical settings on a single NVIDIA H100 GPU (80GB). 
+
+B.1. Throughput Measurement 
+
+To ensure fair comparison, we evaluate each model in its officially supported inference mode. Wan2.2-TAEHV [3], Wan2.2 [65], and FlashDecoder natively support stream-ing and are evaluated accordingly. Other VAEs (Hunyuan-Video, AToken, MAGI-1) process entire clips in batch mode using their official implementations, as forcing them into a streaming setup would require chunking and blending that degrades their reconstruction quality. Throughput is mea-sured in frames per second (FPS), calculated as total de-coded frames divided by total decoding time. 
+
+# C. More Visual Results 
+
+Figures A–C show additional 720p reconstruction results from Wan2.2-TAEHV [3], AToken [37], Wan2.2 [65], and FlashDecoder-XL-Opt. Wan2.2-TAEHV struggles with fine details; AToken produces smoother but blurrier out-puts. Both Wan2.2 and FlashDecoder-XL-Opt produce sharp results, with Wan2.2 showing slightly finer details in some cases. FlashDecoder-XL-Opt achieves over 9×
+
+higher throughput (151.0 vs. 16.1 FPS). 
+
+# D. Limitations and Future Directions 
+
+Decoder-only design. FlashDecoder replaces only the decoder while keeping the pretrained convolutional en-coder fixed. The latent space therefore inherits the en-coder’s characteristics, which favor spatial locality by de-sign; what properties a Transformer-based encoder–decoder Table A. Hyperparameters for FlashDecoder-XL training on the Wan2.2 latent space. We report the training configurations for each stage. Stage 1 focuses on low-resolution pre-training, Stage 2 transitions to high-resolution training, and Stage 3 introduces adversarial post-training. For additional technical details, please refer to the original papers: LPIPS [78], R1 regularization [39], AdamW optimizer [36], and 3D PatchGAN [9, 22]. DDP denotes Distributed Data Parallel. 
+
+Hyperparameters Stage 1 Stage 2 Stage 3 
+
+Model Architecture 
+
+Latent channels ( C′) 48 48 48 Model dimension ( D) 1536 1536 1536 
+
+# of Transformer blocks 20 20 20 
+
+# of Temporal refinement Transformer blocks 2 2 2Attention heads ( N ) 24 24 24 KV groups ( G) 3 3 3MLP expansion 4.0 4.0 4.0 Temporal compression ( rt) 4 4 4Spatial compression ( rs) 16 16 16 Window size ( Wfrm ) 2 2 2
+
+Data Configuration 
+
+Video resolution 224 ×224 ×17 480p / 720p / 1080p ×17 480p / 720p ×17 Image resolution 256 ×256 512 ×512 512 ×512 Sampling ratio 8:2 (video:image) 2:4:2:2 (480p:720p:1080p:image) 2:6:2 (480p:720p:image) 
+
+Loss Configuration 
+
+L1 loss weight ( λL1 ) 1.0 1.0 1.0 Perceptual loss weight ( λLPIPS ) 0.1 0.25 0.25 Adversarial loss type - - Logistic Adversarial loss weight ( λadv ) - - 1e-4 R1 regularization weight - - 0.1024 R1 interval - - 16 
+
+Decoder & Decoder-related Optimization 
+
+Optimizer AdamW AdamW AdamW Batch size 16 8 8Learning rate 1e-4 1e-5 1e-5 AdamW β1 0.9 0.9 0.9 AdamW β2 0.999 0.999 0.999 Weight decay 0.01 0.01 0.01 EMA - - 0.9999 EMA warmup step - - 2000 Precision bfloat16 bfloat16 bfloat16 
+
+Discriminator & Discriminator-related Optimization 
+
+Architecture - - 3D PatchGAN 
+
+# of conv layers - - 5Base channels - - 128 Learning rate - - 1e-5 AdamW β1 - - 0.0 AdamW β2 - - 0.9 Weight decay - - 0.01 Precision bfloat16 bfloat16 bfloat16 
+
+Training specifications 
+
+Training iterations 200K 100K 20K Distributed training DDP DDP DDP GPU type H100 80GB H100 80GB H100 80GB 
+
+# GPUs 8 8 8pair would learn remains unexplored. Designing a stream-ing Transformer encoder to pair with FlashDecoder and training the full VAE from scratch is a clear next step. Such an encoder–decoder pair would also eliminate the resolu-tion gap between low-resolution VAE training ( 256 ×256 )and high-resolution diffusion training (720p, 1080p), since our streaming architecture scales to high resolutions. This is particularly relevant for recent end-to-end frameworks such as Unified Latents [18], which jointly train the VAE and dif-fusion model. Existing convolutional video VAEs are diffi-cult to jointly train with a diffusion model at 480p or 720p due to their high memory consumption. FlashDecoder’s low memory footprint makes such joint training feasible. Training the VAE and diffusion model at the same resolu-tion used during inference would ensure that the latent space has good diffusibility at that resolution, avoiding potential mismatches caused by training at a lower resolution. 
+
+rFVD gap. FlashDecoder-XL falls short of Wan2.2 [65] and HunyuanVideo [27] in rFVD [14, 62], despite compa-rable PSNR and LPIPS. We trained on a single 8-GPU node, whereas these production decoders likely used significantly more compute and data. Scaling up model capacity and ad-versarial training duration is expected to close this gap. 
+
+Integration with Representation Autoencoders. Re-cent work on Representation Autoencoders (RAE [81]) pairs frozen pretrained encoders (e.g., DINOv2 [42], SigLIP [60]) with Transformer decoders for image gener-ation. Extending this paradigm to video with a streaming-capable decoder like FlashDecoder is a promising direction. (a) Wan2.2 -TAEHV 
+
+(1177.6 FPS) 
+
+(b) AToken 
+
+(28.1 FPS) 
+
+(c) Wan2.2 
+
+(16.1 FPS) 
+
+(e) Ground Truth 
+
+(d) FlashDecoder -XL -Opt 
+
+(151.0 FPS) 
+
+FlashDecoder -XL -Op t (720p, 151.0 FPS) Figure A. Qualitative comparison of 720p reconstruction results. We compare reconstructed frames from video decoders with 4 ×
+
+temporal and 16 × spatial compression: (a) Wan2.2-TAEHV [3], (b) AToken [37], (c) Wan2.2 [65], (d) our FlashDecoder-XL-Opt, and (e) ground truth. (a) and (b) produce blurry reconstructions, while (c) and (d) yield visually comparable outputs, yet (d) achieves over 9×
+
+higher throughput. (a) Wan2.2 -TAEHV 
+
+(1177.6 FPS) 
+
+(b) AToken 
+
+(28.1 FPS) 
+
+(c) Wan2.2 
+
+(16.1 FPS) 
+
+(e) Ground Truth 
+
+(d) FlashDecoder -XL -Opt 
+
+(151.0 FPS) 
+
+FlashDecoder -XL -Op t (720p, 151.0 FPS) Figure B. Qualitative comparison of 720p reconstruction results. We compare reconstructed frames from video decoders with 4 ×
+
+temporal and 16 × spatial compression: (a) Wan2.2-TAEHV [3], (b) AToken [37], (c) Wan2.2 [65], (d) our FlashDecoder-XL-Opt, and (e) ground truth. (a) fails to decode fine details such as tree branches and foliage, while (b) produces blurry reconstructions. (c) and (d) yield sharper results, yet (d) achieves over 9× higher throughput. (a) Wan2.2 -TAEHV 
+
+(1177.6 FPS) 
+
+(b) AToken 
+
+(28.1 FPS) 
+
+(c) Wan2.2 
+
+(16.1 FPS) 
+
+(e) Ground Truth 
+
+(d) FlashDecoder -XL -Opt 
+
+(151.0 FPS) 
+
+FlashDecoder -XL -Op t (720p, 151.0 FPS) Figure C. Qualitative comparison of 720p reconstruction results. We compare reconstructed frames from video decoders with 4 ×
+
+temporal and 16 × spatial compression: (a) Wan2.2-TAEHV [3], (b) AToken [37], (c) Wan2.2 [65], (d) our FlashDecoder-XL-Opt, and (e) ground truth. (a) struggles to decode wall textures near the flowerpot, while (b) produces blurry details in the flowerpot region. (c) and (d) yield visually comparable outputs, with (c) appearing to synthesize marginally finer details, particularly around the flower petals. (d) achieves over 9× higher throughput.
