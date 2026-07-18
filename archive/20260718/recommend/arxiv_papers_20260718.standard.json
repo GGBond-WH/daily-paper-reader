@@ -1,0 +1,63 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-18T21:00:48.610997+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 0,
+    "deep_cap": 6,
+    "deep_selected": 0,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [],
+  "quick_skim": [
+    {
+      "id": "2607.11614v1",
+      "source": "arxiv",
+      "title": "Extending LLM Context via Associative Recurrent Memory",
+      "abstract": "Extending the context length of large language models (LLMs) is critical for many real-world applications, yet standard transformers remain constrained by quadratic compute and linear memory scaling. In this work, we investigate the Associative Recurrent Memory Transformer (ARMT) as a practical approach for enabling long-context processing in LLMs, constant memory scaling, and better efficiency. We make three main contributions. First, we construct two domain-specific long-context datasets designed to evaluate realistic workloads, focusing on narrow-domain fine-tuning scenarios. Second, we propose a comprehensive training recipe for ARMT-based context extension, combining continued pre-training, synthetic long-context data generation, curriculum learning, and selective integration of associative memory into chosen model layers. Third, we present an extensive experimental study demonstrating that ARMT-augmented models: (i) process inputs well beyond their original context limits without degrading performance relative to in-limit baselines; (ii) generalize more effectively to out-of-distribution context lengths; and (iii) need 30% less FLOPs while preserving baseline performance within the original context window.",
+      "authors": [
+        "Gleb Kuzmin",
+        "Ivan Rodkin",
+        "Aydar Bulatov",
+        "Yuri Kuratov",
+        "Lyudmila Rvanova",
+        "Mikhail Katkov",
+        "Ilia Sochenkov",
+        "Misha Tsodyks",
+        "Timothy Baldwin",
+        "Mikhail Burtsev",
+        "Artem Shelmanov"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI"
+      ],
+      "published": "2026-07-13T14:37:24+00:00",
+      "link": "https://arxiv.org/pdf/2607.11614v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Associative Recurrent Memory Transformer as alternative to KV cache for constant memory scaling",
+      "llm_evidence_cn": "关联循环记忆变换器作为KV cache的替代方案实现恒定内存缩放",
+      "llm_evidence": "关联循环记忆变换器作为KV cache的替代方案实现恒定内存缩放",
+      "canonical_evidence": "关联循环记忆变换器作为KV cache的替代方案实现恒定内存缩放",
+      "llm_tldr_en": "Proposes Associative Recurrent Memory Transformer (ARMT) for long-context processing with constant memory scaling, offering an alternative to traditional KV cache growth.",
+      "llm_tldr_cn": "该文针对标准Transformer中上下文长度受限于二次计算和线性内存增长的问题，探索关联循环记忆变换器（ARMT）。ARMT通过引入循环记忆机制，实现常量内存缩放，从而支持更长的上下文处理。作者构建了领域特定长上下文数据集，并提出结合持续预训练、合成数据生成、课程学习和选择性微调的训练方案。该方法提供了不使用传统KV cache而扩展上下文的新思路，对KV cache优化领域具有启发意义。",
+      "llm_tldr": "该文针对标准Transformer中上下文长度受限于二次计算和线性内存增长的问题，探索关联循环记忆变换器（ARMT）。ARMT通过引入循环记忆机制，实现常量内存缩放，从而支持更长的上下文处理。作者构建了领域特定长上下文数据集，并提出结合持续预训练、合成数据生成、课程学习和选择性微调的训练方案。该方法提供了不使用传统KV cache而扩展上下文的新思路，对KV cache优化领域具有启发意义。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

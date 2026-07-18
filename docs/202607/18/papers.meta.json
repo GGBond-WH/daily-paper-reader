@@ -1,0 +1,24 @@
+{
+  "label": "2026-07-18",
+  "date": "2026-07-18",
+  "generated_at": "2026-07-18T21:03:00",
+  "count": 1,
+  "papers": [
+    {
+      "paper_id": "202607/18/2607.11614v1-extending-llm-context-via-associative-recurrent-memory",
+      "section": "quick",
+      "title_en": "Extending LLM Context via Associative Recurrent Memory",
+      "authors": "Gleb Kuzmin, Ivan Rodkin, Aydar Bulatov, Yuri Kuratov, Lyudmila Rvanova, Mikhail Katkov, Ilia Sochenkov, Misha Tsodyks, Timothy Baldwin, Mikhail Burtsev, Artem Shelmanov",
+      "date": "2026-07-13",
+      "pdf": "https://arxiv.org/pdf/2607.11614v1",
+      "score": "6.0",
+      "evidence": "关联循环记忆变换器作为KV cache的替代方案实现恒定内存缩放",
+      "tldr": "标准Transformer受限于二次计算和线性内存，难以处理长上下文。本文提出关联循环记忆Transformer (ARMT)，实现常数内存扩展。实验表明，ARMT增强模型可处理远超原始上下文限制的输入，保持性能，且FLOPs减少30%。贡献包括构建两个领域特定长上下文数据集，并提出包含持续预训练、合成数据生成、课程学习和选择性记忆集成的综合训练方案。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Extending the context length of large language models (LLMs) is critical for many real-world applications, yet standard transformers remain constrained by quadratic compute and linear memory scaling. In this work, we investigate the Associative Recurrent Memory Transformer (ARMT) as a practical approach for enabling long-context processing in LLMs, constant memory scaling, and better efficiency. We make three main contributions. First, we construct two domain-specific long-context datasets designed to evaluate realistic workloads, focusing on narrow-domain fine-tuning scenarios. Second, we propose a comprehensive training recipe for ARMT-based context extension, combining continued pre-training, synthetic long-context data generation, curriculum learning, and selective integration of associative memory into chosen model layers. Third, we present an extensive experimental study demonstrating that ARMT-augmented models: (i) process inputs well beyond their original context limits without degrading performance relative to in-limit baselines; (ii) generalize more effectively to out-of-distribution context lengths; and (iii) need 30% less FLOPs while preserving baseline performance within the original context window.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}
