@@ -1,0 +1,601 @@
+Title: Cache-Aware Prompt Compression:A Two-Tier Cost Model for LLM API Caching
+
+URL Source: https://arxiv.org/pdf/2607.15516v1
+
+Published Time: Mon, 20 Jul 2026 00:18:39 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Cache-Aware Prompt Compression: A Two-Tier Cost Model for LLM API Caching 
+
+Yan Song 
+
+PayPal Inc. 
+
+ysong2@paypal.com 
+
+Abstract 
+
+Production LLM deployments routinely combine two cost-reduction primitives — prompt caching (charging a deeply discounted rate for re-used token prefixes) and prompt compression 
+
+(reducing the number of tokens sent). The prompt-compression literature has standardized on 
+
+query-aware methods that produce a different compressed prefix for every query, a design choice that mechanically invalidates the prefix-strict cache on every call. We characterize the cost of this choice empirically on Anthropic’s Sonnet 4.6 API and find that caching is far from the ρ = 1 .0
+
+ideal the literature assumes: Sonnet’s cache has a two-tier architecture with a sharp threshold near 3,500 tokens, below which the hit rate plateaus at ρ ≈ 0.83 across 30-call sessions. Our cost model predicts — and experiments confirm — that under realistic ρ, query-aware compression beats naïve caching at high compression ratios ( r ≥ 6). We then propose Cache-Aware Prompt Compression (CAPC) , which pairs query-agnostic compression with explicit cache_control ,augmented by a tier-preserving ratio bound that prevents over-compression from pushing the cached prefix into the hot tier. CAPC is the cheapest strategy in 16 / 16 (document-size × ratio) configurations on LongBench-v2, with mean savings of 49% over cache-only (range 24–67%), 64% over query-aware compression (range 42–76%), and 90% over vanilla (range 84–94%) — at quality within 0.05 of the uncompressed baseline at tier-preserving ratios. We validate CAPC on three production-scale workloads: an enterprise tool-using assistant with a 94k-token tools= schema prefix (51.7% cost reduction at r=3), a graphify knowledge-graph RAG pipeline replicated across two codebases (9.3 × vs. cache-all on FastAPI, 2.4 × on httpx , with stable 85% cache hit rate across 5k– 260 k prefix sizes), and the public τ -bench retail benchmark (50 tasks with deterministic database-state reward), where CAPC is the cheapest of four strategies with task-completion reward exactly equal to vanilla (both 36/50, z = 0 .00 , p = 1 .00 ) while query-aware compression is the most expensive at +40 .1% over vanilla — the first production confirmation of the crossover model’s negative-ROI prediction on a public benchmark. Total Anthropic API spend across all experiments was $98.96. 
+
+# 1 Introduction 
+
+Modern LLM deployments combine two cost-reduction primitives that the literature has so far treated separately. Prompt caching (Anthropic’s cache_control , OpenAI’s automatic caching, Google’s Vertex caching) saves cost by storing the KV-states of a prefix and charging a discounted rate for subsequent reads. Prompt compression (LLMLingua, LongLLMLingua, Cmprsr) saves cost by reducing the number of tokens sent in the first place. These two ideas are typically in conflict . Query-aware compression methods — the dominant family in the prompt-compression literature — produce a different compressed prefix for every query. This breaks the prefix constraint that caching depends on: every call is a cache miss, every call pays 1arXiv:2607.15516v1 [cs.LG] 17 Jul 2026 the full uncached input rate, and the carefully-tuned compression savings are erased by repeated cache writes. We characterize this interaction empirically on Anthropic’s Sonnet 4.6 API. We show that under realistic, measured cache hit rates ρ(N, |P |), the literature’s implicit assumption ρ = 1 .0 misstates the cost-quality landscape in three concrete ways: (1) Anthropic’s cache has a two-tier architecture 
+
+with a sharp size threshold near 3,500 tokens, below which ρ < 1; (2) at high compression ratios (r ≥ 6), query-aware compression actually beats naïve cache-only — the inverse of conventional wisdom; (3) at all 16 (doc-size × ratio) configurations tested on LongBench-v2, a simple Cache-Aware Prompt Compression ( CAPC ) that combines query-agnostic compression with caching strictly dominates the literature’s baselines. 
+
+Contributions. Our contributions are: 1. An empirical characterization of Anthropic Sonnet 4.6’s prompt cache that uncovers a two-tier architecture (hot/limited tier below ∼3k tokens with ρ ≤ 0.83 ; persistent/replicated tier above with ρ ≈ 1.0), reproducible across n = 3 independent trials with σ = 0 at the plateau. 2. A realistic cost model cost (N, |P |, r ) = N [(1 − ρ(N, |P |/r )) |P |/r c w + ρ(N, |P |/r ) |P |/r c r 
+
+> ]
+
++output that subsumes the literature’s ideal model ( ρ = 1 .0) as a special case and produces a 
+
+crossover prediction — at r ≥ 6, cache-only practically never beats query-aware compression — that we validate exactly on real API spend. 3. Cache-Aware Prompt Compression (CAPC) with an associated tier-preserving ratio bound rmax (P ) = ⌊P/ 3500 ⌋ that prevents over-compression from pushing the cached prefix into the hot tier. 4. A 16/16 empirical dominance result on LongBench-v2 documents (12k–25k tokens, ratios 2–6, N = 10 queries per cell): CAPC is the cheapest of four strategies in every configuration, with mean savings of 49% over cache-only, 64% over query-aware compression, and 90% over vanilla. A separate 18-point cost-quality Pareto sweep (Section 6) shows CAPC fully dominant on the 28k-token document (0/6 dominated by any baseline) and at matched quality saves 53–78% vs. cache-only. 5. Production validation at scale on an enterprise tool-using assistant (Section 6.3): CAPC 
+
+delivers 51.7% cost reduction over vanilla on a 94k-token tools= schema prefix, while uncovering an implicit-tools-caching phenomenon that qualifies our Section 3.1 characterization. 6. The "last-mile delivery" framing for knowledge-graph RAG (Section 6.4): we inte-grate CAPC with graphify and show that the indexer’s native query output is content-free (NODE/EDGE metadata only); CAPC ’s Layer 2 source_file dereference closes this gap. Replicated on two codebases with opposite model-prior strengths (FastAPI: model knows it well; 
+
+httpx : substantially less), revealing the prior-mediated nature of CAPC’s quality contribution. We release capc_graphify_profiler.py , a heuristic auto-configurator that reduces integration to two commands. 7. Public-benchmark validation with deterministic ground-truth reward (Section 6.5): on τ -bench retail (50 tasks, multi-round tool-using agent, judge-free 0/1 DB-state reward), 
+
+CAPC is the cheapest of four strategies with reward exactly equal to vanilla (both 36/50, two-proportion z = 0 .00 , p = 1 .00 ), while query-aware compression is +40 .1% more expensive than vanilla — a direct, reproducible production confirmation of Section 4’s negative-ROI prediction. The contrast between τ -bench retail (small wiki-dominated prefix, query-aware 2penalty +40% ) and EA (large tools-dominated prefix, query-aware penalty −31% ) yields a refined characterisation: the cost effect of query-aware compression is monotone in the mutated fraction of the cached prefix, a finding we develop in Section 7.2. 
+
+Scope and what generalizes. This paper makes both framework-level and empirical-snapshot 
+
+claims, and we are explicit about which is which. The cost model (Section 4), the crossover analysis methodology, the CAPC algorithm (Section 5), the tier-preserving ratio bound, and the AdaptiveCacheBoundary algorithm (Section 5.3) are framework contributions that depend only on the existence of a prefix-strict caching API with a cw > c r pricing structure — a property currently shared by all major commercial LLM APIs (Anthropic, OpenAI, Google). The specific numerical values — the two-tier threshold at ∼3,500 tokens, the ρ ≈ 0.83 hot-tier plateau, the 16/16 dominance percentages, the crossover thresholds ρcross (r) — are Sonnet 4.6 in May 2026 measurements. We expect the qualitative findings (two-tier architecture, ρ < 1 at small prefixes, CAPC dominance) to transfer to other providers and future model versions, while the specific numbers will need re-measurement. Section 7 elaborates the cross-provider replication plan; Section 4 presents the crossover analysis in parametric form so practitioners can re-derive the design rule from their own measured prices. 
+
+Paper roadmap. Section 2 surveys related work on prompt caching evaluation, prompt compres-sion, and the small literature on their interaction. Section 3 presents our empirical characterization of Sonnet 4.6’s caching behavior. Section 4 derives the cost model and crossover analysis. Section 5 specifies the CAPC algorithm with the tier-preserving ratio bound and the adaptive segment-classification subroutine. Section 6 presents five experiments across four independent prompt structures: (§6.1–6.2) synthetic LongBench-v2 documents; (§6.3) a production enterprise tool-using assistant with a 94k-token tools= prefix; (§6.4) two graphify knowledge-graph RAG case stud-ies on FastAPI and httpx ; and (§6.5) the public τ -bench retail benchmark with deterministic database-state reward. Section 7 discusses limitations and future work. 
+
+# 2 Related Work 
+
+Prior work touching CAPC ’s design space falls into five threads: empirical characterization of prompt caching, prompt compression methods, cost-aware model routing, agent and reasoning budget control, and the small but growing body of industry guidance on cache-aware prompt construction. Each thread has produced useful primitives but stops short of the joint optimization 
+
+CAPC requires. 
+
+2.1 Prompt caching: from implementation to economic modeling 
+
+Anthropic, OpenAI, and Google have all shipped cache_control -style prefix-caching APIs in 2024–2025, accompanied by detailed pricing schedules. The academic study of these APIs is recent and narrow. Don’t Break the Cache (Lumer et al., 2026) evaluates three caching strategies on the DeepResearch benchmark for long-horizon agentic tasks but does not propose a cost model. Auditing Prompt Caching (Gu et al., 2025) treats caching as a side-channel privacy risk. vCache (Schroeder et al., 2025) and GenCache (Chakraborty et al., 2025) study semantic caching mechanisms, which is orthogonal to prefix caching. 3Gap. We provide the first systematic ρ(N, |P |) characterization on a production caching API, uncover a two-tier cache architecture with a sharp threshold near 3,500 tokens, and embed the empirical curve in a cost model that the rest of the paper builds on. 
+
+2.2 Prompt compression: query-aware vs query-agnostic 
+
+The dominant family of prompt-compression methods is query-aware . LLMLingua (Jiang et al., 2023a) introduced this paradigm with a 10–20 × token reduction; LongLLMLingua (Jiang et al., 2023b) extended it to the long-context regime; Prompt Compression in the Wild (Kummer et al., 2026) measures LLMLingua’s behavior across 30k production queries. ProCut (Xu et al., 2025) and 
+
+CompactPrompt (Choi et al., 2025) propose domain-tuned compressors. 500xCompressor (Li et al., 2024) and Fundamental Limits of Prompt Compression (Nagle et al., 2024) push the compression ratio frontier and characterize information-theoretic bounds. The crucial property of all query-aware methods is that they produce a different compressed prefix for every query, by construction. This is precisely the property that prompt caching forbids. A small literature on query-agnostic compression exists. Cmprsr (Zakazov et al., 2025) trains an RL-driven query-agnostic abstractive compressor and notes that the result is “amenable to pre-computation”; however, it does not model the caching economics that make pre-computation valuable. 
+
+Gap. We position query-agnostic compression as the cache-preserving design choice it implicitly was, evaluate it against three canonical baselines, and identify a new failure mode — over-compression that pushes the cached prefix into the hot cache tier (Section 5). 
+
+2.3 Cost-aware model routing and cascading 
+
+FrugalGPT (Chen et al., 2023) introduced LLM cascades. RouteLLM (Ong et al., 2024) trains a binary router. xRouter (Qian et al., 2025) uses RL for cost-aware orchestration. The Cascade Routing framework (Dekoninck et al., 2025) unifies these. These works treat the per-model price as a static constant ; none considers cache-stickiness. 
+
+Gap. The ρ(N, |P |) cost model is directly composable with any of these routers; we flag this as future work in Section 7. 
+
+2.4 Agent and reasoning budget control 
+
+Budget-Aware Tool-Use (Liu et al., 2025) limits the number of tool calls; INTENT (Liu et al., 2026) optimizes budget-constrained agentic LLMs; Re-FORC (Zabounidis et al., 2025) adapts the chain-of-thought reasoning budget per query. This thread operates on a different lever — call count rather than token content — and composes cleanly with CAPC .
+
+2.5 Industry guidance and the academic–practical gap 
+
+A substantial body of industry writing — provider documentation (Anthropic, 2024; OpenAI, 2024), engineering blogs — gives correct but informal guidance for cache-aware prompt construction (“static first, dynamic last”; “compress first, then cache the compressed version”). 4Gap. We turn this informal production guidance into (a) a formal cost model with measured parameters, (b) an algorithm with a derived design rule, and (c) a rigorous empirical evaluation against established academic baselines. 
+
+2.6 Summary of positioning                                 
+
+> Prior thread Representative work ρtreated as Compress ×
+> cache? Cost model? Cache eval Don’t Break the Cache unmeasured partial no Prompt compression LLMLingua, Cmprsr ρ= 1 .0implicit no no Cache mechanism vCache, GenCache n/a (semantic) no no Model routing FrugalGPT, RouteLLM static const no partial Industry guidance Anthropic blog implicit informal no
+> CAPC (ours) —empirical ρ(N, |P|)yes two-tier
+
+Table 1: Positioning of CAPC relative to the five closest literature threads. 
+
+# 3 Empirical Characterization of Sonnet 4.6 Prompt Caching 
+
+Prior work on prompt caching either treats the cache hit rate ρ as an unmeasured (and usually implicit) ρ = 1 .0 or studies caching behavior without producing a quantitative cost model. Before we can argue that query-aware compression has negative ROI under realistic caching (Section 4) or that CAPC dominates (Section 6), we need to characterize ρ as a function of the variables a deployment can control. This section reports four empirical findings. All measurements use claude-sonnet-4-6 with 5-minute TTL ephemeral caching. To prevent inter-experiment cache pollution, every cached prefix is tagged with a per-run UUID ( RUN_NONCE in our codebase). Total characterization cost: $1.91 in API calls. 
+
+3.1 ρ(N, |P |) has a two-tier architecture 
+
+We measured ρ as a function of subsequent-call count N in two phases: first at a fixed prefix size of 2.4k tokens ( n = 3 trials, N up to 50), then sweeping prefix sizes {2, 4, 6, 8}k tokens ( n = 3 trials per size, N up to 30). At 2.4k tokens, the cumulative hit rate climbs from ρ(N = 5) = 0 .47 to a plateau of ρ(N = 50) = 0.89 , with reproducibility σ ≤ 0.01 at the plateau. This refutes the literature’s implicit ρ = 1 .0
+
+assumption (Figure 1). The multi-size sweep reveals a step function :
+
+|P | tokens ρ(N = 5) ρ(N = 10) ρ(N = 30) 
+
+2,053 0.53 0.63 0.83 
+
+4,096 1.00 1.00 1.00 6,139 1.00 1.00 1.00 8,182 1.00 1.00 1.00 
+
+Table 2: ρ as a function of prefix size and call count. Threshold lies between 2k and 4k tokens. At 2k all three trials produced ρ(N = 30) = 25 /30 = 0 .833 exactly (σ = 0 ). Above threshold, 
+
+ρ = 1 .0 from the first subsequent call. We adopt T ≈ 3,500 tokens as the modeling threshold. 5Figure 1: Cumulative cache hit rate ρ(N ) at |P | = 2 .4k cached tokens, n = 3 independent trials. Hit rate climbs from ρ ≈ 0.47 at N = 5 to a plateau of ρ ≈ 0.89 at N ≥ 40 .
+
+3.2 Prefix invalidation is token-strict, with one tokenizer caveat 
+
+A correctness prerequisite is that the cache key is computed over the exact token sequence of the marked prefix. We tested this by sending the same prompt 10 times (warming the cache), then sending four controlled mutations: (a) different post-cache_control query (expected HIT); (b) 1-character mutation at the start of the cached prefix (expected MISS); (c) 5-character mutation in the middle (expected MISS); (d) a real-token suffix ( " END." ) appended at the end (expected MISS). All four expectations were met (4/4 PASS). However : an initial naive test that prepended a single space character ( " " + doc ) unexpectedly HIT — Claude’s tokenizer normalizes leading and trailing whitespace before computing the cache key. The mutation tests above use real-content edits to avoid this confound. 
+
+3.3 Billing reconciles with documented rates to <1% 
+
+Across three independent step 1 runs, the billing total reported by Anthropic matched our me-chanical calculation — $3.00/MTok input, $15.00/MTok output, $3.75/MTok cache write (5-min), $0.30/MTok cache read — within 1% in all three cases. The published pricing table is exact. 
+
+# 4 Cost Model and Crossover Analysis 
+
+We derive per-call cost expressions for the four strategies the paper compares. 6Figure 2: ρ(N, |P |) surface at four prefix sizes. The 2k curve (hot tier) plateaus at ρ ≈ 0.83 ; 4k, 6k, 8k (persistent tier) sit at ρ = 1 .0 from N = 2 onward. 
+
+4.1 Notation and the strategy zoo 
+
+Let |D| be the document size in tokens, r the compression ratio, N the number of queries, Dq the per-query dynamic block size, O the output size. 
+
+A — Vanilla Full document and query, no cache, no compression. 
+
+B — Cache-only Full document marked with cache_control , no compression. 
+
+C — Query-aware compress Per-query compressed prefix, no caching. 
+
+D — CAPC Query-agnostic compression of D to size |D|/r , cached with cache_control .
+
+4.2 Per-strategy cost expressions 
+
+cost A(|D|, N ) = N [(|D| + Dq) pin + O p out  
+
+> ]
+
+(1) 
+
+cost B (|D|, N ) = N [(1 − ρB ) |D| cw + ρB |D| cr + Dq pin + O p out  
+
+> ]
+
+(2) 
+
+cost C (|D|, N, r ) = N [(|D|/r + Dq) pin + O p out  
+
+> ]
+
+(3) 
+
+cost D(|D|, N, r ) = N [(1 − ρD) ( |D|/r ) cw + ρD (|D|/r ) cr + Dq pin + O p out  
+
+> ]
+
+(4) where ρB = ρ(N, |D|) and ρD = ρ(N, |D|/r ).
+
+4.3 The crossover threshold (general form) 
+
+Dropping the common N (Dqpin + Op out ) overhead and equating per-call cached and compressed costs gives the crossover ρ threshold :7ρcross (r) = cw − pin /r cw − cr
+
+. (5) This is a provider-agnostic formula: it requires only the three pricing constants (pin , c w, c r). To make the generalization more transparent we can rewrite (5) in dimensionless form. Let α = cw/p in 
+
+(write-rate premium over uncached input, 1.25 on Sonnet 4.6’s 5-minute TTL, 2.0 on the 1-hour TTL) and β = cr/p in (read-rate discount, 0.10 on Sonnet 4.6). Then: 
+
+ρcross (r) = α − 1/r α − β . (6) For any provider whose write/read ratio is close to Anthropic’s ( α ≈ 1.25 , β ≈ 0.1), the crossover thresholds will be close to those reported below. OpenAI’s automatic caching is similar in structure ( α = 1 .0, β = 0 .5 at the time of writing); Google Vertex caching uses a different schedule. Practitioners can plug their own measured α, β into (6) to derive the design rule for their deployment. 
+
+Sonnet 4.6 instantiation. With pin = 3 .00 , c w = 3 .75 , c r = 0 .30 (equivalently α = 1 .25 , β =0.10 ):                             
+
+> rρcross (r)Interpretation 20.652 B beats C if ρ > 0.65
+> 30.797 B beats C if ρ > 0.80
+> 40.870 B beats C if ρ > 0.87
+> 60.942 B beats C only if ρ≥0.94
+> 80.978 B beats C only if ρ≥0.98
+> 10 1.000 (capped) ρ > 1.0impossible — B never beats C
+
+Table 3: Crossover ρ on Sonnet 4.6. At r ≥ 6 the threshold exceeds Sonnet 4.6’s empirical ρ plateau (∼0.89 ), so C beats B in practice. 
+
+Sensitivity to pricing. A useful concrete sensitivity: at fixed β = 0 .1, halving the write premium from α = 1 .25 to α = 1 .1 pushes the “B-never-beats-C” regime from r ≥ 10 down to r ≥ 4. That is, less aggressive write pricing widens the regime in which query-aware compression dominates naïve caching . Conversely, if a future provider sets α = 2 .0 (e.g., a 1-hour TTL cache), the regime moves up to r ≥ 16 . The qualitative finding — a finite crossover ratio above which cache-only loses to compression — is robust as long as β < 1 < α , which is the standard pricing structure of all currently shipping cache APIs. 
+
+4.4 Empirical crossover N from the two-tier ρ
+
+The crossover ρ thresholds can be converted into crossover N values: Section 6 verifies this prediction: 4 of 4 r = 6 configurations showed C cheaper than B. 
+
+4.5 Robustness to pricing and infrastructure changes 
+
+The specific numbers in Tables 3 and 4 are functions of Sonnet 4.6’s May 2026 pricing and Anthropic’s measured two-tier cache architecture. We sketch how the analysis shifts under four plausible future scenarios. 8r ρcross Ncross (ideal ρ = 1 ) Ncross (empirical) 2 0.652 5.6 small ( ≈5) 3 0.797 7.0 24 4 0.870 8.3 38 6 0.942 10.5 ∞ in practice 8 0.978 12.2 ∞ in practice 
+
+Table 4: Crossover N under ideal vs. empirical ρ. Under the two-tier model, the crossover shifts by a factor of 3–5 ×, and at r ≥ 6 never happens in practice. 
+
+Scenario 1: cache_read becomes cheaper. If a future model lowers β = cr/p in from 0.10 to (say) 0.05 while keeping α = cw/p in at 1.25 , then (6) pushes every ρcross (r) downward (B beats C in more regimes). The CAPC advantage grows accordingly because CAPC ’s cache reads become cheaper too — the gap between D and C widens. Qualitative conclusions strengthen. 
+
+Scenario 2: write premium tightens. If α shrinks toward 1.0 (cache writes priced equal to uncached input), the regime where “B never beats C” moves from r ≥ 10 down to r ≥ 4. Many real workloads use r ∈ [2 , 4] , so this regime becomes more frequently encountered, strengthening the motivation for CAPC .
+
+Scenario 3: the two-tier architecture collapses. If a future API offers a uniform ρ → 1.0
+
+regardless of prefix size (no hot/persistent split), the tier-preserving ratio bound (Section 5.2) loses its threshold-based justification. However, CAPC ’s remaining advantage — the 1/r reduction in per-call cached tokens — is unaffected. Section 6 shows that even at ρ = 1 .0, CAPC dominates baselines by 50–65%; the empirical advantage is robust to the threshold’s existence. 
+
+Scenario 4: semantic prefix matching. A speculative shift: providers introduce semantic caching that tolerates small prefix perturbations (akin to Schroeder et al. (2025)’s verified semantic cache). Under such an API, query-aware compression (Strategy C) would partially recover cache hits, narrowing the gap to CAPC . The CAPC algorithm’s advantage would then come purely from token reduction rather than cache preservation, but it would remain strictly better than both query-aware-compression-alone and cache-only. 
+
+What is genuinely invariant. Across all four scenarios, three properties persist: (i) query-aware compression at least matches CAPC (equality when ρ = 1 and semantic caching is perfect; otherwise CAPC strictly better); (ii) the cost model (5) retains its functional form, with provider-specific pricing as parameters; (iii) the methodology of RUN_NONCE -isolated ρ(N, |P |) characterization transfers directly. We therefore expect the framework contributions of this paper to outlive the specific Sonnet 4.6 numbers by several model generations. 
+
+# 5 The CAPC Algorithm 
+
+5.1 Core CAPC procedure 
+
+Let D denote a static document, Q1, . . . , Q N a stream of queries, r a compression ratio, and Compress 
+
+any query-agnostic sentence-selection compressor. 9Listing 1: Core CAPC procedure                        
+
+> def CAPC (D , queries , r ) : D_prime =Compress (D , r ) #once , off the request path for qin queries : api . messages . create ( content =[ {" type ": " text " , " text ": D_prime , " cache_control ": {" type ": " ephemeral "}} , {" type ": " text " , " text ": q } , ])
+
+The critical design choices are: (i) D′ is computed once and reused across all N queries; (ii) the 
+
+cache_control marker is placed on the compressed-document block but not on the query block. 
+
+5.2 Tier-preserving ratio bound 
+
+Increasing r reduces |D|/r and lowers the per-query cost until |D|/r falls below the persistent-tier threshold T ≈ 3500 tokens, at which point ρ drops from 1 to roughly 0.85 and a substantial fraction of calls pay the write rate cw = 12 .5 cr.
+
+rsafe max (|D|) =  
+
+> ⌊
+
+|D|
+
+T
+
+> ⌋
+
+, T = 3 ,500 tokens (Sonnet 4.6) . (7) Section 6 visualizes this empirically on a 12,191-token document: at r = 3 the compressed prefix is 4,067 tokens (persistent) and the per-query cost is $0.0057; at r = 4 the compressed prefix drops to 3,119 tokens (hot) and the cost rebounds to $0.0101 — a 77% increase from a single ratio increment. 
+
+5.3 AdaptiveCacheBoundary: handling evolving prompts 
+
+When the document evolves across calls, CAPC extends with an AdaptiveCacheBoundary 
+
+subroutine that classifies each sentence position as STATIC, QUASI, or DYNAMIC based on observed mutation rate across K versions. For each sentence position p, the set of fingerprints {h( norm (D(k) 
+
+> p
+
+)) : k = 1 , . . . , K } is computed, where norm is a regex-based normalizer (dates → [DATE] , large numbers → [NUM] , amounts 
+
+→ [AMOUNT] ). The mutation rate is μp = 1 − max h count (h)/K . Thresholds εstatic = 0 .05 and 
+
+εquasi = 0 .30 partition positions into the three classes. The cache prefix is the maximal STATIC-or-QUASI contiguous prefix. 
+
+Whitespace normalization. Section 3’s finding that Claude’s tokenizer normalizes leading and trailing whitespace implies that whitespace-only segment diffs are not real mutations from the cache’s perspective. The algorithm normalizes whitespace before fingerprinting. 
+
+5.4 Empirical validation of AdaptiveCacheBoundary 
+
+We evaluate the algorithm on three LongBench-v2 documents ( ∼6k, 12k, 24k tokens) with synthetic but realistic version-drift across K = 25 versions, at four mutation rates μ ∈ { 0.05 , 0.10 , 0.20 , 0.40 }.10 Mutation rate μ Token retention (mean) Adaptive vs. naïve savings (mean) 0.05 100% +86%       
+
+> 0.10 85% +76%
+> 0.20 85% +76%
+> 0.40 80% +73%
+
+Table 5: Adaptive boundary algorithm performance under synthetic version drift. 12/12 configura-tions achieved positive savings. 
+
+Figure 3: Adaptive boundary on real LongBench-v2 docs with synthetic version drift. Left: cost savings vs. naïve full-doc caching. Right: fraction of document tokens captured in the adaptive prefix. 
+
+Real-trace validation on production git histories. To remove the residual concern that the synthetic-mutation setup may favour the algorithm, we additionally ran AdaptiveCacheBoundary on three real engineer-driven file histories from the enterprise tool-using AI Assistant repository introduced in Section 6.3: main.py (the FastAPI entry point), orchestrator.py (the multi-round tool-use loop), and analysis_module.py (a long-running analysis module). Each file has 25+ commits in the EA git history. We feed the 25 most-recent versions of each file (oldest to newest) into the algorithm with the same hyper-parameters as Section 5.4 ( εstatic = 0 .05 , εquasi = 0 .30 ,
+
+min _calls = 3 ), and report the resulting classification plus savings versus naïve cache-all over a 10-query session against the latest version. 
+
+5.5 Practical guidance 
+
+1. For static, single-version documents: use the core CAPC procedure with the smaller of rtarget 
+
+and rsafe max (|D|).2. For evolving documents: observe K ≥ 3 versions, run AdaptiveCacheBoundary, use the adaptive prefix as the cached block. 3. For documents below the persistent-tier threshold: CAPC is not the right strategy; use cache-only (Strategy B) instead. 11 File (EA repo) K STATIC QUASI DYNAMIC Adaptive prefix vs cache-all                   
+
+> main.py 25 33% 22% 44% 12 tok −62.6%
+> orchestrator.py 25 14% 6% 79% 17 tok −70.5%
+> analysis_module.py 25 17% 3% 80% 749 tok −64.4%
+
+Table 6: Real-trace AdaptiveCacheBoundary validation on three heavily-edited EA source files (25 commits each, full local git history, no API calls). The algorithm correctly identifies that these production files are predominantly DYNAMIC (44–80% of sentence-level positions mutate at rate 
+
+> ε quasi across the 25 commits) and therefore extracts a very small but genuinely stable adaptive prefix (12–749 tokens of imports, constants, and stable function signatures). Even with such a small adaptive prefix, the algorithm yields −62 .6% to −70 .5% cost savings versus naïve cache-all by avoiding the cache-write tax on the predominantly-dynamic remainder. This complements the synthetic results in Table 5: when the underlying workload IS as benign as the synthetic generator, savings scale to +86% ; when the workload is as adversarially dynamic as a hot production file, savings still stay in the 60 –70% band. 
+
+Figure 4: AdaptiveCacheBoundary on real EA git histories ( K = 25 commits per file). Left: STATIC/QUASI/DYNAMIC composition — real production code is much more dynamic than the synthetic configurations in Table 5. Right: cost savings versus naïve cache-all hold at 62 –70% 
+
+because the algorithm correctly refuses to cache the dynamic majority. 
+
+# 6 Experiments 
+
+6.1 16/16 Dominance Grid 
+
+Setup. Four LongBench-v2 (Bai et al., 2024) documents at increasing lengths (12,191 / 16,319 / 21,531 / 24,576 tokens), four compression ratios r ∈ { 2, 3, 4, 6}, yielding 16 (doc × ratio) configurations. N = 10 queries per cell. Quality is judged by Haiku 4.5 self-consistency ×3 against vanilla baselines. Total API spend: $8.18. 
+
+Crossover validation. Section 4 predicts that B never beats C when ρcross (r) exceeds the achievable ρ plateau. At r = 6 , ρcross = 0 .942 , exceeding the empirical ρ plateau ( ∼0.89 ). Our experiment confirms this exactly: in all 4/4 r = 6 configurations, C is cheaper than B .12 Doc tokens Ratio A vanilla B cache C compress D CAPC D save vs B 12,191 2 0.0447 0.0096 0.0233 0.0061 37% 12,191 3 0.0447 0.0096 0.0162 0.0048 50% 12,191 4 0.0447 0.0096 0.0126 0.0073 24% 12,191 6 0.0447 0.0096 0.0092 0.0050 48% 16,319 2 0.0543 0.0112 0.0285 0.0068 40% 16,319 3 0.0543 0.0112 0.0197 0.0052 54% 16,319 4 0.0543 0.0112 0.0154 0.0045 60% 16,319 6 0.0543 0.0112 0.0110 0.0062 45% 21,531 2 0.0873 0.0169 0.0412 0.0102 39% 21,531 3 0.0873 0.0169 0.0283 0.0079 53% 21,531 4 0.0873 0.0169 0.0216 0.0067 60% 21,531 6 0.0873 0.0169 0.0152 0.0088 48% 24,576 2 0.0998 0.0191 0.0456 0.0114 40% 24,576 3 0.0998 0.0191 0.0318 0.0091 52% 24,576 4 0.0998 0.0191 0.0244 0.0079 59% 24,576 6 0.0998 0.0191 0.0170 0.0062 67%      
+
+> Mean 0.0741 0.0144 0.0238 0.0073 48.5%
+
+Table 7: Per-query cost (USD) on LongBench-v2. CAPC is the cheapest strategy in 16/16 configurations. Aggregate savings: 89.6% vs. vanilla (range 83.6–93.8%), 48.5% vs. cache-only (range 23.8–67.4%), 64.4% vs. query-aware compression (range 41.8–76.3%). 
+
+Quality preservation. Mean quality scores: Vanilla A 0.73, Cache-only B 0.75, Query-aware C 0.67, CAPC D 0.66. At r = 2 , all four strategies sit within 0.04 quality of each other. 
+
+6.2 Cost-Quality Pareto Sweep 
+
+Setup. Three LongBench-v2 documents chosen to span the cache-tier threshold (12,191 / 20,246 / 27,917 tokens). Six compression ratios r ∈ { 1.5, 2, 3, 4, 6, 8} swept for C and D. N = 6 queries per doc. Total API spend: $6.54.            
+
+> Doc tokens CAPC dom. by baselines Baselines dom. by CAPC Headline 12,191 2 / 6 6 / 8 CAPC mostly Pareto-optimal 20,246 3 / 6 3 / 8 Content-dependent quality cliff (Sec 7)
+> 27,917 0 / 6 ✓4 / 8 CAPC fully Pareto-dominant
+
+Table 8: Within-document Pareto dominance. 
+
+Doc tokens B cache-only CAPC at matched-quality Savings 12,191 $0.0122 / q =0.77 r = 3 → $0.0057 / q =0.77 53% 
+
+27,917 $0.0323 / q =0.77 r = 6 → $0.0070 / q =0.72 ( −0.05 q) 78% 
+
+Table 9: Same-quality cost savings of CAPC vs. cache-only baseline. 
+
+Same-quality savings. 
+
+13 Figure 5: Per-query cost vs. document length on LongBench-v2. Each panel shows the four strategies at a fixed compression ratio. CAPC (green) is the cheapest in all configurations. 
+
+Tier-preserving sweet-spot. The 12,191-token document demonstrates the cache-tier threshold empirically. Increasing r from 3 to 4 pushes the compressed prefix from 4,067 tokens (persistent tier) to 3,119 tokens (hot tier), and the per-query cost rebounds from $0.0057 to $0.0101 (a 77% increase from a single ratio increment). 
+
+Figure 6: Cost-quality Pareto frontier per document. Each panel = one document; each curve = one strategy across compression ratios. CAPC (green diamonds) is fully Pareto-optimal on the 28k doc. 
+
+6.3 Production validation on an enterprise tool-using assistant 
+
+To validate CAPC on a real production workload, we benchmarked it against an enterprise tool-using assistant (henceforth EA), an internal Claude-based agent serving the internal engineering team. EA’s prompt structure is substantially larger than our LongBench-v2 docs: a 1,312-token system prompt plus 287 MCP tool definitions (71 from internal MCP catalogue A, 217 from catalogue B, totaling 93k tokens of tool schemas) for a combined static prefix of approximately 94,401 tokens per call — well into the persistent tier. We ran 4 strategies × 15 representative enterprise engineering queries (observability, CI/CD, SDLC metrics, data-science feature search, Jira). Results below are per-query means across the 15 queries: 14 Strategy Ratio Cost/query Hit rate Quality vs Vanilla A: Vanilla — $0.13323 93% 1.000 —B: Cache-only — $0.10888 100% 0.703 −18.3% C: Query-aware (r=2) 2 $0.12863 100% 0.680 −3.5% C: Query-aware (r=3) 3 $0.09768 100% 0.603 −26.7% D: CAPC (r=2) 2 $0.12785 87% 0.680 −4.0%      
+
+> D: CAPC (r=3) 3$0.06428 100% 0.700 −51.7%
+
+Table 10: EA production validation ($9.91 / 15 queries, repeated across two runs). CAPC at r = 3 
+
+saves 51.7% over vanilla on a 94k-token static prefix; same tool-selection quality as cache-only (0.700 vs. 0.703). Cache-only’s modest −18% saving reflects that Anthropic already implicitly caches the tools= array (Section 7.1). Quality is measured by set-IoU on the tool names selected by each strategy versus the vanilla baseline (14–15 of 15 queries triggered tool_use , so text-similarity judging is replaced by a tool-aware judge). Three findings beyond the headline 51.7% saving are worth noting. First , the cost gap between Strategy B and Strategy A ( −18.3%) is much smaller than predicted by our LongBench-v2 cost model, because Anthropic implicitly caches large tools= arrays even without explicit cache_control 
+
+(Section 7.1); most of B’s “free” cache savings have already been captured for A. CAPC’s value in this regime therefore comes primarily from the compression layer. Second , Strategy D at r = 2 
+
+(compressing the 94k prefix to ∼47 k) still required cache writes large enough to offset most of the compression gain, yielding only −4.0% over vanilla; only once r = 3 reduces the prefix below 
+
+∼31 k does CAPC reach steady-state and recover the full benefit. The 94k-token prefix size requires multiple write events for the cache to propagate across Anthropic’s routing pool — consistent with the multi-server replication mechanism in Section 3.1, but amplified at this scale. Third , and surprisingly, CAPC’s query-agnostic compression at r = 3 delivered better tool-selection quality 
+
+(0.700) than query-aware compression (Strategy C, r = 3 : 0.603). When the compressor is allowed to see the query, it preferentially preserves content related to that query — which here means it discards tool definitions the model would otherwise have selected. Query-agnostic compression preserves the full tool catalog uniformly, leading to better tool selection in a tool-augmented agent setting. This validates the CAPC framework on a real production system at 10 2× the prompt scale of our LongBench-v2 experiments. 
+
+End-to-end production-path validation. The numbers above come from a simulator that issues messages.create calls directly against the Anthropic API with EA’s prompt structure (system prompt + 287 MCP tools loaded from the two internal MCP catalogues A and B). To validate that the result also holds through the full production code-path — the FastAPI orchestrator, multi-round tool-use loop, lazy tool catalog ( USE_LAZY_TOOLS=True ), and streaming SSE response handler — we instrumented the production backend with a CAPC_STRATEGY environment variable (vanilla | cache_only | query_aware | capc ) that swaps the prompt assembly at the API call site, and re-ran the 15-query suite four times against a locally-hosted EA backend. The production-path measurements are summarised in Table 11: CAPC delivers −45.5% total cost versus vanilla and −16% versus cache-only, with 99.1% cache hit rate on the same Sonnet 4.6 model and pricing schedule. The gap from the simulator’s −51.7% is attributable to EA’s lazy-tool-loading behaviour (fewer active_tools= entries per call than the simulator assumed) and to per-round message accumulation, both of which moderate the cache write/read ratio. 15 Strategy Rounds $/round Total $ Hit% CR tok CW tok vanilla 147 $0.0378 $5.55 85.7% 3.40M 0.99M query_aware 128 $0.0297 $3.80 100% 2.36M 0.64M cache_only 102 $0.0352 $3.59 95.1% 2.50M 0.61M       
+
+> capc 107 $0.0283 $3.03 99.1% 2.91M 0.43M
+
+Table 11: End-to-end production-path measurement on a locally-hosted EA backend (15 queries, 4 strategies, Sonnet 4.6). CAPC is the cheapest in total cost ( −45.5% vs vanilla), writes the fewest cache tokens (0.43M vs vanilla 0.99M; query-agnostic compression shrinks the cached prefix), and completes the workload in the fewest multi-round tool-use rounds (107 vs vanilla 147; the compressed system prompt is more directive). Vanilla’s surprising 85.7% hit rate is the implicit tools= caching documented in Section 7.1. 
+
+6.4 Case study: knowledge-graph RAG with graphify 
+
+To validate CAPC on a third, qualitatively different prompt structure, we integrated it with 
+
+graphify (Shamsi and graphify contributors, 2025), an open-source agentic code-indexing tool that converts a repository into a queryable knowledge graph (NetworkX node-link format with Leiden communities and LLM-extracted concept edges). The combined pipeline is illustrative of a class of emerging "knowledge-graph RAG" workflows where the static context is too large to ship in full (∼2M tokens for the FastAPI repository) but too valuable to discard per-query. 
+
+Setup. We ran graphify on the FastAPI codebase ( ∼80 Python files plus multilingual docs and tutorials), producing a graph with 8,610 nodes / 15,969 edges / 981 communities 
+
+and a raw JSON dump of 8.2 MB (≈2.0M tokens). We then ingested this graph into the CAPC layered structure: Layer 1 (cached, query-agnostic) contains the top-50 god nodes by degree centrality, 1-line summaries of the top-100 communities, and the top-145 INFERRED semantic edges (conceptually_related_to , semantically_similar_to , implements ); Layer 2 (per-query, post-cache) is a bge-small top-5 retrieval over a 666-node filtered pool ( source_file prefix fastapi/ ), with each retrieved node expanded by reading ∼40 lines of source at its source_location . The Layer-1 prefix totals ≈11,500 tokens at r=2 (persistent tier), ≈9,800 tokens at r=3, and ≈5,200 tokens at r=5 (boundary of hot tier). 
+
+Strategies. The four strategies of Section 6 adapt naturally: G-A (vanilla, no graph access), 
+
+G-B (cache-all: full graph skeleton plus Layer 1, ≈262k tokens cached), G-C (naive graphify: per-query top-15 retrieval, no caching — the default pattern users adopt when they reach for graph RAG), and G-D (CAPC: Layer 1 cached, Layer 2 retrieved dynamically per query). We evaluated 40 FastAPI engineering queries spanning navigational ("where is X implemented"), conceptual ("how does Y work"), and cross-cutting ("trace X across the codebase") buckets. Quality is the Haiku 4.5 self-consistency judge score (median of 3) against the G-B reference answer; retrieval is scored as Recall@10 against authored ground-truth file paths. 
+
+Four findings. 
+
+Finding 1: CAPC dominates both G-C variants on quality (see Figure 7). G-D r=3 achieves quality 0.655 , matching the embedding-RAG baseline ( 0.655 ) and beating graphify’s native BFS algorithm ( 0.613 ) by +6 .8% . Against embedding-RAG, CAPC is also 24% cheaper and converts a 0% 
+
+cache hit rate into 85% ; against graphify-native, CAPC’s cost is 33% higher ( $0 .024 vs $0 .018 ) but the quality lift more than compensates. The full Pareto frontier among the six caching/non-caching strategies is {G-A , G-D r=3, G-D r=2, G-B }: the only non-CAPC strategies on the frontier are vanilla and full-context, and CAPC fills the entire intermediate quality region that neither alternative 16 Strategy Ratio Cost/query Hit% Recall@10 Quality vs G-B G-A: Vanilla — $0.0114 0.0% — 0.647 −95.0% G-B: Cache-all — $0.2248 85.0% — 1.000 ref G-C: Embedding-RAG — $0.0319 0.0% 0.88 0.655 −85.8% G-C: graphify-native (BFS) — $0.0180 2.5% 0.25 0.613 −92.0% G-D: CAPC ( r=2 ) 2 $0.0266 82.5% 0.80 0.657 −88.2%             
+
+> G-D: CAPC ( r=3 )3$0.0242 85.0% 0.80 0.655 −89.2%
+> G-D: CAPC ( r=5 , HOT) 5$0.0202 85.0% 0.80 0.647 −91.0%
+
+Table 12: Knowledge-graph RAG validation on the FastAPI codebase via graphify : 40 queries, mean per-call cost. Two G-C variants: the embedding-RAG baseline uses bge-small + top-k= 15 
+
+cosine retrieval, while graphify-native ports graphify/serve.py:_query_graph_text verbatim. Concretely, the latter performs tiered lexical matching against each node’s label (exact / prefix / substring bonuses of 1000 /100 /1, with an additional 0.5 multiplier for hits in source_file ) weighted by per-term IDF, picks the top ≤3 seed nodes (with a 20% score-gap stop to suppress high-frequency noise terms), runs BFS to depth 3 from those seeds while skipping degree-p99 hubs (floor 50) so concentrator nodes do not flood the subgraph, and renders the visited nodes/edges as text within a 2k-token budget. Crucially, the resulting prompt contains node labels, source_file /source_location 
+
+pointers, community IDs, and edge relation/confidence labels — but no source code . The empirical Pareto frontier is {G-A , G-D r=3, G-D r=2, G-B }: G-C-native is dominated by G-A (more expensive, lower quality), G-C-embedding is dominated by G-D r=3 (more expensive, equal quality, no cache), and G-D r=5 is dominated by G-A. Cache hit rate converges to 85% by query 10 across all caching strategies, consistent with the multi-server replication model of Section 3.1. can reach. 
+
+Finding 2: Cache stability matches the two-tier prediction at a new scale (Figure 8). The full graph skeleton in G-B is 262k tokens — far above the 3.5k tier boundary — and yet both G-B and G-D converge to ≈85% hit rate by query 10. The first 5–10 queries exhibit the WRITE-heavy "server pool warm-up" pattern predicted in Section 3.1 and observed at 94k in the EA case (Section 6.3). This validates that the multi-server cache replication model generalizes across infrastructure scales spanning 10 ×.
+
+Finding 3: Marginal gain over a no-graph baseline scales inversely with the model’s prior on the codebase, and we measure both endpoints empirically. The quality gap between G-D r=3 and G-A vanilla is only 0.8 percentage points on FastAPI ( 0.655 vs 0.647 ) — a framework Sonnet 4.6 has extensive training-time exposure to. On httpx , an HTTP client library the model knows substantially less well ( G-A vanilla drops to Q=0.300 ), the same strategy delivers Q=0.725 , a +142% absolute lift. This is the most direct two-point empirical evidence we have for the prior- dependence claim made in the EA section (Section 6.3): CAPC’s quality contribution is proportional to what the model doesn’t already know . On familiar codebases CAPC primarily delivers cost reduction (at unchanged quality); on unfamiliar codebases it delivers cost reduction plus substantial quality lift. Both regimes are practically relevant: vendor-locked enterprise codebases ( ∼httpx end) and well-known open-source frameworks ( ∼FastAPI end) cover most production deployments. 
+
+Finding 4: graphify’s native subgraph output is content-free; its quality contribution is mediated by the model’s prior on the codebase. graphify’s actual query mechanism ( serve.py , exposed via MCP) emits NODE label [src=path loc=L42 community=C0] + EDGE a –calls [EXTRACTED]–> b lines — the shape of the relevant subgraph but no source code . Whether this helps depends entirely on what the model already knows. On FastAPI, where Sonnet 4.6 has extensive 
+
+17 10 2 10 1   
+
+> Cost per query (USD, log scale)
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> 1.05
+> Answer quality (Haiku judge  × 3, vs G-B reference)
+> winner: G-D r=3
+> 9.3 × cheaper, 66% of G-B quality
+> Graphify ×CAPC: Cost-Quality Pareto (40 FastAPI queries)
+> G-A vanilla
+> G-B cache-all
+> G-C naive graphify
+> G-D CAPC r=2
+> G-D CAPC r=3
+> G-D CAPC r=5
+> Pareto frontier
+
+Figure 7: Cost-quality scatter on a log-cost axis. Dashed line is the empirical Pareto frontier among the six measured strategies. G-D r=3 and r=5
+
+are on the frontier; G-C is dominated by G-D r=2
+
+(same Recall but worse quality and zero cache). 5 10 15 20 25 30 35 40  
+
+> Query index (chronological)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cumulative cache hit rate  steady state 0.85
+> Cache hit rate warm-up (multi-server pool replication)
+> G-D CAPC r=2 (~12k prefix)
+> G-D CAPC r=3 (~10k prefix)
+> G-D CAPC r=5 (~5k prefix, HOT)
+
+Figure 8: Cumulative cache hit rate. All four caching strategies converge to ≈0.85 by query 10–15 (server-pool replication delay). G-D vari-ants reach steady state slightly faster than G-B because smaller prefixes propagate sooner across the pool. 
+
+training-time exposure (G-A Q=0.647 ), the structural metadata is largely redundant: graphify-native quality is 0.613 — below vanilla, because the added lines dilute attention without adding information. On httpx, where Sonnet has substantially weaker priors (G-A Q= 0.300 ),the same structural metadata is genuinely new information: graphify-native quality jumps to 0.637 
+
+(+112% over G-A). CAPC’s Layer 2 (which does include ≈40-line source excerpts at each retrieved node’s source_location ) closes the remaining gap in both regimes: Q=0.655 on FastAPI ( +0 .8% 
+
+over G-A) and Q= 0.725 on httpx ( +142% over G-A). The unifying principle: a knowledge graph indexes content; you still have to ship the content when the model needs it .
+
+Take-away: CAPC is the last-mile delivery layer for knowledge-graph RAG. Tools like graphify excel at building a knowledge graph — AST parsing, community detection, and LLM-extracted semantic edges produce a high-fidelity codebase index. By design, that index stores pointers ( source_file , source_location , community ID), not content; delivering the index’s value to an LLM at inference time is an orthogonal problem the indexer is not positioned to solve, because optimising for index quality and optimising for prompt economics are different concerns. CAPC closes the loop by separating the two: 
+
+• Layer 1 (the index — cached, query-agnostic) : graphify’s god nodes, community summaries, and INFERRED edges, compressed to ≈10k tokens and parked behind a single 
+
+cache_control marker. Built once per repo, amortised across every query. 
+
+• Layer 2 (the content fetch — per-query) : top-k retrieval plus an explicit dereference of each node’s source_file /source_location pointer, reading ≈40 lines of verbatim source from disk. The model sees both structural context and the code itself. Combined with prefix-strict caching, this delivers 9.3× cost reduction on FastAPI and 2.4×
+
+on httpx versus cache-all, at ≥ 85% cache hit rate, and delivers higher quality than graphify’s native query API in both regimes ( +6 .8% on FastAPI, +13 .8% on httpx ; Tables 12, 13). The pattern generalises beyond graphify : any pointer-emitting indexer — code-search systems (Source-graph / Cody), enterprise knowledge graphs, or schema catalogues that store “what” and “where” but ship the “what” only on demand — can use the same two-tier decomposition. The cost-stability 18 tradeoff at r=3 holds across all three prompt structures we validate (synthetic LongBench-v2 docs Section 6, production tools= schemas Section 6.3, and LLM-extracted knowledge graphs this section), supporting CAPC’s generality. 
+
+The profiler artifact. The seven CAPC integration parameters ( allowed_paths , noise_paths ,
+
+n_god_nodes , n_communities , n_inferred , recommended r, rmax _saf e ) were hand-selected for the experiment above. To support reproducible integration on new codebases, we release capc_graphify_profiler.py ,which auto-detects these values from any graphify graph.json via three classes of heuristics: (i) mul-tilingual documentation detection (paths matching docs/<lang>/ where multiple ISO-639 codes coexist, keep en only); (ii) common-noise directory matching against a 26-entry list covering tests, build artifacts, vendored deps, and generated code; (iii) per-directory code-node density ranking, picking the top-K directories that cumulatively cover ≥ 80% of code nodes. Layer-1 budgets are back-solved from a target token budget (default 25k, persistent-tier sweet spot), using empirically-fit per-element token estimates (god node: 25, community heading: 60, inferred edge: 22). On the FastAPI graph, the profiler auto-detects all 10 non-English documentation languages (including 
+
+fr /ru /tr /uk , which our hand-tuning omitted) and recovers ≈95% of our hand-tuned configuration quality. Two residual false-positive classes (tutorial files with non-canonical paths, and image-to-concept sponsor-banner edges) are caught by additive label-based and edge-typology rules in the ingester. Together, these reduce CAPC integration on a new repository to two commands: profile ,then ingest .
+
+Cross-codebase replication on httpx . We replicated the full 40-query benchmark on a second codebase — httpx , an HTTP client library (1,705 nodes, 2,828 edges, 176 communities; roughly 5× smaller than FastAPI). The profiler produced a clean configuration with no warnings or false positives ( httpx/ sole allowed path, tests/ sole noise path, rmax _saf e =2 from a Layer-1 raw size of 10 ,302 tokens). Results are in Table 13.                                                 
+
+> Strategy Ratio Cost/query Hit% Recall@10 Quality vs G-B G-A: Vanilla —$0.0105 0.0% —0.300 −78.4% G-B: Cache-all —$0.0486 87.5% —1.000 ref G-C: Embedding-RAG —$0.0312 0.0% 0.93 0.705 −35.7% G-C: graphify-native (BFS) —$0.0178 5.0% 0.68 0.637 −63.4%
+> G-D: CAPC ( r=2 )2$0.0218 82.5% 0.85 0.730 −55.1%
+> G-D: CAPC ( r=3 )3$0.0202 85.0% 0.88 0.725 −58.4% G-D: CAPC ( r=5 , HOT) 5$0.0183 80.0% 0.88 0.702 −62.3%
+
+Table 13: Cross-codebase validation on httpx (1.7k nodes, 5× smaller than FastAPI). The empirical Pareto frontier is {G-A , G-D r=5, G-D r=3, G-D r=2, G-B } — both G-C variants are dominated by G-D variants on this codebase. Quality numbers shift substantially vs. Table 12: G-A drops from 0.647 to 0.300 (the model’s prior on httpx is much weaker), and graphify-native rises from 
+
+0.613 to 0.637 (+112% over G-A here), the opposite of the FastAPI ranking. This is the empirical pivot underlying Finding 3 (prior dependence) and Finding 4 (content-free metadata is useful when the model is uninformed). The full 40-query results confirm three CAPC properties hold across both codebases: 
+
+(a) CAPC’s Pareto dominance over both G-C variants is stronger on httpx , not weaker. On FastAPI, G-D r=3 and G-C-embedding tied on quality ( 0.655 ); on httpx , G-D r=3
+
+(0.725 ) beats G-C-embedding ( 0.705 ) by 2.8pp and is 35% cheaper. G-D r=5 dominates G-C-native strictly (same cost $0.018, +10 pp quality), so the frontier contains four CAPC points out of seven strategies tested. 19 (b) Cache hit rates converge to the same regime ( 80 –87% ) on a graph 5× smaller and a prefix 5× shorter. G-B converges to 87 .5% on a 53 k-token static prefix; G-D r=3 to 85% 
+
+on a 6k-token prefix. The multi-server replication mechanism of Section 3.1 generalises across the 
+
+5k– 260 k prefix-size range we have measured. 
+
+(c) The absolute $ savings shrink with graph size but the relative win persists. G-B costs $0 .049 /query on httpx (vs $0 .225 on FastAPI) because the prefix is 5× smaller, so G-D r=3’s cost advantage is 2.4× instead of 9.3×. The cost reduction is real at all scales; the gap simply widens with the static-prefix size, which is exactly the prediction of the crossover model in Section 4. 
+
+6.5 Public-benchmark validation: τ -bench retail 
+
+The EA results in Section 6.3 use an LLM-as-judge quality measurement, which (as flagged in Section 7.4) is the standard cost-constrained approach but inherits judge bias. To eliminate this concern we additionally evaluate CAPC on τ -bench (Yao et al., 2024) — a public, third-party, multi-round tool-using-agent benchmark introduced at NeurIPS 2024. τ -bench’s reward is computed from a deterministic database-state check after the agent finishes (a binary 0/1 outcome per task, with no LLM judge in the loop), and the entire task suite is downloadable, so results are exactly reproducible by reviewers. We ran all four prompt strategies on the retail environment ( N = 50 tasks, the first 50 task IDs in the public split, matching τ -bench’s published leaderboard configuration), with Sonnet 4.6 as the agent model and Haiku 4.5 as the user simulator (matching τ -bench’s official user-strategy= llm 
+
+configuration). The agent uses the same CAPC prompt-strategy switch as our EA implementation (Section 6.3); only the underlying environment ( retail wiki ≈ 4k tokens, 14 retail tools ≈ 5ktokens) and reward function differ. Each task is a multi-round tool-use loop (5–15 rounds typically) until the agent calls respond or the env returns done .                              
+
+> Strategy Ratio Avg $ Total $ Reward 95% CI vs Vanilla vanilla —$0.1244 $6.222 36/50 = 0.720 [0.58, 0.83] —cache_only —$0.1252 $6.257 37/50 = 0.740 [0.60, 0.84] +0.6% query_aware 3$0.1744 $8.718 38/50 = 0.760 [0.63, 0.86] +40.1%
+> capc 3$0.1145 $5.727 36/50 = 0.720 [0.58, 0.83] −7.9%
+
+Table 14: τ -bench retail public-benchmark results (50 tasks × 4 strategies, Sonnet 4.6 agent + Haiku 4.5 user simulator). Reward is the deterministic 0/1 task-completion signal from τ -bench’s DB-state check; 95% CI is Wilson interval at N = 50 . CAPC is the cheapest strategy with reward 
+
+exactly equal to vanilla (both 36/50; two-proportion z = 0 .00 , p = 1 .00 ). Query-aware compression is more expensive than vanilla by +40.1%, the inverse of the LLMLingua-family literature’s implicit assumption and a direct production confirmation of Section 4’s negative-ROI prediction. Cache-only is effectively indistinguishable from vanilla ( +0.6%) on this small-prefix workload — a new data point we discuss in Section 7.2. Three findings stand out beyond the headline that CAPC retains its cost advantage on a public, judge-free benchmark. 
+
+First, CAPC ’s quality is identical to vanilla. The two strategies record exactly the same task success count (36/50 each); the two-proportion z-test gives z = 0 .00 (p = 1 .00 ). All four strategies’ 95% Wilson confidence intervals overlap substantially ([0.58, 0.86] union, N = 50 ). With deterministic ground-truth scoring, the LLM-as-judge caveat from Section 7.4 is removed and the quality-equivalence claim is statistically defensible. 20 Second, query-aware compression is more expensive than vanilla by +40 .1%. This is the first production observation we are aware of in which a query-aware compressor costs more than no compression at all. The mechanism is exactly the one Section 4 predicts: query-aware mutation of the wiki system block invalidates the cached prefix on every call, forcing a cache-write tax that exceeds the cache-read savings ( τ -bench: 1.64 M cache-write tokens vs vanilla’s 0.87 M — +87% ,against a cache-read decrease from 4.67 M to 3.56 M; net cost effect is the +40 .1% premium reported above). This complements the EA observation (Table 11, where query-aware actually saved money) and yields a refined, prefix-composition-aware characterization in Section 7.2. 
+
+Third, cache-only is statistically indistinguishable from vanilla on this workload. In contrast to the EA result where cache-only saved 18%, on τ -bench’s smaller prefix cache-only costs only 
+
++0 .6% more than vanilla — within the per-task sampling noise of either strategy. The most likely explanation is that Anthropic’s implicit caching (Section 7.1) already captures most of the cache benefit on the 9k-token retail prefix, so the explicit cache_control markers add a marginal cache-write tax without proportional read savings (cache_only wrote 884 k tokens vs vanilla’s 875 k — a 
+
++1 .1% increase against a 0.5% decrease in cache reads). Importantly, CAPC still saves −8.5% over cache-only on the same workload, because the compression layer adds value independent of caching: 
+
+CAPC ’s cache-write tokens drop 10 .5% below vanilla’s (the compressed prefix is smaller to cache), and that net of reduced read volume yields the headline −7.9% cost saving. Together with the EA validation (Table 11), this gives the paper two independent multi-round agent validations on systems with qualitatively different prompt compositions (EA: ∼94k tokens dominated by tool schemas; τ -bench retail: ∼9k tokens split between wiki and tools). Both confirm the headline CAPC claims; the contrast between them is the substrate for the refinement in Section 7.2. 
+
+6.6 Total cost of the pilot 
+
+Across all empirical work in this paper, the total Anthropic API spend was $98.96 , itemised as: 
+
+• $16.64 — LongBench-v2 pilot (Section 6): ρ characterisation, 16/16 dominance grid, cost-quality Pareto sweep 
+
+• $9.57 — EA simulator validation (Section 6.3): 40 queries × 4 strategies on the 94k-token 
+
+tools= prefix via direct messages.create calls 
+
+• $15.98 — EA end-to-end production-path validation (Table 11): 15 queries × 4 strategies ×
+
+multi-round agent loop through the live FastAPI backend 
+
+• $16.85 — graphify FastAPI case study (Section 6.4): $14.85 main 40-query run + $2.00 G-C-native ablation run with re-judge pass 
+
+• $13.00 — graphify httpx cross-codebase replication (Section 6.4): full 40-query benchmark on the 1.7k-node graph with all seven strategies including G-C-native 
+
+• $26.92 — τ -bench retail public-benchmark validation (Section 6.5): 50 tasks × 4 strategies, multi-round tool-use loops with Sonnet 4.6 agent and Haiku 4.5 user simulator, deterministic database-state reward This includes 6,300 + Haiku 4.5 self-consistency judge calls across all five experiments. The total budget is small enough that a single grad student or small team can reproduce the paper end-to-end in a weekend. All raw data, run logs, and reproduction scripts are released with the paper. 21 7 Limitations and Future Work 
+
+7.1 Implicit caching of tools arrays (production observation) 
+
+Section 3.1 reported that Anthropic Sonnet 4.6 does not implicitly cache plain text prompts without explicit cache_control markers. A subsequent production-scale validation on a real enterprise tool-using Engineering assistant (40 queries against a 94k-token static prefix comprising the system prompt plus 287 MCP tool definitions) revealed an important refinement: when the API request includes a large tools= array, Anthropic appears to implicitly cache the tools schemas across calls, even without explicit cache_control markers. In our test, the vanilla baseline (Strategy A, no caching) showed cache_read_input_tokens ≈ 106k on every call after the first, indicating reuse of the tool definitions from a provider-managed cache. This has two consequences. First, the claim in Section 3.1 (“no implicit caching observed without cache_control ”) should be qualified: it holds for plain text content blocks (which is what we measured) but not for the tools= parameter when the array is large. Second, the practical implication for CAPC is that the additional savings from explicit cache_control over the implicit-cache baseline is smaller than our LongBench-v2 experiments (Section 6) suggest — in our EA validation, Strategy B saved only 18.3% over Strategy A (versus 50–80% in the LongBench-v2 regime where implicit caching was not active). However, CAPC (Strategy D) with r = 3 still saved 51.7% versus vanilla, demonstrating that the compression layer adds substantial value even on top of implicit tool caching. We treat the systematic characterization of this implicit tool-caching mechanism as future work. 
+
+7.2 Cache-invalidation cost depends on which prefix region changes 
+
+Our crossover analysis (Section 4) assumes that query-aware compression invalidates the entire cached prefix on every call, producing a flat-rate cache miss. The end-to-end EA measurement (Table 11) shows this is an upper-bound, not a generic rule. On EA the query_aware strategy registered a 
+
+100% cache hit rate — higher than even cache_only (95.1%) — because our implementation re-compressed the system text but left the ≈94k-token tools= array unchanged. The tools= array is implicitly cached by Anthropic (Section 7.1) regardless of explicit cache_control , so the bulk of the prefix kept hitting cache even though the system text changed per query. The implication is a refinement of Section 4: the sign and magnitude of the query-aware-vs-cache-only crossover depend on what fraction of the cached prefix the compressor mutates. The two multi-round production workloads in this paper sit at opposite ends of this axis: 
+
+• τ -bench retail (Table 14): the wiki system block is roughly half of the cached prefix, and our query-aware implementation mutates all of it on every call. Result: query-aware costs 
+
++40 .1% more than vanilla — a direct production confirmation, on a public benchmark, of Section 4’s prediction that query-aware compression can pay a net negative ROI when its mutation footprint overlaps the main cached region. 
+
+• EA (Table 11): a static ∼94k-token tools= schema dominates the prefix ( ∼90% tools, ∼10% system), and our query-aware compressor only mutates the system fraction. The unmodified 
+
+tools= array is implicitly cached by Anthropic (Section 7.1), so <15% of cached bytes are actually invalidated and the cost penalty is masked — query-aware saves 31% versus vanilla here, though it still costs 25% more than CAPC .The same query-aware-compression mechanism produces a +40% penalty on one production workload and a −31% saving on another, with the sign determined entirely by what fraction of the cached 22 prefix the compressor mutates. This is the strongest evidence in the paper for treating “query-aware vs query-agnostic” as a spectrum parametrised by mutated-fraction rather than a binary label. The LongBench-v2 single-shot regime (Section 6) is a separate operating point where the document is itself the cached prefix and where token-count compression compounds with the cache-bust effect; the relative ordering of strategies there ( CAPC < cache-only < query-aware < vanilla) is consistent with this framing but does not lie on the same vs-vanilla curve as the two agent workloads. Future work: parametrise the crossover model by “mutated-fraction-of-cached-prefix” and validate the predicted monotonicity on a wider grid of prefix compositions. A parallel refinement applies to cache-only ’s benefit over vanilla. On LongBench-v2 (no implicit caching observed) cache-only saves 90% over vanilla; on EA (94k-token prefix, implicit tool caching active for vanilla too) it saves ∼18%; on τ -bench retail (9k-token prefix where implicit caching appears to capture most of the benefit) cache-only is statistically indistinguishable from vanilla (+0 .6% delta over 50 tasks, Table 14). The most likely reading is that explicit cache_control 
+
+markers add a small cache-write tax (cache_only writes 1.1% more tokens than vanilla) that is only paid off by the read-side savings when the cacheable prefix is large enough; below some threshold, implicit caching dominates and explicit markers are net-neutral. This is practically actionable: 
+
+CAPC ’s value on small-prefix agent workloads comes primarily from the compression layer, while on large-prefix workloads it comes from both layers. The quality-equivalent cost saving in Table 14 (−7.9% CAPC vs vanilla, −8.5% CAPC vs cache-only) confirms that the compression layer keeps adding value even where caching alone does not. 
+
+7.3 Single model, single TTL 
+
+All empirical results come from claude-sonnet-4-6 with 5-minute TTL ephemeral caching. We expect the qualitative findings to transfer to other providers; the quantitative parameters will differ. 
+
+Future work: replicate Section 3.1 on Opus 4.7 and Haiku 4.5 (estimated cost $5–10 per model). 
+
+7.4 LLM-as-judge quality evaluation 
+
+Quality scores in the LongBench-v2 (Section 6), EA (Section 6.3), and graphify (Section 6.4) experiments are produced by Haiku 4.5 self-consistency ×3 against the G-B (cache-all, full-context) reference answer. This is the emerging standard for cost-constrained evaluations but is not human evaluation. Three specific concerns are worth flagging: (i) Haiku and the strategies being scored share an architectural family with the reference (G-B is also Sonnet output), which may cause Haiku to favour stylistic alignment with G-B over factual content; (ii) G-B is the highest-context answer we can produce, not a ground-truth oracle — if G-B itself is wrong on a given query, candidates that disagree get penalised; (iii) judge calls hit a provider rate limit during one of our runs and silently fell back to a 0.5 default score before we noticed; we now apply a 45-RPM throttle and explicit 429-retry with exponential backoff. The median-of-3 aggregation absorbs single-call variance but does not correct for systematic judge bias. The τ -bench validation (Section 6.5) partially addresses this caveat: τ -bench’s reward is a deterministic database-state check (no LLM in the loop), so the quality equivalence between CAPC 
+
+and vanilla on that benchmark ( ∆ = 0 .0 pp at N = 50 , two-proportion z = 0 .00 , p = 1 .00 )cannot be attributed to judge bias. We still recommend the further validations below as next steps. 
+
+Future work: sample ∼100 triples for human evaluation and report correlation with the Haiku self-consistency judge; cross-check with a second judge model (e.g. GPT-4.1) on the same triples to bound provider-family bias. 23 7.5 Content-dependent quality cliff 
+
+The 20,246-token document in our Pareto sweep exhibited a quality cliff at r ≥ 6 that did not appear on the other two documents. With only N = 6 queries per cell, we cannot decompose the cliff into “this document is harder” vs. “these specific queries are harder”. Implication: the tier-preserving ratio bound is necessary but not sufficient ; a safe deployment also needs a quality monitor. 
+
+7.6 Synthetic version drift for AdaptiveCacheBoundary 
+
+The bulk of the validation in Section 5.4 uses synthetic version drift via a templated STATIC + QUASI + DYNAMIC generator. We have additionally validated the algorithm on three real engineer-driven git histories from the EA repo (Table 6): the algorithm yields −62 .6% to −70 .5% 
+
+savings even on adversarially-edited production files where 44 –80% of sentence positions are classified DYNAMIC. This addresses the first-order concern that the synthetic generator may favour the algorithm; the bridge from synthetic to real holds. Remaining future work: validate on real 
+
+conversational session traces (e.g., LMSys-Chat-1M filtered to single-topic conversations) where the multi-turn-context-window structure differs qualitatively from a single document evolving over commits. 
+
+7.7 Composability with model routing and reasoning budgets 
+
+CAPC composes naturally with model routing (Section 2) and reasoning-budget controllers. Future work: evaluate joint CAPC + cache-aware routing on a multi-model production trace. 
+
+7.8 Cross-provider generalization 
+
+The mechanism of CAPC should transfer to any provider that exposes a prefix-strict cache_control API. Future work: replicate Section 3 on at least one non-Anthropic provider. 
+
+# 8 Conclusion 
+
+This paper started from an observation a production engineer would recognize: prompt caching and prompt compression are not independent levers . The literature’s implicit ρ = 1 .0 assumption hides a 12.5 × spread between cache_write and cache_read pricing on Anthropic Sonnet 4.6, and the prefix-strict invalidation rule turns query-aware compression into a cache-busting operation that pays the full input price on every call. Our empirical characterization (Section 3) shows that Sonnet 4.6’s cache has a two-tier architecture with a sharp threshold near 3,500 tokens; our cost model (Section 4) predicts — and Section 6’s experiments verify — that under realistic ρ, the conventional ranking of cache-only vs. compression inverts at high ratios. Cache-Aware Prompt Compression ( CAPC ), our proposed remedy, pairs query-agnostic compression with explicit caching and a tier-preserving ratio bound; it is the cheapest of four strategies in 16/16 configurations tested on LongBench-v2 and traces a dominant cost-quality Pareto curve on the 28k-token document. Three production-scale validations corroborate the framework: a 94k-token enterprise tools= schema prefix (51.7% cost reduction over vanilla; Section 6.3); a graphify knowledge-graph RAG pipeline replicated on FastAPI and httpx (9.3 × and 2.4 × cost reductions over cache-all respectively, with stable ≥ 85% cache hit rate; Section 6.4); and the public τ -bench retail benchmark (50 tasks, deterministic database-state reward) where CAPC is the cheapest of four strategies with task-completion reward exactly equal to vanilla ( z = 0 .00 , p = 1 .00 ) while query-aware compression costs +40 .1% more than vanilla (Section 6.5). 24 We see three broader implications. First, production-grade caching APIs have become research-grade variables. The cost-aware LLM literature has historically treated per-call pricing as a static constant, but the actual price depends on cache state, prefix size, and call count — a function with structure worth characterizing. Second, the bridge between industry guidance and academic methodology is a fertile genre. The “static first, dynamic last” guidance found in Anthropic’s engineering blog is correct but informal; CAPC turns that informal guidance into a derived design rule with empirical support. Third, indexers and prompts are complementary, not competing, abstractions. Tools like graphify are designed for index quality (extraction fidelity, visualization); 
+
+CAPC is the orthogonal companion that decides how to deliver that index to an LLM economically, and the generalisation we expect across any pointer-emitting indexer (code-search, enterprise KGs, schema catalogues) is worth more systematic study. The total Anthropic API spend for all empirical work in this paper was $98.96. We release all raw data, plots, and reproduction scripts at [URLTBD] ; any research group should be able to reproduce the LongBench-v2 headline findings within a single afternoon and $20, or replicate the full multi-experiment battery in a weekend. 
+
+# Acknowledgments 
+
+The author thanks colleagues who provided access to the production benchmark environment, reviewed the CAPC prompt-strategy integration described in Section 6.3, and assisted with Anthropic API metering and cache-behaviour instrumentation. 
+
+# References 
+
+Anthropic. Prompt caching, 2024. URL https://docs.anthropic.com/en/docs/ build-with-claude/prompt-caching . Anthropic API documentation. Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. Longbench v2: Towards deeper understanding and reasoning on realistic long-context multitasks, 2024. URL https://arxiv.org/abs/2412.15204 .THUDM; 503 multiple-choice questions, 8k-2M tokens. Sarthak Chakraborty, Suman Nath, Xuchao Zhang, Chetan Bansal, and Indranil Gupta. Generative caching for structurally similar prompts and responses, 2025. URL https://arxiv.org/abs/ 2511.17565 . NeurIPS 2025 Poster; 83% hit rate on production prompts. Lingjiao Chen, Matei Zaharia, and James Zou. Frugalgpt: How to use large language models while reducing cost and improving performance, 2023. URL https://arxiv.org/abs/2305.05176 .Joong Ho Choi, Jiayang Zhao, Jeel Shah, Ritvika Sonawane, Vedant Singh, Avani Appalla, Will Flanagan, and Filipe Condessa. Compactprompt: A unified pipeline for prompt and data compression in llm workflows, 2025. URL https://arxiv.org/abs/2510.18043 . ACM ICAIF ’25 Workshop on LLMs and Generative AI for Finance. Jasper Dekoninck, Maximilian Baader, and Martin Vechev. A unified approach to routing and cascading for llms. In International Conference on Learning Representations (ICLR) , 2025. URL 
+
+https://arxiv.org/abs/2410.10347 .25 Chenchen Gu, Xiang Lisa Li, Rohith Kuditipudi, Percy Liang, and Tatsunori Hashimoto. Auditing prompt caching in language model apis, 2025. URL https://arxiv.org/abs/2502.07776 .Accepted ICML 2025. Huiqiang Jiang, Qianhui Wu, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. Llmlingua: Compressing prompts for accelerated inference of large language models, 2023a. URL https://arxiv.org/ abs/2310.05736 . Accepted EMNLP 2023. Huiqiang Jiang, Qianhui Wu, Xufang Luo, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. Longllmlingua: Accelerating and enhancing llms in long context scenarios via prompt compression, 2023b. URL https://arxiv.org/abs/2310.06839 . Accepted ACL 2024. Cornelius Kummer, Lena Jurkschat, Michael Färber, and Sahar Vahdati. Prompt compression in the wild: Measuring latency, rate adherence, and quality for faster llm inference, 2026. URL 
+
+https://arxiv.org/abs/2604.02985 .Zongqian Li, Yixuan Su, and Nigel Collier. 500xcompressor: Generalized prompt compression for large language models, 2024. URL https://arxiv.org/abs/2408.03094 . Accepted ACL 2025 Main; University of Cambridge. Hanbing Liu, Chunhao Tian, Nan An, Ziyuan Wang, Pinyan Lu, Changyuan Yu, and Qi Qi. Budget-constrained agentic large language models: Intention-based planning for costly tool use, 2026. URL https://arxiv.org/abs/2602.11541 .Tengxiao Liu, Zifeng Wang, Jin Miao, I-Hung Hsu, Jun Yan, Jiefeng Chen, Rujun Han, Fangyuan Xu, Yanfei Chen, Ke Jiang, Samira Daruki, Yi Liang, William Yang Wang, Tomas Pfister, and Chen-Yu Lee. Budget-aware tool-use enables effective agent scaling, 2025. URL https: //arxiv.org/abs/2511.17006 . Google; 15 authors. Elias Lumer, Faheem Nizar, Akshaya Jangiti, Kevin Frank, Anmol Gulati, Mandar Phadate, and Vamse Kumar Subbiah. Don’t break the cache: An evaluation of prompt caching for long-horizon agentic tasks, 2026. URL https://arxiv.org/abs/2601.06007 . Evaluation across OpenAI, Anthropic, Google on DeepResearch Bench. Alliot Nagle, Adway Girish, Marco Bondaschi, Michael Gastpar, Ashok Vardhan Makkuva, and Hyeji Kim. Fundamental limits of prompt compression: A rate-distortion framework for black-box language models, 2024. URL https://arxiv.org/abs/2407.15504 . NeurIPS 2024. Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E. Gonzalez, M Waleed Kadous, and Ion Stoica. Routellm: Learning to route llms with preference data, 2024. URL https://arxiv.org/abs/2406.18665 .OpenAI. Automatic prompt caching, 2024. URL https://openai.com/ . OpenAI API documenta-tion. Cheng Qian, Zuxin Liu, Shirley Kokane, Akshara Prabhakar, Jielin Qiu, Haolin Chen, Zhiwei Liu, Heng Ji, Weiran Yao, Shelby Heinecke, Silvio Savarese, Caiming Xiong, and Huan Wang. xrouter: Training cost-aware llms orchestration system via reinforcement learning, 2025. URL 
+
+https://arxiv.org/abs/2510.08439 . Salesforce AI Research + UIUC. Luis Gaspar Schroeder, Aditya Desai, Alejandro Cuadron, Kyle Chu, Shu Liu, Mark Zhao, Stephan Krusche, Alfons Kemper, Matei Zaharia, and Joseph E. Gonzalez. vcache: Verified semantic prompt caching, 2025. URL https://arxiv.org/abs/2502.03771 . Accepted ICLR 2026. 26 Safi Shamsi and graphify contributors. graphify: Knowledge-graph indexing for ai coding assistants. 
+
+https://github.com/safishamsi/graphify , 2025. Open-source tool; v1 release. Converts code, documentation, PDFs, and images into a NetworkX knowledge graph with Leiden community detection and LLM-extracted concept edges. Zhentao Xu, Fengyi Li, Albert C. Chen, and Xiaofeng Wang. Procut: Llm prompt compression via attribution estimation. In Proceedings of EMNLP 2025 Industry Track , 2025. URL https: //arxiv.org/abs/2508.02053 .Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. τ -bench: A benchmark for tool-agent-user interaction in real-world domains. In Advances in Neural Information Pro-cessing Systems (NeurIPS) , 2024. URL https://arxiv.org/abs/2406.12045 . Sierra Research. Benchmark of multi-round tool-using LLM agents with deterministic database-state reward. Renos Zabounidis, Aditya Golatkar, Michael Kleinman, Alessandro Achille, Wei Xia, and Stefano Soatto. Re-forc: Adaptive reward prediction for efficient chain-of-thought reasoning, 2025. URL 
+
+https://arxiv.org/abs/2511.02130 .Ivan Zakazov, Berke Argin, Oussama Gabouj, Kamel Charaf, Alexander Sharipov, Alexi Semiz, Lorenzo Drudi, Nicolas Baldwin, and Robert West. Cmprsr: Abstractive token-level question-agnostic prompt compressor, 2025. URL https://arxiv.org/abs/2511.12281 .
+
+# A AdaptiveCacheBoundary Pseudocode 
+
+Listing 2: AdaptiveCacheBoundary Python implementation                                                               
+
+> class AdaptiveCacheBoundary : def __init__ ( self , eps_static =0.05 , eps_quasi =0.30 , min_calls =3) : self . eps_static =eps_static self . eps_quasi =eps_quasi self . min_calls =min_calls self . _position_hashes =defaultdict ( list ) self . _seg_text ={} #hash -> canonical text self . _call_count =0def observe ( self , doc : str ) : """ Feed one observed document version .""" sents =sentences ( doc ) self . _call_count += 1for pos , sent in enumerate ( sents ) : h=md5 ( normalize ( sent ) . encode () ) . hexdigest () self . _position_hashes [ pos ]. append ( h ) self . _seg_text [ h ] =sent def classify ( self ) -> list [ Segment ]: """ Classify each position by mutation rate .""" out =[] for pos in sorted ( self . _position_hashes ) : hashes =self . _position_hashes [ pos ] if len ( hashes ) <self . min_calls : out . append ( Segment ( cls = DYNAMIC , ...) ) continue counts =Counter ( hashes )
+
+27 most_common_count = counts . most_common (1) [0][1] mu = 1.0 - most_common_count / len ( hashes ) if mu <= self . eps_static : cls = STATIC elif mu <= self . eps_quasi : cls = QUASI else : cls = DYNAMIC out . append ( Segment ( text =... , cls = cls , mutation_rate = mu ) ) return out def build_cache_prefix ( self ) -> str : """ Maximal contiguous STATIC / QUASI prefix .""" parts = [] for seg in self . classify () : t = seg . cache_text () # canonical form or "" if DYNAMIC if not t : break parts . append ( t ) return " ". join ( parts ) 
+
+28

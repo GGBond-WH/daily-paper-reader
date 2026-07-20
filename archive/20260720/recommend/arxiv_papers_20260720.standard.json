@@ -1,0 +1,207 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-20T21:19:07.204458+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 4,
+    "deep_cap": 6,
+    "deep_selected": 4,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [
+    {
+      "id": "2607.15456v1",
+      "source": "arxiv",
+      "title": "Looped Latent Attention: Cross-Loop KV Compression for Looped Transformers",
+      "abstract": "Looped, weight-tied Transformers reduce parameters by reusing a block, but decoding still stores a separate K/V cache for every recurrence step. We show that this loop-indexed cache is highly structured. For a fixed token, layer and head, K/V vectors trace a short low-rank trajectory across loops, while the head and layer axes remain much flatter. We introduce Looped Latent Attention (LLA), a post-training cache codec that stores compact K and V latents and reconstructs loop-specific K/V vectors only when attention reads them. The default per-head codec compresses recurrence, while LLA-2D also folds heads into one latent for the extreme-compression regime. The codec is initialized from SVD of teacher activations and refined with KL and attention-output distillation. At matched cache budget, per-head LLA outperforms head-axis MLA, cross-layer sharing, KV quantization and final-loop reuse, showing that the recurrent cache is low-rank but not safely collapsible to a single state. The same axis advantage holds on Ouro-2.6B-Thinking and transfers to Huginn-3.5B, where an SVD codec remains near-lossless to 32x in decoder-independent evaluation. The cache reduction is exact. On one H200, the latent-store path increases measured Ouro-1.4B batch capacity at 4k context from 32 to 768 sequences at 21.3x compression. For long math rollouts, on-policy refinement on student-generated prefixes raises MATH-500 at 4x from 0.43 to 0.66 and reduces no-answer generations.",
+      "authors": [
+        "James O' Neill",
+        "Fergal Reid"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.CL"
+      ],
+      "published": "2026-07-16T20:58:16+00:00",
+      "link": "https://arxiv.org/pdf/2607.15456v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "cross-loop KV compression for looped transformers",
+      "llm_evidence_cn": "针对循环Transformer的跨循环KV压缩",
+      "llm_evidence": "针对循环Transformer的跨循环KV压缩",
+      "canonical_evidence": "针对循环Transformer的跨循环KV压缩",
+      "llm_tldr_en": "LLA stores compact K/V latents and reconstructs loop-specific vectors, compressing the loop-indexed KV cache.",
+      "llm_tldr_cn": "针对循环权重绑定Transformer中每个循环步骤存储独立KV缓存造成内存膨胀的问题，本文提出循环潜注意力（LLA），利用跨循环K/V向量的低秩轨迹，存储紧凑潜变量并在注意力读取时重建。实验表明，LLA显著压缩缓存占用且保持生成质量，为循环架构的KV缓存管理提供了高效后训练方案。",
+      "llm_tldr": "针对循环权重绑定Transformer中每个循环步骤存储独立KV缓存造成内存膨胀的问题，本文提出循环潜注意力（LLA），利用跨循环K/V向量的低秩轨迹，存储紧凑潜变量并在注意力读取时重建。实验表明，LLA显著压缩缓存占用且保持生成质量，为循环架构的KV缓存管理提供了高效后训练方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.15498v1",
+      "source": "arxiv",
+      "title": "VarRate: Training-Free Variable-Rate KV Cache Compression for Long-Context LLMs",
+      "abstract": "The key-value (KV) cache is the main memory bottleneck in long-context large language model (LLM) inference. Two leading training-free families are both structurally limited: token-selection methods (SnapKV, Ada-KV) score importance from an observation window and evict low-scoring tokens, but eviction is irreversible -- so when the importance signal degrades under query-agnostic reuse, accuracy collapses by 11-15 points; uniform low-rank coding keeps every token but spends equal rank everywhere, wasting budget. We observe that both failures share one cure: rank should be allocated, not evicted. We present VarRate, a training-free KV codec that assigns each token a variable low-rank budget by its query salience, keeping every token at a nonzero rank. Comparable adaptive-rank codecs reach this allocation only through training; VarRate requires none. Because no token is dropped, it degrades by only 3.5-5.5 points where query-aware selection collapses. At a matched 20% budget on LongBench (16 tasks), VarRate stays within 0.8 points of the uncompressed model on both Llama-3.1-8B and Qwen2.5-7B. Averaged over the two, it is the strongest matched-memory compressor. It significantly beats its uniform-rank ablation on both models. Against KVzip, a method purpose-built for query-agnostic reuse, it is accuracy-equivalent in three of four settings and within a point overall, at about one-eighth the prefill overhead.",
+      "authors": [
+        "Shahrzad Esmat",
+        "Dhawal Shah",
+        "Ali Jannesari"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.LG"
+      ],
+      "published": "2026-07-16T23:03:14+00:00",
+      "link": "https://arxiv.org/pdf/2607.15498v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "training-free variable-rate KV cache compression for long-context LLMs",
+      "llm_evidence_cn": "面向长上下文大语言模型的无训练变速率KV缓存压缩",
+      "llm_evidence": "面向长上下文大语言模型的无训练变速率KV缓存压缩",
+      "canonical_evidence": "面向长上下文大语言模型的无训练变速率KV缓存压缩",
+      "llm_tldr_en": "VarRate assigns each token a variable low-rank budget based on query salience, avoiding eviction and achieving better compression.",
+      "llm_tldr_cn": "针对长上下文LLM推理中KV缓存成为内存瓶颈的问题，VarRate提出无训练变速率编码，根据查询显著性为每个令牌分配可变的低秩预算，保留所有令牌但灵活分配秩。实验表明，相比现有方法，VarRate在保持精度的同时显著降低缓存内存占用，为训练无关的KV压缩提供了高效方案。",
+      "llm_tldr": "针对长上下文LLM推理中KV缓存成为内存瓶颈的问题，VarRate提出无训练变速率编码，根据查询显著性为每个令牌分配可变的低秩预算，保留所有令牌但灵活分配秩。实验表明，相比现有方法，VarRate在保持精度的同时显著降低缓存内存占用，为训练无关的KV压缩提供了高效方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.15621v1",
+      "source": "arxiv",
+      "title": "Think at 5 Hz, Act at 20 Hz: Asynchronous Fast-Slow Vision-Language-Action Inference for Closed-Loop Driving",
+      "abstract": "Large language models bring instruction following and scene reasoning to end-to-end driving, but their inference latency collides with the control rate a vehicle requires. Existing closed-loop agents hide this gap by invoking the model on alternate simulation ticks and replaying the previous command in between, so half of all control outputs ignore the newest observations. We present a fast-slow architecture that removes this compromise. A frozen 7B vision-language backbone acts as the slow system, digesting navigation instructions and visual history at low frequency while exposing its per-layer key-value cache as a standing representation of the scene. A lightweight action expert acts as the fast system, attending to this cache and to the current camera frame at every simulation tick to regress waypoints in a single forward pass. Since the cache lags behind the world at deployment, we train the expert under randomized staleness, aligning training with asynchronous execution. On LangAuto-Short routes in CARLA, our system produces fresh control at every 50 ms simulation tick and lifts route completion from 37.0 to 94.0 over the frame-skipping baseline. A frame-skip ablation with the same expert separates the two factors at work: the expert raises the driving score on its own, while per-tick freshness raises completion from 82.1 to 94.0 and cuts red-light violations by a third. Trained on a single town, the expert transfers zero-shot to two unseen towns, holding 84-94% route completion where the baseline reaches 31-41%. It reduces open-loop waypoint error by nearly a factor of four compared to the backbone's own action head, at a per-tick model cost of 32 ms that is independent of history length on a single consumer GPU.",
+      "authors": [
+        "Yun Li",
+        "Jiachen Gong",
+        "Simon Thompson",
+        "Ehsan Javanmardi",
+        "Qunli Zhang",
+        "Zifan Zeng",
+        "Shiming Liu",
+        "Peng Wang",
+        "Zixuan Guo",
+        "Manabu Tsukada"
+      ],
+      "primary_category": "cs.RO",
+      "categories": [
+        "cs.RO",
+        "cs.AI"
+      ],
+      "published": "2026-07-17T04:40:02+00:00",
+      "link": "https://arxiv.org/pdf/2607.15621v1",
+      "tags": [
+        "keyword:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "uses per-layer key-value cache for fast-slow inference",
+      "llm_evidence_cn": "使用逐层键值缓存实现快慢推理",
+      "llm_evidence": "使用逐层键值缓存实现快慢推理",
+      "canonical_evidence": "使用逐层键值缓存实现快慢推理",
+      "llm_tldr_en": "Proposes a fast-slow architecture that uses a frozen 7B vision-language backbone's KV cache as a standing scene representation to accelerate closed-loop driving inference, reducing latency.",
+      "llm_tldr_cn": "本文提出一种快慢推理架构，用于闭环驾驶场景。其中，一个冻结的7B视觉语言模型作为慢系统，在低频下处理指令和历史视觉信息，并暴露其逐层键值缓存作为场景的持续表示；一个轻量级动作专家作为快系统，以高频执行控制。该方法消除了因模型延迟导致的控制输出忽略最新观测的问题。实验表明，该架构在保持驾驶质量的同时，有效降低了推理延迟。",
+      "llm_tldr": "本文提出一种快慢推理架构，用于闭环驾驶场景。其中，一个冻结的7B视觉语言模型作为慢系统，在低频下处理指令和历史视觉信息，并暴露其逐层键值缓存作为场景的持续表示；一个轻量级动作专家作为快系统，以高频执行控制。该方法消除了因模型延迟导致的控制输出忽略最新观测的问题。实验表明，该架构在保持驾驶质量的同时，有效降低了推理延迟。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.16184v1",
+      "source": "arxiv",
+      "title": "PagedWeight: Efficient MoE LLM Serving with Dynamic Quality-Aware Weight Quantization",
+      "abstract": "Mixture-of-Experts (MoE) is a popular class of large language models (LLMs), offering high efficiency and accuracy. However, in KV-cache-intensive serving scenarios, MoEs often exhibit a tension between the GPU memory requirements of the model weights and the growing KV cache. We propose PagedWeight, a novel management method for MoE LLM serving that dynamically quantizes MoE model's weights at runtime and balances expert-weight precision with the KV cache sizes. PagedWeight exposes and effectively navigates the complex tradeoff between the model's task accuracy, memory consumption, and throughput/latency. Across several memory-sensitive MoE serving scenarios, PagedWeight improves the quality-memory tradeoff over several existing quantization baselines. PagedWeight achieves FP16-equivalent accuracy with up to 72.0% GPU memory savings and 1.94$\\times$ throughput improvement, and improves quality over quantization methods by up to 39.3% at a similar memory budget with at most 4.1% throughput loss.",
+      "authors": [
+        "Yuchen Yang",
+        "Yifan Zhao",
+        "Anisha Dasgupta",
+        "Sasa Misailovic"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-17T17:58:29+00:00",
+      "link": "https://arxiv.org/pdf/2607.16184v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "optimizes KV cache size with dynamic weight quantization in MoE LLMs",
+      "llm_evidence_cn": "在MoE大模型中通过动态权重量化优化KV缓存大小",
+      "llm_evidence": "在MoE大模型中通过动态权重量化优化KV缓存大小",
+      "canonical_evidence": "在MoE大模型中通过动态权重量化优化KV缓存大小",
+      "llm_tldr_en": "PagedWeight dynamically quantizes MoE weights to balance expert precision and KV cache memory, improving quality-memory tradeoff in KV-cache-intensive serving.",
+      "llm_tldr_cn": "针对MoE大模型在KV缓存密集型服务中模型权重与KV缓存之间的内存紧张问题，提出了PagedWeight方法，通过运行时动态量化专家权重，在保持任务精度的同时平衡KV缓存大小。实验表明，PagedWeight在多种内存敏感场景下优于现有量化方案，有效改善了质量-内存权衡。",
+      "llm_tldr": "针对MoE大模型在KV缓存密集型服务中模型权重与KV缓存之间的内存紧张问题，提出了PagedWeight方法，通过运行时动态量化专家权重，在保持任务精度的同时平衡KV缓存大小。实验表明，PagedWeight在多种内存敏感场景下优于现有量化方案，有效改善了质量-内存权衡。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.15516v1",
+      "source": "arxiv",
+      "title": "Cache-Aware Prompt Compression:A Two-Tier Cost Model for LLM API Caching",
+      "abstract": "Production LLM deployments combine two cost-reduction primitives: prompt caching (a discounted rate for re-used token prefixes) and prompt compression (fewer tokens sent). The compression literature has standardized on query-aware methods that produce a different compressed prefix per query, mechanically invalidating the prefix-strict cache on every call. We characterize this cost empirically on Anthropic's Sonnet 4.6 API and find caching is far from the rho=1.0 ideal the literature assumes: Sonnet's cache has a two-tier architecture with a sharp threshold near 3,500 tokens, below which the hit rate plateaus at rho~0.83 across 30-call sessions. Our cost model predicts, and experiments confirm, that under realistic rho, query-aware compression beats naive caching at high compression ratios (r>=6). We propose Cache-Aware Prompt Compression (CAPC), pairing query-agnostic compression with explicit cache_control plus a tier-preserving ratio bound that prevents over-compression from pushing the cached prefix into the hot tier. CAPC is the cheapest strategy in 16/16 configurations on LongBench-v2, with mean savings of 49% over cache-only, 64% over query-aware compression, and 90% over vanilla, at quality within 0.05 of the uncompressed baseline. We validate CAPC on three production workloads: an enterprise tool-using assistant with a 94k-token schema prefix (51.7% cost reduction at r=3); a graphify knowledge-graph RAG pipeline across two codebases (9.3x vs cache-all on FastAPI, 2.4x on httpx); and the public tau-bench retail benchmark (50 tasks), where CAPC is the cheapest of four strategies with reward exactly equal to vanilla (both 36/50, p=1.00) while query-aware compression is the most expensive at +40.1% over vanilla -- the first production confirmation of the crossover model's negative-ROI prediction on a public benchmark.",
+      "authors": [
+        "Yan Song"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-07-17T00:03:47+00:00",
+      "link": "https://arxiv.org/pdf/2607.15516v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "cache-aware prompt compression analyzing prefix caching cost model",
+      "llm_evidence_cn": "考虑缓存感知的提示压缩，分析前缀缓存成本模型",
+      "llm_evidence": "考虑缓存感知的提示压缩，分析前缀缓存成本模型",
+      "canonical_evidence": "考虑缓存感知的提示压缩，分析前缀缓存成本模型",
+      "llm_tldr_en": "Analyzes the cost of prompt caching vs. compression in LLM APIs, finding two-tier cache architecture and that query-aware compression is beneficial under realistic hit rates.",
+      "llm_tldr_cn": "针对大模型API中提示缓存和提示压缩的成本权衡，通过分析Anthropic Sonnet API的缓存特性，发现其具有两层架构，在3500令牌附近存在明显阈值。建立成本模型，表明在现实命中率下，查询感知压缩优于无压缩方案，为缓存与压缩联合优化提供了理论指导。",
+      "llm_tldr": "针对大模型API中提示缓存和提示压缩的成本权衡，通过分析Anthropic Sonnet API的缓存特性，发现其具有两层架构，在3500令牌附近存在明显阈值。建立成本模型，表明在现实命中率下，查询感知压缩优于无压缩方案，为缓存与压缩联合优化提供了理论指导。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}
