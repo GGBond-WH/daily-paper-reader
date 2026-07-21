@@ -1,0 +1,444 @@
+Title: Regularize or Localize: When Training-Time KV-Cache Geometry Pays Under Quantization
+
+URL Source: https://arxiv.org/pdf/2607.17019v1
+
+Published Time: Tue, 21 Jul 2026 00:51:55 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Regularize or Localize: When Training-Time KV-Cache Geometry Pays Under Quantization 
+
+Libo Sun 1 Po-Wei Harn 2 Zewei Zhang 1 Peixiong He 1 Xiao Qin 1,∗
+
+> 1
+
+Department of Computer Science and Software Engineering, Auburn University, Auburn, AL 36830, USA 
+
+> 2
+
+Department of Information Management, National Central University, Taoyuan 320317, Taiwan 
+
+Emails: libo@auburn.edu; harnpowei@ncu.edu.tw; zez0001@auburn.edu pzh0029@auburn.edu; xqin@auburn.edu 
+
+> ∗
+
+Corresponding author: Xiao Qin 
+
+# Abstract 
+
+We study whether SIGReg—LeJEPA’s anti-collapse objective—can reshape representations during standard autoregressive language-model pretraining, and when the resulting geometry helps K/V-cache quantization. We train 110M-parameter models on 10B FineWeb tokens and report three findings. (1) At λ=0.01 , SIGReg reduces hidden-state pairwise-cosine anisotropy by 38% across three paired seeds. Perplexity increases by less than 0.35% in every pair, with no consistent zero-shot loss. (2) This change does not propagate from hidden states to the K/V cache. Applying SIGReg directly to K and V during continued training, however, reduces mean cache anisotropy by 94% across four checkpoints. A matched continuation without the K/V term leaves cache geometry nearly unchanged, and the frozen-trunk retrofits we tested do not reproduce the effect. (3) Under untransformed symmetric group-free quantization, direct K/V regularization is the only training condition that prefers per-channel scaling in all three seeds, and under that same 3-bit per-channel scheme the baseline incurs 4.3–7.9× the directly regularized model’s ∆NLL. Under the full simulated KIVI-style configuration (mixed arrangement, zero-points, grouped scales), however, all models reach near-parity, including when storage overhead is approximately matched. In this 110M regime, the training intervention helps when quantizer scales are coarse; the advantage vanishes under the tested combination of token-local grouping, mixed K/V scaling, and zero-points. To our knowledge this is the first training-time distributional regularization of standard K/V-cache geometry evaluated against post-hoc cache quantization. 
+
+# 1 Introduction 
+
+Transformer language models trained with cross-entropy develop anisotropic hidden-state geometry: represen-tations concentrate along a few shared directions (Ethayarajh, 2019; Gao et al., 2019; Timkey & van Schijndel, 2021). A separate line of work—joint-embedding predictive architectures (JEPA)—treats representation geometry as a first-class training target, and its recent instantiation LeJEPA (Balestriero & LeCun, 2025) introduces SIGReg: a sketched Epps–Pulley normality test (Epps & Pulley, 1983) that pushes embeddings toward N (0 , I ) along random projections. SIGReg has spread through vision, RL, and time-series models, and has twice been ablated on language models with null results—as an auxiliary on a nonstandard architecture’s signature stream (Akbar, 2026) and on final-layer states under LoRA fine-tuning (Sengupta, 2026). Neither measured geometry; neither targeted the question a systems designer would ask. We ask that question in three parts. The bridge probes of part 2 use numerical gates fixed before any probe was run; the quantization study of part 3 is exploratory: 1. Does SIGReg shape geometry in standard AR pretraining, and at what cost? Yes: hidden-state anisotropy falls by 38 .0 ± 5.8% across three paired seeds, at a perplexity cost below 
+
++0 .35% in every pair, with capability guards (zero-shot, STS) clean (§5.1–§5.3). 1arXiv:2607.17019v1 [cs.LG] 19 Jul 2026 2. Does the geometry extend to the per-layer K/V cache—and can it be retrofitted? It does not extend on its own, and the frozen-trunk retrofits we tested (new heads on fixed weights) do not recover it. Continued training with SIGReg applied directly to K and V does reduce cache anisotropy—by 94% —while a matched continuation without the K/V term does not, isolating the K/V term as the cause (§5.4). 3. Does the reduced cache anisotropy buy anything under quantization? Conditionally. Under untransformed symmetric group-free quantization the directly regularized model is the only training condition that prefers per-channel over per-token scaling, and its 3-bit symmetric per-channel damage is 4.3–7.9× smaller than the baseline’s; under the full simulated KIVI-style configuration (mixed arrangement, zero-points, grouped scales), all models reach near-parity (§5.5). 
+
+Contributions. We provide the first anisotropy-targeted characterization of SIGReg in standard LM pretraining, with a paired-seed design that survives a measured 1.8–1.9% software-stack drift. We then separate what continued training with the K/V term changes from what frozen-trunk probes and a K/V-term-free continuation do not reproduce, giving a controlled account of where the cache geometry comes from. Third—to our knowledge for the first time—we evaluate a training-time distributional regularization of standard K/V-cache geometry against post-hoc cache quantization, with quantizer controls spanning offset absorption to simulated KIVI-style grouped zero-point schemes, and we locate both the payoff and its boundary. Finally, we state explicitly what the pairwise-cosine anisotropy metric does and does not certify, and use that account to interpret the quantization results. We deliberately do not claim “first isotropy regularization for LMs” (that line runs through CosReg, Spectrum Control, SimCTG, I-STAR—§2) nor a deployed compression system (§7). 
+
+# 2 Related Work 
+
+JEPA-line objectives for LMs. LLM-JEPA (Huang et al., 2026a) adds a predictive embedding loss over paired views at fine-tuning scale; STP (Huang et al., 2026b) predicts semantic-tube triplets on plain token streams. Both retain CE as the implicit anti-collapse mechanism; neither regularizes the embedding 
+
+distribution explicitly. NextLat (Teoh et al., 2025) is the nearest methodological neighbor—a next-latent prediction auxiliary in from-scratch pretraining—but shapes no distribution and measures no geometry. NCP (Liu et al., 2026) discretizes latents into a codebook (CE, not continuous regression). The two SIGReg-on-LM nulls (Akbar, 2026; Sengupta, 2026) used SIGReg as a generic auxiliary at placements our results predict to be inert or insufficient (final-layer-only; fine-tuning-only; nonstandard stream): our λ=0.001 dose is likewise inert, and our frozen-trunk probes likewise fail—placement and dose carry the effect. 
+
+Isotropy in LM representations. The representation-degeneration line regularizes toward isotropy during training: CosReg on output embeddings (Gao et al., 2019), singular-spectrum control (Wang et al., 2020), token-level contrastive SimCTG (Su et al., 2022). NITP (Zhang et al., 2026) adds a continuous representation-space auxiliary during pretraining and frames anisotropic drift as the failure mode it prevents—but isotropy there is a byproduct of a predictive objective, geometry is not measured, and K/V is untouched; our target is the distribution itself and the cache. Post-hoc, All-but-the-Top (centering plus top-PC removal) (Mu & Viswanath, 2018) and whitening variants achieve isotropy for free at the embedding level. I-STAR (Rudman & Eickhoff, 2024) reports that decreasing isotropy can help downstream tasks—evidence from encoder fine-tuning, not decoder pretraining; our zero-shot guard addresses the same concern in our regime and finds no sign-consistent cost. Closest to our cache-level observations, Godey et al. (2024) show anisotropy is inherent to self-attention and that drifted Q/K means are functionally load-bearing—they enable sharp, low-entropy attention—which predicts both that severe K anisotropy is the default and that removing it may cost something (§5.4). We differ from this line in target (per-layer K/V, not just h or output embeddings), mechanism (a distributional normality test, not cosine/spectrum penalties—I-STAR itself observes CosReg acts mainly as a mean shift), and endpoint (cache quantization, not generation diversity). 
+
+KV-cache compression. Quantization and low-rank methods treat the trained cache as given: KIVI’s asymmetric per-channel-K/per-token-V quantization (Liu et al., 2024b), KVQuant’s pre-RoPE per-channel-K 2110M Llama trunk CE + λ·SIGReg( h)FineWeb, 10B tokens              
+
+> λsweep
+> +3 seeds
+> λ=0 .01
+> checkpoint
+> gate
+> A1 : trunk un-frozen +multi-layer SIGReg( Kℓ, V ℓ)PASS
+> A2 : trunk frozen +
+> per-layer predictors
+> PℓFAIL
+> A3 : trunk frozen +de-coders z→Kℓ, V ℓFAIL
+> 3-bit K/V cache quan-tization eval
+> 3-bit sym. group-free per-channel:
+> 4.3–7.9×less damage full KIVI-style config.: parity
+
+Figure 1: Pipeline. Stage 1 characterizes CE +λ·SIGReg ( h) pretraining (dose–response + paired seeds). Stage 2 asks whether the K/V cache’s geometry can be changed: only the trunk-adapted probe (A1) passes its pre-specified gate; the frozen-trunk probes (A2 at two capacities, A3) fail. Stage 3 measures the payoff of A1’s directly regularized cache under post-hoc quantization. quantization (Hooper et al., 2024), QuaRot’s outlier-killing rotations (Ashkboos et al., 2024), KVTC’s transform coding (Staniszewski & Łańcucki, 2026), KV-CoRE’s effective-rank benchmarking of cache com-pressibility (Chen et al., 2026), and eOptShrinkQ’s spectral denoising that “restores the isotropy scalar quantization assumes” (Su, 2026)—all post-hoc. Low-rank attention variants change the cache architecturally (LRKV (O’Neill et al., 2026); adaptive-rank compression, STAR-KV (Bhatnagar et al., 2026)), but none regularize the geometry of a standard attention cache during training. A note on terminology: DMC “retrofits” LLMs by continued pretraining (Nawrot et al., 2024), which is what our successful probe below does; in this paper “retrofit” means frozen-trunk recovery (new heads on fixed weights) or zero-training quantizer changes, with LoRA-scale light adaptation an untested middle ground. Stronger post-hoc normalizations than our controls exist—NSNQuant standardizes K/V vectors channel-wise (mean and scale) before quantizing (Son et al., 2025), and KVarN composes a Hadamard rotation with dual-axis variance normalization for calibration-free 2-bit cache quantization (Muller et al., 2026), whose token-scale-error diagnosis is consonant with our scheme-flip finding—and the K-vs-V asymmetry we observe has independent theoretical grounding: key matrices carry larger norms than values, so keys deserve more bits (Hariri et al., 2026). 
+
+Quantization-friendly training. A complementary line prevents quantization-hostile geometry during training rather than repairing it afterwards: Outlier-Safe Pre-Training suppresses activation outliers via optimizer and normalization choices (Park et al., 2025); Quantizable Transformers remove attention-driven outliers architecturally (Bondarenko et al., 2023); gated attention eliminates attention sinks, with quantization cited among the benefits (Qiu et al., 2025). QAT methods go further and put the quantizer in the training loop, including over the K/V cache (Liu et al., 2024a; Lee et al., 2026). Closest in spirit, KV-CAT trains for token-axis cache compaction through K/V-slot sparsification and evaluates shorter continuous caches; it neither targets coordinate-level distributional geometry nor evaluates scalar or low-bit K/V quantization (Gelberg et al., 2026). We share this line’s thesis—shape the cache during training—but differ in mechanism and in what is measured: a distributional normality regularizer on the standard cache (no optimizer, architecture, sparsification, or in-loop quantizer change), with the geometry itself measured before and after, and the quantizer applied purely post-hoc. Our “first” claim is scoped accordingly: first training-time distributional regularization of K/V-cache geometry evaluated against post-hoc cache quantization—not first training-time intervention that helps cache compression. 
+
+# 3 Method 
+
+Figure 1 shows the three-stage design; Algorithm 1 the training-step objective. 
+
+SIGReg on hidden states (Phase 1). Following LeJEPA’s per-position variant, for hidden states 
+
+h ∈ RB×T ×d we draw m random unit directions per step, compute the Epps–Pulley sketched-normality statistic of the projected batch distribution at each position (exact estimator and quadrature in Appendix B), and add λ·SIGReg (h) to the CE loss. The batch axis is the sample axis of the empirical characteristic function 3Algorithm 1 One pretraining step of CE + λ·SIGReg ( h) (A1 adds the bracketed lines)  
+
+> 1:
+
+sample packed batch (x, y ) ∈ ZB×T ▷ dense, no padding  
+
+> 2:
+
+h ← trunk( x); L ← CE(head( h), y ) ▷ [A1: hooks capture Kℓ, V ℓ ∀ℓ] 
+
+> 3:
+
+draw m directions u1, . . . , u m ∼ Unif( Sd−1) ▷ fresh every step  
+
+> 4:
+
+for position t = 1 , . . . , T do  
+
+> 5:
+
+st ← 1
+
+> m
+
+∑mj=1 EP ({ h⊤
+
+> b,t
+
+uj }Bb=1 
+
+) ▷ Epps–Pulley statistic over the batch axis  
+
+> 6:
+
+end for  
+
+> 7:
+
+L ← L + λ · 1
+
+> T
+
+∑ 
+
+> t
+
+st ▷ [A1: λ ≡ λz ; + λKV 
+
+∑
+
+> ℓ
+
+[SIGReg( Kℓ) + SIGReg( Vℓ)] , same estimator]  
+
+> 8:
+
+AdamW step on L ▷ [A1: trunk unfrozen] (B= 8); m=1024 , directions resampled every step. The trunk is a 110M Llama-style decoder (Touvron et al., 2023) ( d=768 , 12 layers, 12 heads, FFN 2048, vocab 32000, tied head). 
+
+Bridge probes (pre-specified falsifiers). From a λ=0.01 checkpoint, three ∼500 M-token probes with numeric gates fixed in the plan before any probe ran: 
+
+• A1 (adaptation): unfreeze the trunk; train CE + λz · SIGReg (h) + λKV · ∑
+
+> ℓ
+
+[ SIGReg (Kℓ) + SIGReg (Vℓ)] over all layers ( λKV = 0.01 , m=256 ). Gate: mean per-layer K/V pairwise-cosine anisotropy −30% AND ∆NLL ≤ 0.15 nats. 
+
+• A2 (frozen prediction): train per-layer next-position predictors Pℓ on the frozen trunk’s K/V. Gate: mean relative residual < 0.5. Run at two capacities: linear d→d probes (the plan’s original configuration), plus a one-hidden-layer MLP ( 2× width, SiLU) capacity check. 
+
+• A3 (frozen decoding): train post-hoc decoders z → Kℓ/V ℓ, where z is the trunk’s final hidden state, on the frozen trunk. Gate: attention-score Frobenius error ≤ 0.1.Probe capacity for A2/A3 was not itself pre-specified—only the thresholds were; we therefore scope every negative as “at these capacities and this budget” and add the MLP variant as insurance. 
+
+Cache-quantization protocol (exploratory). We fake-quantize (quantize → dequantize) each layer’s K and V projection outputs at evaluation time, on the same pre-RoPE surface the geometry metrics use—a real design point in deployed systems (Hooper et al., 2024)—and report NLL on the standard held-out window as 
+
+∆ versus each model’s own unquantized reference, plus K-only and V-only diagnostics at 3 bits. 
+
+Scheme definitions. Group-free per-token quantization uses one scale across channels for each token. Group-free per-channel quantization uses one scale across all batch elements and positions for each channel. With group size g, per-token grouping partitions channels into contiguous groups of g, while per-channel grouping partitions token positions within each batch element. “Mixed” denotes per-channel K with per-token V—the KIVI arrangement (Liu et al., 2024b). Symmetric grids use absmax scales; asymmetric grids add zero-points, allowing constant offsets to be represented at the same nominal data width (metadata overhead is accounted for separately). The base grid is symmetric and group-free at b ∈ { 8, 4, 3, 2} bits; the KIVI-style extension adds the mixed arrangement, grouped scales ( g=32 , KIVI’s default), and zero-point combinations. Concretely, at d=768 (12 heads × 64 dimensions, concatenated), group-free per-token uses one scale per token spanning 
+
+all heads ; group-free per-channel uses 768 scales per layer per tensor, each spanning the full batch–sequence extent; g=32 per-token partitions within 64-dimensional heads; and per-token at g=64 corresponds to the conventional head-local layout (one scale per head per token). “Untransformed” means no basis rotation or channel standardization is applied before scaling. The six group-free configurations (symmetric, zero-point, and mean-subtraction grids at both granularities) form the original grid ; extensions add mixed, grouped, rotated, and standardized configurations. 
+
+Controls. Two families guard the comparison. Quantizer-side: zero-point and mean-subtraction controls run on all four training conditions (mean subtraction is dynamic-oracle—statistics from the current full batch, full-precision add-back); a fixed rotation surrogate and dynamic-oracle channel standardization were evaluated on baseline and A1. The training-side control is a token-matched continuation ( λKV = 0): the same checkpoint continued for the same 500M tokens with CE + λz ·SIGReg ( h) only. 4Simulation limits. This simulates quantizer arrangements, not systems: cache-disabled full-sequence forwards on the pre-RoPE surface (post-RoPE K variants confirm that the group-free findings, the full KIVI-style configuration, and grouped symmetric per-channel all transfer, §5.5(i) and (v)), full-precision scale/zero-point metadata, and none of KIVI’s block timing or full-precision residual window. 
+
+Metrics, stated precisely. Anisotropy is the mean pairwise cosine of sampled representation pairs (Ethayarajh, 2019; Mu & Viswanath, 2018). It is mean-dominated: removing a shared mean/rogue direction (Timkey & van Schijndel, 2021) can drive it to ∼0 without whitening the covariance. All spectral quantities (top-1 share, condition number, σmin ) are singular values of the centered representation matrix, so they measure covariance shape and cannot be moved by mean removal alone. We co-report the spectral top-1 share throughout (and the condition number at the h level), and treat disagreements between the two metric families as findings (§6). 
+
+# 4 Experimental Setup 
+
+110M Llama-style models pretrained on FineWeb sample-10BT (Penedo et al., 2024) for 10B tokens ( 610 ,352 
+
+steps × 8×2048 ), lr 3·10 −4 cosine (warmup 2000, floor 0.1×), AdamW (0 .9, 0.95) , bf16 autocast, Mistral-7B tokenizer (Jiang et al., 2023). Evaluation: 2.01M held-out FineWeb tokens (5000 docs at a 100k-doc offset; the training stream starts after the eval window). The dose–response sweep ran once (seed 42, May 2026 stack); the {baseline, λ= 0.01 } confirmation ran at seeds {42,43,44} on a rebuilt venv. The rebuild shifted absolute perplexity by −1.8% /−1.9% on the two models (near-identical co-movement; seed-42 reproduction check)—all headline statistics are therefore within-seed, within-stack paired deltas , and the dose–response sweep is presented as shape evidence only. Zero-shot: lm-eval-harness (Gao et al., 2023) (LAMBADA, HellaSwag, PIQA, ARC-easy, WinoGrande) on HF-exported checkpoints whose logits are verified bit-identical to the training-format originals. Compute: one 8×A100 SLURM node for pretraining ( ∼33 h per model); all probes, panels, and sweeps on a single RTX 5090. 
+
+# 5 Results 
+
+5.1 Dose–response ( n=1 , shape)                               
+
+> λppl ∆ppl aniso( h)top1 cond# 0 (baseline) 21.894 —0.0242 0.0618 30.6 0.001 21.893 −0.0% 0.0255 0.0658 33.2 0.01 21.934 +0 .19% 0.0183 0.0556 24.3 0.1 23.658 +8 .1% 0.0107 0.0338 17.6 1.0 22.866 +4 .4% 0.0016 0.0310 32.7
+
+Table 1: Dose–response of CE + λ·SIGReg (h) at 10B tokens (seed 42, May stack; n=1 per arm). Anisotropy responds monotonically to dose over the active range λ ∈ { 0.01 , 0.1, 1.0} (Figure 2); λ= 0.001 is inert (within cross-seed noise, ±0.002 ). Perplexity and conditioning are not monotone: λ=1.0 reduces the smallest singular value sharply ( σmin 62 →9), so near-perfect pairwise-cosine isotropy coexists with worse conditioning than baseline—the first of several places the two metric families dissociate. λ=0.01 is the operating point for everything below. 
+
+5.2 Paired confirmation at λ=0 .01 (n=3 seeds) 
+
+The anisotropy effect is sign-consistent and ∼6.5× the pair-to-pair spread; the perplexity cost is positive in every pair and below +0 .35% (largest pair +0 .340% ). We do not report seed-level inferential statistics at n= 3; the claim is the descriptive bound and its sign-consistency (within-seed quantization margins later carry eval-window bootstrap intervals, §5.5(iii)). The λ-arm’s across-seed anisotropy spread ( ±0.0007 ) is 3×
+
+tighter than baseline’s ( ±0.0020 ): the regularizer pins the metric it targets. The spectral top-1 share moves 510 −3 10 −2 10 −1 10 0     
+
+> λ(log scale)
+> 0.005
+> 0.010
+> 0.015
+> 0.020
+> 0.025
+> anisotropy( h)
+> baseline
+> 10 −310 −210 −110 0
+> λ(log scale)
+> 0
+> 2
+> 4
+> 6
+> 8
+> Δppl vs baseline (%)
+
+Figure 2: Dose–response of SIGReg ( h) at 10B tokens ( n= 1 per λ setting). Left: anisotropy( h) falls monotonically over the active doses; λ= 0.001 sits on the baseline reference (dashed). Right: in this single-seed sweep the perplexity cost is not monotone— λ=1 .0 costs less than λ=0 .1.                                     
+
+> within-seed ∆(λ=0 .01 −baseline) s42 s43 s44 mean ±sd anisotropy( h)−37 .4% −32 .5% −44 .1% −38 .0±5.8%
+> perplexity +0 .068% +0 .179% +0 .340% +0.196 ±0.137 %
+> NLL (nats) +0 .0007 +0 .0018 +0 .0034 +0 .0020 ±0.0014
+> cond# −7.6−10 .0−8.4−8.7±1.2
+> spectral top1 +4 .4% −21 .4% −23 .2% sign-inconsistent
+
+Table 2: Within-seed paired deltas, rebuilt stack, n=3 .inconsistently—at this dose SIGReg acts primarily on shared directions, with only weak, seed-inconsistent pressure on the top of the spectrum, though the conditioning improvement is sign-consistent ( −8.7 ± 1.2)—the estimator intuition in §6 is consistent with exactly this diluted-but-nonzero spectral pressure. 
+
+5.3 Capability guards 
+
+Zero-shot (5 tasks × 3 seeds). No task shows a sign-consistent within-seed effect; per-task mean deltas (percentage points): LAMBADA +0 .81 , HellaSwag +0 .03 , PIQA +0 .53 , ARC-e −0.01 , WinoGrande 
+
+−1.45 —each within the standard error of a between-model comparison ( √2 × single-run task SE; the largest single-pair excursion is WinoGrande −4.2pp at s43, within cross-seed task noise). The regularizer changes geometry, not measured zero-shot capability. 
+
+STS-B and the All-but-the-Top comparator. Raw pooled-embedding STS-B Spearman improves within-seed in all three pairs ( 0.559 →0.594 , 0.542 →0.577 , 0.538 →0.564 ). But All-but-the-Top post-processing (centering plus top-7-PC removal) lifts every model, baseline included, to 0.688 –0.697 . At the hidden-state level, this post-hoc centering-plus-PC-removal subsumes the trained regularizer’s sentence-embedding benefit— we state this plainly, because it localizes the interesting question at the K/V level, where the same post-hoc logic fails (§5.4). 
+
+5.4 Bridge characterization: adaptation vs. retrofit 
+
+A1 (adaptation) passes on four of four pretraining checkpoints. A1 was evaluated from four distinct starting checkpoints (the dose–response λ=0.01 checkpoint and the three seed-confirmation checkpoints); two runs were repeated in the same configuration to persist the adapted weights, giving six runs total (all probes ran on the local stack, on checkpoints from both stacks). Across these runs, mean per-layer K/V anisotropy fell by a 0.936 –0.943 fraction (gate ≥ 0.30 ) at a +0 .095 –0.101 -nat NLL cost (guard ≤ 0.15 ). At tensor level, 143 of 144 per-run layer-tensor checks clear the 30% bar; the single exception is V layer 0 at 27 .0% in the 6s43 run. V layer 0 is the weakest tensor in every run ( 40 .7–44 .6% in the other five; dose-checkpoint run minimum 43 .9% with all 24 tensors clear). Before adaptation the trunk’s K is severely anisotropic (per-layer pairwise-cosine ∼0.76 mean; overall K/V 0.42) despite the h-level regularizer— h-level anisotropy reduction does not propagate to the cache by itself, consistent with K anisotropy being self-attention’s default operating point (Godey et al., 2024). 
+
+The token-matched continuation control isolates the cause. The same checkpoints continued for the same 500M tokens without the K/V term ( λKV = 0; one run per seed-confirmation checkpoint, n= 3) reduce K/V anisotropy by only a 0.04 –0.05 fraction in every run. The matched hidden-SIGReg continuation does not produce the geometry change; adding the multi-layer K/V term does. 
+
+A2 (frozen prediction) fails at two capacities (single runs on the dose–response checkpoint). Mean relative residual 0.618 (linear) and 0.593 (MLP 2×, SiLU) against a < 0.5 gate. The decomposition is the finding: K mean residual 0.37 (linear) / 0.35 (MLP)— 0.28 –0.35 across layers 1–11 with layer 0 an outlier at 
+
+0.86 –0.88 —versus V mean 0.87 (linear) / 0.84 (MLP). K alone would clear the gate; V stays ∼70% above it at both capacities, and doubling probe capacity moves it by only 0.03 . Next-position K is largely predictable from a frozen trunk; V is not. 
+
+A3 (frozen decoding) fails decisively (single run, same checkpoint). Attention-score Frobenius error 
+
+0.861 vs. a 0.1 gate ( 8.6× the threshold; layers 3–11 near-total error). Post-hoc reconstruction of usable K from the trunk’s output embedding is not available at this budget and capacity. Reading: the K/V geometry of a CE( +SIGReg-on-h) trunk can be changed by continued training with trunk adaptation at a bounded, replicated quality cost, but was not recovered by the frozen-trunk probes we tested (linear and MLP-2×, one checkpoint, matched 500M-token budget). The corroborating external evidence is the pair of published SIGReg-on-LM nulls at other placements (Akbar, 2026; Sengupta, 2026): where the regularizer acts determines whether it does anything. 
+
+5.5 The payoff: cache quantization ( n=3 , exploratory)                     
+
+> bits baseline SIGReg ( h)A1-adapted baseline/A1 per-seed 8+0 .001 +0 .000 +0 .000 —4+0 .219 +0 .204 +0.070 2.4–4.2×
+> 3+1 .659 +1 .289 +0.268 4.3–7.9×
+> 2+6 .92 +3 .94 +4 .02 (all unusable)
+
+Table 3: ∆NLL vs. each model’s own fp32 reference under symmetric group-free per-channel K/V fake quantization; mean over 3 seeds. Five observations (Figure 3, Tables 3–5). 
+
+(i) A1 uniquely changes the preferred scaling axis under untransformed symmetric group-free quantization. We call this the scheme flip : a change in preferred scaling from per-token to per-channel. The baseline prefers per-token scaling (3-bit: +0 .76 vs. +1 .66 per-channel)—token-norm variation across positions inflates shared per-channel scales (Xiao et al., 2023); our concentration proxy (§7) is mild at this scale, but these scales pool the full batch–sequence extent—and so do the h-only model and the continuation control, in every seed; A1 is the only training condition that prefers per-channel in all three seeds. Among the controls we ran, none makes the baseline share this preference. Zero-point grids barely move the baseline ( +0 .74 
+
+per-token) and do not repair its per-channel configuration ( +1 .81 ); dynamic-oracle mean subtraction makes every training condition worse (baseline per-token +2 .30 )—an empirical regularity of our grids: mean-removed geometry suits per-token absmax scaling poorly whether the mean is removed by arithmetic or by training (§6 supplies channel-level correlates for the trained case). A fixed rotation surrogate (random-orthogonal basis— dense, not the Hadamard-structured, head-aware, post-RoPE transform deployed QuaRot uses; evaluated on baseline and A1) substantially improves the baseline’s zero-point per-token configuration ( +0 .74 → +0 .18 
+
+mean at 3 bits, spanning +0 .10 –+0 .28 across seeds) while degrading per-channel scaling for both (channel identity does not survive rotation); dynamic-oracle channel standardization (mean and scale recomputed 72348
+
+> bits
+> 10 −3
+> 10 −2
+> 10 −1
+> 10 0
+> 10 1
+> ΔNLL vs own fp32 ref (nats)
+> per-token scaling
+> baseline
+> SIGReg( h)
+> A1-adapted
+> 2348
+> bits
+> baseline @ 4-bit
+> A1 @ 3-bit
+> per-channel scaling
+
+Figure 3: The scheme flip (untransformed symmetric group-free scales). ∆NLL (log scale) vs. quantization bit-width for both scale granularities; lines are 3-seed means, faint points individual seeds. Per-token (left): the baseline’s preferred scheme, on which A1 is worst . Per-channel (right): A1 dominates at 3–4 bits (4.3–7.9 × less degradation at 3 bits). The full simulated KIVI-style configuration compresses these differences to near-parity (Table 5).                                  
+
+> 3-bit scheme baseline SIGReg ( h)A1-adapted continuation ( λKV =0 )symmetric, per-token +0 .765 +0 .540 +2 .693 +0 .341
+> symmetric, per-channel +1 .659 +1 .289 +0.268 +0 .591
+> asymmetric, per-token +0 .736 +1 .182 +2 .536 +0 .479
+> asymmetric, per-channel +1 .810 +1 .744 +1 .533 +0 .607
+> mean-sub +sym., per-token +2 .299 +2 .949 +4 .434 +0 .929
+> mean-sub +sym., per-channel +2 .348 +2 .672 +0 .748 +1 .274
+
+Table 4: Controls at 3 bits: ∆NLL vs. own fp32 reference under the six displayed all-model configurations (symmetric, zero-point, and mean-subtraction grids at both granularities; 3-seed means in every column). No mean-absorbing retrofit rescues the baseline’s per-channel column or flips its preferred scheme; only A1 flips. on the current full batch, future tokens included—a favorable, non-deployable diagnostic) backfires even so (baseline symmetric per-token +0 .77 → +1 .87 ). These transforms change the geometry the scales see, and preferences with them: rotated or standardized, the baseline still prefers per-token, and A1’s own best configuration under the extended grid becomes standardize +rotate per-token ( +0 .13 –+0 .17 , sharing the high-level rotation-plus-normalization ingredients used by KVarN (Muller et al., 2026)). The single-target diagnostics localize A1’s per-token damage to V (K-only +1 .17 / V-only +2 .36 vs. baseline +0 .38 /+0 .10 ): V is mean-reduced but spectrally more concentrated—poorly suited to per-token scales, well suited to per-channel. The flip is specifically a coarse-extent phenomenon: under the conventional head-local layout (per-token at 
+
+g=64 , one scale per head per token), every model—A1 included—prefers per-head per-token over group-free per-channel, and A1’s advantage persists there as magnitude rather than axis (it is best on every per-head configuration: 3-bit symmetric +0 .127 vs. the baseline’s +0 .229 ; zero-point +0 .055 vs. +0 .101 ; 1.8× in the means). The quantization locus transfers: quantizing K after rotary embedding (the surface deployed caches store; V has no RoPE) reproduces the group-free structure nearly quantitatively—3-bit symmetric per-channel baseline +1 .807 vs. A1 +0 .331 (5.5×; pre-RoPE 6.2×), per-token ordering intact for both models—so the pre-RoPE simulation is not load-bearing for the group-free findings. 
+
+(ii) The symmetric per-channel advantage is robust across seeds. Scheme-matched at 3 bits, A1’s degradation is 4.3–7.9× smaller than the baseline’s in every seed ( 2.4–4.2× at 4 bits; Table 3). At this scheme A1 at 3 bits degrades about as much as the baseline at 4 bits ( +0 .268 vs. +0 .219 in the mean)— informally, one extra bit at iso-degradation. Its damage magnitude is also stable: +0 .23 –0.31 across seeds 83-bit KIVI-style scheme (simulated) baseline SIGReg ( h) A1-adapted continuation mixed (pc-K/pt-V), symmetric, group-free +0 .793 +0 .641 +2 .439 +0 .332                                  
+
+> symmetric, per-token, per-head ( g=64 )+0 .229 +0 .212 +0 .127 +0 .149
+> asymmetric, per-token, per-head ( g=64 )+0 .101 +0 .097 +0 .055 +0 .072
+> symmetric, per-token, g=32 +0 .129 +0 .125 +0 .084 +0 .090
+> symmetric, per-channel, g=32 +1 .045 +2 .045 +0.105 +0 .249
+> mixed (pc-K/pt-V), symmetric, g=32 +0 .161 +0 .113 +0 .036 +0 .077
+> asymmetric, per-token, g=32 +0 .057 +0 .055 +0 .036 +0 .042
+> KIVI-style: mixed, asym., g=32 +0 .016 +0 .015 +0 .015 +0 .012
+
+Table 5: KIVI-style quantizers at 3 bits nominal ( ∆NLL vs. own fp32 reference; 3-seed means in every column). Grouping alone (symmetric rows) preserves A1’s per-channel advantage ( 9.9× in the mean) and a modest per-token edge; the full KIVI-style configuration brings every model to near-parity. Grouped zero-point scales add an analytical ∼1 bit/value of metadata ( 2 × 16 -bit parameters per 32 elements; kept full-precision and free to all models in this simulation). against the baseline’s +0 .99 –2.11 (and +4 .1–11 .1 at 2 bits). The baseline’s ranking of configurations is itself seed-dependent: its best configuration changes identity with seed on the original grid (with rotation admitted it stabilizes on rotated per-token), and, separately, its asymmetric (zero-point) mixed-arrangement value spans 6×. The h-only SIGReg model sits between baseline and A1 at the usable 3–4-bit symmetric per-channel points in the three-seed means—per-seed the ordering crosses twice (s43 at 3 bits: 1.17 vs. the baseline’s 0.99 ; s44 at 4 bits: 0.24 vs. 0.22 )—a dose narrative from h-regularization to full K/V adaptation, scheme-conditional throughout. 
+
+(iii) Best-configuration rankings depend on bit width and the quantizer grid. Define the margin as the baseline’s best-configuration NLL minus A1’s best-configuration NLL over a stated grid, in absolute nats: positive favors A1, which carries its +0 .10 -nat unquantized handicap into this accounting. On the original group-free grid at 3 bits, A1 wins in every seed (margins +0 .011 /+0 .125 /+0 .261 ); a paired packed-batch bootstrap that reselects each model’s best configuration inside every replicate places the 95% interval above zero even for the smallest margin (s42 [+0 .004 , +0 .018] , bootstrap win frequency 0.999 ; Appendix B). On the same six-configuration group-free grid at 4 bits the ranking reverses: margins −0.101 /−0.121 /−0.103 ,all intervals excluding zero—4-bit damage is too small to repay the handicap—so the one-extra-bit reading from (ii) holds per-channel scheme-matched but not best-configuration-vs-best-configuration. Extending the 3-bit grid changes the ranking again: the asymmetric group-free KIVI arrangement gives the baseline 
+
++0 .149 /+0 .319 /+0 .925 ∆ NLL across seeds—a 6× spread on a single configuration—and with the mixed arrangement and selected competitive rotation/standardization configurations included the margins become 
+
+−0.139 ([−0.143 , −0.135] ) at s42, −0.104 ([−0.108 , −0.101] ) at s43, and +0 .050 ([+0 .045 , +0 .056] ) at s44. Each seed’s winner is resolved at held-out-window resolution; the ranking itself is seed- and grid-dependent. What is robust is the preference (i), the scheme-matched advantage (ii), and where the contest dissolves (v). 
+
+(iv) The K/V-term-free continuation already shows part of the raw robustness—not the preference. The λKV = 0 continuation ( n= 3, one run per seed checkpoint) retains the hidden-state term (CE 
+
++ λz ·SIGReg ( h)); its cache anisotropy-reduction is 0.04 –0.05 in every run, against A1’s 0.94 (same convention: fraction of anisotropy removed), and it costs +0 .073 –+0 .076 nats of its own—so roughly three quarters of A1’s 
+
++0 .10 -nat full-precision penalty is already present in the matched K/V-term-free hidden-SIGReg continuation. This design does not distinguish hidden-state regularization, additional training, and the learning-rate restart as the source. The continuation nevertheless gains substantial quantization robustness (original-grid best configurations +0 .27 –+0 .35 across seeds, vs. the baseline’s +0 .42 –+0 .63 and A1’s +0 .23 –+0 .31 —a near-tie against A1 once handicaps are counted), so raw low-bit tolerance does not require the K/V term. What it does not gain, in any seed: its preferred scaling is still per-token, and its same-seed symmetric per-channel configuration is 2.1–2.4× worse than A1’s ( +0 .54 –+0 .66 vs. +0 .23 –+0 .31 ). The K/V term’s specific contribution is the geometry (§5.4), the scheme flip, and the per-channel operating point—not the bulk of the raw best-configuration robustness. 90 2 4 6 8 10      
+
+> layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> pairwise-cosine anisotropy
+> K before
+> K after
+> V before
+> V after
+> 0246810
+> layer
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> spectral top-1 share
+
+Figure 4: Per-layer K/V geometry before (solid) and after (dashed, open markers) the A1 probe, primary run. Left: pairwise-cosine anisotropy collapses for every layer’s K and V. Right: the spectral top-1 share 
+
+dissociates —K flattens while V concentrates, especially in early layers. 
+
+(v) The full KIVI-style configuration removes the advantage at nominal bit width. Table 5: quantizer-side structure absorbs the geometry advantage in stages—a quantizer-side dose–response mirroring the training-side one. Per-head scales (per-token, g=64 ) preserve a 1.8× A1 edge; grouped scales at g=32 
+
+(symmetric) still favor A1 by 9.9× per-channel ( +0 .105 vs. +1 .045 ), 1.5× per-token ( +0 .084 vs. +0 .129 ), and 4.5× in the mixed arrangement ( +0 .036 vs. +0 .161 ). Zero-points complete the collapse: asymmetric grouped per-token narrows to +0 .036 vs. +0 .057 . A batch-isolation control locates the driver: per-channel scales at full-sequence extent within each batch element ( g=T , no cross-batch pooling, no locality change) leave the group-free picture intact—baseline +1 .34 vs. A1 +0 .22 , 6.2×, matching the batch-pooled 6.2×—so what removes the advantage is scale locality along the token axis , together with the mixed arrangement and zero-points, not cross-batch scale sharing. The full KIVI-style configuration (mixed arrangement + zero-points + g=32 ) brings every model to +0 .011 –+0 .016 per seed at 3 bits nominal ( +0 .003 at 4)—near-parity (used descriptively throughout: across-model spreads of ∼0.005 nats at 3 bits and ∼0.03 at nominal-2-bit, against group-free spreads above 1 nat; no formal equivalence test is implied), at which point A1’s +0 .10 -nat base handicap dominates end-to-end NLL and the training-time intervention is a net loss in this regime at this scale. The boundary holds at the deployed K locus: applying the full KIVI-style configuration with post-RoPE K lands every model at +0 .017 –+0 .021 at 3 bits nominal ( +0 .004 at 4), and post-RoPE grouped symmetric per-channel preserves A1’s advantage ( +0 .11 vs. the baseline’s +1 .06 , 9.7×)—both sides of the story transfer. The storage-adjusted comparison cuts both ways: grouped zero-point scales are not free at deployment (an analytical ∼1 extra bit per value, making 3-bit g=32 storage comparable to group-free 4-bit), and our grids keep that metadata full-precision and uncharged for every model. The comparison still lands the same way: nominal-2-bit KIVI-style configurations (analytically ≈3.0 bits/value) sit at model means 
+
++0 .075 –+0 .105 —near-parity again, and at or below every model’s best group-free 3-bit configuration (per-seed there is one exception: the baseline’s rotated best at s42, +0 .099 , edges its own 2-bit grouped +0 .111 ). The training-time advantage is a coarse-scale-regime property: real where quantizer scales span long token extents; it vanishes under the tested combination of token-local grouping, mixed K/V scaling, and zero-points. 
+
+# 6 What the anisotropy metric certifies—and what it doesn’t 
+
+The geometry gates in this paper (Phase 1 and A1) use mean-pairwise-cosine anisotropy, which is mean-dominated: it indicates reduced average directional alignment—a quantity a shared mean or rogue direction can dominate—and does not certify removal of any particular direction, nor covariance whitening. Our results show both faces. At the h level ( λ= 0.01 ), top-1 spectral share is sign-inconsistent across seeds while pairwise cosine drops 38%—consistent with a predominantly mean-level change, since our spectral quantities 10 are centered (§3) and mean removal cannot move a centered spectrum. After A1 (primary run, Figure 4), the 
+
+aggregate K/V top-1 share is flat ( 0.158 →0.161 ), but per-layer it decomposes into K −55% (0.206 →0.094 ,genuine spectral flattening) and V +107% (0.111 →0.229 ; layer 1: 0.139 →0.453 —spectral concentration ). We could have buried this in an appendix; instead it is our account of §5.5’s scheme flip, and the channel-level statistics supply strong, consistent correlates in the basis quantization actually uses (correlates, not a causal identification): after A1, V’s per-channel scale dispersion (pooled median of per-layer max/median channel stds) rises to 8.5 against 1.9–2.2 for every other model—consistent with greater sensitivity of per-token absmax scaling to a small number of high-variance channels—while K’s heaviest channel tail collapses (pooled median of per-layer max excess kurtosis 50 → 12 ). It also sharpens an open question: whether the increased V spectral concentration helps or harms low-rank cache compression is untested, and is distinct from the quantization robustness studied here. The dissociation is, moreover, consistent with the estimator’s structure—an intuition about sensitivity, not a statement about training gradients. The per-position Epps–Pulley statistic is computed over the batch axis— B= 8 samples—where a normality test may have limited sensitivity to distributional shape ; it is sensitive mainly to the projected first and second moments. And, heuristically, for a random unit direction 
+
+u, Eu[⟨u, v 1⟩2] = 1 /d , so a rank-one covariance spike along v1 contributes on average 1/d of its energy to 
+
+u⊤Σu (d=768 ), suggesting weak, not absent, pressure on any individual spectral direction. That is what the data show: a strong reduction in mean/rogue-direction alignment without whitening, alongside small but sign-consistent second-moment movement (the h-level condition number improves in all three pairs, Table 2). What this intuition does not predict is the direction of the large per-layer spectral moves after A1—K’s 
+
+−55% flattening, V’s +107% concentration; those are facts the account accommodates, not ones it forecasts. All such attributions are intervention-level: adding the K/V objective changes geometry and quantization outcomes jointly; mediation by any individual geometric statistic—pairwise-cosine anisotropy included—is not established. Claims in this paper are phrased accordingly. 
+
+# 7 Limitations 
+
+Scale and generalization. All claims are scoped to one regime: 110M parameters, one corpus (FineWeb 10BT), one tokenizer and architecture. Modern GQA/MQA cache layouts, whose per-KV-head geometry and outlier structure differ, are untested. Near-parity under the full KIVI-style configuration is a result at this scale—and our channel statistics suggest why scale matters: our token-norm concentration proxy (median max/median per-token K/V norm 1.2–1.7; no value above 3.6) shows no severe concentration, in contrast to the extreme outlier structure reported at larger scale. The proxy measures norms, not attention mass, so it is not a direct attention-sink measurement (Xiao et al., 2023). The same caveat bounds our positive results symmetrically. 
+
+Probe evidence. The A2/A3 negatives are single runs on a single checkpoint, bounded by probe capacity (linear, MLP-2×) and a 500M-token budget; the pre-specification covers thresholds, not capacities, and LoRA-scale light adaptation between “frozen” and “fully unfrozen” is an untested middle ground. Two of the six A1 runs are same-configuration re-runs rather than independent replicates, and the λKV = 0 continuation control has one run per seed checkpoint ( n= 3). A1 costs +0 .10 nats of base NLL, ∼50 × the Phase-1 regularizer’s cost; whether a gentler adaptation schedule shrinks it is open—if drifted K/Q means are load-bearing for sharp attention (Godey et al., 2024), part of the cost may be the price of re-routing attention around the removed drift, a hypothesis we do not test. 
+
+Simulated deployment. Quantization is simulated (fake quantization in cache-disabled full-sequence forwards, NLL-only) and was not pre-specified in the plan—no deployed cache and no wall-clock or memory measurements. Evaluation is prefill-style throughout; autoregressive error accumulation under decoding, which motivates pseudo-decode evaluation in recent work (Muller et al., 2026), is untested. The post-RoPE K locus is verified for the group-free grid (§5.5(i)), the full KIVI-style configuration, and grouped symmetric per-channel (§5.5(v)); the remaining grouped cells are pre-RoPE only. The simulated KIVI-style grouped grid charges no model for scale/zero-point metadata storage; the iso-storage configurations (§5.5(v)) address metadata overhead under the stated analytical accounting, not with quantized metadata. Our rotation control is a dense random-orthogonal surrogate for the QuaRot class (Ashkboos et al., 2024)—not Hadamard-11 structured, head-aware, fused, or post-RoPE as deployed—and involves no statistics; our standardization control (alone or composed with rotation) uses dynamic oracle statistics computed on the full current batch (future tokens included; degenerate at batch-of-one decoding), covering NSNQuant’s normalization idea but not its calibration-free causal pipeline (Son et al., 2025). The oracle treatment strengthens the standardization-backfire result but makes those configurations favorable, non-deployable diagnostics rather than deployable retrofits; both controls also ran only on baseline and A1. 
+
+Statistical scope. n= 3 supports descriptive bounds across seeds, not seed-level inference; within -seed best-vs-best margins carry paired-bootstrap intervals at held-out-window resolution (§5.5(iii), Appendix B). Part of A1’s raw low-bit tolerance is already present in the K/V-term-free hidden-SIGReg continuation (§5.5(iv)); the geometry, the scheme flip, and the per-channel operating point are the K/V-term-specific residue. The two software stacks are never pooled; the −1.8% /−1.9% drift is disclosed and quarantined by the paired design. 
+
+# 8 Conclusion 
+
+SIGReg provides a low-NLL-cost way to reduce shared-direction anisotropy during standard autoregressive pretraining. This change does not automatically propagate to the K/V cache. Direct K/V regularization during continued training reduces cache anisotropy by 94% , whereas a matched continuation without the K/V term and the frozen-trunk probes we tested do not reproduce the effect. The quantization consequence depends on scale granularity. Under untransformed symmetric group-free scaling, the K/V-regularized model is the only training condition that prefers per-channel scaling, and the baseline incurs 4.3–7.9× as much ∆NLL under 3-bit symmetric per-channel quantization. This advantage disappears under the full simulated KIVI-style configuration (mixed arrangement, zero-points, and g=32 
+
+grouping), including when storage overhead is approximately matched under our analytical metadata accounting. Training-time regularization therefore controls cache geometry; in the tested grid, its quantization advantage appears with long-span scales and disappears under that full token-local grouped zero-point configuration. 
+
+# References 
+
+Habibullah Akbar. ATMA: Length-invariant language modeling via polar attention and gated-delta compres-sion memory. arXiv preprint arXiv:2606.25156 , 2026. Saleh Ashkboos, Amirkeivan Mohtashami, Maximilian L. Croci, Bo Li, Pashmina Cameron, Martin Jaggi, Dan Alistarh, Torsten Hoefler, and James Hensman. QuaRot: Outlier-free 4-bit inference in rotated LLMs. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. arXiv:2404.00456. Randall Balestriero and Yann LeCun. LeJEPA: Provable and scalable self-supervised learning without the heuristics. arXiv preprint arXiv:2511.08544 , 2025. Priyansh Bhatnagar, Ashkan Moradifirouzabadi, Se-Hyun Yang, SeungJae Lee, Jungwook Choi, and Mingu Kang. STAR-KV: Low-rank KV cache compression via soft thresholding for adaptive rank control. arXiv preprint arXiv:2606.08382 , 2026. Yelysei Bondarenko, Markus Nagel, and Tijmen Blankevoort. Quantizable transformers: Removing outliers by helping attention heads do nothing. In Advances in Neural Information Processing Systems (NeurIPS) ,2023. arXiv:2306.12929. Jian Chen, Zhuoran Wang, Jiayu Qin, Ming Li, Meng Wang, Changyou Chen, Yin Chen, Qizhen Weng, and Yirui Liu. KV-CoRE: Benchmarking data-dependent low-rank compressibility of KV-caches in LLMs. 
+
+arXiv preprint arXiv:2602.05929 , 2026. Thomas W. Epps and Lawrence B. Pulley. A test for normality based on the empirical characteristic function. 
+
+Biometrika , 70(3):723–726, 1983. 12 Kawin Ethayarajh. How contextual are contextualized word representations? comparing the geometry of BERT, ELMo, and GPT-2 embeddings. In Proceedings of EMNLP-IJCNLP , 2019. arXiv:1909.00512. Jun Gao, Di He, Xu Tan, Tao Qin, Liwei Wang, and Tie-Yan Liu. Representation degeneration problem in training natural language generation models. In International Conference on Learning Representations (ICLR) , 2019. arXiv:1907.12009. Leo Gao, Jonathan Tow, Baber Abbasi, et al. A framework for few-shot language model evaluation. Zenodo, 2023. lm-evaluation-harness. Yoav Gelberg, Yam Eitan, Michael Bronstein, Yarin Gal, and Haggai Maron. Training transformers for KV cache compressibility. arXiv preprint arXiv:2605.05971 , 2026. Nathan Godey, Éric de la Clergerie, and Benoît Sagot. Anisotropy is inherent to self-attention in transformers. In Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (EACL) , 2024. arXiv:2401.12143. Mohsen Hariri, Alan Luo, Weicong Chen, Shaochen Zhong, Tianyi Zhang, Qifan Wang, et al. Quantize what counts: More for keys, less for values. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (ACL) , 2026. arXiv:2502.15075. Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. KVQuant: Towards 10 million context length LLM inference with KV cache quantization. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. arXiv:2401.18079. Hai Huang, Yann LeCun, and Randall Balestriero. LLM-JEPA: Large language models meet joint embed-ding predictive architectures. In International Conference on Learning Representations (ICLR) , 2026a. arXiv:2509.14252. Hai Huang, Yann LeCun, and Randall Balestriero. Semantic tube prediction. arXiv preprint arXiv:2602.22617 ,2026b. Albert Q. Jiang, Alexandre Sablayrolles, Arthur Mensch, et al. Mistral 7B. arXiv preprint arXiv:2310.06825 ,2023. Janghwan Lee, Sihwa Lee, Jinseok Kim, Yongjik Kim, Jieun Lim, Jinwook Oh, and Jungwook Choi. ReQAT: Achieving full-precision reasoning accuracy with 4-bit floating-point quantization-aware training. In 
+
+International Conference on Machine Learning (ICML) , 2026. arXiv:2606.15682. Yuliang Liu, Yunchong Song, Yixuan Wang, Kewen Ge, Alex Lamb, Qipeng Guo, Kai Chen, Bowen Zhou, and Zhouhan Lin. Next concept prediction in discrete latent space leads to stronger language models. 
+
+arXiv preprint arXiv:2602.08984 , 2026. Zechun Liu, Barlas Oguz, Changsheng Zhao, Ernie Chang, Pierre Stock, Yashar Mehdad, et al. LLM-QAT: Data-free quantization aware training for large language models. In Findings of the Association for Computational Linguistics: ACL 2024 , 2024a. arXiv:2305.17888. Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. KIVI: A tuning-free asymmetric 2bit quantization for KV cache. arXiv preprint arXiv:2402.02750 ,2024b. Jiaqi Mu and Pramod Viswanath. All-but-the-top: Simple and effective postprocessing for word representations. In International Conference on Learning Representations (ICLR) , 2018. arXiv:1702.01417. Lorenz K. Muller, Philippe Bich, Chiara Boretti, Hyun-Min Chang, Jiawei Zhuang, and Lukas Cavigelli. KVarN: Variance-normalized KV-cache quantization mitigates error accumulation in reasoning tasks. arXiv preprint arXiv:2606.03458 , 2026. 13 Piotr Nawrot, Adrian Łańcucki, Marcin Chochowski, David Tarjan, and Edoardo M. Ponti. Dynamic memory compression: Retrofitting LLMs for accelerated inference. In Proceedings of the 41st International Conference on Machine Learning (ICML) , 2024. arXiv:2403.09636. James O’Neill, Robert Clancy, Mariia Matskevichus, and Fergal Reid. Low-rank key value attention. arXiv preprint arXiv:2601.11471 , 2026. Jungwoo Park, Taewhoo Lee, Chanwoong Yoon, Hyeon Hwang, and Jaewoo Kang. Outlier-safe pre-training for robust 4-bit quantization of large language models. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (ACL) , 2025. arXiv:2506.19697. Guilherme Penedo, Hynek Kydlíček, Loubna Ben Allal, et al. The FineWeb datasets: Decanting the web for the finest text data at scale. In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks , 2024. arXiv:2406.17557. Zihan Qiu, Zekun Wang, Bo Zheng, Zeyu Huang, Kaiyue Wen, Songlin Yang, et al. Gated attention for large language models: Non-linearity, sparsity, and attention-sink-free. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. arXiv:2505.06708. William Rudman and Carsten Eickhoff. Stable anisotropic regularization. In International Conference on Learning Representations (ICLR) , 2024. arXiv:2305.19358. Biswa Sengupta. Representation without reward: A JEPA audit for LLM fine-tuning. arXiv preprint arXiv:2605.15394 , 2026. Donghyun Son, Euntae Choi, and Sungjoo Yoo. NSNQuant: A double normalization approach for calibration-free low-bit vector quantization of KV cache. arXiv preprint arXiv:2505.18231 , 2025. Konrad Staniszewski and Adrian Łańcucki. KV cache transform coding for compact storage in LLM inference. In International Conference on Learning Representations (ICLR) , 2026. arXiv:2511.01815. Pei-Chun Su. eOptShrinkQ: Near-lossless KV cache compression through optimal spectral denoising and quantization. arXiv preprint arXiv:2605.02905 , 2026. Yixuan Su, Tian Lan, Yan Wang, Dani Yogatama, Lingpeng Kong, and Nigel Collier. A contrastive framework for neural text generation. In Advances in Neural Information Processing Systems (NeurIPS) ,2022. arXiv:2202.06417. Jayden Teoh, Manan Tomar, Kwangjun Ahn, Edward S. Hu, Tim Pearce, Pratyusha Sharma, Akshay Krishnamurthy, Riashat Islam, Alex Lamb, and John Langford. Next-latent prediction transformers learn compact world models. arXiv preprint arXiv:2511.05963 , 2025. William Timkey and Marten van Schijndel. All bark and no bite: Rogue dimensions in transformer language models obscure representational quality. In Proceedings of EMNLP , 2021. arXiv:2109.04404. Hugo Touvron, Thibaut Lavril, Gautier Izacard, et al. LLaMA: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971 , 2023. Lingxiao Wang, Jing Huang, Kevin Huang, Ziniu Hu, Guangtao Wang, and Quanquan Gu. Improving neural language generation with spectrum control. In International Conference on Learning Representations (ICLR) , 2020. OpenReview ByxY8CNtvr; no arXiv version. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. Xiangdong Zhang, Debing Zhang, Shaofeng Zhang, Xiaohan Qin, Yu Cheng, and Junchi Yan. NITP: Next implicit token prediction for LLM pre-training. In International Conference on Machine Learning (ICML) ,2026. arXiv:2605.24956. 
+
+# Appendix 
+
+14 A Numbers provenance 
+
+Every quantitative claim traces to an artifact in the code release (paths repo-relative). Curated copies of every artifact below ship under version control in paper/artifacts/ with a manifest recording sha256 hashes (the collection-time git revision is redacted from the bundle for double-blind review and logged externally; scripts/collect_paper_artifacts.py ); table bodies regenerate from them via 
+
+scripts/paper_tables.py .                                
+
+> claim artifact §5.1 dose–response outputs/phase1_exitgate/sweep_metrics.json
+> §5.2 paired table; stack drift outputs/phase1_seedconfirm_aggregate.json
+> §5.3 zero-shot outputs/zeroshot/*/
+> §5.3 STS +All-but-the-Top outputs/sts_probe/results*.json
+> §5.4 A1 ×6outputs/phase1_5/a1/ ,
+> outputs/phase1_5_replicates/*/a1/
+> §5.4 A2 linear / MLP outputs/phase1_5/a2/ ,
+> outputs/phase1_5_replicates/a2_mlp_h2/
+> §5.4 A3 outputs/phase1_5/a3/
+> §5.5 quant grid +diagnostics outputs/kv_quant/results_s*.json
+> §5.5 mean-absorbing controls outputs/kv_quant/controls_s*.json
+> §5.5 KIVI-style grouped grid (Table 5) outputs/kv_quant/results_kivi_*.json
+> §5.5 rotation/standardization retrofits outputs/kv_quant/results_retrofit_main.json
+> §5.5(i) post-RoPE K locus outputs/kv_quant/results_postrope_main.json
+> §5.5(i) per-head ( g=64 ) control outputs/kv_quant/results_perhead_all.json
+> §5.5(v) post-RoPE KIVI-style outputs/kv_quant/results_postrope_kivi_all.json
+> §5.5 λKV =0 continuation ×3outputs/phase1_5_replicates/s4*_ce_continue/ outputs/kv_quant/*ce_continue*.json
+> §5.5(v) iso-storage 2-bit configurations outputs/kv_quant/results_kivi2bit_all.json
+> §5.5(v) batch-isolation ( g=T) control outputs/kv_quant/results_gcontrol_all.json
+> §5.5(iii) bootstrap margins outputs/kv_quant/bootstrap_{records,summary}.json
+> §6 per-layer K/V top-1 outputs/phase1_5/a1/probe_result.json
+> §6 channel statistics outputs/channel_stats/results_all.json
+> export logits-equivalence outputs/hf_export/*/export_manifest.json
+
+Table 6: Claim-to-artifact map. 
+
+# B Estimator and probe definitions 
+
+Sketched Epps–Pulley statistic. For scalar samples p1, . . . , p B (one random projection of the batch at one position), let ˆφ(t) = 1
+
+> B
+
+∑ 
+
+> b
+
+eitp b be the empirical characteristic function and φ(t) = e−t2/2 the standard-normal one. The statistic is 
+
+EP( p1: B ) = B
+
+∫ 3
+
+> −3
+
+∣∣ ˆφ(t) − φ(t)∣∣2 φ(t) dt, 
+
+with φ(t) acting as the window (LeJEPA’s default bandwidth) and the integral evaluated by a 17-knot trapezoid rule on [0 , 3] using the integrand’s evenness; the B-scaling removes the leading 1/B dependence of the statistic. SIGReg (h) at position t averages EP over m fresh unit directions and the loss is the mean over positions (Algorithm 1); m=1024 in pretraining, and the A1 probe’s per-layer K/V terms use 
+
+m=256 (memory-bound; m affects only the new term’s sketch, and directions resample every step). The implementation is verified line-for-line against the LeWM reference implementation. 
+
+Probe objectives. A1 trains CE + λz · SIGReg (h) + λKV · ∑
+
+> ℓ
+
+[ SIGReg (Kℓ) + SIGReg (Vℓ)] with λz = 0.01 
+
+(the checkpoint’s own operating dose, unchanged), λKV = 0.01 , AdamW at lr 10 −4, 500M tokens, bf16 autocast; the λKV = 0 continuation control is the identical run with the K/V term removed. A2’s gate metric is the next-position relative residual ∥X2: T − Pℓ(X1: T −1)∥F / ∥X2: T ∥F for Xℓ ∈ { Kℓ, V ℓ}, token-weighted and averaged over layers and {K, V }. A3 reconstructs Kℓ/V ℓ from the final hidden state and is gated on the Frobenius error of the implied attention scores. 15 Anisotropy sampling protocol. Anisotropy (·) is the mean pairwise cosine over 10 ,000 pairs drawn from a 
+
+4,096 -vector reservoir sampled over the held-out window under a fixed eval seed—the same protocol at the h
+
+level and per-layer K/V level. 
+
+Margin uncertainty (paired packed-batch bootstrap). Group-free per-channel scales couple the eight packed sequences of an eval batch through the shared scale, so the resampling unit is the packed batch , not the token or document. For every load-bearing 3-/4-bit configuration we replay the eval window recording per-batch (NLL sum, token count); the eval stream is deterministic, so batch i is the same data for every model and configuration. Each of 10 ,000 replicates draws one batch-index resample shared across all models and configurations (pairing), recomputes token-weighted NLL, and reselects each model’s best configuration inside the replicate —holding the observed winners fixed would ignore best-configuration selection noise. We report percentile intervals and bootstrap win frequencies under both relative-to-own-reference and absolute-NLL accounting ( scripts/kv_quant_bootstrap.py ). 
+
+Channel-statistics protocol (§6). Per layer and tensor, raw per-channel moments (orders 1–4, float64) stream over a 500k-token pass of the same held-out window: scale dispersion is max/median of per-channel standard deviations; excess kurtosis is the population central-moment ratio m4/m 22 − 3 per channel; the token-norm concentration ratio is the median over batches of max/median per-token L2 norm. 
+
+# C Reproducibility notes 
+
+Pre-specification: bridge-probe gates fixed in the research plan (v12), committed 2026-04-25 in the repository history (a repository commit, not an externally timestamped registration); probe runs June–July 2026; the quantization study postdates the plan and is exploratory. Two software stacks: May-2026 cluster venv (dose–response pretraining) and a July rebuild (all paired pretraining results); all probes and sweeps ran on the local stack. Seed-42 reproduction across stacks shifted the two models −1.78% /−1.90% ppl together; no cross-stack numbers are pooled anywhere. Evaluation determinism: fixed eval seed before every evaluation; train/eval streams disjoint by construction. Artifact caveat: the original A2/A3 run configs carry a vestigial 
+
+unfreeze: "trunk" field from a shared CLI template—the trunk was frozen in code (gradients disabled at probe construction; pinned by tests), and probe configs generated after 2026-07-10 record the effective policy explicitly ( trunk_policy: "frozen" ). Environment: frozen package listings for both stacks ship in the artifact bundle ( env/ ); the dataset and tokenizer are referenced by name (upstream revision pins were not recorded at run time), and some audit configs record a dirty working tree without preserving the diff—exact bit-level re-execution is therefore bounded, and the artifact numbers, not re-execution, are the ground truth for every table. 16
