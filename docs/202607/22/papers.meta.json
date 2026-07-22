@@ -1,0 +1,24 @@
+{
+  "label": "2026-07-22",
+  "date": "2026-07-22",
+  "generated_at": "2026-07-22T20:41:54",
+  "count": 1,
+  "papers": [
+    {
+      "paper_id": "202607/22/2607.19214v1-keeping-the-cache-warm-pays-keepalive-economics-for-agentic-workloads",
+      "section": "deep",
+      "title_en": "Keeping the Cache Warm Pays: Keepalive Economics for Agentic Workloads",
+      "authors": "Maxim Khailo",
+      "date": "2026-07-21",
+      "pdf": "https://arxiv.org/pdf/2607.19214v1",
+      "score": "8.0",
+      "evidence": "面向智能体工作负载的前缀缓存保活经济学",
+      "tldr": "前沿大语言模型提供商缓存提示词前缀以降低延迟和成本，但智能体工作负载在工具调用或等待审批时产生分钟级间隔，导致缓存被驱逐，使后续请求需重新支付全量预填充成本。客户端定期发送keepalive请求可保持缓存温暖，实验表明在Anthropic、OpenAI等平台上可将后续请求成本降低最多12.5倍。最优keepalive间隔为提供商TTL略减（如Anthropic 5分钟TTL下约4分钟），盈亏平衡点约46分钟。由于收益显著且仅受限于用户账单，理性采用将导致普遍使用，形成缓存占用饱和，迫使提供商改为直接计量缓存驻留。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Frontier LLM providers cache a prompt's processed prefix so that a follow-up request sharing it pays ~10% of the input price and skips most of the prefill latency. Agentic workloads systematically destroy this benefit: the agent sends a request, runs a tool or waits for approval for minutes, and by the time the follow-up is sent the cached prefix has been evicted, so the agent pays the full prefill again. A client-side keepalive, replaying the prefix on a timer during the pause, prevents this, and it is individually rational: across Anthropic, OpenAI, Google, and DeepSeek we show that a keepalive holds the prefix warm through gaps where idle baselines are evicted, cutting the post-pause request cost by up to 12.5x. The strategic question is the ping frequency, and it has a clean answer: keepalive cost falls monotonically in the interval, so the economical choice is the largest interval safely under the provider's TTL, about 4 minutes at Anthropic's 5-minute TTL rather than the 30-second convention, and the strategy breaks even against a re-prefill at idle ~tau(w/r - 1) (~46 min for Anthropic, ~36 min for OpenAI and DeepSeek). Because the benefit is real and bounded only by each user's own bill, rational adoption is universal adoption; and since cache residency is priced per read rather than per token-hour, a keepalive-saturated tier gives LRU eviction nothing to rank. We argue this externality will push providers to meter cache residency directly, and one already does. We derive the operator's policy until then.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,50 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-22T20:40:45.637743+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 1,
+    "deep_cap": 6,
+    "deep_selected": 1,
+    "quick_candidates": 0,
+    "quick_skim_target": 11,
+    "quick_selected": 0
+  },
+  "deep_dive": [
+    {
+      "id": "2607.19214v1",
+      "source": "arxiv",
+      "title": "Keeping the Cache Warm Pays: Keepalive Economics for Agentic Workloads",
+      "abstract": "Frontier LLM providers cache a prompt's processed prefix so that a follow-up request sharing it pays ~10% of the input price and skips most of the prefill latency. Agentic workloads systematically destroy this benefit: the agent sends a request, runs a tool or waits for approval for minutes, and by the time the follow-up is sent the cached prefix has been evicted, so the agent pays the full prefill again. A client-side keepalive, replaying the prefix on a timer during the pause, prevents this, and it is individually rational: across Anthropic, OpenAI, Google, and DeepSeek we show that a keepalive holds the prefix warm through gaps where idle baselines are evicted, cutting the post-pause request cost by up to 12.5x. The strategic question is the ping frequency, and it has a clean answer: keepalive cost falls monotonically in the interval, so the economical choice is the largest interval safely under the provider's TTL, about 4 minutes at Anthropic's 5-minute TTL rather than the 30-second convention, and the strategy breaks even against a re-prefill at idle ~tau(w/r - 1) (~46 min for Anthropic, ~36 min for OpenAI and DeepSeek). Because the benefit is real and bounded only by each user's own bill, rational adoption is universal adoption; and since cache residency is priced per read rather than per token-hour, a keepalive-saturated tier gives LRU eviction nothing to rank. We argue this externality will push providers to meter cache residency directly, and one already does. We derive the operator's policy until then.",
+      "authors": [
+        "Maxim Khailo"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC"
+      ],
+      "published": "2026-07-21T15:45:47+00:00",
+      "link": "https://arxiv.org/pdf/2607.19214v1",
+      "tags": [
+        "keyword:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "prefix caching keepalive economics for agentic workloads",
+      "llm_evidence_cn": "面向智能体工作负载的前缀缓存保活经济学",
+      "llm_evidence": "面向智能体工作负载的前缀缓存保活经济学",
+      "canonical_evidence": "面向智能体工作负载的前缀缓存保活经济学",
+      "llm_tldr_en": "Shows that client-side keepalive pings can prevent KV prefix cache eviction during agent pauses, reducing post-pause request cost by up to 12.5x across major LLM providers.",
+      "llm_tldr_cn": "本文发现智能体工作负载中，代理在工具调用或等待期间会导致已缓存的前缀被驱逐，从而失去缓存优势。提出客户端保活机制，在空闲期间定期重放前缀以保持缓存热度。在Anthropic、OpenAI等多个平台上，该方法将暂停后请求成本降低高达12.5倍。",
+      "llm_tldr": "本文发现智能体工作负载中，代理在工具调用或等待期间会导致已缓存的前缀被驱逐，从而失去缓存优势。提出客户端保活机制，在空闲期间定期重放前缀以保持缓存热度。在Anthropic、OpenAI等多个平台上，该方法将暂停后请求成本降低高达12.5倍。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": []
+}

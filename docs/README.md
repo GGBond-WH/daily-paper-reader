@@ -6,40 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-21
-- 运行时间：2026-07-21 21:25:17 UTC
+- 最新运行日期：2026-07-22
+- 运行时间：2026-07-22 20:41:46 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：5
-- 速读区：1
+- 本次总论文数：1
+- 精读区：1
+- 速读区：0
 
 ### 今日简报（AI）
-1) 今日精读5篇速读1篇，聚焦LLM推理中KV缓存复用优化与输出长度不确定性管理两大核心挑战。
-2) 最值得关注C²KV的压缩可组合复用方案（10分）和Robust KV Cache Management对长度不确定性的鲁棒处理（9分）。
-3) 建议优先实践KV缓存压缩与组合复用技术，可大幅提升长序列推理效率。
-- 详情：[/202607/21/README](/202607/21/README)
+今日精读一篇8分论文，聚焦代理工作负载中缓存“保活”的经济性分析。  
+核心结论：为AI代理任务保持缓存预热虽增加资源开销，但能大幅降低延迟与重复计算成本，总体更划算。  
+建议读者在部署实际AI应用时，重新评估缓存策略：适当牺牲闲置缓存以换取更稳定、低延迟的交互体验。
+- 详情：[/202607/22/README](/202607/22/README)
 
 ### 精读区论文标签
-1. [C$^2$KV: Compressed and Composable KV Cache Reuse for Efficient LLM Inference](/202607/21/2607.17715v1-c2kv-compressed-and-composable-kv-cache-reuse-for-efficient-llm-inference)  
-   标签：评分：10.0/10、query:llm-kv-cache
-   evidence：通过联合优化实现压缩且可组合的KV缓存重用
-2. [Robust KV Cache Management for LLM Serving under Output Token Length Uncertainty](/202607/21/2607.16892v1-robust-kv-cache-management-for-llm-serving-under-output-token-length-uncertainty)  
-   标签：评分：9.0/10、query:llm-kv-cache
-   evidence：鲁棒的KV缓存管理，降低内存占用和抢占风险
-3. [Regularize or Localize: When Training-Time KV-Cache Geometry Pays Under Quantization](/202607/21/2607.17019v1-regularize-or-localize-when-training-time-kv-cache-geometry-pays-under-quantization)  
-   标签：评分：9.0/10、query:llm-kv-cache
-   evidence：训练时KV缓存几何正则化以改善量化
-4. [SALT: Salience-Aware Lexical Trie for Long-Context Compression](/202607/21/2607.17486v1-salt-salience-aware-lexical-trie-for-long-context-compression)  
-   标签：评分：9.0/10、query:llm-kv-cache
-   evidence：KV缓存内存瓶颈；基于显著性感知的词汇trie压缩
-5. [HyMCache: A KV Cache Framework for Multi-Turn LLM Serving with CXL-Hybrid Memory](/202607/21/2607.18141v1-hymcache-a-kv-cache-framework-for-multi-turn-llm-serving-with-cxl-hybrid-memory)  
-   标签：评分：9.0/10、query:llm-kv-cache
-   evidence：面向多轮LLM服务的KV缓存框架，使用CXL混合内存
+1. [Keeping the Cache Warm Pays: Keepalive Economics for Agentic Workloads](/202607/22/2607.19214v1-keeping-the-cache-warm-pays-keepalive-economics-for-agentic-workloads)  
+   标签：评分：8.0/10、query:llm-kv-cache
+   evidence：面向智能体工作负载的前缀缓存保活经济学
 
 ### 速读区论文标签
-1. [SpecLA: Efficient Speculative Decoding for Linear-Attention Models](/202607/21/2607.16673v1-specla-efficient-speculative-decoding-for-linear-attention-models)  
-   标签：评分：7.0/10、query:llm-kv-cache
-   evidence：为线性注意力模型设计的推测解码，处理循环状态而非KV缓存
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
