@@ -1,0 +1,69 @@
+{
+  "label": "2026-07-23",
+  "date": "2026-07-23",
+  "generated_at": "2026-07-23T21:22:05",
+  "count": 4,
+  "papers": [
+    {
+      "paper_id": "202607/23/2607.19957v1-hijackkv-new-threat-in-position-independent-kv-cache-reuse",
+      "section": "deep",
+      "title_en": "HijackKV: New Threat in Position-Independent KV Cache Reuse",
+      "authors": "Yichi Zhang, Zhiqi Wang, Huan Zhang, Yuchen Yang",
+      "date": "2026-07-22",
+      "pdf": "https://arxiv.org/pdf/2607.19957v1",
+      "score": "10.0",
+      "evidence": "讨论KV缓存重用安全性，提出位置无关KV缓存重用中的新威胁（KV缓存劫持）",
+      "tldr": "位置无关的KV缓存复用虽提升效率，但因缓存检索仅匹配token而忽略上下文，引入KV缓存劫持新威胁。攻击者可优化前缀使后续常见文本的KV编码恶意目标，复用后无声劫持模型行为。HIJACKKV框架单次攻击平均成功率94%，在低命中率、频繁重算等现实条件下依然有效，且可跨模型黑盒迁移。该工作揭示了关键漏洞，为构建安全的KV复用系统提供了设计指引。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Key-Value (KV) cache reduces inference latency in large language models (LLMs). Traditional prefix-based reuse has low cache hit rates across inference requests because it requires exact token and position matches. To improve efficiency, recent system optimizations introduce position-independent KV reuse, allowing KV cache to be reused whenever identical text chunks appear, regardless of their position in the sequence.   We show this design introduces a new threat, KV Cache Hijacking. Since KV caches are retrieved by token match but encode the context in which they were originally computed, the KV tied to a benign-looking token chunk may encode an attacker-controlled prefix. When later reused in a victim query, this contaminated KV silently hijacks the model's behavior, even if no attacker-controlled text appears in the input.   We introduce HIJACKKV, the first attack framework that systematically exploits this vulnerability, demonstrating its severity and practicality. HIJACKKV optimizes an attacker-controlled prefix, so that the KV computed for a subsequent common benign text encodes the attacker's goal, while the text remains unchanged for future cache hits. HIJACKKV achieves an average 94% success rate in a single attempt, remains effective under realistic constraints including low hit rates (10%) and frequent recomputation (50%), persists over multi-turn interactions, and transfers across models in black-box settings. We further provide design insights for building secure KV reuse systems.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/23/2607.19456v1-moa-structured-decode-attention-dnf-derivation-kv-cache-accumulation-gqamqa-and-openacc-kernel",
+      "section": "deep",
+      "title_en": "MoA-Structured Decode Attention DNF Derivation, KV-Cache Accumulation, GQA/MQA, and OpenACC Kernel",
+      "authors": "Lenore Mulin, Gaetan Hains",
+      "date": "2026-07-21",
+      "pdf": "https://arxiv.org/pdf/2607.19456v1",
+      "score": "9.0",
+      "evidence": "推导了基于KV缓存累积的Transformer注意力内存最优推理方法",
+      "tldr": "针对Transformer注意力推理的内存瓶颈，利用数组数学（MoA）从前向传播的Denotational Normal Form推导出四种内存最优工件。单查询解码DNF通过代数消除K^T缓冲区，减少DRAM流量；C/OpenACC GPU内核实现精确浮点运算；多步KV缓存每步追加仅需O(d_k+d_v)；GQA/MQA通过ψ选择实现KV流量按比例缩减。所有工件经PyTorch验证，数值误差极低。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "We derive four memory-optimal inference artifacts for transformer attention using the Mathematics of Arrays (MoA), each following directly from the forward-pass Denotational Normal Form (DNF) of with the query-row index fixed to the current decode step. The artifacts are: (1)~a single-query decode DNF in which the $ψ$-reduction eliminates the $K^\\top$ buffer algebraically, achieving $(d_k + nd_k+ nd_v+ d_v)\\times4\\,{B}$ Dynamic Random Access Memory (DRAM) traffic result numerically verified to $\\|{err}\\|_\\leq2\\times10^{-7}$; (2)~a C/OpenACC Graphics Processing Unit (GPU) kernel with Operational Normal Form (ONF) stride arithmetic and hardware-coalesced memory access, verified to $\\|\\mathrm{err}\\|_\\infty=0$ (exact IEEE-754 floating-point arithmetic); (3)~a multi-step KV-cache with $O(d_k+d_v)$ per-step append via MoA concatenation $\\#$; and (4)~Grouped-Query Attention (GQA) and Multi-Query Attention (MQA) derived via $ψ$-selection, achieving a proven $\\frac {h_q} { h_{kv} }$ reduction in KV traffic. All programs are verified against PyTorch scaled_dot_product_attention.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/23/2607.16339v2-lacache-exact-caching-and-precision-adaptive-inference-for-diffusion-large-language-models",
+      "section": "quick",
+      "title_en": "LaCache: Exact Caching and Precision-Adaptive Inference for Diffusion Large Language Models",
+      "authors": "Xingru Chen, Zelang Liang, Yongjia Ma, Jiqing Zhan, Shuling Yang, Lian Wen, Kun Zhan",
+      "date": "2026-07-16",
+      "pdf": "https://arxiv.org/pdf/2607.16339v2",
+      "score": "7.0",
+      "evidence": "为扩散大语言模型缓存中间状态以减少重计算",
+      "tldr": "扩散大语言模型（DLLM）通过半自回归解码实现并行生成，但存在算子级冗余，即去噪步骤中重复计算不变token。LaCache通过无损状态记忆（LSM）缓存嵌入、RoPE和FlashAttention中间结果，跳过冗余计算。该方法无需训练，单独实现约1.3倍加速，结合其他方法可达40.2倍，同时保持任务精度。其贡献在于提出一种即插即用的加速框架，缓解了DLLM的冗余计算和内存带宽瓶颈。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Diffusion-based Large Language Models(DLLMs) enable parallel generation via Semi-Autoregressive (SAR) decoding in text generation. However, current methods suffer from severe operator-level redundancy: they recompute the entire sequence during denoising steps, ignoring that the prefix and masked suffix remain invariant within a block. We propose LaCache, a training-free acceleration framework that alleviates this redundancy through lossless caching and mixed precision. Specifically, LaCache employs Lossless State Memoization (LSM) by caching three types of intermediate results: (i) EmbedCache for embedding outputs, (ii) RoPECache for token-wise pre-attention states, and (iii) FACache for the online softmax statistics within FlashAttention. These caches allow the model to skip redundant computation on unchanged tokens without altering the output. To further alleviate memory-bandwidth bottlenecks, LaCache inegrates a per-group FP8 quantization strategy for FFN layers, tailored to step-dependent activation distributions across the diffusion process. Experiments demonstrate that LaCache alone achieves approximately 1.3X end-to-end speedup over vanilla DLLM. When combined with existing acceleration methods, LaCache reaches up to 40.2X end-to-end speedup while maintaining comparable task accuracy.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/23/2607.19547v1-chronostitch-training-free-composition-of-visual-kv-memories-for-long-horizon-temporal-reasoning",
+      "section": "quick",
+      "title_en": "ChronoStitch: Training-Free Composition of Visual KV Memories for Long-Horizon Temporal Reasoning",
+      "authors": "Santiram Tiwari, Nishant Sinha, Kunal Kislay",
+      "date": "2026-07-21",
+      "pdf": "https://arxiv.org/pdf/2607.19547v1",
+      "score": "7.0",
+      "evidence": "视觉KV缓存组合用于长视频问答",
+      "tldr": "长视频问答中，独立缓存每个视频块的KV状态可避免重复处理，但每个块从本地旋转位置零开始，直接拼接会导致时间相位冲突，丢失事件顺序。ChronoStitch是一种无需训练的方法，首先通过全局三维多轴RoPE坐标系重新对齐后旋转键，保留时间、高度、宽度结构，然后对后续块中高偏差视觉token进行选择性重计算，使其能关注已组合的KV缓存。在Qwen2.5-VL-3B和TempCompass时序分割上，该方法在事件排序准确率上超越朴素拼接和仅位置变体，同时运行速度比全联合重预填充快3.3倍。这项贡献为无需训练的长视频时态推理提供了高效且实用的组合方案。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Long-video question answering requires a model to preserve visual evidence over time without repeatedly reprocessing the same video. A practical approach is to store the vision-language model's internal key-value (KV) cache for each video chunk and retrieve that state at query time. However, independently cached video chunks do not compose correctly: every chunk is prefilled from local rotary position zero, so naive concatenation collides temporal phases and removes the global order required for questions about what happened first, how often events occurred, or what changed across the video. This paper presents ChronoStitch, a training-free method for composing independently stored visual KV memories. The method first re-bases stored post-rotary keys onto a global three-axis multimodal RoPE coordinate system that preserves time, height, and width structure. We show why a one-dimensional scalar re-indexing is geometrically inconsistent for visual tokens because it turns spatial order within a frame into false temporal displacement. We then address the residual content gap left by positional repair: later chunks were originally encoded without attending to earlier chunks. ChronoStitch therefore selectively recomputes a small fraction of high-deviation later-chunk visual tokens while allowing them to attend over the composed cache. On Qwen2.5-VL-3B and the temporal split of TempCompass, ChronoStitch outperforms naive composition and position-only variants, improving event-ordering accuracy while running 3.3x faster than full joint re-prefilling.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

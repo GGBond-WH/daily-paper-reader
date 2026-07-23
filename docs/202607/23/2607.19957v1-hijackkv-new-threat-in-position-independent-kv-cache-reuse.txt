@@ -1,0 +1,1113 @@
+Title: HijackKV: New Threat in Position-Independent KV Cache Reuse
+
+URL Source: https://arxiv.org/pdf/2607.19957v1
+
+Published Time: Thu, 23 Jul 2026 00:49:32 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# HIJACK KV: New Threat in Position-Independent KV Cache Reuse 
+
+## Yichi Zhang 1, Zhiqi Wang 1, Huan Zhang 2, Yuchen Yang 11The Pennsylvania State University, 2University of Illinois Urbana-Champaign {yichi.zhang, zhiqi.wang, yuchen.yang}@psu.edu, huan@huan-zhang.com 
+
+## Abstract 
+
+Key-Value (KV) cache reduces inference latency in large lan-guage models (LLMs). Traditional prefix-based reuse has low cache hit rates across inference requests because it requires exact token and position matches. To improve efficiency, re-cent system optimizations introduce position-independent KV reuse, allowing KV cache to be reused whenever identical text chunks appear, regardless of their position in the sequence. We show this design introduces a new threat, KV Cache Hijacking . Since KV caches are retrieved by token match but encode the context in which they were originally computed, the KV tied to a benign-looking token chunk may encode an attacker-controlled prefix. When later reused in a victim query, this contaminated KV silently hijacks the model’s behavior, even if no attacker-controlled text appears in the input. 
+
+We introduce H IJACK KV, the first attack framework that systematically exploits this vulnerability, demonstrating its severity and practicality. H IJACK KV optimizes an attacker-controlled prefix, so that the KV computed for a subsequent common benign text encodes the attacker’s goal, while the text remains unchanged for future cache hits. H IJACK KV achieves an average 94% success rate in a single attempt, remains effective under realistic constraints including low hit rates (10%) and frequent recomputation (50%), persists over multi-turn interactions, and transfers across models in black-box settings. We further provide design insights for building secure KV reuse systems. 1
+
+## 1 Introduction 
+
+LLMs are now widely deployed in personal assistance [35,41], healthcare [33, 44], and retrieval-augmented applications [6, 22], where user queries are often augmented with long con-textual input for accurate responses. However, long inputs slow down inference because the model must perform a full prefill pass to build the Key-Value (KV), which dominates 
+
+> 1
+
+The source code of H IJACK KV is publicly available: https://github. com/YichiCS/KV-Cache-Hijack Lower efficiency          
+
+> (2) Position-Independent Reuse
+> Reuse
+> Shared KV Cache Pool
+> Cache
+> KV Cache 1 KV Cache 3
+> (1) Prefix Reuse
+> Benign User Query
+> Normal Response
+> Hijacked Response
+> KV Cache 1 Recompute KV
+> Popular Query
+> Text Chunk 3
+> Adversarial Text
+> Text Chunk 2
+> Popular Query
+> Text Chunk 1
+> Malicious Attacker Query
+> KV Cache 1 KV Cache 2 KV Cache 3
+> Hijacked KV Other KV Cache ...
+> Popular Query
+> Text Chunk 3
+> Popular Query
+> Text Chunk 1
+> Affect Match
+> Fast, but new threat
+> (b) KV cache used by User (a) KV cache hijacked by attacker
+
+Figure 1: New threat from position-independent KV reuse in multi-tenant systems. (1) Prefix reuse is slow because reuse requires the same preceding prefix. (2) Position-independent reuse is fast but unsafe because it will reuse a hijacked KV despite position mismatch, enabling cross-user attacker-controlled outputs without any adversarial text. the time-to-first-token (TTFT) and scales super-linearly with input length [5, 20]. To reduce this overhead, modern infer-ence engines increasingly rely on caching and reusing KV across requests, as adopted by major providers, e.g. , Anthropic Claude [1], Google Gemini [8] and OpenAI ChatGPT [34]. Traditional reuse is strictly prefix-based [38], requiring exact matches of both tokens and positions, resulting in a low hit rate [62], and provides marginal benefit compared with no KV cache reuse. Figure 1(b)(1) shows that reuse requires the same preceding prefix: KV3 was cached after chunk 2, so if chunk 2 is missing in the future query, KV3 cannot be reused even if chunk 3’s text is identical. Recent system research proposes efficiency-driven opti-mizations that relax prefix and position constraints, includ-ing (i) position-independent KV reuse [14, 49, 57, 58, 62], which enables chunk-level reuse if the tokens match, re-gardless of original prefix. Position-independent reuse is already deployed in commercial platforms such as LM-Cache [28] (commercializing the award-winning research pro-totype CacheBlend [62]), as well as a growing body of follow-up work [14, 49, 57]; and (ii) multi-tenant KV reuse [48, 53], where KV states computed for one user’s request are shared to accelerate independent requests from different users that con-arXiv:2607.19957v1 [cs.CR] 22 Jul 2026 tain overlapping context. Widely adopted open-source serving engines such as vLLM [48], used by organizations including Cloudflare and IBM, enable shared KV reuse by default. In practice, users frequently submit overlapping text (e.g., re-trieved documents, organizational knowledge bases, or public materials), making cache reuse common and predictable. While significantly improving efficiency, these optimiza-tions assume that a text chunk’s KV state remains invariant across different preceding contexts. However, KV states in Transformers are inherently context-dependent , and the same text chunk can produce different internal states under differ-ent contexts. Prior work views this misalignment as a utility issue caused by attention shift, and mitigates it via selec-tive recomputation [14, 62], refreshing 10-20% KV under the new context to recover accuracy. In contrast, we reveal this misalignment as a critical security vulnerability : by decoupling KV states from their causal context, modern reuse mechanisms inadvertently create a channel for adversarial KV cache hijacking. We formalize this security vulnerability in Section 4.2. Next, we demonstrate that this channel is not only theoretical but can be exploited in realistic deployments. We propose H IJACK KV, the first KV cache hijacking attack against position-independent KV cache systems un-der multi-tenant deployment, to demonstrate that an un-privileged attacker can stealthily alter the LLM inference behavior of other users. As shown in Figure 1(a), an at-tacker can prepend a commonly reused benign Text Chunk 3 (e.g., company FAQs) with an adversarially optimized prefix Text Chunk 2 . This prefix encodes a hidden adversarial ob-jective by conditioning the KV Cache 3 of the benign chunk 3 on the Text Chunk 2 . Under position-independent reuse (Figure 1(b)), a subsequent benign user query may trigger reuse of the KV Cache 3 despite the absence of its preced-ing prefix (text chunk 2), enabling silent cross-user output hijacking without any adversarial tokens appearing in the benign user’s input. This is the key difference from prompt injection [25], where adversarial tokens must appear in the victim’s input, either directly or via retrieved content. HIJACK KV is both powerful and practical in terms of the following aspects. (1) Attack success: it attains an average 94% attack success rate with a single attempt. (2) Robustness and Practice: it remains effective under realistic deployment conditions, even when the match chunk hit rate is as low as 10% and when recomputation is enabled at levels up to 50%. 
+
+(3) Persistence: it retains its impact even when over 1,000 tokens of new, unrelated context are inserted, indicating that a single adversarial injection can persist through multi-turn interactions. (4) Transferability: it demonstrates strong cross-model transferability under a black box threat model, as the same malicious prefix succeeds across multiple models. 
+
+Contribution. We make the following contributions: 
+
+• We identify and formalize a new threat introduced by efficiency-oriented KV reuse optimization. 
+
+• We design H IJACK KV, the first attack framework that hi-jacks KV reuse, revealing a previously unknown vulnera-bility in modern LLM serving systems. 
+
+• We evaluate state-of-the-art KV reuse mechanisms across multiple models and benchmarks, showing that they re-main vulnerable even with selective recomputation and low cache hit rates, and offer suggestions for building secure-by-design KV cache systems. 
+
+## 2 Related Work 2.1 Efficiency Optimization for KV Cache 
+
+KV Cache Reuse and Sharing. To address the low hit rate of prefix KV reuse [38] and reduce the computational cost across multiple requests, recent systems have explored cache reuse and sharing strategies for multi-tenant LLM serving. 
+
+For reuse, CacheBlend [62] addresses KV reuse in RAG, which enables chunk-level reuse of precomputed KV caches regardless of their positions and selectively recomputes KV values for a small subset of tokens to mitigate utility loss. EPIC [14] and MEPIC [49] formalize Position-Independent KV Cache by introducing the LegoLink algorithm to mitigate attention sink effects, and add memory-efficient optimizations such as chunk-level paging and RoPE fusion. KVShare [57] designs a dual-stage high deviation algorithm that selectively recomputes KV cache during prefill and decode phases via a cache-aware scheduler. For sharing, PagedAttention [20] enables multi-tenant KV cache sharing via zero-copy map-ping of logical prompts to the shared physical KV blocks. SGLang [64] stores the KV cache in GPU memory with a Radix Tree to maximize sharing across requests. While these systems improve service efficiency, their secu-rity implications remain largely unexplored. Our work reveals that these efficiency-driven optimizations open a hidden chan-nel for KV cache hijacking. 
+
+KV Cache Compression. Compression aims to reduce the storage overhead of the KV cache. The first line of work focuses on quantization [12, 27], which demonstrates that quantization to low-bit representations (e.g., 4-bit or even 2-bit) maintains generation quality while significantly reducing memory consumption. The second approach targets the se-lective pruning of less important KV states. Early strategies keep only the most recent tokens or preserve initial tokens alongside recent context [54]. More advanced methods lever-age attention score statistics to identify and evict tokens with minimal impact on subsequent generations [26, 63]. Several KV-level defenses [17, 50] also adopt pruning to limit misuse. 
+
+However, simply applying KV cache compression does not prevent KV cache hijacking as shown in Section 8. 2.2 Adversarial Attacks 
+
+KV Cache Privacy Leakage Attack. Sharing the KV cache across multi-tenant LLM serving introduces privacy vulner-abilities, allowing adversaries to reconstruct sensitive user inputs via multiple attack vectors. Wu et al. [53] present the first systematic investigation of security risks in multi-tenant LLM serving with KV cache sharing in frameworks like SGLang [64] and vLLM [20]. Luo et al. [29] study KV cache privacy leakage under three attack paradigms and iden-tify the KV cache as a privacy-critical component. Song et al. [45] discover timing side channels in LLM serving sys-tems arising from shared caches and GPU memory alloca-tions, which can be exploited to infer both confidential system prompts and sensitive requests issued by other users. While prior works have primarily focused on the privacy issues associated with KV caches, our work investigates how to exploit the KV cache to hijack model outputs. 
+
+KV Cache Modification Attack. Beyond passive privacy leakage, recent work explores active attacks that modify the KV cache to change model behavior. CacheTrap [31] intro-duce a trojan attack that corrupts value vectors in the KV cache through bit-flip operations, achieving targeted misclas-sification without modifying model inputs or weights. His-torySwap [7] propose a block-level attack that overwrites contiguous segments of the active KV cache with precom-puted caches from different topics. MTI [13] formalize the malicious token injection, which perturbs cached key vectors through additive noise, zeroing, or orthogonal rotations. However, these attacks require system-level access to mod-ify the cache directly and do not consider broader KV cache matching and reuse mechanisms. In contrast, our work is the first to enable adversaries to hijack model outputs without requiring system-level privileges. 
+
+Input-Based LLM Attacks. Prompt injection attacks [10, 16, 21, 25, 36, 37, 42, 43, 51] exploit prompt composition, where system/user instructions are combined with untrusted external data (e.g., emails, webpages, API responses). Ad-versaries manipulate the data portion to override instruc-tions and trigger unauthorized model behavior. Jailbreak at-tacks [3, 24, 52, 59, 60, 65] similarly rely on adversarial text patterns that steer the model away from its intended safety policies. Both attack types require malicious text to appear in the user’s input, either directly in the user’s query or indi-rectly through retrieved content. In contrast, our work enables attacker-controlled model outputs even when the user’s input is without any malicious text. 
+
+## 3 Preliminaries 
+
+LLM Inference. In Transformer-based LLMs, the core com-putational bottleneck during inference is the Multi-Head Self-Attention (MHA) mechanism [47]. To generate the next token 
+
+xT +1 at step T + 1 , the attention mechanism must model the relationship between the current token xT and the entire pre-vious sequence [x1, . . . , xT −1]. This requires projecting the hidden states into Query ( QQQ), Key ( KKK), and Value ( VVV ) matri-ces, and computing the attention scores [47]: Attention (QQQ, KKK,VVV ) = softmax QQQK KK⊤
+
+√dk
+
+!
+
+VVV (1) where dk is the scaling factor. For completeness, Appendix B details the inference process of Transformer-based LLMs. A naive implementation recomputes the keys and values for all T tokens at every generation step. Because T increases with each step, this redundant computation leads to O(T 2)
+
+time complexity, which increases inference latency. 
+
+KV Cache Mechanism. To eliminate this redundancy, LLM inference engines employ the KV cache mechanism . The key idea is that the keys ( KKK1: T −1) and values ( VVV 1: T −1) of previous tokens remain static during generation. The model only needs to compute representations for the current token 
+
+xT . By storing these past tensors in GPU memory, we reduce the computational complexity of each step from O(T ) to O(1)
+
+with respect to matrix multiplications. Specifically, for each attention head, the model only com-putes the query, key, and value vectors for the current token 
+
+xT via the projection weights WWW Q,WWW K ,WWWV :
+
+qqqT = uuuT WWW Q, kkkT = uuuT WWW K , vvvT = uuuT WWWV (2) where uuuT is the normalized hidden state of the current token. The system then appends the new key and value vectors to the existing KV cache: 
+
+KKK1: T = [ KKK1: T −1; kkkT ], VVV 1: T = [ VVV 1: T −1; vvvT ] (3) Finally, the attention output for the current token is com-puted by performing the multiplication between the single query vector qqqT and the cached matrices KKK1: T and VVV 1: T :Attention (qqq, KKK,VVV ) = softmax qqqT KKK⊤
+
+> 1: T
+
+√dk
+
+!
+
+VVV 1: T . (4) In summary, the KV cache trades memory storage for lower computational cost, which significantly reduces inference la-tency. Importantly, its benefits extend beyond accelerating a single user’s multi-turn dialogue. By sharing the KV cache across different users, the system can further eliminate redun-dant computations on a global scale. 
+
+Prefix KV Cache Prompts sent by different users often ex-hibit significant prefix overlap ( e.g. , system prompts or few-shot examples). Based on this observation, the prefix KV cache maintains a global KV cache pool shared across multi-ple users: 
+
+Pprefix =  ˜X, ( ˜KKK, ˜VVV ) , (5) where ˜X is a cached token sequence and ( ˜KKK, ˜VVV ) are the corre-sponding KV cache. When a new prompt X arrives, the LLM inference engine searches the cache pool for a token sequence that shares the longest common prefix with X:˜X, ( ˜KKK, ˜VVV ) = arg max 
+
+> ˜X∈Pprefix
+
+PREFIX LEN (X, ˜X), (6) where PREFIX LEN ( ) returns the length of the longest com-mon prefix. The key and value vectors (ˆkkkt , ˆvvvt ) at position t
+
+during the prefill phase are defined as: 
+
+(ˆkkkt , ˆvvvt ) = 
+
+(
+
+( ˜KKKt , ˜VVV t ), 1 ≤ t ≤ PREFIX LEN (X, ˜X),
+
+(kkkt , vvvt ), otherwise , (7) where ( ˜KKKt , ˜VVV t ) denotes the cached key and values vectors at position t from the cache pool, and (kkkt , vvvt ) denotes the vectors computed on-the-fly for unmatched tokens. 
+
+Position-Independent KV Cache To overcome the low cache hit rates by strict prefix matching, position-independent KV cache [14, 49, 58, 62] enables the matching of cached chunks against arbitrary subsequences of the input context. The system maintains a cache pool where the chunk serves as the unit of storage: 
+
+Pchunk =  ˜X, ( ˜KKK, ˜VVV ) , (8) where ˜X is a cached token chunk with fixed-length Lchunk and 
+
+( ˜KKK, ˜VVV ) are the corresponding KV cache. When a new prompt 
+
+X arrives, the LLM inference engine searches the cache pool for reusable segments that match a subsequence within X. Let 
+
+Shit denote the set of all successfully hit KV cache chunks: 
+
+Shit = i, j, ˜X, ( ˜KKK, ˜VVV ) | ˜X = Xi: j, ˜X ∈ Pchunk . (9) where [i, j] denotes the position interval in the input X
+
+matched to the cached chunk ˜X. The key and value vectors 
+
+(ˆkkkt , ˆvvvt ) at position t during the prefill phase for every hit cache chunk {i, j, ˜X, ( ˜KKK, ˜VVV )} are defined as: 
+
+(ˆkkkt , ˆvvvt ) = 
+
+(
+
+( ˜KKKt′ , ˜VVV t′ ), i ≤ t ≤ j,
+
+(kkkt , vvvt ), otherwise , (10) where t′ = t − i + 1 is the relative token position. However, context discrepancies between cached chunks and the actual user input may induce attention shift when using a position-independent KV cache, thereby degrading generation quality. To mitigate this, researchers adopt selec-tive recomputation [14, 57, 62], which recomputes tokens that are semantically important or show large divergence in their key and values vectors. These methods define a recom-putation set R ⊆ [i, j] of positions that require recomputation. The Equation 10 is then refined as: 
+
+(ˆkkkt , ˆvvvt ) = 
+
+(
+
+( ˜KKKt′ , ˜VVV t′ ), t ∈ [i, j] \ R ,
+
+(kkkt , vvvt ), otherwise , (11) 
+
+## 4 Problem Formulation 
+
+In this section, we give the problem formulation, including threat model (§ 4.1) and new attack surface (§ 4.2). 
+
+## 4.1 Threat Model 
+
+We formally define the threat model guiding our analysis, including the system model, the attacker’s goal, capability, and knowledge. 
+
+System Model. We consider a realistic deployment scenario where the LLM inference infrastructure integrates two op-timization components to improve system throughput and reduce computational cost: 
+
+• Position-Independent KV Cache . LLM inference systems adopt this novel mechanism to decouple memory retrieval from strict positional constraints, thereby maximizing cache reuse and reducing inference latency. 
+
+• Multi-Tenant Cache Sharing . The system adopts a multi-tenant architecture in which the KV cache pool is globally shared across users and sessions. This setting is common in organizational or cloud-hosted LLM services, where users frequently draw from common knowledge sources, such as internal documentation, shared RAG corpora, or publicly available materials ( e.g. , Wikipedia). 
+
+Attacker’s Goal. The attacker aims to persistently influence model outputs for future users by causing adversarially con-ditioned KV cache states to be stored and later reused. By submitting inputs derived from widely shared knowledge con-tent, the attacker ensures their cache states are likely to match future benign queries. When reused, these states hijacked gen-eration toward attacker-controlled behavior rather than solely the victim’s prompt, resulting in a cross-user integrity attack. 
+
+Unlike prompt injection , this influence occurs without any adversarial text appearing in the victim’s input. We describe how such infected chunks can be constructed without directly modifying the cache in Section 5. 
+
+Attacker’s Capabilities. The attacker has no direct access to the shared KV cache and cannot read, modify, or tamper with cached states, model weights, or system configurations. The attacker also cannot inject or alter the text of a victim’s query, either directly or indirectly ( e.g. , via prompt injection or retrieval poisoning). The attacker can submit inputs to the LLM service and observe the model’s feedback. We consider two settings: 
+
+• White-box setting. The attacker has access to a local surro-gate model that is identical to the target model, including model-internal signals such as gradients. The attacker uses this surrogate to optimize adversarial prefixes that condition hijacked KV states. 
+
+• Black-box setting. The attacker has no access to the target model’s internal states or gradients and can only observe its outputs. In this case, adversarial prefixes are optimized on a locally accessible substitute model and then transferred to the target system. In both settings, prefix optimization is performed only on a local surrogate model and never touches the victim cache. During local optimization, the surrogate KV cache is cleared between iterations to avoid unintended cache carryover. Inputs submitted by attacker may have their KV states stored in the shared cache pool, enabling cross-user reuse under the system’s cache-matching policy. 
+
+Attacker’s Knowledge. The attacker must know that the tar-get system uses a position-independent KV cache with cross-user reuse. Other assumptions can be relaxed (see detailed analysis in Section 7.4 and Section 7.5). The attacker does not 
+
+need to know other users’ query prompts, current cache con-tents (which may originate from common shared knowledge sources such as internal documents, shared code files, or pub-lic corpora), prompt histories, or the internal configuration of the LLM server, including the exact model, recomputa-tion strategy, or the precise cache chunk size and boundary (since sliding-window matching can identify reusable cached chunks within a sufficiently long context). 
+
+Generality and Practicality. The attack applies broadly to systems that enable position-independent KV-cache reuse across sessions, regardless of specific model architectures. It requires no privileged access and can be executed via normal user queries, making it feasible in real-world deployments that use cross-user cache sharing for efficiency. 
+
+## 4.2 New Attack Surface 
+
+We now explain why the position-independent KV cache reuse introduces a new attack surface within our threat model, in contrast to prefix cache reuse. First, we provide the formal definition of prefix KV cache hit. 
+
+Definition 1 (Prefix KV Cache Hit) . Let X = [ x1, . . . , xL]
+
+be a newly arrived prompt and ˜X = [ ˜x1, . . . , ˜x˜L] be an unau-thenticated token sequence in the shared cache pool, with associated key and value matrices ˜KKK and ˜VVV . A prefix cache hit occurs if there exists: X1: S = ˜X1: S. (12) 
+
+where X1: S = [ x1, . . . , xS] and ˜X1: S = [ ˜x1, . . . , ˜xS] denote con-tiguous segments of X and ˜X , respectively. And S is the length of the longest common prefix between X and ˜X. 
+
+Let ( ˜KKK, ˜VVV ) denote the hit KV cache, and (KKK,VVV ) denote the ground-truth KV states computed on-the-fly without KV cache. Suppose a prefix cache hit occurs between X and ˜X with prefix length S. According to Definition 1, X and ˜X
+
+are strictly identical over their prefix of length S. Given the deterministic and causal nature of standard decoder-only trans-formers [47], identical input prefixes strictly yield identical 0 7 14 21 28 35      
+
+> Layer Index
+> 0
+> 20
+> 40
+> 60
+> 80
+> Deviation (%)
+> (a)
+> Key Value
+> 025 50 75 100
+> Average KV Deviation (%)
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Total Variation Distance  (b)
+
+Figure 2: Empirical analysis of KV Cache deviation. (a) Pre-fix → KV deviation: We prepend different prefixes to the input text and measure the KV deviation relative to a prefix-free baseline. (b) KV deviation → output change: We inject varying levels of noise into the KV cache to investigate the impact of numerical deviations on the final output. We ob-serve that the deviations inherent in the position-independent KV cache are sufficient ( i.e. , when ≥ 20%) to alter model outputs, potentially enabling adversarial exploitation. internal representations. Therefore, the hit KV cache states must be numerically identical to the ground-truth states: ˜KKK1: S = KKK1: S, ˜VVV 1: S = VVV 1: S. (13) This demonstrates that under the prefix KV cache reuse mechanism, the hit KV cache during the prefill phase is strictly governed by the user’s inputs. Consequently, an at-tacker cannot manipulate the LLM’s output without system-level privileges to directly modify the KV cache. Therefore, we conclude that the prefix KV cache is secure .Then we formalize the definition of a position-independent KV cache hit for a more detailed comparison. 
+
+Definition 2 (Position-Independent KV Cache Hit) . Let X =[x1, . . . , xL] be a newly arrived prompt and ˜X = [ ˜x1, . . . , ˜x˜L]
+
+be an unauthenticated token sequence in the shared cache pool, with associated key and value matrices ˜KKK and ˜VVV . A position-independent cache hit occurs if there exists: Xa:b = ˜Xm:n. (14) 
+
+where Xa:b = [ xa, . . . , xb] and ˜Xm:n = [ ˜xm, . . . , ˜xn] denote con-tiguous segments of X and ˜X, respectively. 
+
+Suppose a position-independent cache hit occurs between 
+
+Xa:b and ˜Xm:n. By comparing Definition 1 and Definition 2, we observe that Equation 12 is a special case of Equation 14 where m = a = 1 and b = n = S. However, the conclusion in Equation 13 does not extend to position-independent case. Considering the deterministic and causal nature of LLMs, the generation of KV states is strictly conditioned on the preceding tokens. In general position-independent reuse sce-narios, the preceding contexts are distinct ( X1: a−1̸ = ˜X1: m−1). Assuming the injectivity of LLMs [32], this history mismatch Proxy LLM 
+
+Malicious Attacker 
+
+... 
+
+> Optimize
+> Compute
+> Loss & Gradient
+
+Proxy LLM Infrastrucure 
+
+> Target LLM
+> Send malicious query to target LLM system
+> Shared KV Cache Pool
+
+Target LLM 
+
+Infrastrucure   
+
+> Store hijacked kv cache
+> into shared pool Other KV Cache ...
+> Hijacked KV Cache for Chunk 1
+
+Benign User         
+
+> Text Chunk 1
+> Please navigate to the official portal
+> and click the "Forgot Password" link.
+> Query
+> How do I reset my password?
+> Matches and Reuse
+> malicious KV cache
+> Malicious Target Answer
+> Visit malicious link to reset.
+> Optimized Prefix
+> Optimized on the target answer .
+> Query
+> How do I reset my password?
+> Malicious Query
+> Prefix | Chunk 1 | ... | Query
+> Text Chunk 1
+> Please navigate to the official portal
+> and click the "Forgot Password" link.
+> Craft Prefix based on target answer of LLM
+> Output Answer
+> Recompute KV
+> Recompute KV
+> Hijacked KV Cache for Chunk 1
+> Reuse
+> Match
+> Visit malicious link to reset.
+> Get malicious answer
+> Common Knowledge Sources
+> Text-KV Binding
+> (Internal documentation, RAG corpora... )
+> Affect
+
+Figure 3: H IJACK KV consists of two phases: (1) constructs an adversarial prefix p and submits a malicious query p ⊕ ˜X to the LLM service; (2) the service processes p ⊕ ˜X into KV states and stores them in the shared cache pool Pchunk . When a user sends a query X ⊕ q, if a cache hit occurs between ˜ X and X as Definition 2, the user receives the malicious response ˜ r.implies a divergence in the internal states. Consequently, even though the token sequences within the matching span are strictly identical, it inevitably leads to: ˜KKKm:n̸ = KKKa:b, ˜VVV m:n̸ = VVV a:b. (15) We investigate the security implications of this KV devia-tion in Figure 2. In Figure 2(a), we visualize the KV deviation caused by cache reuse by pairing a text segment with vari-ous prefixes and calculating the average deviation compared to a prefix-free baseline. Complementing this, Figure 2(b) examines the impact of such deviation on model outputs by injecting varying levels of noise into the KV cache and mea-suring the Total Variation Distance of the next-token logits. Our results highlight a critical vulnerability: while a mere 20% numerical deviation in KV states is sufficient to alter the LLM’s output, position-independent KV caches typically exhibit much higher deviations–approximately 50% in keys and 25% in values. This substantial discrepancy creates a wide attack surface for adversaries to hijack model genera-tions. Therefore, we conclude that the position-independent KV cache is inherently insecure .
+
+## 5 KV Cache Hijacking 
+
+Figure 3 illustrates H IJACK KV, our attack framework target-ing position-independent KV cache reuse. A complete attack consists of two phases: (1) the attacker constructs an adversar-ial prefix p and submits a malicious query p ⊕ ˜X to the LLM service; (2) the LLM service processes p ⊕ ˜X into KV states and stores them as chunks in the shared cache pool Pchunk .Subsequently, when a user sends a query X ⊕ q, if a cache hit occurs between ˜X and X as Definition 2, the user receives the malicious response ˜ r.We formulate the problem of finding a prefix p that causes the LLM to stably output the malicious response ˜r in the aforementioned scenario as an optimization problem: 
+
+p∗ = arg min  
+
+> p
+
+LCE 
+
+
+
+LLM (X ⊕ q | T p 
+
+> ˜X
+
+), ˜r
+
+
+
+, (16) where ˜X denotes a subsequence of the user context X, T p
+
+> ˜X
+
+represents the KV cache of ˜X obtained by querying the LLM with p ⊕ ˜X, and LLM (X ⊕ q | T p 
+
+> ˜X
+
+) indicates LLM inference with cache hits on T p 
+
+> ˜X
+
+. ˜X can be chosen as frequently used context that provides answers to q, such as text from an FAQ interface, to further increase the attack success rate. We employ the Greedy Coordinate Gradient (GCG) al-gorithm [65] to solve this optimization problem, a method widely applied in discrete token optimization. The optimiza-tion process of H IJACK KV consists of two main components: (1) an iterative GCG optimization loop that refines the adver-sarial prefix through coordinate-wise gradient descent, and (2) a loss computation function that evaluates the effectiveness of each candidate prefix under position-independent cache reuse. Algorithm 1 presents the implementation of this algo-rithm. We describe each component in detail below. In the actual attack process, the attacker runs the algorithm locally in a simulator using a surrogate model, thereby avoiding any impact on the remote server-side model or cache pool. Algorithm 1: HIJACK KV P REFIX OPTIMIZATION 
+
+Input: Target text ˜ X, target query q, target malicious answer ˜ r, prefix length L, optimize step T ,number of candidate prefixes B
+
+Output: Optimized prefix p 
+
+> 1
+
+p ← INITIALIZE PREFIX (L) ; 
+
+> 2
+
+for t = 1 to T do  
+
+> 3
+
+L ← COMPUTE LOSS (p, ˜X, q, ˜r) ; 
+
+> 4
+
+∇p ← ∇ONE HOT (p)L ; 
+
+> 5
+
+for l = 1 to L do  
+
+> 6
+
+V lcand ← TOP K(−∇p) ; 
+
+> 7
+
+P ← /0 ; 
+
+> 8
+
+for b = 1 to B do  
+
+> 9
+
+l ← UNIFORM RANDOM (L) ; 
+
+> 10
+
+x′ ← RANDOM SELECT (V lcand ) ; 
+
+> 11
+
+P ← P ∪ { [x1, . . . , xl−1, x′, xl+1, . . . , xL]} ; 
+
+> 12
+
+p ← arg min p∈P COMPUTE LOSS (p, ˜X, q, ˜r) ; 
+
+> 13
+
+return p ; 
+
+> 14
+
+Function COMPUTE LOSS (p, ˜X, q, ˜r) 
+
+> 15
+
+eeep ← ONE HOT (p) ·Wembed ; 
+
+> 16
+
+eeecontext ← eeep ⊕ EMBEDDING ( ˜X) ; 
+
+> 17
+
+(KKK,VVV ) ← COMPUTE KV (LLM (eeecontext )) ; 
+
+> 18
+
+T p 
+
+> ˜X
+
+← (KKKL+1: L+| ˜X|,VVV L+1: L+| ˜X|) ; 
+
+> 19
+
+r ← LLM ( ˜X ⊕ q | T p 
+
+> ˜X
+
+) ; 
+
+> 20
+
+L ← CROSS ENTROPY (r, ˜r) ; 
+
+> 21
+
+return L ;
+
+Greedy Coordinate Gradient Optimization. The main opti-mization loop (Lines 2 - 12) iteratively refines the adversarial prefix p over T iterations. Since the prefix consists of discrete tokens, the gradient is computed through the continuous relaxation obtained by em-bedding the one-hot vectors. At each iteration t, the algorithm first computes the loss L and its gradient ∇p with respect to the one-hot encoded prefix O NE HOT (p) (Lines 3 - 4). For each position l in the prefix, the algorithm identifies the top-k candidate tokens that would most decrease the loss, based on the negative gradient values (Lines 5 - 6). To explore the discrete space efficiently, the algorithm con-structs a candidate set P by randomly sampling B positions and substituting each with a randomly selected token from its top-k candidates V lcand (Lines 7 - 11). The candidate prefix that achieves the minimum loss is then greedily selected as the new prefix for the next iteration (Line 12). Upon completion of the iterations, we obtain an effective malicious prefix p (Line 13). This GCG optimization enables efficient search within the exponentially large and discrete token space. 
+
+Evaluation of Malicious KV Cache. The C OMPUTE LOSS 
+
+function (Lines 14 - 21) is the core component that evalu-ates the effectiveness of a candidate prefix under position-independent cache reuse. This function simulates the com-plete attack pipeline from prefix injection to victim query inference. We now describe each step in detail. 
+
+Step 1: Compute continuous embedding of the malicious prefix p (Line 15). Since gradient-based optimization requires differentiable operations, the discrete token sequence p is first converted to a continuous representation. The one-hot encoding of p is multiplied by the model’s embedding matrix 
+
+Wembed to obtain continuous embeddings eeep ∈ RL×d , where 
+
+d is the embedding dimension. This operation enables the direct computation of the gradient of the loss function with respect to each token. 
+
+Step 2: Compute hijacked KV cache (Lines 16 - 18). The prefix embeddings eeep are concatenated with the embed-dings of the target chunk ˜X to form the complete context 
+
+eeecontext = eeep ⊕ EMBEDDING ( ˜X), where ⊕ denotes sequential concatenation along the token dimension. This concatenated sequence is then fed through the LLM to generate the com-plete key-value pairs (KKK,VVV ) for all layers. Critically, only the KV pairs corresponding to the target chunk c are extracted and cached, yielding T pc = ( KKKL+1: L+| ˜X|,VVV L+1: L+| ˜X|). The slicing operation L + 1 : L + | ˜X| selects the KV states from position 
+
+L + 1 (begin with the end of prefix) to position L + | ˜X| (the end of the chunk), discarding the prefix’s KV states while retaining its adversarial influence encoded in the chunk’s rep-resentations. This computation strategy aligns with real-world KV cache systems that cache document chunks ˜X without explicitly storing malicious prefix p.
+
+Step 3: Simulate victim’s inference (Line 19). To evaluate the attack’s effectiveness, the function simulates a victim’s query by performing inference with the malicious cache reuse. The shared context ˜X is concatenated with the target query q,and the LLM generates output response r while reusing the hijacked KV cache T pc . Notably, in real-world cache reuse scenarios, the cache T pc may have undergone processing such as recomputation [14, 62] or compression [26, 63]. Conse-quently, the attacker can replicate these operations during this optimization step to enhance the robustness of the attack. By simulating position-independent cache reuse, we can evaluate the impact of T pc on the LLM in real-world scenarios. 
+
+Step 4: Compute loss (Line 20 - 21). Finally, we compute the cross-entropy loss L to measure the divergence between the model’s current output distribution r and the designated malicious target ˜r. Minimizing L provides the essential gradi-ent signals required to iteratively refine the adversarial prefix and achieves alignment with the attacker’s target objective. Algorithm 1 produces an adversarial prefix p by optimizing the prefix p through GCG. When p serves as the prefix for the context ˜X, it ensures that the KV state of ˜X is manipulated, such that upon a position-independent cache hit, the model’s output is hijacked to the attacker’s desired ˜ r.6 Experimental Setup 
+
+Datasets. We employed four question-answering (QA) bench-mark datasets for evaluation. HotpotQA [61] and SQuAD (v1.1 and v2.0) [39, 40] serve as general domain QA bench-marks, while MedQA [18] and PubMedQA [19] represent specific domain datasets from the medical field. To evaluate the effectiveness of the attack, we randomly sampled 200 instances from each dataset. Each instance was formatted as a triplet consisting of a question, a ground-truth answer, and a context containing that answer. We employed an LLM to generate a specific incorrect answer for each question. These questions can be classified into three categories, with distinct strategies applied to generate the incorrect answers: 
+
+(1) Binary Questions (e.g., Yes/No or A/B): We generated the logical opposite of the ground-truth answer. (2) Multiple-Choice Questions: We randomly selected one of the incorrect options. (3) Open-Ended Questions: We generated an incor-rect answer that shares the same part-of-speech or semantic category as the ground truth. For example, given the ques-tion and ground-truth answer “What is the capital of France? Paris”, we prompted the LLM to generate an incorrect entity such as “Hawaii.” The specific prompts used for this process are shown in Appendix D. 
+
+Models. We use a diverse set of state-of-the-art open-source LLM families, including Qwen [56], LLaMA [9], and Mis-tral [30], for evaluation. These models cover a wide spectrum of parameter sizes, ranging from 1B to 70B. We designed a specific system prompt to instruct the LLMs to prioritize answer extraction from the provided context and to ensure the generated responses are concise. The prompt used for this process are detailed in Appendix D. 
+
+KV Cache System. We formalize a comprehensive KV cache system defined by the following four key components: (1) Re-computation Method ( R ): We implement two recomputa-tion strategies based on Cacheblend [62] and EPIC [14]. Ad-ditionally, we introduce a Random method, which randomly selects tokens for recomputation. We designate the baseline without any recomputation as Vanilla and the baseline with full recomputation as Full . (2) Chunk Size ( Lchunk ): This is the length of the minimal unit segment required to trigger a cache hit. (3) Cache Ratio ( δ): This denotes the proportion of chunks within the user’s context that are replaced by matched cache entries. It can be calculated as δ = ( b − a + 1)/L. (4) Recomputation Ratio ( ρ): This indicates the proportion of matched cached tokens that undergo recomputation. 
+
+Metrics. Let r denote the ground-truth answer and ˜r denote the target malicious answer. Let x represent the model’s re-sponse in the benign setting, and y represent the response under the proposed attack. We employ the following three metrics to evaluate the effectiveness of the attack and the preservation of model utility: (1) Accuracy (Acc): Defined as the condition where x = r. This metric evaluates the model’s baseline capability on the QA task and assesses the impact of different KV cache system settings on benign performance. 
+
+(2) Untargeted Attack Success Rate (U-ASR): Defined as the condition where y̸ = x. This metric measures the effec-tiveness of the attack in successfully altering the model’s output, indicating a deviation from the original generation. (3) Targeted Attack Success Rate (T-ASR): Defined as the con-dition where y = ˜r and y̸ = x. This serves as a stricter metric, quantifying the attack’s success in manipulating the model to generate the specific malicious answer from the attacker. 
+
+Environment. All experiments are conducted on a server equipped with an AMD EPYC 9334 32-Core Processor run-ning Ubuntu 22.04.5 LTS, with four NVIDIA RTX PRO 6000 Blackwell Workstation Edition GPUs. 
+
+## 7 Experiment 
+
+We conduct a comprehensive evaluation to demonstrate the se-vere security threat H IJACK KV poses to position-independent KV cache reuse systems. Crucially, we highlight that this threat cannot be mitigated by existing text-level defenses, sanitizers, or alignment mechanisms, as H IJACK KV funda-mentally manipulates the internal KV representations rather than the textual input. To systematically analyze the impact of this vulnerability, our evaluation is guided by the following research questions: 
+
+• RQ1 (Effectiveness): Can H IJACK KV exploit the identi-fied vulnerability to manipulate model outputs? 
+
+• RQ2 (Robustness): Can H IJACK KV maintain its effective-ness across diverse KV cache system configurations? 
+
+• RQ3 (Persistence): Can H IJACK KV sustain its malicious impact throughout multi-turn interactions? 
+
+• RQ4 (Transferability): Can H IJACK KV successfully ma-nipulate model outputs under black-box settings? Unless otherwise specified, RQ1-RQ3 are evaluated under the white-box setting, while RQ4 evaluates the black-box setting. Furthermore, we conduct comprehensive ablation studies to evaluate the impact of attack hyperparameters on H IJACK KV. Finally, we study adaptive attacks against recomputation-based defenses and examine whether existing defense mechanisms and cache compression methods can mitigate the negative impact introduced by H IJACK KV. 
+
+## 7.1 RQ1: Effectiveness 
+
+Setup. RQ1 investigate the effectiveness of the H IJACK KV across different models, datasets, and recomputation methods. Experiments are conducted on four QA benchmarks: Hot-potQA [61], SQuAD (v1.1 and v2.0) [39, 40], MedQA [18], and PubMedQA [19]. Regarding hyperparameters, we set the cache ratio δ = 0.3 , the recomputation ratio ρ = 0.1 , and the chunk size Lchunk = 32 as the default settings [14,62]. We eval-uate the effectiveness of H IJACK KV without using KV cache Table 1: [RQ1] Effectiveness of H IJACK KV. This table shows the attack effectiveness of H IJACK KV across four different datasets, three different models, and three different recomputation methods. The KV cache system are conducted under default settings with a cache ratio δ = 0.3 and a recomputation ratio ρ = 0.1 . Acc is the model’s task accuracy reported to measure the impact of position-independent KV reuse on model utility. U-ASR and T-ASR is reported as the attack performance metrics.                                                                                                                                                                                                    
+
+> Method HotpotQA SQuAD MedQA PubMedQA
+> Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR
+> Llama-3.1-8B
+> Full 0.73 ––0.76 ––0.71 ––0.92 ––Vanilla 0.58 1.00 1.00 0.60 0.98 0.96 0.55 0.98 0.90 0.74 0.93 0.92 Random 0.63 0.95 0.94 0.69 0.98 0.89 0.63 0.93 0.87 0.79 0.92 0.89 EPIC 0.66 0.87 0.85 0.72 0.89 0.75 0.70 0.96 0.82 0.87 0.96 0.91 CacheBlend 0.68 0.92 0.89 0.72 0.94 0.85 0.68 0.88 0.80 0.89 0.92 0.86
+> Ministral-8B
+> Full 0.70 ––0.67 ––0.68 ––0.94 ––Vanilla 0.57 1.00 1.00 0.55 0.98 0.93 0.54 1.00 1.00 0.71 0.97 0.94 Random 0.61 0.97 0.97 0.62 0.89 0.87 0.63 1.00 1.00 0.75 0.91 0.88 EPIC 0.67 0.96 0.95 0.65 0.88 0.78 0.63 1.00 1.00 0.84 0.92 0.87 CacheBlend 0.66 0.94 0.94 0.66 0.93 0.87 0.65 1.00 1.00 0.85 0.89 0.85
+> Qwen3-8B
+> Full 0.82 ––0.84 ––0.73 ––0.95 ––Vanilla 0.61 0.96 0.94 0.68 1.00 1.00 0.57 0.97 0.96 0.75 1.00 1.00 Random 0.72 0.91 0.85 0.74 0.95 0.90 0.66 0.86 0.83 0.85 0.93 0.89 EPIC 0.75 0.88 0.87 0.75 0.92 0.86 0.71 0.93 0.84 0.92 0.95 0.93 CacheBlend 0.80 0.91 0.89 0.82 0.93 0.87 0.70 0.92 0.87 0.92 1.00 0.91
+
+(Full ), with full KV cache reuse ( Vanilla ), and with three re-computation methods ( Random , EPIC , and CacheBlend ). We use white-box setting and report Acc for model performance, and U-ASR and T-ASR for the effectiveness of H IJACK KV. 
+
+Results. Table 1 shows that H IJACK KV demonstrates strong attack performance across all evaluated scenarios. Specifi-cally, on the Llama-3.1-8B model, H IJACK KV achieves an average T-ASR of 89% across the four datasets, even when countering the four distinct recomputation methods. While advanced recomputation strategies like EPIC and CacheBlend result in a slight reduction in ASR compared to the Vanilla setting, H IJACK KV still maintains effectiveness. This trend is further supported by the results on Qwen3-8B, where the attack frequently achieves near-perfect success rates (e.g., 100% T-ASR on PubMedQA), proving that H IJACK KV re-mains robust despite the slight drop introduced by partial recomputation. 
+
+Conclusion. In conclusion, H IJACK KV is a highly effective, model-agnostic attack that hijacks LLM generation across diverse domains. Our findings indicate that standard partial recomputation mechanisms, at current ratios, are insufficient to mitigate the adversarial cache optimized by H IJACK KV. 
+
+## 7.2 RQ2: Robustness 
+
+Setup. RQ2 conducts experiments to analyze the impact of the chunk size Lchunk , cache ratio δ, and recomputation ratio 
+
+ρ of the position-independent cache system on H IJACK KV. All experiments are performed on the HotpotQA dataset with Llama-3.1-8B. We vary the hyperparameters by selecting 
+
+Lchunk from the set {32 , 64 , 128 , 256 , 512 } while exploring both δ and ρ within the values of {0.1, 0.2, 0.3, 0.4, 0.5}. We use white-box setting and report Acc for model performance, and U-ASR and T-ASR for the effectiveness of H IJACK KV. 
+
+Impact of Chunk Size Lchunk . Table 2 presents the experi-mental results regarding the impact of chunk size Lchunk on the effectiveness of H IJACK KV. This parameter determines the minimum granularity for storage, matching, and reuse in the position-independent KV cache. As Lchunk increases from 32 to 512, we observe that both the main task Acc and the ASR of H IJACK KV remain stable. Although the ASR decreases slightly when Lchunk is large, we attribute this to partial cache misses at the head and tail of the hijacked KV cache, i.e. , incomplete cache reuse caused by coarse cache granularity. Overall, these results demonstrate that H IJACK KV is robust to variations in chunk size. 
+
+Impact of Cache Ratio δ. Table 3 illustrates the experimental results regarding the impact of cache ratio δ on the effective-ness of H IJACK KV. This parameter determines the proportion of the user’s prefilled KV cache occupied by the hijacked KV cache. Since existing position-independent KV cache meth-ods typically achieve cache hit rates of up to 60% [57], we vary the cache ratio from 10% to 50% to evaluate the robust-ness of H IJACK KV. We find that H IJACK KV maintains a high ASR even at low cache hit rate, where only a small proportion of the user’s KV cache is affected. For example, at δ = 0.1 and ρ = 0.3,where the malicious cache occupies only 7% of the user’s KV context, the average T-ASR remains at 67%. As cache ratio in-creases, ASR of H IJACK KV rises rapidly, approaching 100% Table 2: [RQ2-1] Robustness of H IJACK KV to Chunk Size Lchunk . This table shows the robustness to chunk size using 200 samples from the HotpotQA dataset. The experiments employ Llama-3.1-8B under default settings with a cache ratio δ = 0.3and a recomputation ratio ρ = 0.1. Acc is the model’s task accuracy to measure the impact of position-independent KV reuse on model utility, where the performance without KV cache is 0.73. U-ASR and T-ASR is reported as the attack performance metrics.                                                                                          
+
+> Method Lchunk =32 Lchunk =64 Lchunk =128 Lchunk =256 Lchunk =512 Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Vanilla 0.58 1.00 1.00 0.58 1.00 1.00 0.58 1.00 1.00 0.59 1.00 1.00 0.57 1.00 1.00 Random 0.63 0.95 0.94 0.61 0.95 0.95 0.64 0.94 0.93 0.63 0.94 0.92 0.62 0.93 0.90 EPIC 0.66 0.87 0.85 0.67 0.89 0.88 0.68 0.87 0.86 0.66 0.88 0.87 0.71 0.85 0.84 CacheBlend 0.68 0.92 0.89 0.68 0.91 0.91 0.70 0.92 0.90 0.68 0.89 0.85 0.69 0.91 0.89
+
+Table 3: [RQ2-2] Robustness of H IJACK KV to Cache Ratio δ. This table shows the robustness to cache ratio using 200 samples from the HotpotQA dataset. The experiments employ Llama-3.1-8B under default settings with a recomputation ratio 
+
+ρ = 0.1. Acc is the model’s task accuracy to measure the impact of position-independent KV reuse on model utility, where the performance without KV cache is 0.73. U-ASR and T-ASR is reported as the attack performance metrics.                                                                                          
+
+> Method δ=0.1δ=0.2δ=0.3δ=0.4δ=0.5Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Vanilla 0.64 0.82 0.81 0.61 0.95 0.93 0.58 1.00 1.00 0.46 1.00 1.00 0.38 1.00 1.00 Random 0.68 0.63 0.61 0.65 0.81 0.78 0.63 0.95 0.94 0.59 0.95 0.95 0.52 0.98 0.97 EPIC 0.73 0.56 0.53 0.71 0.80 0.78 0.66 0.87 0.85 0.63 0.93 0.91 0.61 0.99 0.96 CacheBlend 0.72 0.73 0.71 0.71 0.80 0.78 0.68 0.92 0.89 0.65 0.96 0.93 0.60 1.00 0.99
+
+at δ = 0.5. Additionally, we observe that the recomputation method EPIC becomes more effective as the low cache ratio. We attribute this to its recomputation of the first k tokens in each cache chunk, which better preserves benign context coherence at lower cache ratios, thereby enhancing resistance against H IJACK KV. In summary, even at lower cache ratios, HIJACK KV still mounts effective attacks, demonstrating its robustness to such reductions. 
+
+Impact of Recomputation Ratio ρ. Table 3 demonstrates the experimental results regarding the impact of recomputation ratio ρ on the effectiveness of H IJACK KV. This parameter determines the recomputation ratio for the reused KV cache. While existing methods claim that a recomputation ratio from 10% to 15% is sufficient to prevent performance degradation on the main task, we vary the recomputation ratio from 10% to 50% to evaluate the robustness of H IJACK KV. We observe that increasing the recomputation ratio brings significant computational overhead but does not eliminate the malicious impact of H IJACK KV. Specifically, the average T-ASR remains high at 70% when the recomputation ratio is tripled to ρ = 0.3 and persists at 39% even when the ratio is raised to ρ = 0.5, which is 5 × the baseline. H IJACK KV shows robustness to an increase in the recomputation ratio. Furthermore, we find that increasing ρ is a more effective defense than reducing δ. We compare two settings where the attacker controls a similar proportion of effective tokens: (1) δ = 0.3, ρ = 0.5 (15% hijacked KV cache) and (2) δ =
+
+0.2, ρ = 0.3 (14% hijacked KV cache). Despite the similar proportions of hijacked KV cache, the T-ASR is 39% lower in the first case. This is because recomputation refreshes more high-influence (including malicious) KV cache entries, whereas a reduced cache hit ratio still preserves many of them. 
+
+Conclusion. Extensive experiments validate the robustness of H IJACK KV across varying system configurations. Whether subjected to low cache ratios, high recomputation penalties, or varying chunk sizes, H IJACK KV maintains strong attack effectiveness. This consistency demonstrates that H IJACK KV poses a widespread threat that cannot be easily mitigated. 
+
+## 7.3 RQ3: Persistence 
+
+Setup. RQ3 investigates the persistence of the malicious im-pact induced by H IJACK KV within a multi-turn conversation scenario. To simulate multi-turn interactions, we first hijack the user’s KV cache using H IJACK KV. Then we insert filler tokens of length Lcontext that are unrelated to the hijacked tar-get topic before issuing the target query, and observe whether the attack influence is diluted in the model’s response. All experiments are conducted on the HotpotQA dataset using Llama-3.1-8B and the same hyperparameters as in Section 7.1. We evaluate the effectiveness of H IJACK KV without KV cache ( Full ), with full KV cache ( Vanilla ), and with three re-computation methods ( Random , EPIC , and CacheBlend ). We use white-box setting and report Acc for model performance, and U-ASR and T-ASR for the effectiveness of H IJACK KV. 
+
+Results. Table 5 illustrates the impact of multi-turn conver-sation length Lcontext on the effectiveness of H IJACK KV. In our experiments, we increase the length of the unrelated filler Table 4: [RQ2-3] Robustness of H IJACK KV to Recomputation Ratio ρ. This table shows the robustness to recomputation ratio using 200 samples from the HotpotQA dataset. The experiments employ Llama-3.1-8B under default settings with cache ratio δ = 0.3 . Acc is models’ task accuracy reported to measure the impact of position-independent KV reuse on model utility, where the performance stands at 0.73 without KV cache and 0.58 without recomputation. U-ASR and T-ASR are reported as attack performance metrics, both of which reach 100% on the vanilla position-independent KV cache without recomputation.                                                                           
+
+> Method ρ=0.1ρ=0.2ρ=0.3ρ=0.4ρ=0.5Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Random 0.63 0.95 0.94 0.66 0.73 0.72 0.69 0.66 0.65 0.70 0.45 0.43 0.72 0.35 0.31 EPIC 0.66 0.87 0.85 0.70 0.82 0.81 0.72 0.72 0.71 0.73 0.63 0.63 0.73 0.51 0.49 CacheBlend 0.68 0.92 0.89 0.71 0.83 0.81 0.72 0.74 0.73 0.72 0.57 0.55 0.72 0.40 0.38
+
+Table 5: [RQ3] Persistence of H IJACK KV. This table evaluates the impact of multi-turn dialogue length on the performance of HIJACK KV performance using 200 samples from the HotpotQA dataset. The experiments employ Llama-3.1-8B under default settings with a cache ratio δ = 0.3 and recomputation ratio ρ = 0.1. Acc is the model’s task accuracy reported to measure the impact of position-independent KV reuse on model utility. U-ASR and T-ASR is reported as the attack performance metrics.                                                                                                         
+
+> Method Lcontext =0Lcontext =256 Lcontext =512 Lcontext =1024 Lcontext =2048 Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Acc U-ASR T-ASR Full 0.73 ––0.73 ––0.71 ––0.68 ––0.65 ––Vanilla 0.58 1.00 1.00 0.58 1.00 0.98 0.55 0.82 0.76 0.51 0.69 0.63 0.49 0.62 0.48 Random 0.63 0.95 0.94 0.62 0.90 0.89 0.62 0.80 0.64 0.59 0.66 0.48 0.58 0.63 0.46 EPIC 0.66 0.87 0.85 0.66 0.85 0.84 0.83 0.77 0.68 0.64 0.67 0.58 0.62 0.63 0.48 CacheBlend 0.68 0.92 0.89 0.68 0.91 0.88 0.68 0.79 0.62 0.63 0.65 0.52 0.61 0.64 0.46
+
+context from 0 up to 2048 tokens. We find that even with a context length of 1024, the average T-ASR remains high at 55%. Furthermore, when the context length extends to 2048, the T-ASR remains at 47%. Notably, once the context reaches a certain length, doubling it results in only a marginal 8% decline in the ASR. 
+
+Conclusion. These findings confirm that once cached, the hi-jacked KV cache retains sufficient influence to manipulate the LLM’s token generation process over long-range interactions, despite the presence of extensive unrelated context. 
+
+## 7.4 RQ4: Transferability 
+
+Setup. RQ4 focuses on the cross-model transferability of HIJACK KV, specifically examining its attack effectiveness under the black-box setting described in Section 4.1. We optimize the prefix p on a proxy model and send the con-structed malicious query p ⊕ ˜X to the target model. We then evaluate the success rate of the target LLM generating the response ˜r for the query X ⊕ q, under the condition that a position-independent cache hit (as defined in Definition 2) occurs between X and ˜X. We employ Llama-3.1-8B as the proxy model for prefix optimization. All experiments are con-ducted on the HotpotQA dataset using Llama-3.1-8B and the same hyperparameters as in Section 7.1. We evaluate the ef-fectiveness of with full KV cache ( Vanilla ), and with three recomputation methods ( Random , EPIC , and CacheBlend ). We use black-box setting and report U-ASR and T-ASR for the effectiveness of H IJACK KV. 
+
+Results. Table 6 presents experimental results demonstrating that H IJACK KV exhibits robust cross-model transferability. When the target LLM is the large-parameter Llama-3.3-70B, HIJACK KV maintains high efficacy, achieving 75% U-ASR and 37% T-ASR. Similarly, H IJACK KV achieves 76% U-ASR and 37% T-ASR against models with comparable pa-rameter counts but distinct architectures like Qwen3-8B and 14B. These results indicate that the prefix p optimized by HIJACK KV poses a significant threat in black-box settings and enables attack transferability across models of varying parameter sizes and architectures. We observe a performance divergence when transferring the attack to smaller target models. Specifically, on Qwen3-4B and Llama-3.2-1B, while H IJACK KV achieves a high U-ASR of approximately 90%, the T-ASR drops significantly to 13%. We attribute this low T-ASR to the capability gap between models, as indicated by the main task performance in Table 7. Drawing on the Platonic Representation Hypothesis [15], which suggests that increasingly capable models converge toward a shared representation space, we argue that prefixes optimized on larger proxy models are effective against simi-larly capable or stronger targets. However, the representation spaces of smaller models likely diverge from that of the proxy, making it difficult to precisely steer them to generate the specific target response ˜r. Conversely, the U-ASR remains high because the prefix p successfully perturbs the KV cache. Table 6: [RQ-4] Transferability of H IJACK KV. This table evaluates cross-model transferability of H IJACK KV performance using 200 samples from the HotpotQA dataset. The experiments employ Llama-3.1-8B as the proxy model under default settings with a cache ratio δ = 0.3 and a recomputation ratio ρ = 0.1. U-ASR and T-ASR is reported as the attack performance metrics.                                                                      
+
+> Method Qwen3-4B Qwen3-8B Qwen3-14B Llama-3.2-1B Llama-3.2-3B Llama-3.3-70B U-ASR T-ASR U-ASR T-ASR U-ASR T-ASR U-ASR T-ASR U-ASR T-ASR U-ASR T-ASR
+> Llama-3.1-8B
+> Vanilla 0.91 0.10 0.87 0.33 0.70 0.40 0.97 0.18 0.90 0.44 0.79 0.37 Random 0.89 0.11 0.87 0.37 0.64 0.41 0.93 0.17 0.89 0.42 0.73 0.35 EPIC 0.88 0.14 0.83 0.32 0.64 0.34 0.89 0.14 0.90 0.46 0.72 0.37 CacheBlend 0.85 0.09 0.87 0.38 0.62 0.39 0.90 0.13 0.89 0.44 0.75 0.38 12345
+> Prefix Length
+> 0.84
+> 0.88
+> 0.92
+> 0.96
+> 1.00
+> T-ASR
+
+(a)     
+
+> 50 100 250 500 1000
+> GCG Optimization Steps
+> 0.68
+> 0.76
+> 0.84
+> 0.92
+> 1.00
+
+(b)     
+
+> 64 128 256 512 1024
+> Top-k
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+
+(c)     
+
+> 0.20 0.35 0.50 0.65 0.80
+> Search Width
+> 0.72
+> 0.79
+> 0.86
+> 0.93
+> 1.00
+
+(d)    
+
+> Vanilla Random EPIC CacheBlend
+
+Figure 4: Ablation studies of H IJACK KV hyperparameters. We evaluate the impact of four H IJACK KV hyperparameters on effectiveness: (a) adversarial prefix length, (b) number of GCG optimization steps, (c) top-k candidates, and (d) search width. Table 7: Main task performance of different models. This table presents the performance (measured by Acc ) of various models on the HotpotQA main task and reports the perfor-mance difference ( ∆) relative to Llama-3.1-8B.                       
+
+> Metric Llama 3 Qwen 3 8B 1B 3B 70B 4B 8B 14B Acc 0.73 0.39 0.52 0.88 0.54 0.82 0.85
+> ∆–−0.34 −0.21 +0.15 −0.19 +0.09 +0.12
+
+This induces substantial contextual hallucinations, causing the model to generate irrelevant or incorrect responses even if it fails to match the exact target string. 
+
+Conclusion. In summary, our experiments confirm that H I-
+
+> JACK
+
+KV possesses strong transferability. This ensures that HIJACK KV remains a threat not only in white-box scenarios but also in black-box settings where the attacker lacks access to the target model’s parameters and gradients. 
+
+## 7.5 Ablation Studies 
+
+In this section, we conduct ablation studies to evaluate the impact of the hyperparameters of H IJACK KV that controlled by the attacker on effectiveness: (1) the adversarial prefix length Lp (default Lp = Lchunk ), (2) the number of GCG opti-mization steps T (default T = 250 ), (3) the top-k candidates (default k = 512 ), and (4) the search width η (default η = 0.5). We also investigate the following questions: (1) necessity of GCG optimization, (2) robustness to paraphrased queries, and (3) feasibility under real-world scenario. All experiments are conducted on the HotpotQA dataset using Llama-3.1-8B and the same hyperparameters as in Section 7.1. 
+
+Impact of Adversarial Prefix Length Lp. Since the attention mechanism attends to all preceding tokens, the prefix length 
+
+Lp significantly impacts the effectiveness. To ensure the pre-fix is correctly processed as a single chunk, we set Lp as an integer multiple of Lchunk (N × Lchunk ). Figure 4 (a) illustrates that as Lp increases, the T-ASR of H IJACK KV improves sig-nificantly. However, a larger Lp requires more optimization steps and increases the computation time per step. 
+
+Impact of GCG Optimization Steps T . Since the adversar-ial suffix p is generated via gradient-based greedy search, the number of iterations directly determines the search depth within the discrete token space. As illustrated in Figure 4 (b), the T-ASR performance exhibits a trend of rapid initial growth followed by saturation. This indicates that while increasing the number of iterations improves performance, the marginal returns gradually diminish after reaching a certain thresh-old. Considering the trade-off between optimization time and efficacy, we select a balanced number of optimization steps. 
+
+Impact of Top-k Candidates. This parameter controls the scope of the token substitution pool by selecting the k tokens with the largest negative gradients at each position. This pa-rameter plays a pivotal role in balancing the trade-off between considering a diverse set of tokens and focusing on those Table 8: Comparison with baseline prefixes. This table com-pares the optimized prefix with baseline prefixes and reports T-ASR and average prefix length.           
+
+> Metric GCG Random prefix Instruction prefix Plain-text misinfo. T-ASR 100.0% 0.0% 17.5% 23.5% Avg. Prefix Length 32 32 10.9 103.4
+
+Table 9: Robustness to paraphrased queries. This table presents the T-ASR of H IJACK KV on HotpotQA after para-phrasing each query into five semantically equivalent variants.       
+
+> Dataset # Paraphrases per query T-ASR HotpotQA 594 .0±2.6%
+
+most likely to minimize the loss. Figure 4(c) shows that per-formance peaks at an optimal candidate pool size. Beyond this point, performance slightly declines due to noise, indicating that a moderate size is sufficient. 
+
+Impact of Search Width η. The search width η represents the ratio of candidates selected for loss verification. A higher ratio allows H IJACK KV to validate a broader segment of the candidates suggested by the gradients. As illustrated in Figure 4 (d), we observe that a higher verification proportion yields higher T-ASR, as it prevents the optimization from discarding valid adversarial tokens that were underestimated by the gradient approximation. However, a larger η increases the computational overhead during the verification phase. 
+
+Impact of GCG We compare the optimized GCG prefix with three simple baselines: (1) a random prefix with the same to-ken length, (2) a short instruction-style prefix, “Please output the answer as {XXX},” and (3) a longer plain-text misinfor-mation prefix. We report T-ASR and average prefix length in Table 8. GCG achieves 100% T-ASR with only 32 tokens, while the random prefix fails completely and the instruction-style and misinformation prefixes achieve only 17 .5% and 23 .5% T-ASR, respectively. This suggests that H IJACK KV relies on the optimized adversarial prefix rather than arbitrary or longer misleading text. 
+
+Impact of Paraphrased Queries. We further test whether HIJACK KV is robust to natural variations in user wording by paraphrasing each HotpotQA query into five semantically equivalent variants. Using the same attack setting, H IJACK KV achieves 94 .0 ± 2.6% T-ASR on the paraphrased queries, as shown in Table 9. This indicates that the attack does not rely on exact surface-form matching of the original query. 
+
+Impact of Temperatures on Code Task. We further evalu-ate H IJACK KV in a realistic code-generation scenario using HumanEval [4]. Specifically, we poison shared code-skill files to induce nonsensical prefixes during the early stage Table 10: Real-world evaluation on HumanEval. This table presents the ASR of H IJACK KV on the HumanEval code generation task under different decoding temperatures τ.          
+
+> τ0.3 0.7 1.0 1.5 Avg. ASR 98.1% 96.9% 95.1% 92.0% 95.5%
+
+of code generation, thereby corrupting the final completion. To reflect realistic decoding conditions, we test multiple sam-pling temperatures τ ∈ { 0.3, 0.7, 1.0, 1.5} and report ASR. As shown in Table 10, H IJACK KV achieves consistently high ASR across all temperatures, with an average ASR of 95 .5% ,demonstrating its robustness to stochastic decoding. 
+
+## 7.6 Mitigability 
+
+Adaptive Attack Against Recomputation. In previous sec-tions, we observed that KV recomputation strategies can par-tially mitigate the attack performance of H IJACK KV. How-ever, we demonstrate that an attacker can counteract this by adding recomputation into the GCG optimization process. By doing so, H IJACK KV generates adversarial suffixes that are robust to recomputation. Figure 5 (a) indicates that this adaptation is highly efficient ,
+
+i.e. , adding only 10% recomputation in the optimization steps is sufficient to improve ASR up to 19%. Furthermore, the adaptive attack shows strong transferability . Even when the recomputation method or ratio used during optimization does not match the target system’s configuration, the generated adversarial prefix remains effective. These results indicate that the adaptive process encourages the identification of robust adversarial tokens instead of yielding solutions specialized to a single recomputation setting. 
+
+Ineffectiveness of Existing Defenses and Cache Compres-sion Methods. We further evaluate the resilience of H I-
+
+> JACK
+
+KV against two representative KV cache defense mech-anisms: RobustKV [17], which prunes KV entries with low at-tention scores to defend against jailbreak attacks, and CacheP-rune [50], which targets KV pairs associated with sensitive neurons to defend against prompt injection attacks. Figure 5 (b) shows that even when RobustKV and CacheP-rune remove 50% of the KV cache, the T-ASR decreases by only 19%, which is much lower than the security improve-ment provided by recomputation. RobustKV fails to prune the hijacked KV cache generated by H IJACK KV because the malicious entries maintain high attention scores, effectively bypassing its detection mechanism. Similarly, CachePrune struggles to defend against H IJACK KV because H IJACK KV generates unique KV caches for every QA pairs, ensuring that these flexible malicious entries avoid triggering the specific sensitive neurons that CachePrune monitors. Figure 5 (c) demonstrates the ASR of H IJACK KV under various cache compression methods. By applying advanced Vanilla                   
+
+> Random@0.1
+> Random@0.3
+> EPIC@0.1
+> EPIC@0.3
+> CacheBlend@0.1
+> CacheBlend@0.3
+> Random@0.3
+> EPIC@0.3
+> CacheBlend@0.3
+> 0.65 0.85 0.94 0.72 0.92 0.84 0.95
+> 0.71 0.76 0.85 0.84 1.00 0.85 0.92
+> 0.73 0.77 0.82 0.78 0.88 0.89 0.99
+
+(a)     
+
+> 0.1 0.2 0.3 0.4 0.5
+> Defense Ratio
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> T-ASR
+
+(b) 
+
+> RobustKV
+> CachePrune
+> Vanilla
+> Vanilla
+> H2O
+> SteamingLLM
+> SnapKV
+> PyramidKV
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> T-ASR
+
+(c) 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+
+Figure 5: (a) Adaptive Attack Against Recomputation (x-axis: recomputation ratio used in the attack; y-axis: target system). Employing recomputation during optimization significantly boosts the robustness of H IJACK KV, maintaining a high ASR even under mismatched recomputation ratios. (b) H IJACK KV Against Existing Defense. Even when RobustKV [17] and CachePrune [50] evict up to 50% of the tokens, H IJACK KV maintains a high T-ASR of 79%. (c) H IJACK KV Against Cache Compression. KV cache compression [2, 23, 55, 63] fails to eliminate the malicious impact of H IJACK KV. Table 11: Mitigation performance with different recompu-tation ratios. This table presents the T-ASR and normalized recomputation cost of two mitigation strategies, Hybrid and 
+
+Attn Score , with different recomputation ratios ρ.                       
+
+> Method Metric Recomputation Ratio ρ
+> 0.2 0.4 0.6 0.8
+> Hybrid T-ASR 73.0% 54.5% 29.0% 11.5% Cost 1.00x 1.84x 2.63x 3.53x
+> Attn Score
+> T-ASR 49.5% 35.5% 22.5% 13.0% Cost 1.15x 2.06x 2.97x 4.02x
+
+compression methods [2, 23, 55, 63] to the cache generated by H IJACK KV, we observe that it maintains an average T-ASR of 97%. This resilience results from cache compression algorithms prioritizing high-influence KV entries, which en-sures that hijacked entries are preserved and remain functional within the user context. These results highlight that H IJACK KV exploits a new threat in the KV cache reuse mechanism that current heuristic-based defenses cannot adequately address. 
+
+Towards Secure KV Cache Reuse. We evaluate whether recomputation-based defenses can mitigate the negative im-pact introduced by H IJACK KV. We consider two recomputa-tion strategies. The first strategy Hybrid combines the recom-putation heuristics used by EPIC [14] and CacheBlend [62]. The second strategy Attn Score recomputes tokens that receive high attention scores with respect to the user query. We vary the recomputation ratio ρ ∈ { 0.2, 0.4, 0.6, 0.8}.We report T-ASR and normalized recomputation cost. The recomputation cost is normalized by the cost of the Hybrid 
+
+strategy at ρ = 0.2. The results are shown in Table 11. Overall, increasing the recomputation ratio substantially reduces T-ASR for both methods, confirming that recomputation can mitigate the attack. However, this improvement comes with a clear computational trade-off. 
+
+## 8 Limitations and Discussion 
+
+Cache Availability. The practicality of H IJACK KV depends on whether the hijacked KV state can enter the shared cache and be reused before eviction or overwritten. This creates a tradeoff: popular segments X are more likely to appear in victim contexts, but also more likely to already have benign cached entries; less popular segments are easier to insert, but less likely to be reused. Thus, H IJACK KV is most practical for moderately shared content, such as shared documents, RAG sources, code files, or agent skill files. If X is already cached, the attacker can switch to a suitable segment Y or wait for an insertion window. A stronger attacker could further increase the likelihood that X appears in the victim’s context through retrieval poisoning techniques such as PoisonedRAG [66]. 
+
+Cache Occupancy Probing. In our main experiments, we assume that the cache entry corresponding to the target seg-ment X can be inserted by the attacker without colliding with an existing benign entry. In real deployments, however, the attacker may not know the current occupancy of the shared cache. A lightweight side-channel test can help infer cache oc-cupancy [11, 45]; in our preliminary experiments, it achieves 81 .4% accuracy with a single query and a 95 .4% hit recogni-tion rate within five attempts. However, probing is not fully passive: probing queries may insert, refresh, or evict cache entries, causing self-pollution and changing the cache state before the attack. Therefore, practical attacks should use a small probing budget. 
+
+Eviction Policies and Deployment Scope. The feasibility of HIJACK KV depends on the cache replacement policy. FIFO may naturally create insertion windows; LRU makes fre-quently refreshed chunks harder to replace; and LFU fur-ther stabilizes high-frequency chunks. These dynamics shape when H IJACK KV is most practical, but they do not eliminate the attack surface. H IJACK KV is most relevant to real-time, position-independent, cross-user KV reuse, such as agent-based or multi-turn serving, and is less applicable to chunk-then-cache RAG pipelines where chunks are encoded inde-pendently. A full assessment would benefit from trace-driven evaluation under realistic workloads and eviction policies. 
+
+## 9 Conclusion 
+
+In this paper, we present H IJACK KV, the first KV cache hi-jacking attack that operates without requiring system-level privileges. By exploiting the position-independent KV cache reuse mechanism, H IJACK KV effectively hijacks the LLM outputs. Extensive experiments demonstrate the effectiveness, robustness, persistence, and transferability of H IJACK KV. Furthermore, existing defenses, recomputation, and compres-sion methods fail to eliminate this new threat. Our work high-lights the critical trade-off between efficiency and security in LLM system, urging the community to seek a balanced design for future systems where efficiency does not come at the expense of security. 
+
+## Ethical Considerations 
+
+We discuss ethical considerations by centering the impacts on each stakeholder across two phases: the research process 
+
+(attack design and evaluation) and the publication of results 
+
+(deployment implications). We then describe the mitigation and conclude with justification for conducting this research. 
+
+Stakeholder Analysis. Consider three stakeholder groups: 
+
+• Model providers and infrastructure operators who de-velop LLM serving systems and cache reuse frameworks. Our findings reveal an underexplored threat in position-independent KV-cache reuse, showing that efficiency op-timizations can introduce new attack surfaces. This can inform safer cache reuse mechanisms and improve system-level security posture. The potential negative impact is that attack insights could be misused against systems that de-ploy cache reuse without sufficient integrity protections. 
+
+• End users of LLM systems, whose interactions depend on reliable context integrity and isolation. They may benefit from defenses against unintended cross-context influence, while insecure reuse mechanisms could affect response reliability in shared infrastructure settings. 
+
+• Researchers and practitioners studying LLM systems, who benefit from understanding system-level risks. Our work frames KV-cache reuse as a security-relevant component and may motivate further defensive research, while detailed technical analysis could lower the barrier for reproducing attacks without appropriate safeguards. 
+
+Mitigation (Implemented). We took steps to minimize harm to the identified stakeholders and promote defensive progress. 
+
+• For model providers and infrastructure operators, respon-sible disclosure : Prior to publication, we contacted the founders of a startup commercializing position-independent cache reuse technology and shared our threat model, tech-nical analysis, and empirical results. Follow-up discussions were scheduled to explore safer reuse designs. 
+
+• For end users, no real-world harm : All experiments used public datasets and public or locally deployed models in controlled offline environments. We did not use private user data, interact with real users, or test production services. 
+
+• For researchers and practitioners, defense analysis : We evaluate mitigation directions, including recomputation-based protection, cache compression, and existing defensive mechanisms, and provide system-level recommendations rather than only exploit guidance. 
+
+Recommended Future Safeguards. We suggest that real-world systems incorporate safeguards that address the risks faced by both infrastructure operators and end users: (1) a hy-brid mechanism that recomputes high-impact KV states while compressing irrelevant entries, ensuring that user-computed data constitutes the majority of the cache; and (2) a deviation-based rejection policy that denies reuse whenever recomputa-tion reveals deviation exceeding a predefined safety threshold. 
+
+Justification for Research. KV cache reuse improves LLM efficiency but introduces underexplored security risks. Iden-tifying and responsibly disclosing these risks is essential to ensure efficiency gains do not compromise system integrity. 
+
+## Open Science 
+
+To support open science, H IJACK KV is publicly at https:// github.com/YichiCS/KV-Cache-Hijack and https:// zenodo.org/records/20403786 .
+
+## Acknowledgment 
+
+We thank the reviewers and shepherd for their constructive comments on our work. The Authors acknowledge the Na-tional Artificial Intelligence Research Resource (NAIRR) Pi-lot for contributing to this research result. Huan Zhang is supported in part by the AI2050 program at Schmidt Sciences (AI2050 Early Career Fellowship). 
+
+## References 
+
+[1] Anthropic. Claude api docs: Prompt caching. 
+
+https://platform.claude.com/docs/en/ build-with-claude/prompt-caching , 2025. [2] Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, et al. Pyramidkv: Dynamic kv cache compression based on pyramidal information funneling. 
+
+arXiv preprint arXiv:2406.02069 , 2024. [3] Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J Pappas, and Eric Wong. Jail-breaking black box large language models in twenty queries. In 2025 IEEE Conference on Secure and Trust-worthy Machine Learning (SaTML) , 2025. [4] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code. 
+
+arXiv preprint arXiv:2107.03374 , 2021. [5] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 2022. [6] Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, Dasha Metropolitansky, Robert Osazuwa Ness, and Jonathan Larson. From local to global: A graph rag ap-proach to query-focused summarization. arXiv preprint arXiv:2404.16130 , 2024. [7] Mukkesh Ganesh, Kaushik Iyer, and Arun Baalaaji Sankar Ananthan. Whose narrative is it anyway? a kv cache manipulation attack. arXiv preprint arXiv:2511.12752 , 2025. [8] Google. Gemini api docs: Context caching. https:// ai.google.dev/gemini-api/docs/caching , 2025. [9] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [10] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injec-tion. In Proceedings of the 16th ACM workshop on artificial intelligence and security , 2023. [11] Chenchen Gu, Xiang Lisa Li, Rohith Kuditipudi, Percy Liang, and Tatsunori Hashimoto. Auditing prompt caching in language model APIs. In Forty-second Inter-national Conference on Machine Learning , 2025. [12] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W Mahoney, Yakun S Shao, Kurt Keutzer, and Amir Gholami. Kvquant: Towards 10 million context length llm inference with kv cache quantization. Ad-vances in Neural Information Processing Systems , 2024. [13] Elias Hossain, Swayamjit Saha, Somshubhra Roy, and Ravi Prasad. Can transformer memory be corrupted? in-vestigating cache-side vulnerabilities in large language models. arXiv preprint arXiv:2510.17098 , 2025. [14] Junhao Hu, Wenrui Huang, Weidong Wang, Haoyi Wang, tiancheng hu, zhang qin, Hao Feng, Xusheng Chen, Yizhou Shan, and Tao Xie. EPIC: Efficient position-independent caching for serving large language models. In Forty-second International Conference on Machine Learning , 2025. [15] Minyoung Huh, Brian Cheung, Tongzhou Wang, and Phillip Isola. Position: The platonic representation hy-pothesis. In Forty-first International Conference on Machine Learning , 2024. [16] Bo Hui, Haolin Yuan, Neil Gong, Philippe Burlina, and Yinzhi Cao. Pleak: Prompt leaking attacks against large language model applications. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , 2024. [17] Tanqiu Jiang, Zian Wang, Jiacheng Liang, Changjiang Li, Yuhui Wang, and Ting Wang. Robustkv: Defending large language models against jailbreak attacks via kv eviction. arXiv preprint arXiv:2410.19937 , 2024. [18] Di Jin, Eileen Pan, Nassim Oufattole, Wei-Hung Weng, Hanyi Fang, and Peter Szolovits. What disease does this patient have? a large-scale open domain question an-swering dataset from medical exams. Applied Sciences ,2021. [19] Qiao Jin, Bhuwan Dhingra, Zhengping Liu, William Cohen, and Xinghua Lu. Pubmedqa: A dataset for biomedical research question answering. In Proceedings of the 2019 conference on empirical methods in natu-ral language processing and the 9th international joint conference on natural language processing (EMNLP-IJCNLP) , 2019. [20] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory manage-ment for large language model serving with pagedatten-tion. In Proceedings of the 29th symposium on operating systems principles , 2023. [21] Andrey Labunets, Nishit V Pandya, Ashish Hooda, Xiaohan Fu, and Earlence Fernandes. Fun-tuning: Characterizing the vulnerability of proprietary llms to optimization-based prompt injection attacks via the fine-tuning interface. In 2025 IEEE Symposium on Security and Privacy (SP) , 2025. [22] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information processing systems , 2020. [23] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems , 2024. [24] Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. Autodan: Generating stealthy jailbreak prompts on aligned large language models. In The Twelfth In-ternational Conference on Learning Representations ,2024. [25] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. Formalizing and benchmarking prompt injection attacks and defenses. In 33rd USENIX Security Symposium (USENIX Security 24) , 2024. [26] Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyrillidis, and Anshumali Shrivastava. Scissorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Information Processing Systems , 2023. [27] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. Kivi: A tuning-free asymmetric 2bit quanti-zation for kv cache. arXiv preprint arXiv:2402.02750 ,2024. [28] LMCache Team. Lmcache. https://lmcache.ai/ ,2024. [29] Zhifan Luo, Shuo Shao, Su Zhang, Lijing Zhou, Yuke Hu, Chenxu Zhao, Zhihao Liu, and Zhan Qin. Shadow in the cache: Unveiling and mitigating pri-vacy risks of kv-cache in llm inference. arXiv preprint arXiv:2508.09442 , 2025. [30] Mistral AI. Mistral 3. https://mistral.ai/news/ mistral-3 , 2025. [31] Mohaiminul Al Nahian, Abeer Matar A Almalky, Gamana Aragonda, Ranyang Zhou, Sabbir Ahmed, Dmitry Ponomarev, Li Yang, Shaahin Angizi, and Ad-nan Siraj Rakin. Cachetrap: Injecting trojans in llms without leaving any traces in inputs or weights. arXiv preprint arXiv:2511.22681 , 2025. [32] Giorgos Nikolaou, Tommaso Mencattini, Donato Crisos-tomi, Andrea Santilli, Yannis Panagakis, and Emanuele Rodolà. Language models are injective and hence in-vertible. arXiv preprint arXiv:2510.15511 , 2025. [33] Harsha Nori, Nicholas King, Scott Mayer McKinney, Dean Carignan, and Eric Horvitz. Capabilities of gpt-4 on medical challenge problems. arXiv preprint arXiv:2303.13375 , 2023. [34] OpenAI. Cahtgpt api docs: Prompt caching. https:// openai.com/index/api-prompt-caching/ , 2025. [35] Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Mered-ith Ringel Morris, Percy Liang, and Michael S Bernstein. Generative agents: Interactive simulacra of human be-havior. In Proceedings of the 36th annual acm sympo-sium on user interface software and technology , 2023. [36] Dario Pasquini, Martin Strohmeier, and Carmela Tron-coso. Neural exec: Learning (and learning from) execu-tion triggers for prompt injection attacks. In Proceed-ings of the 2024 Workshop on Artificial Intelligence and Security , 2024. [37] Fábio Perez and Ian Ribeiro. Ignore previous prompt: Attack techniques for language models. arXiv preprint arXiv:2211.09527 , 2022. [38] Reiner Pope, Sholto Douglas, Aakanksha Chowdhery, Jacob Devlin, James Bradbury, Jonathan Heek, Kefan Xiao, Shivani Agrawal, and Jeff Dean. Efficiently scal-ing transformer inference. Proceedings of machine learning and systems , 2023. [39] Pranav Rajpurkar, Robin Jia, and Percy Liang. Know what you don’t know: Unanswerable questions for SQuAD. In Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers) , 2018. [40] Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. SQuAD: 100,000+ questions for machine comprehension of text. In Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing , 2016. [41] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-moyer, Nicola Cancedda, and Thomas Scialom. Tool-former: Language models can teach themselves to use tools. Advances in Neural Information Processing Sys-tems , 2023. [42] Zedian Shao, Hongbin Liu, Jaden Mu, and Neil Gong. Enhancing prompt injection attacks to llms via poison-ing alignment. In Proceedings of the 18th ACM Work-shop on Artificial Intelligence and Security , 2025. [43] Jiawen Shi, Zenghui Yuan, Yinuo Liu, Yue Huang, Pan Zhou, Lichao Sun, and Neil Zhenqiang Gong. Optimization-based prompt injection attack to llm-as-a-judge. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security ,2024. [44] Karan Singhal, Shekoofeh Azizi, Tao Tu, S Sara Mah-davi, Jason Wei, Hyung Won Chung, Nathan Scales, Ajay Tanwani, Heather Cole-Lewis, Stephen Pfohl, et al. Large language models encode clinical knowledge. Na-ture , 2023. [45] Linke Song, Zixuan Pang, Wenhao Wang, Zihao Wang, XiaoFeng Wang, Hongbo Chen, Wei Song, Yier Jin, Dan Meng, and Rui Hou. The early bird catches the leak: Unveiling timing side channels in llm serving systems. 
+
+IEEE Transactions on Information Forensics and Secu-rity , 2025. [46] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: Enhanced trans-former with rotary position embedding. Neurocomput-ing , 2024. [47] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 2017. [48] vLLM Team. vllm. https://docs.vllm.ai/en/ latest/ , 2024. [49] Qian Wang, Zahra Yousefijamarani, Morgan Lindsay Heisler, Rongzhi Gu, Bai Xiaolong, Shan Yizhou, Wei Zhang, Wang Lan, Ying Xiong, Yong Zhang, et al. Mepic: Memory efficient position independent caching for llm serving. arXiv preprint arXiv:2512.16822 , 2025. [50] Rui Wang, Junda Wu, Yu Xia, Tong Yu, Ruiyi Zhang, Ryan Rossi, Subrata Mitra, Lina Yao, and Julian McAuley. Cacheprune: Neural-based attribution de-fense against indirect prompt injection attacks. arXiv preprint arXiv:2504.21228 , 2025. [51] Xilong Wang, John Bloch, Zedian Shao, Yuepeng Hu, Shuyan Zhou, and Neil Zhenqiang Gong. Webinject: Prompt injection attack to web agents. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 2025. [52] Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. Jailbroken: How does llm safety training fail? Advances in Neural Information Processing Systems , 2023. [53] Guanlong Wu, Zheng Zhang, Yao Zhang, Weili Wang, Jianyu Niu, Ye Wu, and Yinqian Zhang. I know what you asked: Prompt leakage via kv-cache sharing in multi-tenant llm serving. In Proceedings of the 2025 Network and Distributed System Security (NDSS) Symposium. San Diego, CA, USA , 2025. [54] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming lan-guage models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. [55] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In The Twelfth Interna-tional Conference on Learning Representations , 2024. [56] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chen-gen Huang, Chenxu Lv, et al. Qwen3 technical report. 
+
+arXiv preprint arXiv:2505.09388 , 2025. [57] Huan Yang, Renji Zhang, Mingzhe Huang, Weijun Wang, Yin Tang, Yuanchun Li, Yunxin Liu, and Deyu Zhang. Kvshare: An llm service system with efficient and effective multi-tenant kv cache reuse. arXiv preprint arXiv:2503.16525 , 2025. [58] Jingbo Yang, Bairu Hou, Wei Wei, Yujia Bao, and Shiyu Chang. KVLink: Accelerating large language models via efficient KV cache reuse. In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,2025. [59] Yijun Yang, Ruiyuan Gao, Xiaosen Wang, Tsung-Yi Ho, Nan Xu, and Qiang Xu. Mma-diffusion: Multi-modal attack on diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024. [60] Yuchen Yang, Bo Hui, Haolin Yuan, Neil Gong, and Yinzhi Cao. Sneakyprompt: Jailbreaking text-to-image generative models. In 2024 IEEE symposium on security and privacy (SP) , 2024. [61] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Ben-gio, William Cohen, Ruslan Salakhutdinov, and Christo-pher D Manning. Hotpotqa: A dataset for diverse, ex-plainable multi-hop question answering. In Proceedings of the 2018 conference on empirical methods in natural language processing , 2018. [62] Jiayi Yao, Hanchen Li, Yuhan Liu, Siddhant Ray, Yi-hua Cheng, Qizheng Zhang, Kuntai Du, Shan Lu, and Junchen Jiang. Cacheblend: Fast large language model serving for rag with cached knowledge fusion. In Pro-ceedings of the Twentieth European Conference on Com-puter Systems , 2025. [63] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Pro-cessing Systems , 2023. [64] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Livia Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. Sglang: Efficient execution of structured language model programs. Advances in neural information pro-cessing systems , 2024. [65] Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. Universal and trans-ferable adversarial attacks on aligned language models. 
+
+arXiv preprint arXiv:2307.15043 , 2023. [66] Wei Zou, Runpeng Geng, Binghui Wang, and Jinyuan Jia. {PoisonedRAG }: Knowledge corruption attacks to 
+
+{Retrieval-Augmented } generation of large language models. In 34th USENIX Security Symposium (USENIX Security 25) , 2025. 
+
+## A Notations 
+
+Symbol Description 
+
+Sequences and Tokens X Input prompt / token sequence ˜X Cached token sequence / target text chunk 
+
+Xa:b Contiguous segment [xa, . . . , xb] of Xq Target query 
+
+r Ground-truth answer ˜r Target malicious answer 
+
+p Adversarial prefix 
+
+S Length of matched prefix 
+
+Lchunk Fixed chunk length for cache storage 
+
+Lp Adversarial prefix length 
+
+Model Architecture N Number of transformer layers 
+
+d Model hidden dimension 
+
+dk Key/query/value head dimension 
+
+WWW (ℓ) 
+
+> Q
+
+,WWW (ℓ) 
+
+> K
+
+,WWW (ℓ) 
+
+> V
+
+Q, K, V projection matrices at layer ℓ
+
+WWW (ℓ) 
+
+> O
+
+Output projection matrix at layer ℓ
+
+WWW (ℓ) 
+
+> FFN
+
+FFN weight matrix at layer ℓ
+
+WFFN Upper bound on ∥WWW (ℓ)
+
+> FFN
+
+∥2
+
+WWW out Final output embedding matrix 
+
+Wembed Token embedding matrix 
+
+Vectors (at position t, layer ℓ)hhh(ℓ) 
+
+> t
+
+Hidden state 
+
+uuut Normalized hidden state 
+
+(continued) 
+
+Symbol Description 
+
+qqq(ℓ) 
+
+> t
+
+, kkk(ℓ) 
+
+> t
+
+, vvv(ℓ) 
+
+> t
+
+Query, Key, Value vectors 
+
+aaa(ℓ) 
+
+> t
+
+Attention output ˆkkkt , ˆvvvt Effective Key, Value (with cache reuse) 
+
+eeep Continuous embedding of prefix pMatrices KKK(ℓ) 
+
+> 1: t
+
+,VVV (ℓ) 
+
+> 1: t
+
+Stacked K, V (positions 1 to t) at layer ℓ
+
+˜KKK, ˜VVV Cached (hit) Key, Value matrices 
+
+KKK,VVV Ground-truth Key, Value matrices 
+
+KV Cache System 
+
+Pprefix Prefix cache pool 
+
+Pchunk Chunk-based cache pool 
+
+Shit Set of matched (hit) cache chunks 
+
+T p 
+
+> ˜X
+
+KV cache of ˜ X conditioned on prefix p
+
+R Recomputation set of token positions 
+
+[i, j] Position interval of matched segment in input 
+
+t′ Relative token position ( t′ = t − i + 1) 
+
+Attack & Optimization T Number of GCG optimization steps 
+
+B Number of candidate prefixes per step 
+
+k Top-k candidate tokens per position 
+
+η Search width (verification ratio) 
+
+LCE Cross-entropy loss 
+
+V l 
+
+> cand
+
+Candidate token set at position lEvaluation Metrics & System Parameters 
+
+δ Cache ratio (proportion of cached chunks) 
+
+ρ Recomputation ratio 
+
+Lcontext Multi-turn filler context length Acc Accuracy ( x = r)U-ASR Untargeted Attack Success Rate ( y̸ = x)T-ASR Targeted Attack Success Rate ( y = ˜r ∧ y̸ = x)
+
+Operators 
+
+softmax (·) Softmax function concat /⊕ Concatenation operation PREFIX LEN (·, ·) Longest common prefix length ONE HOT (·) One-hot encoding 
+
+## B LLM Inference 
+
+During the inference phase, the LLM predicts the next token xT con-ditioned on the previously generated sequence X = [ x1, x2, ..., xT ] of length T . The inference procedure for a single step is described below. The input token xT is first mapped to its corresponding dense vector representation via the embedding matrix EEE: hhh0 = E[xT ],where hhh0 ∈ R1×d and d is the hidden dimension of the model. For each layer l ∈ { 1, . . . , N} in the Transformer architecture, the hid-den state undergoes Multi-Head Self-Attention (MHA) [47] and a Feed-Forward Network (FFN). Given H attention heads, the hidden state is first normalized using the Layer Normalization (LN): uuu = LN (hhhl−1). For each head h ∈{1, . . . , H}, the query, key, and value vectors are computed using head-specific weight matrices WWW (h,l) 
+
+> Q
+
+,WWW (h,l) 
+
+> K
+
+,WWW (h,l) 
+
+> V
+
+∈ Rd×dk , where dk = d/H:
+
+qqq(h) 
+
+> T
+
+= uuuW WW (h,l) 
+
+> Q
+
+, kkk(h) 
+
+> T
+
+= uuuW WW (h,l) 
+
+> K
+
+, v(h) 
+
+> T
+
+= uuuW WW (h,l) 
+
+> V
+
+. (17) Rotary Position Embedding (RoPE) [46] RRRT is then applied to encode positional information in the queries and keys: ˜qqq(h) 
+
+> T
+
+= RRRT qqq(h) 
+
+> T
+
+, ˜kkk(h) 
+
+> T
+
+= RRRT kkk(h) 
+
+> T
+
+. (18) The current key and value vectors are concatenated with the past cached tensors kkk(h) 
+
+> 1: T
+
+and V(h) 
+
+> 1: T
+
+to update the KV cache: 
+
+KKK(h)  
+
+> 1: T+1
+
+= [ KKK(h) 
+
+> 1: T
+
+; ˜kkk(h) 
+
+> T
+
+], VVV (h)  
+
+> 1: T+1
+
+= [ VVV (h) 
+
+> 1: T
+
+; vvv(h) 
+
+> T
+
+]. (19) The attention output for head h is computed by attending to the updated key-value pairs: 
+
+ooo(h) = softmax ˜qqq(h) 
+
+> T
+
+(KKK(h) 
+
+> 1: T+1
+
+)⊤
+
+√dk
+
+!
+
+VVV (h) 
+
+> 1: T+1
+
+. (20) The outputs from all H heads are concatenated and linearly pro-jected back to the original dimension: 
+
+oooattn = [ ooo(1); . . . ; ooo(H)]WWW (l) 
+
+> O
+
+. (21) The final hidden state for layer l is obtained via standard residual connections and a position-wise FFN: 
+
+hhhmid = hhhl−1 + oooattn , hhhl = hhhmid + FFN (LN .(hhhmid )) (22) After passing through all N layers, the final hidden state is nor-malized and projected into the vocabulary space of size V to obtain the logits zzzT :
+
+hhhfinal = LN (hhhN ), zzzT = hhhfinal WWW vocab . (23) Finally, a decoding strategy (e.g., greedy search or nucleus sampling) is applied to zzzT to select the actual token. 
+
+## C End-to-End Sample 
+
+Here, we give an end-to-end sample from HotpotQA. We present the Context , benign answer , malicious answer , and the prefix 
+
+obtained through GCG optimization. 
+
+Context: ... Paul Hayden Desser (born February 12, 1971) who records as Hayden, is a Canadian singer-songwriter from Thornhill, Ontario. Buck-Tick (stylized as BUCK-TICK) is a Japanese rock band, formed in Fujioka, Gunma in 1983. The group has consisted of Atsushi Sakurai (lead vocals), Hisashi Imai (guitar), Hidehiko Hoshino (guitar), Yutaka Higuchi (bass) and Toll Yagami (drums) since 1985. In their three decade career, the band has released 20 studio albums, nearly all reaching the top ten on the charts, of which three in the late eighties and early nineties topped them. They are commonly credited as one of the founders of the visual kei movement ... 
+
+Question: Who was born first Garo Yepremian or Michael Casey? 
+
+Benign Answer: Fujioka Malicious Answer: Tokyo 
+
+Prefix: !!!!!!!!!!!!!! analyt nutrition:)Thismillan Recipeieri quatro_classes-bisKeiniai]],:) UICollection prodotti:_), Dublin<SPECIAL_71>Technˆ ),Berlinˆ (
+
+## D LLM Prompts 
+
+In this section, we provide the system prompts we used in generating malicious answers and QA tasks. 
+
+Question & Answer Prompt 
+
+Based strictly on the provided context, answer the question using the following rules: 1. Multiple Choice questions with labeled options (A/B/C/D): Output ONLY the corresponding uppercase letter. 2. Binary-choice questions (e.g., Yes/No, True/False, A/B, Option1/Option2): Output ONLY the option text itself, NOT the letter label. This rule OVERRIDES rule 1. 3. Open-ended questions: Answer in 1–3 words. Do not provide explanations or full sentences. Be extremely concise. 
+
+Generate Malicious Answer Prompt 
+
+Role: You are an expert data generator specializing in creating plausible incorrect answers (distractors). 
+
+Goal: Given a specific Question and its Correct Answer, gener-ate a single Wrong Answer. 
+
+Core Rules: (1) The answer must be factually wrong. (2) The answer must be plausible (it should belong to the same category and context as the correct answer). (3) The answer must match the format of the correct answer. 
+
+Step-by-Step Instructions: 
+
+• Identify the Category of the Correct Answer 
+
+• Boolean/Binary: Yes/No, True/False, Agree/Disagree. 
+
+• Selection: A choice from a limited set (e.g., Red or Blue). 
+
+• Entity: A person, place, organization, chemical, etc. 
+
+• Quantitative: A date, number, price, or measurement. 
+
+• Apply Generation Logic based on Category 
+
+• If Binary or Selection (A vs B): Return the option that is NOT the correct answer. Example: “High”–>“Low”. 
+
+• If Entity (Open-ended): Substitute the entity with a dif-ferent one from the exact same field. The wrong answer must be related to the topic to be plausible. Example: If the question is about US Presidents and the answer is “Lincoln”, return “Washington” (another President), not “Churchill” (wrong country) or “Ferrari” (wrong type). 
+
+• If Quantitative (Number/Date): Return a value that is close to the correct answer but incorrect (a deviation). 
+
+Example: If the answer is “1995”, return “1994” or “1997”. Do not return a random number like “5000”. 
+
+• Format and Safety Check 
+
+• Do not add negation words like “Not” or “Non-” to the correct answer (e.g., do not output “Not Red”). 
+
+• Do not provide an explanation. 
+
+• Ensure the output contains ONLY the wrong string.

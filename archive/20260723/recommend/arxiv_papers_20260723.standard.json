@@ -1,0 +1,172 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-23T21:19:15.724263+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 2,
+    "deep_cap": 6,
+    "deep_selected": 2,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2607.19957v1",
+      "source": "arxiv",
+      "title": "HijackKV: New Threat in Position-Independent KV Cache Reuse",
+      "abstract": "Key-Value (KV) cache reduces inference latency in large language models (LLMs). Traditional prefix-based reuse has low cache hit rates across inference requests because it requires exact token and position matches. To improve efficiency, recent system optimizations introduce position-independent KV reuse, allowing KV cache to be reused whenever identical text chunks appear, regardless of their position in the sequence.   We show this design introduces a new threat, KV Cache Hijacking. Since KV caches are retrieved by token match but encode the context in which they were originally computed, the KV tied to a benign-looking token chunk may encode an attacker-controlled prefix. When later reused in a victim query, this contaminated KV silently hijacks the model's behavior, even if no attacker-controlled text appears in the input.   We introduce HIJACKKV, the first attack framework that systematically exploits this vulnerability, demonstrating its severity and practicality. HIJACKKV optimizes an attacker-controlled prefix, so that the KV computed for a subsequent common benign text encodes the attacker's goal, while the text remains unchanged for future cache hits. HIJACKKV achieves an average 94% success rate in a single attempt, remains effective under realistic constraints including low hit rates (10%) and frequent recomputation (50%), persists over multi-turn interactions, and transfers across models in black-box settings. We further provide design insights for building secure KV reuse systems.",
+      "authors": [
+        "Yichi Zhang",
+        "Zhiqi Wang",
+        "Huan Zhang",
+        "Yuchen Yang"
+      ],
+      "primary_category": "cs.CR",
+      "categories": [
+        "cs.CR",
+        "cs.AI",
+        "cs.LG"
+      ],
+      "published": "2026-07-22T09:32:45+00:00",
+      "link": "https://arxiv.org/pdf/2607.19957v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 10.0,
+      "llm_evidence_en": "discusses KV cache reuse security, introducing a new threat of KV cache hijacking in position-independent reuse",
+      "llm_evidence_cn": "讨论KV缓存重用安全性，提出位置无关KV缓存重用中的新威胁（KV缓存劫持）",
+      "llm_evidence": "讨论KV缓存重用安全性，提出位置无关KV缓存重用中的新威胁（KV缓存劫持）",
+      "canonical_evidence": "讨论KV缓存重用安全性，提出位置无关KV缓存重用中的新威胁（KV缓存劫持）",
+      "llm_tldr_en": "HijackKV reveals a security vulnerability in position-independent KV cache reuse for LLMs, where attacker-controlled prefixes can be injected during cache reuse to hijack model behavior.",
+      "llm_tldr_cn": "HijackKV揭示了大型语言模型中位置无关KV缓存重用带来的新安全威胁：攻击者可通过操纵缓存内容，在复用阶段注入恶意前缀，从而劫持模型输出。该工作首次系统分析此风险，对KV缓存优化系统的安全性提出警示。",
+      "llm_tldr": "HijackKV揭示了大型语言模型中位置无关KV缓存重用带来的新安全威胁：攻击者可通过操纵缓存内容，在复用阶段注入恶意前缀，从而劫持模型输出。该工作首次系统分析此风险，对KV缓存优化系统的安全性提出警示。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.19456v1",
+      "source": "arxiv",
+      "title": "MoA-Structured Decode Attention DNF Derivation, KV-Cache Accumulation, GQA/MQA, and OpenACC Kernel",
+      "abstract": "We derive four memory-optimal inference artifacts for transformer attention using the Mathematics of Arrays (MoA), each following directly from the forward-pass Denotational Normal Form (DNF) of with the query-row index fixed to the current decode step. The artifacts are: (1)~a single-query decode DNF in which the $ψ$-reduction eliminates the $K^\\top$ buffer algebraically, achieving $(d_k + nd_k+ nd_v+ d_v)\\times4\\,{B}$ Dynamic Random Access Memory (DRAM) traffic result numerically verified to $\\|{err}\\|_\\leq2\\times10^{-7}$; (2)~a C/OpenACC Graphics Processing Unit (GPU) kernel with Operational Normal Form (ONF) stride arithmetic and hardware-coalesced memory access, verified to $\\|\\mathrm{err}\\|_\\infty=0$ (exact IEEE-754 floating-point arithmetic); (3)~a multi-step KV-cache with $O(d_k+d_v)$ per-step append via MoA concatenation $\\#$; and (4)~Grouped-Query Attention (GQA) and Multi-Query Attention (MQA) derived via $ψ$-selection, achieving a proven $\\frac {h_q} { h_{kv} }$ reduction in KV traffic. All programs are verified against PyTorch scaled_dot_product_attention.",
+      "authors": [
+        "Lenore Mulin",
+        "Gaetan Hains"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-07-21T15:50:28+00:00",
+      "link": "https://arxiv.org/pdf/2607.19456v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "derives memory-optimal inference artifacts for transformer attention with KV-cache accumulation",
+      "llm_evidence_cn": "推导了基于KV缓存累积的Transformer注意力内存最优推理方法",
+      "llm_evidence": "推导了基于KV缓存累积的Transformer注意力内存最优推理方法",
+      "canonical_evidence": "推导了基于KV缓存累积的Transformer注意力内存最优推理方法",
+      "llm_tldr_en": "MoA-Structured Decode Attention derives memory-optimal transformer inference artifacts using Mathematics of Arrays, eliminating K^T buffer algebraically and achieving verified DRAM traffic reduction.",
+      "llm_tldr_cn": "本文使用数组数学（MoA）为Transformer注意力推导出四种内存最优的推理构件，通过代数消除K^T缓冲区并实现验证的DRAM流量降低，直接优化了KV缓存累积过程，显著提升解码效率。",
+      "llm_tldr": "本文使用数组数学（MoA）为Transformer注意力推导出四种内存最优的推理构件，通过代数消除K^T缓冲区并实现验证的DRAM流量降低，直接优化了KV缓存累积过程，显著提升解码效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.16339v2",
+      "source": "arxiv",
+      "title": "LaCache: Exact Caching and Precision-Adaptive Inference for Diffusion Large Language Models",
+      "abstract": "Diffusion-based Large Language Models(DLLMs) enable parallel generation via Semi-Autoregressive (SAR) decoding in text generation. However, current methods suffer from severe operator-level redundancy: they recompute the entire sequence during denoising steps, ignoring that the prefix and masked suffix remain invariant within a block. We propose LaCache, a training-free acceleration framework that alleviates this redundancy through lossless caching and mixed precision. Specifically, LaCache employs Lossless State Memoization (LSM) by caching three types of intermediate results: (i) EmbedCache for embedding outputs, (ii) RoPECache for token-wise pre-attention states, and (iii) FACache for the online softmax statistics within FlashAttention. These caches allow the model to skip redundant computation on unchanged tokens without altering the output. To further alleviate memory-bandwidth bottlenecks, LaCache inegrates a per-group FP8 quantization strategy for FFN layers, tailored to step-dependent activation distributions across the diffusion process. Experiments demonstrate that LaCache alone achieves approximately 1.3X end-to-end speedup over vanilla DLLM. When combined with existing acceleration methods, LaCache reaches up to 40.2X end-to-end speedup while maintaining comparable task accuracy.",
+      "authors": [
+        "Xingru Chen",
+        "Zelang Liang",
+        "Yongjia Ma",
+        "Jiqing Zhan",
+        "Shuling Yang",
+        "Lian Wen",
+        "Kun Zhan"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-16T10:49:15+00:00",
+      "link": "https://arxiv.org/pdf/2607.16339v2",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "caching intermediate states for diffusion LLMs to reduce recomputation",
+      "llm_evidence_cn": "为扩散大语言模型缓存中间状态以减少重计算",
+      "llm_evidence": "为扩散大语言模型缓存中间状态以减少重计算",
+      "canonical_evidence": "为扩散大语言模型缓存中间状态以减少重计算",
+      "llm_tldr_en": "LaCache caches embeddings, RoPE states, and softmax statistics to avoid redundant computation in diffusion LLMs, achieving lossless acceleration.",
+      "llm_tldr_cn": "LaCache针对扩散大语言模型（DLLM）中半自回归解码的重计算冗余，提出无训练加速框架：通过缓存嵌入输出、RoPE预注意力状态和FlashAttention softmax统计量，实现无损缓存和混合精度推理。实验表明该方法在保持生成质量的同时显著降低推理延迟，为扩散模型的缓存优化提供了有效方案。",
+      "llm_tldr": "LaCache针对扩散大语言模型（DLLM）中半自回归解码的重计算冗余，提出无训练加速框架：通过缓存嵌入输出、RoPE预注意力状态和FlashAttention softmax统计量，实现无损缓存和混合精度推理。实验表明该方法在保持生成质量的同时显著降低推理延迟，为扩散模型的缓存优化提供了有效方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2607.19547v1",
+      "source": "arxiv",
+      "title": "ChronoStitch: Training-Free Composition of Visual KV Memories for Long-Horizon Temporal Reasoning",
+      "abstract": "Long-video question answering requires a model to preserve visual evidence over time without repeatedly reprocessing the same video. A practical approach is to store the vision-language model's internal key-value (KV) cache for each video chunk and retrieve that state at query time. However, independently cached video chunks do not compose correctly: every chunk is prefilled from local rotary position zero, so naive concatenation collides temporal phases and removes the global order required for questions about what happened first, how often events occurred, or what changed across the video. This paper presents ChronoStitch, a training-free method for composing independently stored visual KV memories. The method first re-bases stored post-rotary keys onto a global three-axis multimodal RoPE coordinate system that preserves time, height, and width structure. We show why a one-dimensional scalar re-indexing is geometrically inconsistent for visual tokens because it turns spatial order within a frame into false temporal displacement. We then address the residual content gap left by positional repair: later chunks were originally encoded without attending to earlier chunks. ChronoStitch therefore selectively recomputes a small fraction of high-deviation later-chunk visual tokens while allowing them to attend over the composed cache. On Qwen2.5-VL-3B and the temporal split of TempCompass, ChronoStitch outperforms naive composition and position-only variants, improving event-ordering accuracy while running 3.3x faster than full joint re-prefilling.",
+      "authors": [
+        "Santiram Tiwari",
+        "Nishant Sinha",
+        "Kunal Kislay"
+      ],
+      "primary_category": "cs.CV",
+      "categories": [
+        "cs.CV",
+        "eess.IV"
+      ],
+      "published": "2026-07-21T19:46:38+00:00",
+      "link": "https://arxiv.org/pdf/2607.19547v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "visual KV cache composition for long video QA",
+      "llm_evidence_cn": "视觉KV缓存组合用于长视频问答",
+      "llm_evidence": "视觉KV缓存组合用于长视频问答",
+      "canonical_evidence": "视觉KV缓存组合用于长视频问答",
+      "llm_tldr_en": "ChronoStitch provides a training-free method to compose independently stored visual KV memories by re-basing positional encodings, enabling correct temporal reasoning from cached chunks.",
+      "llm_tldr_cn": "长视频问答需要在不重复处理视频的情况下保存视觉证据，存储视觉KV缓存是一种实用方法，但独立缓存的视频块无法正确组合，因为每个块从局部旋转位置零开始填充，导致时间相位冲突。本文提出ChronoStitch，一种无需训练的组合视觉KV记忆的方法，通过重新设置位置编码来解决拼接错误，实现正确的时空推理。实验表明该方法能有效合成跨时间点的证据，支持长时推理任务。",
+      "llm_tldr": "长视频问答需要在不重复处理视频的情况下保存视觉证据，存储视觉KV缓存是一种实用方法，但独立缓存的视频块无法正确组合，因为每个块从局部旋转位置零开始填充，导致时间相位冲突。本文提出ChronoStitch，一种无需训练的组合视觉KV记忆的方法，通过重新设置位置编码来解决拼接错误，实现正确的时空推理。实验表明该方法能有效合成跨时间点的证据，支持长时推理任务。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}

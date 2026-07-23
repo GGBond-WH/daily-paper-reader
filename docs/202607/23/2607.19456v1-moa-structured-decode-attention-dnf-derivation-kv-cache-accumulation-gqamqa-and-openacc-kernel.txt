@@ -1,0 +1,1230 @@
+Title: MoA-Structured Decode Attention DNF Derivation, KV-Cache Accumulation, GQA/MQA, and OpenACC Kernel
+
+URL Source: https://arxiv.org/pdf/2607.19456v1
+
+Published Time: Thu, 23 Jul 2026 00:04:11 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# MoA-Structured Decode Attention 
+
+DNF Derivation, KV-Cache Accumulation, GQA/MQA, and OpenACC Kernel Lenore Mullin 1,∗
+
+> 1
+
+University at Albany, SUNY 
+
+lmullin@albany.edu 
+
+> ∗
+
+Corresponding author 
+
+Ga´ etan Hains 2
+
+> 2
+
+LACL, Universit´ e Paris-Est Cr´ eteil 
+
+gaetan.hains@u-pec.fr 
+
+June 2026 
+
+# Abstract 
+
+We derive four memory-optimal inference artifacts for transformer attention using the Mathematics of Arrays (MoA), each following directly from the forward-pass Denotational Normal Form (DNF) of [1] with the query-row index fixed to the current decode step. The artifacts are: (1) a single-query decode DNF in which the ψ-reduction eliminates the K⊤ buffer algebraically, achieving ( dk + nd k +
+
+nd v + dv ) × 4 B Dynamic Random Access Memory (DRAM) traffic (Storage Theorem 2.7 of [1]), result numerically verified to ∥err ∥∞ ≤ 2 × 10 −7; (2) a C/OpenACC Graphics Processing Unit (GPU) ker-nel with Operational Normal Form (ONF) stride arithmetic and hardware-coalesced memory access, verified to ∥err ∥∞ = 0 (exact IEEE-754 floating-point arithmetic); (3) a multi-step KV-cache with 
+
+O(dk + dv ) per-step append via MoA concatenation #; and (4) Grouped-Query Attention (GQA) and Multi-Query Attention (MQA) [7, 8] derived via ψ-selection, achieving a proven hq /h kv reduction in KV traffic. All programs are verified against PyTorch 
+
+scaled dot product attention .
+
+# 1 Introduction 
+
+1.1 Background 
+
+The Mathematics of Arrays (MoA) [3] is a formal algebra of multi-dimensional arrays whose primitive operations — ψ-selection, ρ (shape), ι (index gener-ation), γ (linear offset), and the Omega (Ω) family of inner products — compose provably minimal com-putations. The Denotational Normal Form (DNF) specifies what to compute; the Operational Normal Form (ONF) specifies how to lay it out in memory. The companion paper [1] applies MoA to the forward training pass of transformer attention [6], deriving the DNF and proving via the Storage Theorem (The-orem 2.7 of [1]) that the resulting ONF achieves the information-theoretic minimum DRAM traffic. The HAL companion [2] extends this to the backward pass and fused kernel. 
+
+1.2 Contributions 
+
+This paper shows that the same DNF, with the query-row index i′ fixed to the current decode step, yields four inference artifacts. 1. Decode DNF (§2): the ψ-reduction eliminates the K⊤ buffer implicit in the standard formula 
+
+A = softmax( QK ⊤/√dk), reducing the score computation to ⃗s = scale (⃗q (+ . × Ω ⟨1,2⟩) K)with K accessed row-by-row in its natural lay-out. Memory traffic: M dec MoA = ( dk + nd k + nd v +
+
+dv )×4 B, is then proven minimal by Storage The-orem 2.7 of [1]. 2. C/OpenACC GPU kernel (§4): ONF γ
+
+stride arithmetic gives coalesced memory access; the coalescing criterion is stated as a γ-difference condition. 3. KV-cache accumulation (§5): MoA concate-nation # appends one row per step at the pre-computed γ offset, with proven O(dk + dv ) per-step traffic. 4. GQA/MQA (§6): ψ-selection ⟨gkv ⟩ψ K maps each query head to its KV group without materi-alising the broadcast, reducing traffic by hq /h kv .
+
+1.3 Notation and Terminology 
+
+Figure 1 summarises the relationship between the three companion papers and the importance of mem-ory minimality at every stage. 1arXiv:2607.19456v1 [cs.LG] 21 Jul 2026 Phase 
+
+L=96 layers 
+
+Conventional 
+
+allocates to DRAM per layer 
+
+MoA ψ-reduction 
+
+eliminates per layer 
+
+Forward 
+
+training arXiv 
+
+> ∼100ms/batch
+
+Per layer, per batch: 
+
+K⊤ ρ = ⟨dk , n ⟩ (buffer) 
+
+S = QK ⊤ ρ = ⟨n, n ⟩
+
+A = softmax( S) ρ = ⟨n, n ⟩
+
+traffic: 96 ×O(n2dk +n2dv )
+
+Per layer, per batch: 
+
+K⊤ — never materialised 
+
+S — on-stack per row, discarded 
+
+A — on-stack per row, discarded traffic: 96 ×O(nd k +nd v ) ✓ 
+
+> ×10 2 epochs
+> ×10 4 batches
+> ×96 layers
+
+O(n2) → O(n) per layer per batch ×10 6 batches ≈40 kWh saved per training run 
+
+Fused 
+
+fwd+bwd HAL 
+
+> ∼180ms/batch
+
+Per layer, per batch: 
+
+A saved fwd →bwd ρ = ⟨n, n ⟩
+
+Jacobian ρ = ⟨n, n ⟩
+
+dS ρ = ⟨n, n ⟩
+
+traffic: 96 ×(8 nd k +8 nd v )
+
+Per layer, per batch: 
+
+A recomputed on-fly, not stored Jacobian — outer-product compat. dS — substitution traffic: 96 ×(4 nd k +4 nd v ) ✓ 
+
+> ×10 2 epochs
+> ×10 4 batches
+> ×96 layers
+
+2× vs separate passes ×96 layers ×10 6 batches ≈80 kWh saved per training run 
+
+Inference 
+
+decode This paper  
+
+> 1–10 μs/step per layer
+
+Per token, per layer: 
+
+K⊤ view ( q @ K.T )score ρ = ⟨1, n ⟩ (n grows) weight ρ = ⟨1, n ⟩
+
+n = 4096, L = 96: 
+
+≈200 MB/step, no proof 
+
+Per token, per layer: 
+
+K⊤ — fix i′ = 1, ψ reads rows ⃗s,⃗ a — rank-1, on-stack KV cache: +1 row at γ offset 
+
+n = 4096, L = 96: 
+
+≈200 MB/step ✓proven 
+
+> ×10 9 req/day
+> ×512 tokens
+> ×96 layers
+
+KV cache n = 1 → 512 per request; total: 96 × P512 
+
+> t=1
+
+(dk + td k + td v + dv ) × 4 B ≈ 96 × 1.6 GB 
+
+Energy: 300 W × 10 μs × 96 × 512 × 10 9/day ≈14,700 kWh/day — MoA minimises every byte transferred 
+
+FlashAttention: similar traffic via tiling, no algebraic proof. MoA: proven before code. Same DNF → CPU/GPU/FPGA. 
+
+Storage Thm. 2.7 [1]: every array read once; traffic proven minimal before code is written 
+
+Figure 1: Realistic nested loops: conventional vs. MoA across training and inference. Solid loops = outer; dashed = inner. Training runs ∼ 10 6 total batches once; inference runs 10 9 requests/day indefinitely, each generating 512 tokens across 96 layers. At n = 4096, L = 96: both conventional and MoA use ≈ 200 MB per decode step — but only MoA’s is proven minimal (Storage Thm. 2.7). FlashAttention achieves similar traffic via tiling without algebraic proof. Energy: ≈ 14 ,700 kWh/day per deployed model; MoA minimises every byte transferred. 2A transformer [6] is a neural network in which each output element is a learned weighted combina-tion of all input elements ( attention ). A token is the basic unit of text processed by the model (typi-cally a word or sub-word). Autoregressive infer-ence generates output one token at a time, feeding each generated token back as input; at each step a single query vector ⃗ q = W Q⃗x is produced from the current token embedding ⃗x via learned projec-tion WQ. All past key vectors ⃗ kl = WK⃗x l and value vectors ⃗v l = WV⃗x l are accumulated in the KV cache : K (shape, ρ(K) = ⟨n, d k⟩) and V (shape, 
+
+ρ(V ) = ⟨n, d v ⟩), where n grows by one per step. The dominant cost at each step is reading the full KV cache from DRAM: O(nd k + nd v ) bytes, unavoidable by any correct implementation (Storage Theorem 2.7 of [1]). MoA proves this bound algebraically before code is written. MoA notation used throughout: ρ(A) denotes the shape of array A; ⟨i0, . . . , i r−1⟩ψ A selects element (i0, . . . , i r−1); γ(⟨i0, . . . ⟩, ρ (A)) is the linear memory offset; A (+ .×Ω⟨σl,σ r ⟩) B is the Omega inner product with left rank σl, right rank σr ; A # B concatenates along the leading axis. All multiplication uses ×.
+
+# 2 Decode DNF 
+
+Formal Inputs 
+
+At decode step t with n cached tokens: 
+
+•⃗q : ρ(⃗q) = ⟨d k⟩ — query vector for the current token. 
+
+• K: ρ(K) = ⟨n, d k⟩ — n rows, each row ⟨l⟩ψ K 
+
+(shape ⟨dk⟩) is the key vector for cached token 
+
+l. K⊤ would have shape ⟨dk, n ⟩; the ψ-reduction accesses rows of K directly so K⊤ is never com-puted thus saving transfers and storage. 
+
+• V : ρ(V ) = ⟨n, d v ⟩ — n rows, each row ⟨l⟩ψ V 
+
+(shape ⟨dv ⟩) is the value vector for cached token 
+
+l.Output: ⃗ out , ρ(⃗out ) = ⟨dv ⟩; its d-th element is 
+
+⟨d⟩ψ⃗ out .An attention head is an independent copy of the attention computation with its own learned key, query, and value projections. Using h heads in par-allel ( multi-head attention ) allows the model to extract different types of relationships from the in-put simultaneously [6]. In the multi-head case K be-comes rank-3 ( ρ(K) = ⟨h, n, d k⟩) or rank-4 ( ρ(K) = 
+
+⟨B, h, n, d k⟩), where batch B is the number of inde-pendent sequences processed simultaneously. The Omega operator Ω ⟨1,2⟩ generalizes automati-cally: σl = 1 uses a rank-1 vector ; σr = 2 uses a rank-2 matrix as l/r arguments. Leading batch or head dimensions are outer indices iterated over by Omega — no re-derivation is needed. How K⊤ is eliminated by ψ-reduction. The standard atten-tion formula contains K⊤:
+
+A = softmax( QK ⊤/pdk),Q, K : ρ = ⟨n, d k⟩, QK ⊤ : ρ = ⟨n, n ⟩.
+
+The arXiv paper [1] starts from this formula and ap-plies the ψ-reduction. The key step: instead of form-ing QK ⊤ (which requires materialising K⊤ in mem-ory), the ψ-reduction shows that each element can be computed by accessing K directly: 
+
+⟨i′, l ⟩ψ (QK ⊤) = ⟨i′⟩ψ Q (+ . × Ω⟨1,1⟩) ⟨l⟩ψ K. 
+
+where this specific Ω expression implements the prod-uct. The columns of K⊤ are exactly the rows ⟨l⟩ψ K 
+
+of K — so K⊤ is algebraically present in the starting formula but the ψ-reduction proves it never needs to be materialised. The Storage Theorem (Theorem 2.7 of [1]) then guarantees this is the minimum-traffic ac-cess pattern. For the decode case (this paper), Q reduces to a single query vector ⃗q, so the ψ-reduction over i ′ dis-appears (there is only one query row), giving directly: ⃗s[l] = scale ⃗q (+ . × Ω ⟨1,1⟩) ⟨l⟩ψ K. K⊤ was in the original formulation; the ψ-reduction removed the need to materialise it before any code is written. This is the central result of [1] applied to the decode setting. This is equations (4)–(6) of [1] with the query-row index i′ fixed to the current token: eq. (4) is the score ψ-reduction, eq. (5) the softmax, eq. (6) the weighted sum. No new Omega derivation is required. 
+
+Independence of ⃗q and K.⃗q and K are produced independently: 
+
+•⃗q = W Q⃗x current is the projection of the current 
+
+token embedding through the learned query ma-trix WQ, ρ(WQ) = ⟨dk, d ⟩.
+
+• ⟨l⟩ψ K = WK⃗x l is the projection of the l-th past 
+
+token embedding through the learned key matrix 
+
+WK , stored as row l of the KV cache. Neither ⃗q nor K is derived from the other. Step I asks: how similar is my current query ⃗q to each of the n stored key vectors ⟨l⟩ψ K ?
+
+Step I – Scores . The ψ-reduction selects row l of 
+
+K as ⟨l⟩ψ K (shape ⟨dk⟩) and contracts it with ⃗q via the inner product: 3Remark 1. The standard formula QK ⊤ is alge-braically present as the starting point (see §2 pream-ble); the ψ-reduction proves K⊤ need never be ma-terialised. In MoA there are no column vectors: ⃗ q
+
+and K are both rank-≥ 1 arrays and contraction is expressed directly via Ω⟨1,2⟩.⃗s[l] = scale  ⃗q (+ . × Ω ⟨1,1⟩) ⟨l⟩ψ K 
+
+= scale Pdk −1 
+
+> j=0
+
+⟨j⟩ψ⃗ q × ⟨ l, j ⟩ψ K. 
+
+Over all n rows simultaneously, with σl = 1 exposing ⃗q as a whole rank-1 vector and σ r = 2 exposing K
+
+(shape ⟨n, d k⟩) as a whole rank-2 array, the Omega expression is: ⃗s = scale  ⃗q (+ . × Ω ⟨1,2⟩) K, ρ(⃗s) = ⟨n⟩. (1) This equals scale K⃗ q (matrix-vector product with K
+
+in its natural row-major layout). No transpose is formed: the Cartesian coordinate interchange is im-plicit in the ψ-reduction, which reads K row by row as stored. The Python equivalent is scale*(K@q) , not 
+
+scale*(q@K.T) . Ω ⟨1,2⟩ is fixed: it always pairs one rank-1 vector from the left with one rank-2 matrix from the right, applying + .× to produce a scalar for each pair. As the rank of the arguments grows, the same partitioning lifts naturally — superscripts de-note rank, Ω ⟨1,2⟩ never changes, only the result rank grows: 
+
+•⃗ q1 (+ .×Ω⟨1,2⟩) K2 →⃗ s1 (vector-matrix product) 
+
+• A2 (+ . × Ω⟨1,2⟩) K3 → rank-2 (each row of A
+
+with each matrix of K)
+
+• A3 (+ . × Ω⟨1,2⟩) K4 → rank-3 (same, one rank higher) This is how MoA handles batched and multi-head attention without re-derivation. No K⊤ buffer is formed; K is read once and fully consumed in Step I. 
+
+Step II – Numerically stable softmax . K does not appear in Step II at all. By the time Step II runs, K has already been fully processed and dis-carded. Step II operates only on the rank-1 score vector ⃗s (shape ⟨n⟩) produced by Step I — no matrix, no K⊤, no K. In the standard training formula, soft-max would be applied to the full n × n score matrix 
+
+QK ⊤/√dk and its Jacobian would be n × n. Here, softmax operates on a single rank-1 vector ⃗s and the MoA ψ-reduction eliminates all intermediates: ⃗s,⃗e,⃗a
+
+and scalars m, Z are O(n) on-stack and never written to DRAM. 
+
+m = max 
+
+> l
+
+⃗ s[l],⃗ e[l] = exp( ⃗s[l] − m),Z = Pn−1
+
+> l′=0
+
+⃗e[l ′],⃗ a[l] = ⃗e[l]/Z, 0 ≤ l < n. (2) No n × n score matrix or Jacobian is allocated. 
+
+Numerical stability : subtracting m = max l⃗s[l]before exponentiating does not change the softmax value (the m terms cancel) but prevents overflow. 
+
+scale = 1 /√dk normalises variance to 1 for random unit-norm inputs. 
+
+Step III – Weighted sum :
+
+⟨d⟩ψ⃗ out = Pn−1 
+
+> l=0
+
+⟨l⟩ψ⃗ a × ⟨ l, d ⟩ψ V, 
+
+0 ≤ d < d v , 0 ≤ l < n. (3) 
+
+V is read once in row-major order; no intermediate array exists. Concrete example (n = 2, dk = 2, 
+
+dv = 2, scale = 1 /√2). Let ⃗q = ⟨1, 0⟩, K =
+
+1 00 1
+
+
+
+, V =
+
+2 46 8
+
+
+
+.
+
+• Step I : let qj = ⟨j⟩ψ⃗ q, K lj = ⟨l, j ⟩ψ K .⃗s[0] = scale (q 0K00 + q1K01 ) = 1√2 (1 + 0) = 1√2 ,⃗ s[1] = scale (q 0K10 + q1K11 ) = 1√2 (0 + 0) = 0 .
+
+• Step II (softmax, m = 1 /√2): ⃗e[0] = exp(0) = 1 ,⃗ e[1] = exp −1/ √2 ≈ 0.493 ,Z ≈ 1.493 ,⃗ a[0] ≈ 0.670 ,⃗a [1] ≈ 0.330 .
+
+• Step III (weighted sum): 
+
+⟨0⟩ψ⃗ out =⃗a[0] × ⟨ 0, 0⟩ψ V +⃗a[1] × ⟨ 1, 0⟩ψ V 
+
+= 0 .670 × 2 + 0 .330 × 6 ≈ 3.32 ,
+
+⟨1⟩ψ⃗ out =⃗a[0] × ⟨ 0, 1⟩ψ V +⃗a[1] × ⟨ 1, 1⟩ψ V 
+
+= 0 .670 × 4 + 0 .330 × 8 ≈ 5.32 .
+
+Proposition 1 (Decode memory minimality) . The decode DNF achieves M dec MoA = ( dk + nd k + nd v +
+
+dv ) × 4 B = O(nd k + nd v ) memory usage.. 
+
+4Python                                            
+
+> start here
+> q @ K.T
+> K⊤buffer
+> softmax
+> ⟨1, n ⟩row
+> a @ V
+> no proof
+> MoA
+> algebra
+> ρ(Q) = ⟨n, d k⟩
+> ρ(K) = ⟨n, d k⟩
+> ρ(V) = ⟨n, d v⟩
+> Q(+ .×Ω⟨2,2⟩)K
+> softmax
+> A(+ .×Ω⟨2,2⟩)VK⊤still present
+> DNF
+> ψ-reduction
+> Step I ⃗s=scale ⃗q(+ .×
+> Ω⟨1,2⟩)K
+> Step II ⃗a= softmax( ⃗s)
+> Step III ⃗
+> out =⃗a(+ .×
+> Ω⟨1,2⟩)VK⊤eliminated
+> ONF
+> γstrides
+> Kat offset:
+> l×dk+jVat offset:
+> l×dv+dd-inner loop: stride( d) = 1
+> coalesced
+> C / Fortran OpenACC
+> C: K[l*dk+j]
+> F90: K(j,l)
+> OpenACC: gang/vector GPU coalesced
+> ✓proven
+> express ψ-red. γmap compile
+> K⊤,n2score K⊤in formula K⊤gone
+> Jacobian gone
+> layout fixed coalescing
+> minimal by Thm 2.7
+> Storage Theorem 2.7 [1]: DNF proves K⊤never forms; ONF proves every element read once; code correct by construction.
+
+Figure 2: The MoA pipeline: Python → MoA → DNF → ONF → C/Fortran/OpenACC. Starting from conventional Python ( q @ K.T ), the MoA formulation expresses attention in array algebra. ψ-reduction (DNF) eliminates K⊤ and the softmax Jacobian algebraically. The γ stride map (ONF) fixes the row-major layout and proves coalescing. The resulting C/Fortran 90/OpenACC code is correct by construction (Storage Theorem 2.7). 
+
+Algorithm 1 MoA decode (single query step). Scratch: ⃗s[n], ⃗e[n] – O(n); no n 2 array. 
+
+Require: ⃗q : ⟨d k⟩, K : ⟨n, d k⟩, V : ⟨n, d v ⟩, scale =1/√dk
+
+Ensure: ⃗ out : ⟨dv ⟩
+
+1: for l = 0 . . . n −1 do 
+
+2: ⃗ s[l] ← scale P
+
+j ⟨j⟩ψ⃗ q × ⟨ l, j ⟩ψ K ▷ eq. (1) 
+
+3: end for 
+
+4: m ← max l⃗s[l]
+
+5: for l = 0 . . . n −1 do 
+
+6: ⃗ e[l] ← exp( ⃗s[l] − m)
+
+7: end for 
+
+8: Z ← P
+
+l⃗e[l]; ⃗ a[l] ←⃗e[l]/Z for all l
+
+9: for d = 0 . . . d v −1 do 
+
+10: ⟨d⟩ψ⃗ out ← P
+
+l⃗a[l] × ⟨ l, d ⟩ψ V ▷ eq. (3) 
+
+11: end for 
+
+# 3 Python Implementation 
+
+Standard PyTorch Reference 
+
+Two PyTorch shape operations appear throughout: 
+
+.unsqueeze(d) inserts a new size-1 dimension at po-sition d (e.g. ⟨dk⟩ → ⟨ 1, d k⟩); .squeeze() removes all size-1 dimensions (e.g. ⟨1, 1, 1, d v ⟩ → ⟨ dv ⟩), recover-ing a MoA rank-1 vector. The conventional single-query decode in PyTorch unsqueezes ⃗q to shape ⟨1, d k⟩, forms the score row via 
+
+q @ K.T (note: .T creates a transposed view; MoA avoids this entirely), applies softmax, and squeezes the result:  
+
+> 1
+
+def std_decode (q , K , V , scale = None ) :  
+
+> 2
+
+if scale is None :  
+
+> 3
+
+scale = 1.0 / math . sqrt ( K . shape [ -1])  
+
+> 4
+
+q_ = q . unsqueeze (0) # (1 , dk )  
+
+> 5
+
+# . T creates a t r a n s p o s e d view of K 
+
+> 6
+
+scores = scale * ( q_ @ K . T ) # (1 , n )  
+
+> 7
+
+weights = torch . softmax ( scores , dim = -1)  
+
+> 8
+
+return ( weights @ V ) . squeeze (0) # ( dv ,) 
+
+Listing 1: Standard PyTorch single-query decode (pytorch reference.py : std decode ). Compare with Listing 2: same result, no algebraic minimality proof. The MoA version (below) replaces q @ K.T with ⃗q (+ . × Ω ⟨1,2⟩) K: the ψ-reduction reads K row by row in its natural layout — no transposed view is cre-ated — and the Storage Theorem proves the result is memory-minimal by construction. 
+
+MoA - Based Implementation 
+
+moa decode.py mirrors the three DNF steps directly. The MoA formulation: 
+
+• Step I (scores, eq. (1)): ⃗s = scale  ⃗q (+ . × Ω ⟨1,2⟩) K, ρ(⃗s) = ⟨n⟩.
+
+• Step II (softmax, eq. (2)): ⃗a[l] = ⃗e[l]  P n−1
+
+l′=0 ⃗e[l ′], ρ(⃗a) = ⟨n⟩.
+
+• Step III (weighted sum, eq. (3)): ⃗
+
+out =⃗a (+ . × Ω ⟨1,2⟩) V, ρ(⃗out ) = ⟨dv ⟩.
+
+5Each listing block below corresponds to one step.                                                                                 
+
+> 1from typing import Optional
+> 2import torch , math
+> 3def moa_decode (q , K , V , scale = None ) :
+> 4n , dk =K . shape
+> 5if scale is None :
+> 6scale =1.0 /math . sqrt ( dk )
+> 7#Step I : scores --no K ^ T buffer ( eq . 1)
+> 8s=scale *( K @q ) #(n ,)
+> 9#Step II : n u m e r i c a l l y stable softmax
+> 10 s=s-s . max ()
+> 11 e=s . exp ()
+> 12 a=e/e . sum () #(n ,) O ( n ) scratch
+> 13 #Step III : weighted sum ( eq . 3)
+> 14 return a@V#( dv ,)
+
+Listing 2: moa decode.py : core decode function. Steps I–III map to eqs. (1)–(3). 
+
+Reference Implementation 
+
+PyTorch — a widely-used open-source numer-ical computing library for neural networks (A. Paszke et al., NeurIPS 2019) — pro-vides scaled dot product attention (SDPA) as a numerically verified fused reference im-plementation of the attention operation. In the full training setting SDPA computes softmax( scale Q (+ . × Ω⟨2,2⟩) K) (+ . × Ω⟨2,2⟩) V
+
+where ρ(Q) = ⟨n, d k⟩ and the output has shape 
+
+⟨n, d v ⟩. Here Ω ⟨2,2⟩ has σl = σr = 2 (both arguments rank-2); for the single decode step, Q reduces to rank-1 ⃗q so Ω ⟨1,2⟩ is used throughout this paper. For a single decode step there is only one query vector ⃗q ∈ R dk , ρ(⃗q) = ⟨d k⟩. In MoA there are no row or column vectors: the score vector ⃗s, weight vector ⃗a,and output ⃗ out are all rank-1 arrays. The decode computation proceeds in three steps, each expressed as a ψ-reduction that eliminates intermediates: 
+
+• Step I (scores, ψ-reduction over K): ⃗ q (+ . ×
+
+Ω⟨1,2⟩) K ∈ Rn — no K⊤ buffer. 
+
+• Step II (softmax, ψ-reduction over ⃗ s): softmax( ⃗s/ √dk) ∈ Rn — no n × n Jacobian. 
+
+• Step III (weighted sum, ψ-reduction over V ): ⃗a (+ . × Ω ⟨1,2⟩) V ∈ Rdv (= ⃗ out ). Every intermediate and output is a rank-1 vector in MoA: ⃗s,⃗ a ∈ R n and ⃗ out ∈ Rdv . This is exactly what the decode DNF computes in equations (1)–(3): ⃗s is the score vector, ⃗a is the weight vector, and ⃗ out is the rank-1 output vector. SDPA is PyTorch’s own numerically verified fused kernel, making it a valid ground truth. Note: PyTorch’s SDPA requires (B, H, S, D) input shape (batch, heads, sequence, di-mension), so dummy size-1 dimensions must be added before the call and removed with .squeeze() after-wards (defined above). To call it as a reference, ⃗q, K,
+
+V are wrapped with dummy batch B = 1 and head 
+
+H = 1 dimensions to match the required (B, H, S, D) input shape:                                                     
+
+> 1# # Single decode step : vq :( dk ,) K :( n , dk ) V :( n , dv )
+> 2q_ =vq . unsqueeze (0) . unsqueeze (0) . unsqueeze (0)
+> 3# # -> (1 , 1 , 1 , dk )
+> 4k_ =K . unsqueeze (0) . unsqueeze (0) #-> (1 , 1 , n , dk )
+> 5v_ =V . unsqueeze (0) . unsqueeze (0) #-> (1 , 1 , n , dv )
+> 6# # SDPA output : (1 , 1 , 1 , dv ) -> squeeze -> ( dv ,)
+> 7out_ref =F . s c a l e d _ d o t _ p r o d u c t _ a t t e n t i o n (
+> 8q_ , k_ , v_ , scale = scale ) . squeeze ()
+
+The .squeeze() removes all size-1 dimensions, giving ⃗
+
+out ref ∈ Rdv for direct comparison with moa decode 
+
+output. Table 1 reports the verification. Errors are float32 round-off only, an order of magnitude smaller than the training kernel (9 ×10 −5) because the decode path has no backward accumulation. Table 1: Verification: moa decode vs. PyTorch SDPA. dk = dv = 64, float32 (32-bit floating point, 4 bytes per element), seed(0) .
+
+n ∥err ∥∞
+
+4 1.79 × 10 −7 ✓
+
+64 5.96 × 10 −8 ✓
+
+256 4.47 × 10 −8 ✓
+
+1024 5.96 × 10 −8 ✓
+
+4096 2.98 × 10 −8 ✓
+
+# 4 C/OpenACC Kernel 
+
+4.1 ONF Stride Arithmetic 
+
+Applying the γ primitive (Definition 2.1 of [1]) to row-major storage: 
+
+γ(⟨l, j ⟩, ⟨n, d k⟩) = l × dk + j (K offset) ,γ(⟨l, d ⟩, ⟨n, d v ⟩) = l × dv + d (V offset) .
+
+These stride expressions appear verbatim as 
+
+K[l*dk+j] and V[l*dv+d] in Listing 3. Concrete example (n = 3, dk = 2, dv = 2). The six elements of K (shape ⟨3, 2⟩, row-major) lie at flat offsets: 
+
+⟨0, 0⟩ : γ(⟨0, 0⟩, ⟨3, 2⟩) = 0 × 2 + 0 = 0 
+
+⟨0, 1⟩ : 0 × 2 + 1 = 1 
+
+⟨1, 0⟩ : 1 × 2 + 0 = 2 
+
+⟨1, 1⟩ : 1 × 2 + 1 = 3 
+
+⟨2, 0⟩ : 2 × 2 + 0 = 4 
+
+⟨2, 1⟩ : 2 × 2 + 1 = 5 So K[l*2+j] in C accesses ⟨l, j ⟩ψ K directly – no transpose buffer is needed. 64.2 Dimension Lifting and Hardware-Coalescing Proof 
+
+Dimension lifting maps a flat index space ⟨N ⟩ to a structured processing array ⟨Π, ⌈N/ Π⌉⟩ , partition-ing work across hierarchical execution blocks. In modern streaming multiprocessors (GPUs), memory throughput is governed strictly by hardware coalesc-ing: global memory requests across a warp — a group of 32 threads that execute in lock-step on a GPU streaming multiprocessor — are merged if those threads access contiguous memory locations. Let the core evaluation of Step III map an ab-stract 2-D sequence-to-feature reduction domain D =
+
+⟨n⟩×⟨ dv ⟩. In parallel architectures, an MoA compiler solves layout compatibility by formalizing a hardware mapping tree. We define multi-level lifting primitives: 
+
+⟨n⟩ 7 → ⟨ Πg , ⌈n/ Πg ⌉⟩ (Sequence Rows) , (4) 
+
+⟨dv ⟩ 7 → ⟨ Πv , ⌈dv /Πv ⌉⟩ (Feature Columns) . (5) The combined domain is reshaped via ρ to mirror the GPU topology: 
+
+S = ⟨Πg , ⌈n/ Πg ⌉, Πv , ⌈dv /Πv ⌉⟩ ,
+
+A coordinate index vector in this space is I =
+
+⟨g, i, v, j ⟩, where g is the gang, i is sequential work inside the block, v is the vector thread (warp chan-nel), and j is the register stride. To detect memory bottlenecks, the compiler eval-uates the γ stride between adjacent vector threads 
+
+v and v + 1 for a fixed ( g, i, j ). Under row-major layout with the hardware-to-logical mapping l =
+
+g⌈n/ Πg ⌉ + i, d = v⌈dv /Πv ⌉ + j:
+
+γ(⟨g, i, v, j ⟩, S ) =  g⌈n/ Πg ⌉ + i × dv + v⌈dv /Πv ⌉ + j. 
+
+The adjacent-thread γ difference is: 
+
+γ(⟨g, i, v + 1 , j ⟩, S ) − γ(⟨g, i, v, j ⟩, S ) = ⌈dv /Πv ⌉.
+
+Coalescing Criterion (in MoA γ terms): access is perfectly coalesced if and only if 
+
+γ(⟨g, i, v + 1 , j ⟩, S ) − γ(⟨g, i, v, j ⟩, S ) = 1 ,
+
+i.e., adjacent vector threads access physically adja-cent memory locations (Definition 2.1 of [1]). In the naive DNF, d maps to gangs and l to vectors. The adjacent-thread γ difference becomes ⌈dv /Πv ⌉ =
+
+dv = 64, meaning threads hit data 256 bytes apart — shattering coalescing. By transposing the execution array (hoisting the 
+
+d loop as the inner vectorized axis), the MoA com-piler sets Π v = dv , so ⌈dv /Πv ⌉ = 1, and the γ dif-ference equals 1 — aligning threads with contiguous 128-bit cache lines. The transformed, fully coalesced algorithm is implemented in Listing 3; this coalescing strategy follows the GPU energy-efficiency approach of [5]. The column space loop over d is hoisted as the inner vectorized axis, ensuring maximal memory saturation. 
+
+4.3 OpenACC Annotations 
+
+Three OpenACC pragma types appear in Listing 3: 
+
+• #pragma acc parallel loop gang distributes the outer loop across GPU gangs (groups of warps). 
+
+• #pragma acc loop vector distributes the inner loop across threads within a gang (the vector lane). 
+
+• #pragma acc atomic ensures that when multi-ple gangs update the same out[d] element si-multaneously (Pass 3, the weighted sum), the read-modify-write is indivisible — preventing a 
+
+race condition (a data corruption that oc-curs when two threads read, then both write, the same location without coordination). The 
+
+reduction clauses in Passes 1 and 2 use a more efficient tree-reduction pattern rather than se-rialising through a single atomic; Pass 3 re-quires atomic because each out[d] is accumu-lated from all n gang iterations. 
+
+4.4 Verification 
+
+Compiled with clang -O3 (macOS) or gcc -O3 
+
+(Linux) — no flags needed beyond -lm for CPU ver-ification. The #pragma acc directives are silently ig-nored by plain C compilers; the moa decode cpu se-quential reference runs in the same binary. The CPU Table 2: C/OpenACC kernel: CPU verification, float32. ∥err ∥∞ = 0 (exact match; same IEEE-754 operation order). 
+
+n MoA (MB) Std n2 (MB) k
+
+1,024 0.52 4.19 8×
+
+4,096 2.10 67.11 32 ×
+
+kernel matches the sequential reference to ∥err ∥∞ =0 (exact IEEE-754 equality for the same opera-tion order). For GPU execution: replace clang 
+
+with nvc -acc=gpu -gpu=cc120 (NVIDIA B200), 
+
+clang -fopenacc --offload-arch=gfx942 (AMD MI300X), or icx -fopenacc (Intel Aurora). 71 void moa_decode_acc (  
+
+> 2
+
+const float * restrict q , /* rho ( q ) = <dk > */  
+
+> 3
+
+const float * restrict K , /* rho ( K ) = <n , dk > */  
+
+> 4
+
+const float * restrict V , /* rho ( V ) = <n , dv > */  
+
+> 5
+
+float * restrict out , /* rho ( out ) = <dv > */  
+
+> 6
+
+int n , int dk , int dv )  
+
+> 7
+
+{ 
+
+> 8
+
+const float sc = 1.0 f / sqrtf (( float ) dk ) ;  
+
+> 9
+
+float * s = malloc ( n * sizeof ( float ) ) ; /* rho ( s ) = <n > */  
+
+> 10
+
+float * e = malloc ( n * sizeof ( float ) ) ; /* rho ( e ) = <n > */  
+
+> 11
+
+/* Pass 1: scores ; l - loop - > gangs , j - loop - > vector  
+
+> 12
+
+ONF : gamma ( <l ,j > , <n , dk >) = l * dk + j */  
+
+> 13
+
+float m = -1 e38f ;  
+
+> 14
+
+# pragma acc data copyin ( q [0: dk ] , K [0: n * dk ] , V [0: n * dv ]) \ 
+
+> 15
+
+copyout ( out [0: dv ]) create ( s [0: n ] , e [0: n ])  
+
+> 16
+
+{ 
+
+> 17
+
+# pragma acc parallel loop gang reduction ( max : m )  
+
+> 18
+
+for ( int l = 0; l < n ; l ++) { 
+
+> 19
+
+float dot = 0.0 f ;  
+
+> 20
+
+# pragma acc loop vector reduction (+: dot )  
+
+> 21
+
+for ( int j = 0; j < dk ; j ++)  
+
+> 22
+
+dot += q [ j ] * K [ l * dk + j ]; /* ONF : l * dk + j */  
+
+> 23
+
+s [ l ] = sc * dot ;  
+
+> 24
+
+if ( s [ l ] > m ) m = s [ l ];  
+
+> 25
+
+} 
+
+> 26 27
+
+/* Pass 2: exponentiate and sum denominator Z */  
+
+> 28
+
+float Z = 0.0 f ;  
+
+> 29
+
+# pragma acc parallel loop gang reduction (+: Z )  
+
+> 30
+
+for ( int l = 0; l < n ; l ++) { e [ l ] = expf ( s [ l ] - m ) ; Z += e [ l ]; } 
+
+> 31
+
+/* Pass 3: weighted sum ; d - loop - > vector ( coalesced )  
+
+> 32
+
+ONF : gamma ( <l ,d > , <n , dv >) = l * dv + d  
+
+> 33
+
+gamma - diff (v , v +1) = 1: coalesced */  
+
+> 34
+
+float inv_Z = 1.0 f / Z ;  
+
+> 35 36
+
+# pragma acc parallel loop gang  
+
+> 37
+
+for ( int d = 0; d < dv ; d ++) { 
+
+> 38
+
+out [ d ] = 0.0 f ;  
+
+> 39
+
+} 
+
+> 40
+
+# pragma acc parallel loop gang  
+
+> 41
+
+for ( int l = 0; l < n ; l ++) { 
+
+> 42
+
+float scaled_weight = e [ l ] * inv_Z ;  
+
+> 43
+
+# pragma acc loop vector  
+
+> 44
+
+for ( int d = 0; d < dv ; d ++) { 
+
+> 45
+
+# pragma acc atomic  
+
+> 46
+
+out [ d ] += scaled_weight * V [ l * dv + d ]; /* ONF : l * dv + d coalesced */  
+
+> 47
+
+} 
+
+> 48
+
+} 
+
+> 49
+
+} /* end acc data region */  
+
+> 50
+
+free ( s ) ; free ( e ) ;  
+
+> 51
+
+}
+
+Listing 3: moa decode openacc.c : core GPU kernel. ONF stride arithmetic and hardware-coalesced loops. Compiles with clang -O3 -o moa decode cpu moa decode openacc.c -lm on macOS/Linux (no OpenMP needed; #pragma acc ignored by plain C compilers). 85 Multi-Step KV-Cache Accu-mulation 
+
+5.1 Cache Append Expression 
+
+At each decode step t, one new key vector ⃗ kt ∈ Rdk ,
+
+ρ(⃗kt) = ⟨dk⟩, and value vector ⃗v t ∈ Rdv , ρ(⃗v t) = ⟨dv ⟩,are appended to the caches using MoA concatenation # along axis 0, defined as: A #⃗ b appends rank-1 vector ⃗ b (shape ⟨dk⟩) as a new final row of rank-2 array A (shape ⟨t, d k⟩), giving ρ(A #⃗ b) = ⟨t + 1 , d k⟩
+
+without copying any existing data: 
+
+Kt+1 = Kt #⃗ kt, (6) 
+
+Vt+1 = Vt #⃗v t. (7) In MoA there are no row or column vectors, so no reshape is needed: # appends ⃗ kt (shape ⟨dk⟩) as a new final row of Kt (shape ⟨t, d k⟩), giving ρ(Kt+1 ) = 
+
+⟨t + 1 , d k⟩. The trailing dimension dk matches, so # is well-defined without Omega lifting. Omega would be needed only if # were being lifted over a batch of such pairs. Concrete example (t = 2, dk = 3). Let 
+
+kij ≡ ⟨ i, j ⟩ψ K 2. K2 has shape ⟨2, 3⟩;⃗ k2 = ⟨a, b, c ⟩
+
+has shape ⟨3⟩:
+
+K2 =
+
+k00 k01 k02 
+
+k10 k11 k12 
+
+
+
+, ρ(K2) = ⟨2, 3⟩.K3 ≡ K2 #⃗ k2 is defined as the result of appending ⃗k2 as the new final row of K2:
+
+K3 = K2 #⃗ k2 =
+
+
+
+k00 k01 k02 
+
+k10 k11 k12 
+
+a b c
+
+ .ρ(K3) = ⟨3, 3⟩. In the ONF, the new row is written at the gamma offset γ(⟨t, j ⟩, ⟨T, d k⟩) = t × dk + j, so elements a, b, c land at offsets 2 × 3 + 0 = 6, 7, 8 in the flat array. No existing data is moved. 
+
+Proposition 2 (Cache-append traffic) . Equa-tions (6)–(7) append ⃗ kt and ⃗v t directly, moving ex-actly (dk + dv ) × 4 B per step, independent of t. This is the information-theoretic minimum: one key row and one value row must be written regardless of algo-rithm. 
+
+5.2 Combined Per-Step Cost 
+
+The total traffic at step t is: 
+
+Mstep (t) = (dk + dv ) × 4
+
+| {z }   
+
+> append O(dk+dv)
+
++ ( td k + td v ) × 4
+
+| {z }   
+
+> decode O(td k+td v)
+
+. (8) Summed over T output tokens: 
+
+Mtotal =
+
+> T
+
+X
+
+> t=1
+
+Mstep (t) = O T 2(dk + dv ) .
+
+This quadratic growth in T is unavoidable (every to-ken must attend over all previous tokens), but MoA makes the constant factor minimal and the bound a theorem. 
+
+5.3 Python Implementation 
+
+Standard PyTorch KV-cache uses torch.cat to grow the cache at each step, materialising K⊤ at each attention call:                                                     
+
+> 1K_cache =torch . zeros (0 , dk )
+> 2V_cache =torch . zeros (0 , dv )
+> 3for tin range ( T ) :
+> 4#Append --torch . cat copies the whole cache
+> 5K_cache =torch . cat ([ K_cache , keys [ t : t +1]] , dim =0)
+> 6V_cache =torch . cat ([ V_cache , values [ t : t +1]] , dim =0)
+> 7q_ =queries [ t ]. unsqueeze (0) #(1 , dk )
+> 8scores =scale *( q_ @K_cache . T ) #K ^ T buffer
+> 9weights =torch . softmax ( scores , -1)
+> 10 outputs [ t ] =( weights @V_cache ) . squeeze (0)
+
+Listing 4: Standard autoregressive decode (pytorch reference.py :
+
+std kvcache decode ). Uses torch.cat to grow cache; no algebraic minimality proof. The MoA version replaces torch.cat with plain # concatenation (writing one row at the pre-computed 
+
+γ offset, no copy) and proves append cost is O(dk +dv )per step. The MoA cache-append expressions (eqs. (6)–(7)) and per-step traffic bound (Proposition 2) are: 
+
+Kt+1 = Kt #⃗ kt, ρ(Kt+1 ) = ⟨t + 1 , d k⟩,Vt+1 = Vt #⃗v t, ρ(Vt+1 ) = ⟨t + 1 , d v ⟩,Mappend = ( dk + dv ) × 4 B (constant in t).
+
+The implementation pre-allocates to max len and writes each new row at the ONF gamma offset t × dk:
+
+5.4 Verification 
+
+At T = 1024 the MoA total ( ≈270 MB) is 5 .3× less than the score-matrix cost alone (1434 MB), with the gap widening quadratically in T .91 class MoAKVCache :  
+
+> 2
+
+def __init__ ( self , dk , dv , max_len =32768) :  
+
+> 3
+
+self . _K = torch . zeros ( max_len , dk )  
+
+> 4
+
+self . _V = torch . zeros ( max_len , dv )  
+
+> 5
+
+self . _t = 0 
+
+> 6
+
+self . dk , self . dv = dk , dv  
+
+> 7
+
+@property  
+
+> 8
+
+def K ( self ) : return self . _K [: self . _t ]  
+
+> 9
+
+@property  
+
+> 10
+
+def V ( self ) : return self . _V [: self . _t ]  
+
+> 11
+
+def append ( self , k , v ) :  
+
+> 12
+
+# Write at gamma ( t ; max_len , dk ) = tdk  
+
+> 13
+
+# O ( dk + dv ) traffic , independent of t 
+
+> 14
+
+self . _K [ self . _t ] = k # ONF : gamma (t , j ; <T , dk >) = t * dk + j  
+
+> 15
+
+self . _V [ self . _t ] = v # ONF : gamma (t , d ; <T , dv >) = t * dv + d  
+
+> 16
+
+self . _t += 1
+
+Listing 5: moa kvcache.py : pre-allocated cache with O(dk + dv ) append. MoAKVCache.append writes at the gamma offset t*dk without copying the existing cache. Table 3: KV-cache multi-step decode: 
+
+moa autoregressive decode vs. causal SDPA (Scaled Dot-Product Attention). dk = dv = 64, float32. 
+
+T dk dv ∥err ∥∞
+
+4 8 8 1.19 × 10 −7 ✓
+
+16 64 64 4.77 × 10 −7 ✓
+
+64 64 64 5.96 × 10 −7 ✓
+
+Table 4: KV-cache traffic accounting: append cost is constant; decode cost grows as O(td k) per step. MoA total beats the n2 score-matrix cost for T ≳ 256; at small T the n2 term is also small. 
+
+T App. (MB) Dec. (MB) n2 (MB) 16 0.01 0.08 0.01 64 0.03 1.10 0.36 256 0.13 16.97 22.50 1024 0.52 269.22 1433.75 
+
+# 6 Grouped-Query and Multi-Query Attention 
+
+6.1 Psi-Selection Expression 
+
+In GQA, hq query heads share hkv < h q KV heads (hkv divides hq ), with K of shape ⟨hkv , n, d k⟩. The scalar elements of K are defined by ψ-selection with a full index vector: 
+
+⟨g, i, j ⟩ ψ K 
+
+
+
+0 ≤ g < h kv (KV head) 0 ≤ i < n (sequence position) 0 ≤ j < d k (feature) (9) A partial index vector ⟨gkv ⟩ selects the entire gkv -th KV head slab: 
+
+Kg = ⟨gkv ⟩ ψ K, ρ(Kg ) = ⟨n, d k⟩, (10) whose elements satisfy ⟨i, j ⟩ ψ (⟨gkv ⟩ ψ K ) =
+
+⟨gkv , i, j ⟩ ψ K . The group assignment for query head g is gkv = ⌊g × hkv /h q ⌋. This drops the leading head dimension, leaving a 2-D array of shape ⟨n, d k⟩
+
+passed directly to the decode DNF (equation (1)). No Omega lifting is needed and no expanded ⟨hq , n, d k⟩
+
+tensor is materialized. Concrete example (hq = 4, 
+
+hkv = 2, n = 3, dk = 2, group size = 2). K has shape ⟨2, 3, 2⟩ with elements ⟨g, i, j ⟩ ψ K . The two KV slabs (each shape ⟨3, 2⟩) are: 
+
+⟨0⟩ ψ K =
+
+
+
+⟨0, 0, 0⟩ ψ K ⟨0, 0, 1⟩ ψ K 
+
+⟨0, 1, 0⟩ ψ K ⟨0, 1, 1⟩ ψ K 
+
+⟨0, 2, 0⟩ ψ K ⟨0, 2, 1⟩ ψ K 
+
+
+
+⟨1⟩ ψ K =
+
+
+
+⟨1, 0, 0⟩ ψ K ⟨1, 0, 1⟩ ψ K 
+
+⟨1, 1, 0⟩ ψ K ⟨1, 1, 1⟩ ψ K 
+
+⟨1, 2, 0⟩ ψ K ⟨1, 2, 1⟩ ψ K 
+
+
+
+The four query heads select slabs as follows: 
+
+g = 0 : gkv = 0 , ⟨0⟩ ψ K, ρ = ⟨3, 2⟩
+
+g = 1 : gkv = 0 , ⟨0⟩ ψ K (same slab as g = 0) 
+
+g = 2 : gkv = 1 , ⟨1⟩ ψ K, ρ = ⟨3, 2⟩
+
+g = 3 : gkv = 1 , ⟨1⟩ ψ K (same slab as g = 2) 10 hq = 8 query heads                                                                                                    
+
+> group 0 ( g= 0 ,1,2,3→gkv = 0)
+> g=0
+> gkv = 0
+> g=1
+> gkv = 0
+> g=2
+> gkv = 0
+> g=3
+> gkv = 0
+> group 1 ( g= 4 ,5,6,7→gkv = 1)
+> g=4
+> gkv = 1
+> g=5
+> gkv = 1
+> g=6
+> gkv = 1
+> g=7
+> gkv = 1
+> gkv =⌊g×hkv /h q⌋
+> all four read ⟨0⟩ψ K and ⟨0⟩ψ V
+> no K⊤, no broadcast
+> all four read ⟨1⟩ψ K and ⟨1⟩ψ V
+> no K⊤, no broadcast
+> hkv = 2 KV slabs
+> ⟨0⟩ψ K ,⟨0⟩ψ V ρ=⟨n, d k⟩,⟨n, d v⟩
+> shared by g=0,1,2,3read once , not 4 times
+> ⟨1⟩ψ K ,⟨1⟩ψ V ρ=⟨n, d k⟩,⟨n, d v⟩
+> shared by g=4,5,6,7read once , not 4 times
+> ⟨0⟩ψK
+> ⟨1⟩ψK
+> Conventional (repeat interleave )
+> K:⟨2, n, d k⟩ → ⟨ 8, n, d k⟩(4 ×copy) traffic: hq×n×dk×4 B, no proof
+> MoA (ψ-selection)
+> Kstays ⟨2, n, d k⟩(no copy) traffic: hkv ×n×dk×4 B ✓proven
+> hq/h kv = 4 ×
+> less traffic
+> MQA ( hkv =1): hq×less traffic. GQA general saving: hq/h kv . Same output. Storage Thm 2.7 [1].
+
+Figure 3: GQA/MQA via MoA ψ-selection. hq = 8 query heads are grouped into hkv = 2 KV groups. 
+
+ψ-selection ⟨gkv ⟩ψ K maps each query head to its KV slab directly, without materialising the ⟨hq , n, d k⟩
+
+broadcast that repeat interleave would create. Traffic reduction: hq /h kv = 4 × here; hq × for MQA (hkv = 1). Proven minimal by Storage Theorem 2.7. Query heads 0 and 1 both evaluate ⟨0⟩ ψ K ; heads 2 and 3 both evaluate ⟨1⟩ ψ K . By the Storage Theo-rem, each slab need only be read from DRAM once, giving the hq /h kv = 2 × KV traffic reduction alge-braically. 
+
+6.2 Dimension Lifting 
+
+Dimension lifting is MoA’s way of mapping to the abstract shape of the target architecture. Starting with the ONF shape, each component of the shape is partitioned one or more times to conform to each architectural target, e.g. processors, memory, etc. For example, The q-head axis and kv -head axis are lifted independently using the dimension-lifting map 
+
+N 7 → ⟨ Π, ⌈N/ Π⌉⟩ of Section 2.5 of [1]: 
+
+⟨hq ⟩ 7 → ⟨ Πq , ⌈hq /Πq ⌉⟩ (q-head gang axis) , (11) 
+
+⟨hkv ⟩ 7 → ⟨ Πkv , ⌈hkv /Πkv ⌉⟩ (KV read axis) . (12) With shared-memory caching ( ⟨gkv ⟩ ψ K held in L1 for the hq /h kv gangs sharing it), the KV traffic re-duces from hq × n × dk to hkv × n × dk bytes – a factor of hq /h kv . MQA is the special case hkv = 1. 
+
+6.3 Python Implementation 
+
+Standard PyTorch GQA expands the KV heads to hq by repeat interleave , materialising a full 
+
+⟨hq , n, d k⟩ broadcast tensor:  
+
+> 1
+
+def std_gqa_decode (Q , K , V , scale = None ) :  
+
+> 2
+
+group_size = Q . shape [0] // K . shape [0]  
+
+> 3
+
+# Expand : ( hkv ,n , dk ) - >( hq ,n , dk ) -- m a t e r i a l i s e d  
+
+> 4
+
+K_exp = K . repeat_interleave ( group_size , dim =0)  
+
+> 5
+
+V_exp = V . repeat_interleave ( group_size , dim =0)  
+
+> 6
+
+for g in range ( Q . shape [0]) :  
+
+> 7
+
+scores = scale *( Q [ g : g +1] @ K_exp [ g ]. T )  
+
+> 8
+
+weights = torch . softmax ( scores , dim = -1)  
+
+> 9
+
+outputs [ g ] = ( weights @ V_exp [ g ]) . squeeze (0) 
+
+Listing 6: Standard GQA decode ( pytorch reference.py : std gqa decode ). Materialises the KV broadcast; MoA avoids this via 
+
+ψ-selection. The MoA version replaces repeat interleave with 
+
+ψ-selection ⟨gkv ⟩ψ K , reading each KV slab once per group rather than hq /h kv times, giving a proven 
+
+hq /h kv traffic reduction. The MoA formulation for GQA uses ψ-selection (eq. (10)) to map each query head g to its KV group, then applies the decode DNF: 
+
+gkv = ⌊g × hkv /h q ⌋, 0 ≤ g < h q ,Kg = ⟨gkv ⟩ ψ K, ρ(Kg ) = ⟨n, d k⟩,⃗ 
+
+out g =⃗a g (+ . × Ω⟨1,2⟩) Vg , ρ(⃗out g ) = ⟨dv ⟩.
+
+No ⟨hq , n, d k⟩ tensor is materialized; each query head reads its assigned slab directly:  
+
+> 1
+
+def moa_gqa_decode (Q , K , V , scale = None ) :  
+
+> 2
+
+# Q : ( h_q , dk )  
+
+> 3
+
+# K : ( h_kv , n , dk ) -- one slab per KV head  
+
+> 4
+
+# V : ( h_kv , n , dv ) 
+
+11 5 h_q , dk = Q . shape                                                     
+
+> 6h_kv =K . shape [0]
+> 7if scale is None :
+> 8scale =1.0 /math . sqrt ( dk )
+> 9group_size =h_q // h_kv
+> 10 out =torch . zeros ( h_q , V . shape [2])
+> 11 for gin range ( h_q ) :
+> 12 g_kv =g// group_size #psi - s elec tion : < g_kv > psi K
+> 13 #< g_kv > psi Kshared across g r o u p _ s i z e query heads
+> 14 out [ g ] =_decode_one_head (
+> 15 Q [ g ] , K [ g_kv ] , V [ g_kv ] , scale )
+> 16 return out
+
+Listing 7: moa gqa.py : GQA decode. The ψ-selection eq. (10) is g kv = g // group size ; no 
+
+repeat interleave materialization. 
+
+6.4 Verification and Traffic 
+
+Table 5: GQA/MQA verification: moa gqa decode 
+
+vs. per-head SDPA reference. n = 64, dk = dv = 32, float32. Configuration ∥err ∥∞
+
+MHA ( hq = 8 , h kv = 8) 1.19 × 10 −7 ✓
+
+GQA ( hq = 8 , h kv = 4) 1.19 × 10 −7 ✓
+
+GQA ( hq = 8 , h kv = 2) 1.49 × 10 −7 ✓
+
+MQA ( hq = 8 , h kv = 1) 1.79 × 10 −7 ✓
+
+Table 6: GQA/MQA KV traffic per decode step. n =1024, dk = dv = 64, float32, hq = 32. KV amortized over hkv reads (shared memory). Config KV (MB) Total (MB) MHA hkv = 32 16.78 16.79 GQA hkv = 8 4.19 4.21 GQA hkv = 4 2.10 2.11 MQA hkv = 1 0.52 0.54 The hq /h kv traffic reduction is exact and follows algebraically from the ψ-selection expression (10): at 
+
+hkv = 1 (MQA), KV traffic falls from 16.78 MB to 0.52 MB (32 ×) on top of the baseline MoA decode savings. 
+
+# 7 Summary and Relationship to Training Kernel 
+
+Table 7 collects the verified artifacts. 
+
+Training – Algorithm 3 of [1] 
+
+Inputs: Q, K, V, O from DRAM Ω I: GV →DRAM; Ω II–III: GA on-stack, gs in reg-ister Ω IV/V: GQ, GK →DRAM Traffic: 4 nd k + 4 nd v B Scratch: O(n)
+
+Decode – Algorithm 1 (this report) 
+
+Inputs: ⃗q, K, V from DRAM (+ GQA: h kv heads) Step I: ⃗s, ρ(⃗s) = ⟨n⟩, on stack, Step II: ⃗a, ρ(⃗a) = ⟨n⟩,on stack Step III: ⃗ out →DRAM Traffic: O(nd k + nd v ) B GQA bonus: ÷ (hq /h kv )
+
+KV-cache append (Section 5) 
+
+Write ⃗ kt at t×dk ,⃗v t at t×dv
+
+Traffic: ( dk + dv ) × 4 B per step – constant in t
+
+Figure 4: MoA inference pipeline. All three compo-nents are specializations or extensions of the training DNF; no new Omega derivations are needed. Table 7: Verified inference artifacts. All errors float32 round-off only.                   
+
+> Artifact File ∥err ∥∞
+> Python de-code
+> moa decode.py ≤2×10 −7
+> C/OpenACC moa decode openacc.c 0 (exact) KV-cache moa kvcache.py 6×10 −7
+> GQA/MQA moa gqa.py ≤2×10 −7
+
+# 8 Conclusion 
+
+Four MoA inference artifacts have been derived, im-plemented, and numerically verified, each following directly from the forward-pass DNF of [1]. The decode DNF is eqs. (4)–(6) of that paper with i′
+
+fixed to the current token: eq. (4) score ψ-reduction, eq. (5) softmax, eq. (6) weighted sum. The C/Ope-nACC kernel applies the γ ONF stride arithmetic of [1] §7.2; KV-cache append uses plain # concatena-tion; GQA/MQA uses ψ-selection and the dimension-lifting Section 2.5 map of [1]. In every case the memory bound is a theorem (Storage Theorem 2.7 of [1]) before code is written, and the DNF →ONF →Cpipeline ports the result to any architecture without re-derivation. 
+
+# References 
+
+[1] L. Mullin and G. Hains, “Attention at the Theoretical Minimum: A Mathematics of Ar-rays Framework for Memory-Optimal Trans-former Kernels,” arXiv :2606.07713v1 [cs.LG], June 2026. 12 [2] L. Mullin and G. Hains, “Memory-Optimal Transformer Training: Backward Pass and Fused Kernel via the Mathematics of Arrays,” HAL-05659212, June 2026. [3] L. M. Mullin, A Mathematics of Arrays , Ph.D. dissertation, Syracuse University, 1988. [4] S. Thomas, L. Mullin, and K. ´Swirydowicz, “Im-proving the Performance of DGEMM with MoA and Cache-Blocking,” in Proc. ACM ARRAY Workshop (PLDI), 2021. https://doi.org/10. 1145/1122445.1122456 
+
+[5] L. Mullin, “From Array Algebra to Energy Effi-ciency on GPUs,” arXiv :2306.11148, 2023. [6] A. Vaswani et al., “Attention is all you need,” in 
+
+Advances in Neural Information Processing Sys-tems (NeurIPS) , 2017. [7] N. Shazeer, “Fast Transformer Decoding: One Write-Head is All You Need,” arXiv :1911.02150, 2019. [8] J. Ainslie et al., “GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints,” in Proc. EMNLP , pp. 4895– 4901, Singapore, 2023. [9] T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. R´ e, “FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness,” in Advances in Neural Information Processing Systems (NeurIPS) , 2022. [10] T. Dao, “FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning,” in Proc. ICLR , 2024. arXiv :2307.08691. [11] T. Dao and D. Y. Fu, “Flash-Decoding for Long-Context Inference,” https://crfm.stanford. edu/2023/10/12/flash-decoding.html , 2023. 13

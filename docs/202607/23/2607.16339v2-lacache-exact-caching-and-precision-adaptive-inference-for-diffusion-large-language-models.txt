@@ -1,0 +1,715 @@
+Title: LaCache: Exact Caching and Precision-Adaptive Inference for Diffusion Large Language Models
+
+URL Source: https://arxiv.org/pdf/2607.16339v2
+
+Published Time: Thu, 23 Jul 2026 00:26:29 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# LaCache: Exact Caching and Precision-Adaptive Inference for Diffusion Large Language Models 
+
+Xingru Chen 1* Zelang Liang 1* Yongjia Ma 1* Jiqing Zhan 1
+
+Shuling Yang 1 Lian Wen 1 Kun Zhan 1†1Li Auto Inc. 
+
+Abstract 
+
+Diffusion-based Large Language Models (DLLMs) enable parallel generation via Semi-Autoregressive (SAR) decoding in text gener-ation. However, current methods suffer from severe operator-level redundancy: they recom-pute the entire sequence during denoising steps, ignoring that the prefix and masked suffix re-main invariant within a block. We propose 
+
+LaCache , a training-free acceleration frame-work that alleviates this redundancy through lossless caching and mixed precision. Specifi-cally, LaCache employs Lossless State Mem-oization (LSM) by caching three types of in-termediate results: (i) EmbedCache for embed-ding outputs, (ii) RoPECache for token-wise pre-attention states, and (iii) FACache for the online softmax statistics within FlashAttention. These caches allow the model to skip redun-dant computation on unchanged tokens with-out altering the output. To further alleviate memory-bandwidth bottlenecks, LaCache in-tegrates a per-group FP8 quantization strategy for FFN layers, tailored to step-dependent ac-tivation distributions across the diffusion pro-cess. Experiments demonstrate that LaCache alone achieves approximately 1.3 × end-to-end speedup over vanilla DLLM. When combined with existing acceleration methods, LaCache reaches up to 40.2 × end-to-end speedup while maintaining comparable task accuracy. 
+
+1 Introduction 
+
+Large language models (LLMs) (Yang et al., 2025a; Dubey et al., 2024; Brown et al., 2020; Ma et al., 2026) are widely used in chat (Mao et al., 2024), code generation (Jiang et al., 2024), and complex reasoning (Wan et al., 2024; Liu et al., 2025a; Feng et al., 2026). In deployment, inference latency and 
+
+> *
+
+Equal contribution. 
+
+> †
+
+Corresponding author. Primary contact chenxr@buaa.edu.cn Step 1 Step 2  
+
+> ……
+> Step t
+> No.i Block’s Generation
+> unchanged unchanged changed
+> Latency of Modules in LLaDA-Instruct
+> LaCache(Ours) Original
+> Time(ms)
+
+Figure 1: Left :DLLMs split total generation tokens into sequential blocks and do parallel decoding across multiple steps inside each block. During one block’s generation, the tokens outside of the block stay un-changed, which results in repetition calculation. Right :the latency of the modules in LLaDA-Instruct is mainly present at the transformer layers and the final sampler. With our method LaCache, the latency of the modules is significantly reduced. 
+
+compute cost are often the main bottlenecks (Lou et al., 2023). Autoregressive decoding generates tokens sequentially, which limits efficiency and hardware parallelism (Dong et al., 2025; Feng et al., 2025; Yang et al., 2025c). This motivates parallel decoding and non autoregressive generation. Diffusion large language models (DLLMs) (Nie et al., 2025; Ye et al., 2025; Lyu et al., 2019; Yang et al., 2025b; Ma et al., 2025; Khanna et al., 2025) formulate text generation as iterative denoising, enabling multiple token positions to be updated in one step and employ bidirectional attention to leverage full context. Despite this potential, open-source DLLMs suffer from significant computation overhead (Nie et al., 2025; Luo et al., 2024). We attribute this inefficiency to two main constraints: First, bidirectional attention prevents direct reuse of standard KV cache mechanisms. Second, parallel decoding can degrade generation quality due to violations of token dependencies (Wu et al., 2025; Xie et al., 2025; Ma et al., 2024). Most open-source DLLMs adopt a semi-autoregressive (SAR) (Nie et al., 2024), block-1arXiv:2607.16339v2 [cs.AI] 22 Jul 2026 Figure 2: The whole procedure of one inference step. After updating the cache in the first step, in the subsequent steps, the input only needs to contain the tokens of the current block, which saves most of the computational work of the embedding layer, norm, qkv linear, rotary embedding and Flash attention in the first layer of transformers. In addition, the method of mixed-precision acceleration is applied to all layers except the first: gateup linear, ffout linear. The FP8 quantization operations are fused with the ff Norm and Swiglu, which further saves overhead. Moreover, The output of the Transformer layers will be truncated again, and only the tokens of the current block will be retained for subsequent sampling operations, which decreased the latency of the float Softmax operation. 
+
+wise inference scheme. The model initializes fu-ture positions with a fixed number of [MASK] to-kens and partitions them into blocks. It then per-forms multiple denoising steps within each block. Across these steps, only the current block tokens change while the prompt and other blocks main-tain the same token IDs. Despite this, the model executes a full forward pass at each step, creat-ing substantial redundant computation. As shown in Fig. 1 (Left), the high input overlap within a block leads to repeated computation (Wei et al., 2025b). It appears in token wise operators, such as embedding, QKV projections and RoPE. It also appears inside attention computation, especially in the tiled calculation of first layer FlashAttention. The profiling result in Fig. 1 (right) shows that latency is dominated by Transformer layers and the final sampler. This observation suggests that eliminating repeated operator-level computation on unchanged tokens can yield stable and compos-able end-to-end speedup. Existing inference ac-celeration techniques primarily reduce the number of denoising steps or the effective context length. Fast DLLM (Wu et al., 2025) employs confidence threshold decoding and approximate caching to increase throughput. DPad (Chen et al., 2025) ap-plies suffix dropout, including a sliding window and distance decay, to reduce the number of tokens used in attention. Other works explore guidance tokens or adaptive decoding schedules (Wei et al., 2025a; Sun et al., 2025). While these methods are effective and complementary to our approach, they do not directly eliminate the operator-level redun-dancy caused by unchanged tokens within a SAR block, leaving room for further acceleration. We propose LaCache , a training-free acceler-ation framework for SAR inference in DLLMs. LaCache reduces operator-level redundancy by reusing intermediate states of unchanged tokens across denoising steps within each SAR block. It combines Lossless State Memoization (LSM) ,which reuses computation with identical outputs, and a mixed-precision strategy that improves hardware efficiency. Firstly, EmbedCache stores embedding outputs of unchanged tokens. Sec-ond, RoPECache stores first-layer token-wise pre-attention results, including RoPE. Third, FA-Cache stores the online softmax states in first-layer 2FlashAttention, including the running maximum, the normalizer, and the unnormalized output ac-cumulator, which allow us to skip attention tiles that do not involve the current block. Motivated by the diverse activation distributions across lay-ers and denoising steps, LaCache further applies a fine-grained per-group FP8 quantization on FFN layers, which adapts scales to local activation pat-terns and runs on FP8 Tensor Core kernels fused with surrounding operators to alleviate memory-bandwidth bottlenecks while preserving model ac-curacy. Experiments show that LaCache achieves approximately 1.3 × end-to-end inference speedup over vanilla DLLM. When combined with existing acceleration schemes, it reaches up to 40.2 × end-to-end speedup with comparable quality. Our main contributions are as follows. • We identify operator-level redundancy in SAR inference of DLLMs and introduce three loss-less cache components that cover token-wise operators and the online softmax state of first-layer FlashAttention, alleviating the redun-dant computation within each SAR block. • We integrate a per-group FP8 quantization for FFN layers, adapting to diverse activation distributions and FP8 Tensor Core kernels to achieve speedup while preserving accuracy. • We demonstrate consistent speedups across multiple models and benchmarks, showing that LaCache composes well with existing ac-celeration methods. 
+
+2 Related Work 
+
+Accelerating Diffusion Language Models. Re-cent research optimizes dLLM inference efficiency from multiple perspectives. Several works (Jiang et al., 2025; Liu et al., 2025b; Wu et al., 2025) intro-duce approximate KV cache mechanisms to reuse hidden states across denoising steps. Specifically, Fast-dLLM(Wu et al., 2025) enhances throughput via confidence-aware parallel decoding, which re-places top-k sampling with a threshold-based strat-egy. Dllm-cache (Liu et al., 2025b) stored and retrieved key–value (KV) states generated during transformer inference. From a complementary an-gle, DPad (Chen et al., 2025) reduces the compu-tational cost of attention by pruning the context length, employing suffix dropout with a sliding window. Other works focus on adaptive decoding schedules, such as inserting guidance tokens (Wei Q: N x dacc_o                          
+
+> acc_o_cache
+> acc _o
+> cache
+> acc _o
+> Step 1 Step 2…t
+> Cache Cache
+> KT:dxN
+> V: Nxdsm (QK T)V :Nxd
+> Inner Loop Outer Loop Inner Loop Outer Loop Q: NxdKT:dxN
+> V: Nxdsm (QK T)V :Nxd
+> ……
+> acc_o …
+> acc_o_cache
+
+Figure 3: The update and resuse scheme of our FACache. 
+
+Left : Update the cache in the first Flash-attention in the first step. When the qkv tile has no overlap with current generation Block, the cache follows same calcu-lation procedure to collect the intermidia results. Right :Reuse the cache in the first Flash-attention in the follow-ing steps. When the q tile has no overlap with current generation Block, the registers would be initialized with the data in cache. And if the kv tile has no overlap with current generation Block as well, the calculation could be skipped directly. 
+
+et al., 2025a) or monitoring token stability to dy-namically adjust generation thresholds (Sun et al., 2025). While these methods effectively optimize the decoding schedule or context graph, they do not directly eliminate the operator-level redundancy on invariant tokens within a block, a gap that our framework is intended to bridge. 
+
+Low-Precision Inference. Quantization has been widely adopted to accelerate LLM infer-ence. SmoothQuant (Xiao et al., 2023) pro-poses per-channel quantization that smooths ac-tivation outliers across channels to maintain accu-racy. COAT (Xi et al., 2024) introduces mixed-granularity quantization, combining per-tensor and per-group schemes to balance efficiency and preci-sion. Similarly, DeepSeek-V3 (Liu et al., 2024) adopts per-group quantization for linear layers. MOSS (Zhang et al., 2025) refines this with a two-level scaling strategy to reduce precision loss dur-ing training. Building on these insights, LaCache applies per-group FP8 quantization to FFN linears in dLLMs, exploiting the activation distribution characteristics observed in SAR inference. 
+
+3 Method 
+
+In this section, we start by analyzing the redun-dant computation in DLLMs, which is raised by the repetition in the input, and the steady activation dynamics suitable for quantization during infer-ence. We then introduce the lossless cache strategy, which contains three parts of the intermediate re-sults during inference. Finally, we propose a fine-grained mixed precision strategy to accelerate the inference with barely precision loss. 33.1 Overview 
+
+LaCache proposes a Lossless State Memoization (LSM) strategy through the integration of three spe-cialized components: EmbedCache , RoPECache ,and FACache . This mechanism ensures mathe-matically equivalent output while strictly skipping redundant computations for invariant tokens. To further enhance throughput, we incorporate a fine-grained FP8 mixed-precision strategy for compute-intensive linear layers. The overall architecture is presented in Figure 2. 
+
+3.2 The Acceleration space in DLLMs 3.2.1 Redundant calculation in DLLM inference 
+
+Within the multiple generation steps of a SAR block, only the tokens in the current block are up-dated, while the token IDs outside the block remain unchanged. Therefore, redundant computation ap-pears in token-wise operators (embedding, atten-tion norm, QKV projection, RoPE) and in parts of the first-layer FlashAttention tiling procedure. With a proper cache strategy, these redundant costs can be reduced without changing the model output. The structure of DLLMs is still Transformer-based, and linear layers dominate the runtime. A common way to accelerate linear layers is low-precision computation (Kalamkar et al., 2019; Lee et al., 2009; Micikevicius et al., 2017; Liu et al., 2024). As shown in Fig. 4 , the peak of activation in the first layer among multiple steps presents a concentration in several channels, and the peak density decreases as future tokens get unmasked. In middle layers, the activation value is relatively flat with only a few channels having sporadic spikes. In later layers, the values of most channels of the same token are basically the same. This suggest that a fine-grained scheme can better balance efficiency and accuracy, especially under SAR inputs that include many masked tokens. 
+
+3.3 Lossless State Memoization 
+
+To eliminate operator-level redundancy, we intro-duce Lossless State Memoization (LSM). It strictly memoizes the intermediate results of token-wise operators and the internal online softmax statistics of the first-layer FlashAttention for the invariant region. The memoized states are populated at the first denoising step of each SAR block and reused across subsequent steps within the same block, en-suring mathematically equivalent outputs with re-Block -1 Step -1 Block -12 Step -3 Block -29 Step -2
+
+> Layer -1
+> Layer -6
+> Layer -17
+> Figure 4: The visualization of activations before the ffout linear in LLaDA-Instruct among multiple steps and blocks.
+
+duced computational cost. 
+
+3.3.1 Notation 
+
+Let the full sequence have length N . For a SAR block, let C denote the index set of tokens in the current block (which may change across denoising steps), and let U = {1, . . . , N } \ C denote the remaining tokens (prompt/prefix and masked suffix outside the current block) whose token IDs stay unchanged within this block. 
+
+3.3.2 EmbedCache and RoPECache 
+
+Embedding, (RMS)Norm, linear projections, and RoPE are applied independently to each token. Therefore, for any token-wise operator f , we have 
+
+f (xU ) unchanged across steps inside the block. We cache: (i) EmbedCache : the embedding outputs for tokens in U; and (ii) RoPECache : the first-layer token-wise pre-attention results (after atten-tion norm, QKV projections, and RoPE) for tokens in U. In subsequent steps, we only compute these token-wise operators for tokens in C and reuse the cached tensors for U, avoiding redundant work in embedding, attention norm, QKV linear, and RoPE. Formally, let H = Embed( x) be the embedding output and let ˆH = Norm( H) be the normalized hidden states at the first layer. The first-layer pro-jections are: 
+
+Q, K = RoPE( ˆHW Q,K ), V = ˆHW V . (1) Within a SAR block, xU is unchanged, so HU and 
+
+(QU , K U , V U ) can be computed once and reused. 4Figure 5: The average inference latency of LaCache and previous methods on LLaDA-instruct model among multiple benchmarks. In all tasks, whether combined with parallel or DPad, LaCache can further reduce the latency on the basis of the original method. 
+
+3.3.3 FACache 
+
+The remaining redundancy in the first layer comes from FlashAttention’s streaming over key–value blocks. As shown in Fig. 3, for query blocks that belong to U, both the query vectors and the key– value blocks from U remain unchanged within the SAR block. We therefore cache the online-softmax state of FlashAttention for tiles that do not overlap the current block. Concretely, for a query block Qi and a streamed KV block (Kj , V j ), define S(j) 
+
+> i
+
+= QiK⊤ 
+
+> j
+
+. FlashAt-tention maintains per-row state (m, ℓ, ˜O) and up-dates it as: 
+
+m(j) = max 
+
+
+
+m(j−1) , RM( S(j))
+
+
+
+, (2) 
+
+α(j) = exp 
+
+
+
+m(j−1) − m(j)
+
+, (3) 
+
+˜P (j) = exp 
+
+
+
+S(j) − m(j)
+
+, (4) 
+
+ℓ(j) = α(j) ⊙ ℓ(j−1) + RS( ˜P (j)), (5) 
+
+˜O(j) = α(j) ⊙ ˜O(j−1) + ˜P (j)Vj , (6) where RM( ·) and RS( ·) denote the row-wise max and sum respectively. All of the scalings are applied row-wise (with broadcasting over the feature dimension). The final attention out-put is obtained by row-wise normalization O =diag( ℓ(Tc))−1 ˜O(Tc).Our FACache stores these state variables re-stricted to the unchanged region : for query blocks Qi ⊆ U, we cache and update 
+
+(mcache , ℓ cache , ˜Ocache ) to be updated like (m, ℓ, ˜O)
+
+after streaming over KV blocks (Kj , V j ) that are fully inside U. In implementation, these corre-spond to the HBM buffers RowMaxcache (mcache ), 
+
+RowSumcache (ℓcache ), and Ocache ( ˜Ocache ). In subsequent steps within the same SAR block, FlashAttention initializes (m, ℓ, ˜O) with the cached state and only processes KV blocks that overlap C,while tiles where both query and KV blocks are in 
+
+U are skipped entirely. 
+
+3.4 Mixed precision strategy 
+
+As shown in Fig. 4, the peaks of activations are lit-erally not higher than the valleys, and densely exist in masked tokens, which mainly provide position information (Luxembourg et al., 2025) instead of semantic information. Moreover, previous meth-ods such as DuQuant (Lin et al., 2024) focus on memory savings without fully exploiting hardware capabilities for acceleration. Therefore we applied the mix-precision strategy in all layers except the first to access acceleration while maintaining preci-sion. The reason to exclude the first layer is that the precision would decrease significantly if applied the quantization in the first layer. Specifically„ We leveraged per-group fp8 quantization before the gate-up linear and ffout linear and applied Deep-GEMM in those linears, where activations are less-sensitive, and maintained the original fp16 settings for the left modules. The quantization group on activation is 1x128 while on model weights it’s 128x128. The equation process could be expressed as: 
+
+x′ 
+
+> i
+
+= clip 
+
+ xi
+
+scale g
+
+, Q min , Q max 
+
+
+
+, i ∈ g, (7) scale g = max i∈g |xi|
+
+Qmax 
+
+. (8) Where x is the high precision tensor splitted into 
+
+G groups, x′ is the quantized counterpart, Qmin ,
+
+Qmax are the min and max value of the low-precision format respectively, and scale g is quanti-zation scale of group g.Meanwhile, to reduce the quantization and de-quantization computation overhead, we fused the operation with the AddNorm operation before the gate-up linear, and with the Swiglu operation be-fore ffout linear, which reduced the memory access time (Guo et al., 2025). Moreover, at the sampling stage, the output would be cut to include only the tokens of cur-rent generation block, and therefore accelerate the sampling procedure. 5Figure 6: Comparison of token generation speed in long text inference scenario of Humaneval benchmark. 
+
+4 Experiments 
+
+4.1 Experimental setup Models and Baselines. All experiments are con-ducted on an designed GPU. We evaluate LaCache on three variants of diffusion-based large language models: LLaDA(base) (Nie et al., 2025), LLaDA-instruct and LLaDA-1.5 (Zhu et al., 2025). Follow-ing are the compared baselines: Vanilla: the original LLaDA (Nie et al., 2025) backbone. +Parallel(Fast-dllm): a sampling strategy that re-places the top-k strategy in vanilla with a threshold strategy (Wu et al., 2025) and allows more tokens to be decoded in parallel. +DPad: a suffix dropout strategy (Chen et al., 2025) that drops a number of suffix tokens at each step with a sliding-window or distance-decay strat-egy. 
+
+Benchmarks and metrics. We conduct exper-iments across a range of task categories. Reason-ing performance is evaluated on GSM8K (Cobbe et al., 2021) and MATH (Hendrycks et al., 2021), while code generation is assessed using Hu-manEval (Chen, 2021) and MBPP (Austin et al., 2021). We examine performance from two comple-mentary perspectives: 
+
+Accuracy: Measured using task-dependent eval-uation criteria. For code generation, we report pass@1, and for reasoning tasks, we use standard accuracy metrics such as flexible-extract and strict-match accuracy on GSM8K. All accuracy results are presented as percentages. 
+
+Efficiency: Assessed in terms of mean inference latency per example and throughput, reported as Tokens Per Second (TPS), which is calculated over the whole output <eos> token is emitted. 
+
+4.2 Main Result 
+
+Table 1: Accuracy of quantization granularities.                         
+
+> Accuracy(%) Benchmark Method Flexible Strict LaCache 76.35 49.43 Per Tensor 75.82 49.66 GSM8K(4-shot) Per Token 76.27 49.96 LaCache 73.7 72.47 Per Tensor 73.4 72.22 Arc_easy Per Token 73.48 71.97 LaCache 43.34 44.97 Per Tensor 42.83 46.33 Arc_challenge Per Token 42.66 46.08
+
+Table 2: Efficiency of quantization methods                      
+
+> Efficiency Benchmark Method Latency(s) ↓TPS ↑
+> Vanilla 10.59 19.78 LaCache 9.6 21.78 GSM8K(4-shot) DuQuant 41.18 6.22 Vanilla 9.93 21.11 LaCache 6.97 30.08 MATH(4-shot) DuQuant 34.4 9.72 Vanilla 15.87 6.71 LaCache 11.83 8.73 HumanEval(0-shot) DuQuant 118.03 0.86
+
+4.2.1 Latency 
+
+Overall, LaCache achieved the fastest speed on all benchmarks and model variants (Tab. 4) with 10.3%-42.5% faster than the Vanilla Backbone and the accuracy largely lossless, even 4 points in-creased in the HumalEval. When combined with Parallel, it accelerates the backbone by 11.3%-42.9%, reaching Vanilla’s 3.7X -12.3X overall. When combined with DPad, it achieved a 10.5%-30.8% acceleration on benchmarks other than hu-manEval, and a 19% acceleration on gsm8k when combined with both Parallel and DPad. In addition, the reason why there is slight accel-eration on Humaneval is that the length of prompt is short which results in short length of total in-put. As shown in Tab. 8, we further evaluate with longer generation length 3.7% speedup over the results a 3.7% speedup over the vanilla backbone, 11.5% speedup over the parallel backbone, and 8.3% speedup over the DPad. Overall, combined with Parallel(fast-DLLM), LaCache can achieve the fastest speed and accu-racy without loss, while the speed is slightly infe-rior when further combined with DPad, probably because the DPad removes more suffix tokens, re-sulting in shorter gen tokens and less pronounced 6Table 3: Ablation results of the caching strategy alone.                            
+
+> Efficiency Benchmark Method Latency(s) TPS Vanilla 10.59 19.78 GSM8K(4-shot) LaCache (w/o fp8) 10.54 19.86 LaCache 9.6 21.78 Vanilla 9.93 21.11 MATH(4-shot) LaCache (w/o fp8) 9.09 23.04 LaCache 6.97 30.08 Vanilla 13.4 7.93 HumanEval(0-shot) LaCache (w/o fp8) 13 8LaCache 12.18 8.69 Vanilla 24.07 2.68 MBPP(3-shot) LaCache (w/o fp8) 23.9 2.7 LaCache 21.51 2.95
+
+acceleration. 
+
+4.2.2 Throughput 
+
+LaCache achieved the best speed in this metric with 10.1%-42.5% faster than Vanilla; When com-bined with parallel, it accelerates by 22.3%-43.0%, reaching 3.7X -12.2X of Vanilla. When combined with DPad, it accelerates by 12.0%-31.7%; When combined with DPad+parallel, it is accelerated by 4.1%-20.3%. 
+
+4.2.3 Accuracy 
+
+LaCache has basically no loss of accuracy on all datasets, and there is a slight improvement in the strict-match score. This shows that the low-precision quantization of the per-group does not bring negative losses to the model. 
+
+4.2.4 Performance on other dllms 
+
+On Llada-base, LaCache is 20%-30% faster than the corresponding backbone on GSM8K, MATH, and MBPP datasets, and the final speed reaches 
+
+2.3X-5.9X of vanilla. On LLaDA-1.5, it is 10%-20% faster than the corresponding backbone on GSM8K, MATH, and MBPP datasets, and the final speed reaches 3.3X-12.3X of vanilla. Meanwhile, as shown in Fig. 7, LaCache is able to generate longer enum answers when faced with difficult questions, thus getting closer to the correct answer than backbones. 
+
+4.2.5 Comparison with different quantization methods 
+
+As shown in Tab. 1 and Tab. 2, the per-tile fp8 quantization(LaCache) achieves higher accuracy compared with other granularities and higher effi-ciency than prior methods such as DuQuant (Lin et al., 2024). 
+
+4.2.6 Ablation Study 
+
+We first evaluate the effect of applying caching alone. As shown in Tab. 3, caching achieves ap-proximately 3% speedup over the vanilla backbone across all benchmarks, compensating for the inabil-ity to apply mixed-precision acceleration to the first layer. We further compare the accuracy of different quantization granularities. As shown in Tab. 1, the accuracy loss grows as the granularity becomes coarser, indicating that per-tile quantization is more suitable for DLLMs than the other two methods. 
+
+5 Conclusion 
+
+We present LaCache , an inference acceleration framework designed to eliminate operator-level re-dundancy in DLLMs. LaCache introduces Loss-less State Memoization (LSM) to reuse invari-ant intermediate states in token-wise operators and first-layer FlashAttention, complemented by a fine-grained FP8 mixed-precision strategy for compute-bound linear layers. Experiments demonstrate that LaCache consistently achieves lossless acceleration across multiple DLLM architectures and bench-marks. Furthermore, it is fully composable with existing schedule-level optimization methods, de-livering 3–12 × speedups on standard sequences and up to 40.2 × on long contexts. LaCache pro-vides a general, training-free, and complementary solution for efficient DLLM deployment without compromising generation quality. 7Question: #### 2 Question: #### 114 Question: #### 78 Question: #### 68 
+
+Question : Johnny is picking up the toys on the floor of his room. He'd dumped a lego boxed set with 500 pieces on the floor, and another one that had 3 times more pieces than the 500 piece one, and another one that had 1/4 the number of pieces. How many blocks does Johnny pick up if he picks up all the legos? To determine the total number of Lego blocks Johnny picks up, we need to calculate the number of pieces in each set and then sum them up. 1. The first set has 500 pieces. 2. The second set has 3 times more pieces than …… Now, we sum the number of pieces from all three sets: \[ 500 + 1500 + 125 = 2125 \] Therefore, Johnny picks up a total of 2125 Lego blocks. To determine the total number of Lego blocks Johnny picks up, we need to calculate the number of pieces in each set and then sum them up. 1. The first set has 500 pieces. 2. The second set has 3 times more pieces than …… Now, we sum the number of pieces from all three sets: \[ 500 + 1500 + 125 = 2125 \] Therefore, Johnny picks up a total of 2125 Lego blocks. 
+
+> #### 2125
+
+Vanilla Answer +LaCache(Ours) Answer Gsm8K Prompt(4-shot) 
+
+From typing import List def factorize(n: int) -> List[int]: """ Return list of prime factors of given integer in the order from smallest to largest. Each of the factors should be listed number of times corresponding to how many times it appeares in factorization. Input number should be equal to the product of all factors >>> factorize(8) [2, 2, 2] >>> factorize(25) [5, 5] >>> factorize(70) [2, 5, 7] if n <= 1: return [] factors = [] while n > 1: if n % 2 == 0: factors.append(2) n = n // 2 …… while n % 7 == 0: factors.append(7) n = n // 7 if n > 1: factors.append(n) return factors if n <= 1: return [] factors = [] while n > 1: if n % 2 == 0: factors.append(2) n //= 2 
+
+…… while n % 297 == 0: factors.append(297) n //= 297 while n % 311 == 0: factors.append(311) n //= 311 
+
+return factors 
+
+Vanilla Answer +LaCache(Ours) Answer HumanEval Prompt(LongSeq) A. B. Figure 7: The response examples of the backbone and LaCache(Ours) generated on different datasets. A. LaCache’s answers are basically the same as backbone in most scenarios, except that the low-precision strategy makes the model slightly tend to generate the end symbol later, so that the correct format of the answer can be output more completely. B. In the scenario of long text generation, when answering difficult code questions using the enumeration method, LaCache tends to generate more enum content, so that the answer is closer to the correct answer. 
+
+Limitations 
+
+Although the proposed LaCache achieves signifi-cant acceleration, certain limitations remain. First, lossless caching is theoretically restricted to the first layer of the model. Due to the bidirectional propagation of hidden states in subsequent layers, implementing caching mechanisms deeper in the network necessitates approximate methods, which may introduce slight degradations in generation quality. Second, from a hardware perspective, the mixed-precision strategy depends heavily on mod-ern accelerators equipped with native support for low-precision formats, such as FP8. This reliance restricts the direct deployment of the framework on older hardware architectures that lack optimized matrix calculation engines. 
+
+Acknowledgments References 
+
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and 1 others. 2021. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 .Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, and 1 others. 2020. Language models are few-shot learners. Advances in neural information processing systems , 33:1877–1901. Mark Chen. 2021. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 .Xinhua Chen, Sitao Huang, Cong Guo, Chiyue Wei, Yintao He, Jianyi Zhang, Hai Li, Yiran Chen, and 1 others. 2025. Dpad: Efficient diffusion lan-guage models with suffix dropout. arXiv preprint arXiv:2508.14148 .
+
+8Table 4: Comprehensive benchmark results of LLaDA-Instruct with LaCache over four tasks. 
+
+Efficiency Accuracy (%) Benchmark Method Latency (s) ↓ TPS ↑ Gen. Length Flexible ↑ Strict ↑
+
+Vanilla 10.59 19.78 209/256 76.04 48.67 +LaCache 9.60 21.78 211/256 76.35 49.43 +Parallel (Fast-dLLM) 3.52 60.44 213/256 78.70 50.64 +Parallel + LaCache 2.48 86.33 214/256 77.71 51.63 +DPad 7.00 20.48 143/256 77.79 75.21 +DPad + LaCache 5.37 26.81 144/256 77.18 75.36 +Parallel + DPad 2.53 56.88 144/256 77.48 75.36 GSM8K (4-shot) +Parallel + DPad + LaCache 2.12 68.43 145/256 78.92 76.35 
+
+Vanilla 9.93 21.11 210/256 31.14 32.20 +LaCache 6.97 30.08 210/256 30.94 32.48 +Parallel (Fast-dLLM) 3.83 54.68 210/256 31.08 32.18 +Parallel + LaCache 2.68 78.13 210/256 30.84 32.48 
+
++DPad 7.60 24.32 185/256 33.82 32.41 +DPad + LaCache 5.81 31.88 185/256 33.94 31.40 +Parallel + DPad 3.05 60.70 185/256 34.14 31.72 MATH (4-shot) +Parallel + DPad + LaCache 3.03 69.27 210/256 30.94 32.36 Vanilla 15.87 6.71 106/512 35.98 –+LaCache 11.83 8.73 103/512 39.63 –+Parallel (Fast-dLLM) 5.04 21.22 107/512 35.37 –+Parallel + LaCache 3.72 28.59 106/512 39.02 –+DPad 11.29 7.89 89/512 39.63 –+DPad + LaCache 11.32 8.84 100/512 40.85 –+Parallel + DPad 4.15 24.20 100/512 38.11 –HumanEval (0-shot) +Parallel + DPad + LaCache 4.29 25.55 110/512 37.80 –Vanilla 24.07 2.68 64/512 36.80 –+LaCache 21.51 2.95 64/512 36.80 –+Parallel (Fast-dLLM) 2.17 26.69 65/512 37.40 –+Parallel + LaCache 1.95 32.65 64/512 37.40 –+DPad 8.07 9.51 77/512 36.40 –+DPad + LaCache 7.30 12.41 91/512 38.20 –+Parallel + DPad 2.30 34.32 79/512 37.60 –MBPP (3-shot) +Parallel + DPad + LaCache 2.33 35.72 83/512 37.20 –
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, and 1 others. 2021. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 .Yixin Dong, Charlie F Ruan, Yaxing Cai, Ziyi Xu, Yi-long Zhao, Ruihang Lai, and Tianqi Chen. 2025. Xgrammar: Flexible and efficient structured genera-tion engine for large language models. Proceedings of Machine Learning and Systems , 7. Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, and 1 others. 2024. The llama 3 herd of models. 
+
+arXiv e-prints , pages arXiv–2407. He Feng, Yongjia Ma, Donglin Di, Lei Fan, and Tonghua Su. 2026. Cogportrait: Fine-grained eye-region control in portrait animation via hierarchical agent planning. Preprint , arXiv:2605.28056. He Feng, Yongjia Ma, Donglin Di, Lei Fan, Tonghua Su, and Xiangqian Wu. 2025. Ditalker: A unified dit-based framework for high-quality and speaking styles controllable portrait animation. arXiv preprint arXiv:2508.06511 .Wentao Guo, Mayank Mishra, Xinle Cheng, Ion Stoica, and Tri Dao. 2025. Sonicmoe: Accelerating moe with io and tile-aware optimizations. arXiv preprint arXiv:2512.14080 .Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Ja-cob Steinhardt. 2021. Measuring mathematical prob-lem solving with the math dataset. arXiv preprint arXiv:2103.03874 .Juyong Jiang, Fan Wang, Jiasi Shen, Sungju Kim, and Sunghun Kim. 2024. A survey on large language models for code generation. ACM Transactions on Software Engineering and Methodology .Yuchu Jiang, Yue Cai, Xiangzhong Luo, Jiale Fu, Jiarui Wang, Chonghan Liu, and Xu Yang. 2025. d 2 cache: Accelerating diffusion-based llms via dual adaptive caching. arXiv preprint arXiv:2509.23094 .Dhiraj Kalamkar, Dheevatsa Mudigere, Naveen Mellem-pudi, Dipankar Das, Kunal Banerjee, Sasikanth Avan-cha, Dharma Teja Vooturi, Nataraj Jammalamadaka, Jianyu Huang, Hector Yuen, and 1 others. 2019. A study of bfloat16 for deep learning training. arXiv preprint arXiv:1905.12322 .Samar Khanna, Siddhant Kharbanda, Shufan Li, Harshit Varma, Eric Wang, Sawyer Birnbaum, Ziyang Luo, 
+
+9Yanis Miraoui, Akash Palrecha, Stefano Ermon, and 1 others. 2025. Mercury: Ultra-fast language models based on diffusion. arXiv preprint arXiv:2506.17298 ,1. Daniel D Lee, P Pham, Y Largman, and A Ng. 2009. Advances in neural information processing systems 22. Tech Rep .Haokun Lin, Haobo Xu, Yichen Wu, Jingzhi Cui, Ying-tao Zhang, Linzhan Mou, Linqi Song, Zhenan Sun, and Ying Wei. 2024. Duquant: Distributing outliers via dual transformation makes stronger quantized llms. Advances in Neural Information Processing Systems , 37:87766–87800. Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, and 1 others. 2024. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 .Yang Liu, Weixing Chen, Yongjie Bai, Xiaodan Liang, Guanbin Li, Wen Gao, and Liang Lin. 2025a. Align-ing cyber space with physical world: A comprehen-sive survey on embodied ai. IEEE/ASME Transac-tions on Mechatronics .Zhiyuan Liu, Yicun Yang, Yaojie Zhang, Junjie Chen, Chang Zou, Qingyuan Wei, Shaobo Wang, and Lin-feng Zhang. 2025b. dllm-cache: Accelerating dif-fusion large language models with adaptive caching. 
+
+arXiv preprint arXiv:2506.06295 .Aaron Lou, Chenlin Meng, and Stefano Ermon. 2023. Discrete diffusion language modeling by estimating the ratios of the data distribution. Chaofan Luo, Donglin Di, Xun Yang, Yongjia Ma, Zhou Xue, Chen Wei, and Yebin Liu. 2024. Trame: Trajectory-anchored multi-view editing for text-guided 3d gaussian splatting manipulation. Preprint ,arXiv:2407.02034. Omer Luxembourg, Haim Permuter, and Eliya Nach-mani. 2025. Plan for speed–dilated scheduling for masked diffusion language models. arXiv preprint arXiv:2506.19037 .He Lyu, Ningyu Sha, Shuyang Qin, Ming Yan, Yuying Xie, and Rongrong Wang. 2019. Advances in neural information processing systems. Advances in neural information processing systems , 32. Yongjia Ma, Junlin Chen, Donglin Di, Qi Xie, Lei Fan, Wei Chen, Na Zhao, and Xun Yang. 2026. Tuning-free long video generation via global-local collabo-rative diffusion. ACM Trans. Multimedia Comput. Commun. Appl. , 22(7). Yongjia Ma, Donglin Di, Xuan Liu, Xiaokai Chen, Lei Fan, Wei Chen, and Tonghua Su. 2025. Adams bash-forth moulton solver for inversion and editing in rec-tified flow. arXiv preprint arXiv:2503.16522 .Yongjia Ma, Bin Dou, Tianyu Zhang, and Zejian Yuan. 2024. Rd-nerf: Neural robust distilled feature fields for sparse-view scene segmentation. In ICASSP 2024 - 2024 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pages 3470– 3474. Manqing Mao, Paishun Ting, Yijian Xiang, Mingyang Xu, Julia Chen, and Jianzhe Lin. 2024. Multi-user chat assistant (muca): a framework using llms to facilitate group conversations. arXiv preprint arXiv:2401.04883 .Paulius Micikevicius, Sharan Narang, Jonah Alben, Gre-gory Diamos, Erich Elsen, David Garcia, Boris Gins-burg, Michael Houston, Oleksii Kuchaiev, Ganesh Venkatesh, and 1 others. 2017. Mixed precision train-ing. arXiv preprint arXiv:1710.03740 .Shen Nie, Fengqi Zhu, Chao Du, Tianyu Pang, Qian Liu, Guangtao Zeng, Min Lin, and Chongxuan Li. 2024. Scaling up masked diffusion models on text. 
+
+arXiv preprint arXiv:2410.18514 .Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. 2025. Large language dif-fusion models. arXiv preprint arXiv:2502.09992 .Xinhao Sun, Maoliang Li, Zihao Zheng, Jiayu Chen, Hezhao Xu, Yun Liang, and Xiang Chen. 2025. Stdd: Spatio-temporal dynamics-driven token refine-ment in diffusion language models. arXiv preprint arXiv:2601.04205 .Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. Advances in neural information processing systems , 30. Yuxuan Wan, Wenxuan Wang, Yiliu Yang, Youliang Yuan, Jen-tse Huang, Pinjia He, Wenxiang Jiao, and Michael Lyu. 2024. Logicasker: Evaluating and im-proving the logical reasoning ability of large lan-guage models. In Proceedings of the 2024 Confer-ence on Empirical Methods in Natural Language Processing , pages 2124–2155. Linye Wei, Wenjue Chen, Pingzhi Tang, Xiaotian Guo, Le Ye, Runsheng Wang, and Meng Li. 2025a. Or-chestrating dual-boundaries: An arithmetic intensity inspired acceleration framework for diffusion lan-guage models. arXiv preprint arXiv:2511.21759 .Qingyan Wei, Yaojie Zhang, Zhiyuan Liu, Dongrui Liu, and Linfeng Zhang. 2025b. Accelerating diffu-sion large language models with slowfast: The three golden principles. arXiv preprint arXiv:2506.10848 .Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie. 2025. Fast-dllm: Training-free accelera-tion of diffusion llm by enabling kv cache and parallel decoding. arXiv preprint arXiv:2505.22618 .
+
+10 Haocheng Xi, Han Cai, Ligeng Zhu, Yao Lu, Kurt Keutzer, Jianfei Chen, and Song Han. 2024. Coat: Compressing optimizer states and activation for memory-efficient fp8 training. arXiv preprint arXiv:2410.19313 .Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han. 2023. Smoothquant: Accurate and efficient post-training quantization for large language models. In International conference on machine learning , pages 38087–38099. PMLR. Qi Xie, Yongjia Ma, Donglin Di, Xuehao Gao, and Xun Yang. 2025. Moca: Identity-preserving text-to-video generation via mixture of cross attention. In Pro-ceedings of the 7th ACM International Conference on Multimedia in Asia , MMAsia ’25, New York, NY, USA. Association for Computing Machinery. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025a. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Jiahui Yang, Donglin Di, Baorui Ma, Jianxun Cui, Xun Yang, Yongjia Ma, Wenzhang Sun, Wei Chen, Zhou Xue, Meng Wang, and Yebin Liu. 2025b. Tv-3dg: Mastering text-to-3d customized generation with vi-sual prompt. IEEE Transactions on Pattern Analysis and Machine Intelligence , pages 1–18. Jiahui Yang, Yongjia Ma, Donglin Di, Jianxun Cui, Hao Li, Wei Chen, Yan Xie, Xun Yang, and Wang-meng Zuo. 2025c. Qr-lora: Efficient and disentan-gled fine-tuning via qr decomposition for customized generation. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision , pages 17587– 17597. Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. 2025. Dream 7b: Diffusion large language models. 
+
+arXiv preprint arXiv:2508.15487 .Yu Zhang, Hui-Ling Zhen, Mingxuan Yuan, and Bei Yu. 2025. Moss: Efficient and accurate fp8 llm train-ing with microscaling and automatic scaling. arXiv preprint arXiv:2511.05811 .Fengqi Zhu, Rongzhen Wang, Shen Nie, Xiaolu Zhang, Chunwei Wu, Jun Hu, Jun Zhou, Jianfei Chen, Yankai Lin, Ji-Rong Wen, and 1 others. 2025. Llada 1.5: Variance-reduced preference optimization for large language diffusion models. arXiv preprint arXiv:2505.19223 .
+
+Appendix A Impact Statement 
+
+This work proposes a method to improve the effi-ciency of diffusion large language model (DLLM) inference. By reducing computational costs, our approach can lower the barrier to deploying and experimenting with large-scale models, potentially benefiting research accessibility and real-world ap-plications such as dialogue systems, code genera-tion, and reasoning tasks. However, like other advances in DLLM effi-ciency, this work may also contribute to broader adoption of powerful language models, which raises concerns regarding misuse, biased outputs, and the amplification of harmful or misleading con-tent. These risks are not specific to our method but are inherent to the deployment of diffusion large-scale language models in general. Our work focuses on improving the computa-tional efficiency of existing models and does not introduce new model capabilities or training data. As such, it does not directly increase the risk of misuse beyond what is already present in current DLLM deployments. Responsible use, proper eval-uation, and alignment techniques remain essential for mitigating potential negative impacts. Overall, we believe that the benefits of improved efficiency—such as reduced computational cost and energy consumption—outweigh the potential risks, provided that the technology is applied re-sponsibly. 
+
+B Preliminary 
+
+B.1 the Inference and Sampling in DLLM 
+
+DLLM adopts a semi-autoregressive (SAR) infer-ence paradigm that balances the latency advantages of parallel decoding with the quality and stability of autoregressive generation. Instead of generat-ing one token at a time or decoding the entire se-quence in a fully parallel manner, SAR inference produces tokens in blocks, allowing partial paral-lelism while preserving causal dependencies across blocks. Given an input prompt x = ( x1, . . . , x t0 ),DLLM generates the output sequence by partition-ing the decoding process into blocks of size B. At inference time, the model predicts future tokens simultaneously within each decoding step, yielding candidate tokens (y(t+1) , . . . , y (t+B)). This block-wise generation reduces the total number of decod-ing iterations by a factor of B compared to fully au-toregressive decoding. Importantly, tokens within 11 the same block do not condition on one another; in-stead, the model relies on a shared contextual repre-sentation to predict all tokens jointly. This structure preserves strict causality across blocks while relax-ing token-level dependencies within each block, leading to a semi-autoregressive dependency pat-tern. 
+
+B.2 the Foundational Principles of Flash-attention 
+
+Self-attention (Vaswani et al., 2017) has quadratic 
+
+compute and memory cost in the sequence length. FlashAttention reduces the memory overhead by computing attention in tiles and avoiding material-izing the full attention score matrix in HBM. Con-cretely, the sequence dimension N is divided into row blocks of size Br and column blocks of size 
+
+Bc. Queries are partitioned into Tr = ⌈N/B r⌉
+
+blocks Q1, . . . , Q Tr , while keys and values are par-titioned into Tc = ⌈N/B c⌉ blocks K1, . . . , K Tc
+
+and V1, . . . , V Tc .For a query block Qi, FlashAttention streams over all key–value blocks (Kj , V j ), computing block scores on-chip: 
+
+S(j) 
+
+> i
+
+= QiK⊤ 
+
+> j
+
+∈ RBr ×Bc . (9) To compute the softmax without storing all S(j) 
+
+> i
+
+,FlashAttention uses an online (log-sum-exp) for-mulation that maintains per-row state variables :a running maximum m, a normalizer ℓ, and an ab-normalized output accumulator ˜O. After pro-cessing all key–value blocks, the output is obtained by row-wise normalization O = ˜O/ℓ . We will reuse (m, ℓ, ˜O) as the cached attention state in Sec. 3.3.3. 
+
+C The Speed-Accuracy Trade-off of only Caching Strategy on more layers 
+
+As shown in Fig. 8, when applying the caching strategy across multiple layers (layers 0 and 3–17 of LLaDA-Instruct), a speed-accuracy trade-off emerges, governed by the cache update interval. As the interval increases, inference accelerates at the cost of greater accuracy degradation. We em-pirically identify a configuration that effectively balances efficiency and accuracy. 
+
+D The acceleration of LaCache on LLaDA-base on multiple benchmarks 
+
+The effect of LaCache on the LLaDA-base model among multiple datasets is presented in Tab. 6, achieving 10%-30% acceleration on datasets other than HumanEval, and the effect is basically loss-less. In addition, the reason for the lack of acceler-ation on the HumanEval dataset is that the overall prompt length of the dataset is short, resulting in insignificant acceleration. 
+
+> Figure 8: The accuracy-speedup curve of caching strat-egy applied to multiple layers. As shown in the figure, as the cache update interval increases, inference speed improves while accuracy degrades more significantly.
+
+E The acceleration of LaCache on LLaDA-1.5 on multiple benchmarks 
+
+The acceleration performance of LaCache on the LLaDA-1.5 model among multiple datasets is pre-sented in Tab. 7, achieving 10%-30% acceleration on datasets other than HumanEval, and the effect is basically lossless. In addition, the reason for the lack of acceleration on the HumanEval dataset is that the overall prompt length of the dataset is short, resulting in insignificant acceleration. 
+
+F The acceleration of LaCache on fast-dllm-v2 on multiple benchmarks 
+
+As shown in Tab. 9, FACache along could con-tribute an additional 6% speedup to Fast-dLLM-V2 (Wu et al., 2025), demonstrating the comple-mentary acceleration potential of LaCache. 
+
+G The acceleration of LaCache on LLaDA-Instruct on more benchmarks and more type of GPU 
+
+As shown in Tab. 5 and Tab. 10, LaCache main-tains competitive accuracy across a broader range of benchmarks and consistent performance on an another designed GPU. 
+
+H Ablation of sequence length 
+
+As shown in Tab. 8, the acceleration performance of LaCache on the HumanEval dataset in the scenario 12 Table 5: Additional benchmark results of LLaDA-Instruct with LaCache.                                  
+
+> Accuracy(%) Benchmark Method Flexible Strict Vanilla 73.6 73.3
+> piqa(4-shot) +LaCache 73.5 73.3 Vanilla 78.7 76.6 arc_easy +LaCache 79 76.2 Vanilla 50 54.5 arc_chanllenge +LaCache 49.53 54.6 Vanilla 50.79 67.46 hellaswag +LaCache 50.77 67.43 Vanilla 68.75 -winogrande +LaCache 69.06 -Vanilla 27.23 27.23 gpqa +LaCache 30.8 30.8
+
+of long text generation is presented in Tab. Table 7, and shows barely loss. 
+
+I The answer example of LaCache compared with DPad 
+
+As shown in Fig. 9, although DPad makes the an-swer shorter, LaCache will make the answer longer, so as to ensure that the comments of the code are fully generated. 
+
+J The pseudocode of FACache 
+
+As shown below, the FACache is updated in the first generation step and reused in later steps to reduce the redundancy in FlashAttention. 13 Algorithm 1 the first layer’s Flash-Attention 
+
+Require: Matrices Q, K, V, Ocache ∈ RN ×d, ℓcache, RowM axcache ∈ RN ×4d in HBM, block sizes 
+
+Bc, B r, GenStep ∈ { T rue, F alse }, where GenStep = T rue if it’s in the first generation step. 
+
+1: Divide Q into Tr = ⌈N/B r⌉ blocks Q1, . . . , Q Tr of size Br × d, divide K, V into Tc = ⌈N/B c⌉
+
+blocks K1, . . . , K Tc and V1, . . . , V Tc of size Bc × d, divide the cache Ocache ∈ RN ×d into Tr blocks 
+
+Ocache 1, . . . , Ocache Tr of size Br × d, divide the cache ℓcache, RowM axcache ∈ RN ×4d into Tr
+
+blocks ℓcache 1, . . . , ℓcache Tr and RowM axcache 1, . . . , RowM axcache Tr of size Br × 4d.
+
+2: Divide the output O ∈ RN ×d into Tr blocks O1, . . . , O Tr of size Br × d, and divide the logsumexp 
+
+L into Tr blocks L1, . . . , L Tr of size Br.
+
+3: Define overlap indicator 
+
+Qoverlap =
+
+(
+
+T rue, if Qi overlaps with current Block 
+
+F alse, otherwise .
+
+4: 
+
+Koverlap =
+
+(
+
+T rue, if Kj overlaps with current Block 
+
+F alse, otherwise .
+
+5: for 1 ≤ i ≤ Tr do 
+
+6: Load Qi from HBM to on-chip SRAM. 
+
+7: On chip, initialize O(0)  
+
+> i
+
+= 0Br ×d, ℓ(0)  
+
+> i
+
+= 0Br , m(0)  
+
+> i
+
+= ( −∞ )Br .
+
+8: if GenStep = T rue and Qoverlap = F alse then 
+
+9: Ocache (0)  
+
+> i
+
+= 0Br ×d, ℓcache (0)  
+
+> i
+
+= 0Br ×4d, RowM axcache (0)  
+
+> i
+
+= 0Br ×4d.
+
+10: else if GenStep = F alse and Qoverlap = F alse then 
+
+11: O(0)  
+
+> i
+
+= Ocache (0)  
+
+> i
+
+, ℓ(0)  
+
+> i
+
+= ℓcache (0)  
+
+> i
+
+, m(0)  
+
+> i
+
+= RowM axcache (0)  
+
+> i
+
+. ▷ Initialize with cache 
+
+12: end if 
+
+13: for 1 ≤ j ≤ Tc do 
+
+14: if GenStep = F lase and Qoverlap = F alse and Koverlap = F alse then 
+
+15: continue . ▷ Already calculated, skip 
+
+16: end if 
+
+17: Load Kj , V j from HBM to on-chip SRAM. 
+
+18: On chip, compute S(j) 
+
+> i
+
+= QiK⊤ 
+
+> j
+
+∈ RBr ×Bc .
+
+19: On chip, compute m(j) 
+
+> i
+
+= max 
+
+
+
+m(j−1)  
+
+> i
+
+, rowmax( S(j) 
+
+> i
+
+)
+
+
+
+, ˜P (j) 
+
+> i
+
+= exp 
+
+
+
+S(j) 
+
+> i
+
+− m(j)
+
+> i
+
+
+
+∈
+
+RBr ×Bc ,
+
+20: ℓ(j) 
+
+> i
+
+= em(j−1)   
+
+> i−m(j)
+> i
+
+ℓ(j−1)  
+
+> i
+
++ rowsum( ˜P (j) 
+
+> i
+
+).
+
+21: On chip, compute O(j) 
+
+> i
+
+= diag 
+
+
+
+em(j−1)  
+
+> i−m(j)
+> i
+
+
+
+O(j−1)  
+
+> i
+
++ ˜P (j) 
+
+> i
+
+Vj .
+
+22: if GenStep = T rue and Qoverlap = F alse and Koverlap = F alse then 
+
+23: Ocache (j) 
+
+> i
+
+= diag 
+
+
+
+em(j−1)  
+
+> i−m(j)
+> i
+
+
+
+Ocache (j−1)  
+
+> i
+
++ ˜P (j) 
+
+> i
+
+Vj ,
+
+24: ℓcache i = em(j−1)   
+
+> i−m(j)
+> i
+
+ℓcache i + rowsum( ˜P (j) 
+
+> i
+
+). ▷ Update cache 
+
+25: end if 
+
+26: end for 
+
+27: On chip, compute Oi = diag 
+
+
+
+ℓ(Tc)
+
+> i
+
+−1
+
+O(Tc) 
+
+> i
+
+.
+
+28: On chip, compute Li = m(Tc) 
+
+> i
+
++ log 
+
+
+
+ℓ(Tc)
+
+> i
+
+
+
+.
+
+29: Write Oi to HBM as the i-th block of O.
+
+30: Write Li to HBM as the i-th block of L.
+
+31: if GenStep = T rue and Qoverlap = F alse then 
+
+32: Write Ocache i to HBM as the i-th block of Ocache .
+
+33: Write ℓcache i to HBM as the i-th block of ℓcache .
+
+34: Write RowM axcache i to HBM as the i-th block of RowM axcache . ▷ Store cache 
+
+35: end if 
+
+36: end for 
+
+14 You are an expert Python programmer… [BEGIN] …[DONE] You are an expert Python programmer… [BEGIN] …[DONE] You are an expert Python programmer… [BEGIN] …[DONE] You are an expert Python programmer, and here is your task: Write a python function to set the left most unset bit. Your code should pass these tests: assert set_left_most_unset_bit(10) == 14 assert set_left_most_unset_bit(12) == 14 assert set_left_most_unset_bit(15) == 15 [BEGIN] def set_left_most_unset_bit(n): # Find the leftmost unset bit while n > 0: n &= n - 1 # Set the leftmost unset bit n += 1 return n # Test cases assert set_left_most_unset_bit(10) == 14 assert set_left_most_unset_bit(12) == 14 assert set_left_most_unset_bit(15) == 15 def set_left_most_unset_bit(n): # Find the leftmost unset bit leftmost_unset_bit = 0 while n > 0: if n & 1 == 0: leftmost_unset_bit += 1 n >>= 1 # Set the leftmost unset bit n |= (1 << leftmost_unset_bit) return n # Test cases assert set_left_most_unset_bit(10) == 14 assert set_left_most_unset_bit(12) == 14 assert set_left_most_unset_bit(15) == 15 
+
+Explanation: 1. The function first finds the leftmost unset bit by iterating through the binary representation of the number. 2. It then sets the leftmost unset bit by using the bitwise OR operator (`|`) with a mask that has a `1` at the leftmost unset bit position. 3. Finally, it returns the modified number. The test cases verify that the function works correctly .
+
+Dpad Answer +LaCache(Ours) Answer MBPP Prompt(3-shot) Figure 9: The response examples of the DPad backbone and LaCache(Ours) generated with the prompt in MBPP benchmark. 
+
+15 Table 6: Comprehensive benchmark results of LLaDA-base with LaCache over four tasks. 
+
+LLaDA-base Efficiency Accuracy(%) Benchmark Method Latency(s) TPS Gen.Length Flexible Strict Vanilla 10.59 14.74 156 62.32 69.67 +LaCache 9.66 15.82 153 64.75 69.75 +Parallel(Fast-dLLM) 5.94 26.42 157 62.93 71.04 +Parallel+LaCache 4.97 30.72 153 65.81 70.89 +DPad 7.47 17.25 129 69.83 71.57 +DPad+LaCache 6.7 19.26 129 70.66 71.04 +Parallel+DPad 3.85 33.57 129 68.92 71.04 GSM8K(4-shot) 
+
++Parallel+DPad+LaCache 3.11 41.54 129 69.83 70.51 
+
+Vanilla 9.14 16.69 153 30.1 27.54 +LaCache 8.17 18.77 153 30.48 27.66 +Parallel(Fast-dLLM) 4.98 30.67 153 30.2 27.66 +Parallel+LaCache 4.1 37.47 153 30.56 27.78 +DPad 8.84 17.05 151 30.06 27.38 +DPad+LaCache 7.92 19.14 152 30 27.52 +Parallel+DPad 4.74 31.8 151 30.1 27.42 MATH(4-shot) 
+
++Parallel+DPad+LaCache 3.91 38.82 152 29.94 27.54 
+
+Vanilla 13.55 8.89 120 33.54 -+LaCache 14.45 7.44 108 32.93 -+Parallel(Fast-dLLM) 4.17 28.87 120 33.54 -+Parallel+LaCache 3.84 28.02 108 32.93 -+DPad 9.96 9.75 97 32.32 -+DPad+LaCache 11.92 8.6 102 34.76 -+Parallel+DPad 2.36 41.12 97 32.32 -HumanEval(0-shot) 
+
++Parallel+DPad+LaCache 2.8 36.73 103 35.67 -
+
+Vanilla 23.99 2.64 63 40 -+LaCache 21.51 2.91 63 39 -+Parallel(Fast-dLLM) 7.32 8.63 63 40.4 -+Parallel+LaCache 5.96 10.5 63 38.6 -+DPad 21.11 2.85 60 40.6 -+DPad+LaCache 18.76 3.23 61 40 -+Parallel+DPad 4.56 13.17 60 40.6 -MBPP(3-shot) 
+
++Parallel+DPad+LaCache 4.09 14.82 61 40 -
+
+16 Table 7: Comprehensive benchmark results of LLaDA-1.5 with LaCache over four tasks. 
+
+LLaDA-1.5 Efficiency Accuracy(%) Benchmark Method Latency(s) TPS Gen.Length Flexible Strict Vanilla 10.6 20.06 213 80.44 63.38 +LaCache 9.65 22.22 215 79.83 62.47 +Parallel(Fast-dLLM) 3.13 69.73 215 81.5 63.53 +Parallel+LaCache 2.89 75.09 217 80.21 60.8 +DPad 6.45 22.63 146 80.67 80.14 +DPad+LaCache 5.76 25.35 146 81.05 79.98 +Parallel+DPad 2.26 64.55 146 81.8 81.05 GSM8K(4-shot) 
+
++Parallel+DPad+LaCache 2.05 71.37 146 82.26 81.2 
+
+Vanilla 9.09 24.01 218 32.9 33.66 +LaCache 8.18 26.7 218 33.66 34.04 +Parallel(Fast-dLLM) 3.48 62.63 218 32.78 33.62 +Parallel+LaCache 3.15 69.4 218 33.58 33.82 +DPad 6.96 27.33 190 36.66 33.64 +DPad+LaCache 6.27 30.33 190 36.38 33.56 +Parallel+DPad 3.04 62.38 190 36.04 33.24 MATH(4-shot) 
+
++Parallel+DPad+LaCache 2.79 68.37 191 36.44 33.6 
+
+Vanilla 13.55 8 108 41.46 +LaCache 14.44 7.31 106 42.07 +Parallel(Fast-dLLM) 4.41 24.48 108 39.63 +Parallel+LaCache 4.58 23.47 107 41.46 +DPad 10.07 9.66 97 39.63 +DPad+LaCache 11.84 7.79 92 39.94 +Parallel+DPad 3.9 24.28 95 41.46 HumanEval(0-shot) 
+
++Parallel+DPad+LaCache 4.6 19.81 91 40.55 
+
+Vanilla 24.07 2.63 63 38.8 +LaCache 21.48 3.11 67 38.2 +Parallel(Fast-dLLM) 2.15 29.43 63 39.4 +Parallel+LaCache 1.96 34.03 67 38 +DPad 7.44 12.07 90 41.2 +DPad+LaCache 7.52 12.23 92 38.4 +Parallel+DPad 2.21 40.55 90 40.2 MBPP(3-shot) 
+
++Parallel+DPad+LaCache 2.26 40.01 91 40.2 
+
+17 Table 8: Ablation study on LLaDA-instruct under dif-ferent context lengths. 
+
+Method Length = 1024 Length = 2048 HumanEval HumanEval Vanilla 37.8 37.8 +LaCache 40.85 39.63 +Parallel (Fast-dLLM) 37.8 37.8 +Parallel + LaCache 41.46 39.63 +DPad 38.41 39.94 
+
++DPad + LaCache 37.8 38.41 +Parallel + DPad 41.46 39.33 +Parallel + DPad + LaCache 40.85 39.33 18 Table 9: Comprehensive benchmark results of Fast-dllm-V2 with FACache only. 
+
+Benchmark Method Efficiency Accuracy(%) 
+
+Latency(s) TPS Gen.Length Flexible GSM8K(4-shot),bsz=256 Vanilla 1.06 310.19 328 82.79 +LaCache(FACache) 1 326.99 328 82.79 MATH(4-shot),bsz=256 Vanilla 1.31 491.52 643 59.94 +LaCache(FACache) 1.23 523.48 643 59.94 MBPP(3-shot),bsz=256 Vanilla 0.9 315.53 270 31.2 +LaCache(FACache) 0.84 336.92 270 31.2 HumanEval(0-shot),bsz=256 Vanilla 1.57 269.68 369 65.24 +LaCache(FACache) 1.45 289.59 362 65.24 
+
+Table 10: Comprehensive results On an another designed GPU of LlaDA-Instruct with LaCache.                                                                                   
+
+> Efficiency Accuracy(%) Benchmark Method Latency(s) TPS Gen.Length Flexible Strict/acc_norm Vanilla 11.07 20.82 230 76.04 35.41 GSM8K(4-shot) +LaCache 8.41 27.5 231 75.66 35.56 Vanilla 9.58 25.96 249 8.5 38.5 MATH(4-shot) +LaCache 7.93 31.32 248 7.88 38.82 Vanilla 25.1 11.91 299 15.58 MBPP(3-shot) +LaCache 18.01 16.64 300 14.8 Vanilla ---78.7 76.6 Arc_Easy +LaCache ---79.46 76.18 Vanilla ---50 54.5 Arc_Chanllenge +LaCache ---51.28 52.99 Vanilla ---69.53 -Winogrande +LaCache ---69.06 -Vanilla ---28.35 28.35 GPQA +LaCache ---30.13 30.13
+
+19
