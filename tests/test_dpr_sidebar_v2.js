@@ -28,8 +28,14 @@ function setupBrowserStub(hash) {
   global.document = {
     readyState: 'loading',
     addEventListener: () => {},
+    dispatchEvent: () => {},
     querySelector: () => null,
     querySelectorAll: () => [],
+    createEvent: () => ({
+      initCustomEvent(name) {
+        this.type = name;
+      },
+    }),
     createElement: () => {
       let text = '';
       return {
@@ -177,6 +183,7 @@ function testSidebarNavigationContract() {
   assert.equal(typeof tools.parseSidebar, 'function');
 
   const model = tools.parseSidebar(sampleSidebar);
+  assert.equal(model.tutorial.label, '教程', '旧版运行态文案也应归一化为两个字');
   assert.deepEqual(tools.collectPaperHrefsFromModel(model), [
     '#/202606/24/paper-a',
     '#/202606/24/paper-b',
@@ -622,19 +629,50 @@ function testQuickLinksCenterTextAndDetachIcon() {
   const sidebar = loadSidebarForTest('#/');
   const tools = sidebar.__test;
   assert.equal(typeof tools.renderQuickLink, 'function');
+  assert.equal(typeof tools.renderSidebarHeader, 'function');
+  assert.equal(typeof tools.renderFeedbackQuickButton, 'function');
 
   const html = tools.renderQuickLink('dpr-sidebar-quick-home', '#/', '🏠', '首页');
   assert.ok(html.includes('class="dpr-sidebar-quick dpr-sidebar-quick-home"'));
   assert.ok(html.includes('<span class="dpr-sidebar-quick-label"><span class="dpr-sidebar-quick-icon" aria-hidden="true">🏠</span>首页</span>'));
 
+  const feedbackHtml = tools.renderFeedbackQuickButton();
+  assert.ok(feedbackHtml.includes('<button type="button" class="dpr-sidebar-quick dpr-sidebar-feedback-btn"'));
+  assert.ok(feedbackHtml.includes('data-sidebar-feedback'));
+  assert.ok(feedbackHtml.includes('aria-label="打开反馈"'));
+  assert.ok(feedbackHtml.includes('<span class="dpr-sidebar-quick-label"><span class="dpr-sidebar-quick-icon" aria-hidden="true">💬</span>反馈</span>'));
+
+  const headerHtml = tools.renderSidebarHeader('#/', '#/tutorial/README', '首页', '使用教程');
+  const homeIndex = headerHtml.indexOf('dpr-sidebar-quick-home');
+  const tutorialIndex = headerHtml.indexOf('dpr-sidebar-quick-tutorial');
+  const feedbackIndex = headerHtml.indexOf('dpr-sidebar-feedback-btn');
+  assert.ok(homeIndex >= 0 && tutorialIndex > homeIndex && feedbackIndex > tutorialIndex);
+  assert.ok(headerHtml.includes('aria-hidden="true">📖</span>教程</span>'));
+
+  const sidebarTemplate = fs.readFileSync('docs_init/_sidebar.md', 'utf8').split('\n').slice(0, 3).join('\n');
+  assert.ok(sidebarTemplate.includes('data-dpr-hash="#/tutorial/README">教程</a>'));
+  assert.ok(!sidebarTemplate.includes('>使用教程</a>'));
+
   const css = fs.readFileSync('app/app.css', 'utf8');
+  const headerRule = cssRule(css, '.dpr-sidebar-header');
+  assert.ok(/display:\s*grid/i.test(headerRule));
+  assert.ok(/grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/i.test(headerRule));
+
   const quickRule = cssRule(css, '.dpr-sidebar-quick');
   assert.ok(/position:\s*relative/i.test(quickRule));
   assert.ok(/justify-content:\s*center/i.test(quickRule));
+  assert.ok(/min-width:\s*0/i.test(quickRule));
+  assert.ok(/width:\s*100%/i.test(quickRule));
+  assert.ok(/box-sizing:\s*border-box/i.test(quickRule));
+  assert.ok(/cursor:\s*pointer/i.test(quickRule));
+  assert.ok(/overflow:\s*visible/i.test(quickRule));
 
   const labelRule = cssRule(css, '.dpr-sidebar-quick-label');
   assert.ok(/position:\s*relative/i.test(labelRule));
   assert.ok(/display:\s*inline-block/i.test(labelRule));
+  assert.ok(/max-width:\s*100%/i.test(labelRule));
+  assert.ok(/overflow:\s*visible/i.test(labelRule));
+  assert.ok(/white-space:\s*nowrap/i.test(labelRule));
   assert.ok(/text-align:\s*center/i.test(labelRule));
 
   const iconRule = cssRule(css, '.dpr-sidebar-quick-icon');
@@ -642,6 +680,63 @@ function testQuickLinksCenterTextAndDetachIcon() {
   assert.ok(/right:\s*calc\(100%\s*\+\s*4px\)/i.test(iconRule));
   assert.ok(/top:\s*50%/i.test(iconRule));
   assert.ok(/transform:\s*translateY\(-50%\)/i.test(iconRule));
+
+  const feedbackRule = cssRule(css, '.dpr-sidebar-feedback-btn');
+  assert.ok(/background:\s*#f0fdf4/i.test(feedbackRule));
+  assert.ok(/border-color:\s*#86efac/i.test(feedbackRule));
+  assert.ok(/color:\s*#166534/i.test(feedbackRule));
+  assert.ok(/box-shadow:\s*inset 0 0 0 1px rgba\(34,\s*197,\s*94,\s*0\.1\)/i.test(feedbackRule));
+  assert.ok(/@media \(max-width:\s*420px\)[\s\S]*\.dpr-sidebar-header\s*{[^}]*gap:\s*6px/i.test(css));
+  assert.ok(/body\.dpr-dark \.dpr-sidebar-feedback-btn\s*{[^}]*background:\s*#123522/i.test(css));
+}
+
+function testFeedbackEntryClickContractAndFallbacks() {
+  const sidebar = loadSidebarForTest('#/');
+  const tools = sidebar.__test;
+  assert.equal(typeof tools.openFeedbackPanel, 'function');
+
+  const originalCustomEvent = global.CustomEvent;
+  const dispatched = [];
+  const openCalls = [];
+
+  global.CustomEvent = function CustomEvent(name) {
+    this.type = name;
+  };
+  document.dispatchEvent = (event) => {
+    dispatched.push(event.type);
+    return true;
+  };
+  document.createEvent = () => ({
+    initCustomEvent(name) {
+      this.type = name;
+    },
+  });
+
+  window.DPRFeedback = {
+    open() {
+      openCalls.push('open');
+    },
+  };
+  assert.equal(tools.openFeedbackPanel(), true);
+  assert.deepEqual(openCalls, ['open']);
+  assert.deepEqual(dispatched, []);
+
+  delete window.DPRFeedback;
+  assert.equal(tools.openFeedbackPanel(), false);
+  assert.deepEqual(dispatched, ['dpr-open-feedback']);
+
+  if (typeof originalCustomEvent === 'undefined') delete global.CustomEvent;
+  else global.CustomEvent = originalCustomEvent;
+
+  const js = fs.readFileSync('app/dpr-sidebar.js', 'utf8');
+  const start = js.indexOf("var feedbackBtn = e.target.closest('.dpr-sidebar-feedback-btn');");
+  const end = js.indexOf("var axisToggle = e.target.closest('.dpr-sidebar-axis-toggle');", start);
+  assert.ok(start > 0 && end > start, 'feedback button click handler should be present');
+  const block = js.slice(start, end);
+  assert.ok(block.includes('e.preventDefault();'));
+  assert.ok(block.includes('openFeedbackPanel();'));
+  assert.ok(block.includes('if (isOverlaySidebarViewport()) {'));
+  assert.ok(block.includes('toggleMobile(false);'));
 }
 
 function testSidebarFooterControlsReplaceRefresh() {
@@ -1565,6 +1660,7 @@ testDailyDateAndTagClicksExpandCurrentSectionOnlyForDaily();
 testPaperEvidenceAndActionButtonsRender();
 testPaperMetaOrderKeepsEvidenceBetweenTitleAndStars();
 testQuickLinksCenterTextAndDetachIcon();
+testFeedbackEntryClickContractAndFallbacks();
 testSidebarFooterControlsReplaceRefresh();
 testCollapsedSidebarRecentersChatSurface();
 testResponsiveModeClearsDesktopCollapsedStateOnOverlayViewports();
