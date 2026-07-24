@@ -2802,8 +2802,53 @@ window.$docsify = {
       const PDFJS_VIEWER_URL = 'https://mozilla.github.io/pdf.js/web/viewer.html';
       const PDFJS_SCRIPT_URL = 'app/vendor/pdfjs/3.11.174/pdf.min.js';
       const PDFJS_WORKER_URL = 'app/vendor/pdfjs/3.11.174/pdf.worker.min.js';
+      const PDF_PREVIEW_MAX_VIEWPORT_SCALE = 1.55;
+      const PDF_PREVIEW_MIN_OUTPUT_SCALE = 2;
+      const PDF_PREVIEW_TARGET_TOTAL_PIXELS = 40000000;
       let pdfJsLoadPromise = null;
       let pdfPreviewRenderSeq = 0;
+
+      const resolvePdfCanvasMetrics = (
+        baseWidth,
+        baseHeight,
+        stageWidth,
+        devicePixelRatio,
+        pageCount,
+      ) => {
+        const parsedBaseWidth = Number(baseWidth);
+        const parsedBaseHeight = Number(baseHeight);
+        const parsedStageWidth = Number(stageWidth);
+        const parsedPageCount = Number(pageCount);
+        const safeBaseWidth =
+          Number.isFinite(parsedBaseWidth) && parsedBaseWidth > 0 ? parsedBaseWidth : 1;
+        const safeBaseHeight =
+          Number.isFinite(parsedBaseHeight) && parsedBaseHeight > 0 ? parsedBaseHeight : 1;
+        const safeStageWidth =
+          Number.isFinite(parsedStageWidth) && parsedStageWidth > 0 ? parsedStageWidth : 1;
+        const safePageCount =
+          Number.isFinite(parsedPageCount) && parsedPageCount > 0
+            ? Math.max(1, Math.floor(parsedPageCount))
+            : 1;
+        const availableWidth = Math.max(1, safeStageWidth - 18);
+        const nativeOutputScale = Number(devicePixelRatio);
+        const scale = Math.min(
+          PDF_PREVIEW_MAX_VIEWPORT_SCALE,
+          availableWidth / safeBaseWidth,
+        );
+        const desiredOutputScale = Math.max(
+          PDF_PREVIEW_MIN_OUTPUT_SCALE,
+          Number.isFinite(nativeOutputScale) && nativeOutputScale > 0 ? nativeOutputScale : 1,
+        );
+        const estimatedDocumentPixels =
+          safeBaseWidth * scale * safeBaseHeight * scale * safePageCount;
+        const budgetOutputScale = Math.sqrt(
+          PDF_PREVIEW_TARGET_TOTAL_PIXELS / estimatedDocumentPixels,
+        );
+        return {
+          scale,
+          outputScale: Math.max(1, Math.min(desiredOutputScale, budgetOutputScale)),
+        };
+      };
 
       const normalizePdfUrl = (url) => {
         const raw = String(url || '').trim();
@@ -2916,15 +2961,20 @@ window.$docsify = {
             if (renderSeq !== pdfPreviewRenderSeq) return;
             const baseViewport = page.getViewport({ scale: 1 });
             const stageWidth = Math.max(320, pagesEl.clientWidth || panel.clientWidth - 36 || 640);
-            const scale = Math.max(0.72, Math.min(1.55, (stageWidth - 18) / baseViewport.width));
+            const { scale, outputScale } = resolvePdfCanvasMetrics(
+              baseViewport.width,
+              baseViewport.height,
+              stageWidth,
+              window.devicePixelRatio,
+              pdf.numPages,
+            );
             const viewport = page.getViewport({ scale });
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            const ratio = window.devicePixelRatio || 1;
-            canvas.width = Math.floor(viewport.width * ratio);
-            canvas.height = Math.floor(viewport.height * ratio);
-            canvas.style.width = `${Math.floor(viewport.width)}px`;
-            canvas.style.height = `${Math.floor(viewport.height)}px`;
+            canvas.width = Math.ceil(viewport.width * outputScale);
+            canvas.height = Math.ceil(viewport.height * outputScale);
+            canvas.style.width = `${viewport.width}px`;
+            canvas.style.height = `${viewport.height}px`;
 
             const pageWrap = document.createElement('div');
             pageWrap.className = 'dpr-pdf-preview-page';
@@ -2939,7 +2989,7 @@ window.$docsify = {
             await page.render({
               canvasContext: ctx,
               viewport,
-              transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null,
+              transform: [outputScale, 0, 0, outputScale, 0, 0],
             }).promise;
           }
           panel.dataset.renderedPdfUrl = rawUrl;

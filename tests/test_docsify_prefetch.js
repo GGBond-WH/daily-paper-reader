@@ -201,6 +201,69 @@ function testArxivPreviewClickStillUsesEmbeddedPanel() {
 
 testArxivPreviewClickStillUsesEmbeddedPanel();
 
+function evaluatePdfCanvasMetrics(baseWidth, baseHeight, stageWidth, devicePixelRatio, pageCount) {
+  const sandbox = {
+    baseWidth,
+    baseHeight,
+    stageWidth,
+    devicePixelRatio,
+    pageCount,
+    result: null,
+  };
+  const source = [
+    'const PDF_PREVIEW_MAX_VIEWPORT_SCALE = 1.55;',
+    'const PDF_PREVIEW_MIN_OUTPUT_SCALE = 2;',
+    'const PDF_PREVIEW_TARGET_TOTAL_PIXELS = 40000000;',
+    extractConstFunction('resolvePdfCanvasMetrics'),
+    'result = resolvePdfCanvasMetrics(baseWidth, baseHeight, stageWidth, devicePixelRatio, pageCount);',
+  ].join('\n');
+  vm.runInNewContext(source, sandbox);
+  return sandbox.result;
+}
+
+function testPdfPreviewUsesCrispCanvasMetrics() {
+  const desktop = evaluatePdfCanvasMetrics(612, 792, 686, 1, 15);
+  assert.strictEqual(desktop.outputScale, 2, 'standard-DPI screens should supersample PDF pages at 2x');
+  assert.ok(desktop.scale <= (686 - 18) / 612, 'desktop viewport should fit the available stage width');
+
+  const narrow = evaluatePdfCanvasMetrics(612, 792, 340, 2, 15);
+  assert.strictEqual(narrow.outputScale, 2, 'high-DPI screens should preserve their native output scale');
+  assert.ok(
+    612 * narrow.scale <= 340 - 18 + Number.EPSILON,
+    'narrow preview canvases must not be rendered wider and then downscaled by CSS',
+  );
+
+  const retina = evaluatePdfCanvasMetrics(612, 792, 686, 3, 15);
+  assert.ok(retina.outputScale > 2, 'retina screens should retain extra detail when the document budget allows');
+  assert.ok(retina.outputScale < 3, 'retina output should respect the whole-document pixel budget');
+
+  const longDocument = evaluatePdfCanvasMetrics(612, 792, 686, 1, 100);
+  assert.strictEqual(longDocument.outputScale, 1, 'long documents should fall back to the original 1x memory baseline');
+  assert.ok(
+    longDocument.outputScale < desktop.outputScale,
+    'the clarity boost must not multiply memory usage for long PDFs',
+  );
+
+  const invalid = evaluatePdfCanvasMetrics(Infinity, NaN, Infinity, Infinity, Infinity);
+  assert.ok(Number.isFinite(invalid.scale) && invalid.scale > 0, 'invalid viewport inputs need a finite scale');
+  assert.ok(
+    Number.isFinite(invalid.outputScale) && invalid.outputScale >= 1,
+    'invalid output inputs need a finite baseline scale',
+  );
+
+  const projectedLongDocumentPixels =
+    612 * longDocument.scale *
+    792 * longDocument.scale *
+    100 *
+    longDocument.outputScale ** 2;
+  assert.ok(
+    projectedLongDocumentPixels <= 40000000 || longDocument.outputScale === 1,
+    'the pixel budget may only be exceeded when preserving the original 1x baseline',
+  );
+}
+
+testPdfPreviewUsesCrispCanvasMetrics();
+
 function testPdfPreviewDoesNotHijackPaperChatLayout() {
   assert.ok(
     /\.dpr-pdf-preview-panel\s*{[^}]*z-index:\s*1600/i.test(css),
