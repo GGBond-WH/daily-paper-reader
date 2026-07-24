@@ -1,0 +1,91 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-24T21:04:06.295714+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 2,
+    "deep_cap": 6,
+    "deep_selected": 2,
+    "quick_candidates": 0,
+    "quick_skim_target": 11,
+    "quick_selected": 0
+  },
+  "deep_dive": [
+    {
+      "id": "2607.21475v1",
+      "source": "arxiv",
+      "title": "Error Certificates for KV-Cache Eviction via Randomized Design",
+      "abstract": "Deterministic KV-cache eviction keeps the top-$k$ tokens under an importance score and deletes the rest. We prove that this design cannot know what it destroyed: evicted values can be altered so that everything the serving system retains is unchanged while the true attention-output error grows arbitrarily, so no serving-time estimator of that error is consistent. Randomized eviction restores identifiability. With a Poisson-sampled tail at known inclusion probabilities, one logit offset performs the Hájek correction inside the softmax, and a survey-sampling variance estimator over the retained set becomes a per-step error certificate with 0.97 empirical coverage at no accuracy cost. On real workloads we pre-registered seven claims and lost three: question-aware eviction at 25--50\\% budgets is nearly free; output log-probability predicts failure better than the certificate; certificate-gated budget escalation adds nothing. What survives is attribution: the certificate separates cache-induced from inherent failures (AUC 0.73--0.75, against 0.47--0.54 for output confidence) and schedules recomputation better than random or confidence gating. Randomization buys attribution, not prediction.",
+      "authors": [
+        "Peng Xie"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.CL"
+      ],
+      "published": "2026-07-23T16:16:59+00:00",
+      "link": "https://arxiv.org/pdf/2607.21475v1",
+      "tags": [
+        "keyword:llm-kv-cache"
+      ],
+      "llm_score": 10.0,
+      "llm_evidence_en": "proposes randomized KV-cache eviction with error certificates",
+      "llm_evidence_cn": "提出带错误证书的随机化KV缓存驱逐方法",
+      "llm_evidence": "提出带错误证书的随机化KV缓存驱逐方法",
+      "canonical_evidence": "提出带错误证书的随机化KV缓存驱逐方法",
+      "llm_tldr_en": "Introduces randomized KV-cache eviction to provide per-step error certificates, achieving 0.97 empirical coverage with no accuracy loss.",
+      "llm_tldr_cn": "该论文指出确定性KV缓存驱逐无法评估被丢弃信息带来的注意力输出误差，因此提出随机化驱逐方法。通过泊松采样尾部并应用Hajek校正，利用保留集上的调查抽样方差估计器生成每步误差证书。在真实负载上经验覆盖率达到0.97且无精度损失。该方法为KV缓存管理提供了可靠性保障，使系统能够量化驱逐风险。",
+      "llm_tldr": "该论文指出确定性KV缓存驱逐无法评估被丢弃信息带来的注意力输出误差，因此提出随机化驱逐方法。通过泊松采样尾部并应用Hajek校正，利用保留集上的调查抽样方差估计器生成每步误差证书。在真实负载上经验覆盖率达到0.97且无精度损失。该方法为KV缓存管理提供了可靠性保障，使系统能够量化驱逐风险。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.20981v1",
+      "source": "arxiv",
+      "title": "Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence",
+      "abstract": "Efficient multimodal inference is increasingly constrained not only by model quality or FLOP count, but also by the cost of preserving, moving, routing, caching, and quantizing multimodal representations under latency, memory, and energy constraints. This paper reviews recent advances in efficient vision-language and multimodal large language models, covering visual token compression, video token management, KV-cache optimization, Mixture-of-Experts (MoE) routing, low-bit quantization, edge deployment, and hardware-aware benchmarking. We argue that these techniques cannot be treated as independent optimizations. Visual token compression alters downstream feature distributions and MoE routing decisions, routing behavior affects expert utilization and quantization sensitivity, quantized router logits influence expert assignment, KV-cache policies determine retained multimodal evidence, and hardware constraints often transform computational savings into memory and communication bottlenecks. We organize the literature around these interactions and identify key design trade-offs, including accuracy versus token budget, static versus adaptive compression, sparse routing efficiency versus expert collapse, and low-bit inference versus modality-specific degradation. Finally, we introduce Temporal Routing Consistency as a diagnostic for video MoE models and highlight open research directions in routing-aware compression, cross-modal cache management, hardware-aware co-design, and unified benchmarking for multimodal edge intelligence.",
+      "authors": [
+        "Jay Gor",
+        "Karm Dave",
+        "Akshita Abrol",
+        "Rajesh Gupta",
+        "Sudeep Tanwar",
+        "Zhengkui Wang"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-23T07:03:33+00:00",
+      "link": "https://arxiv.org/pdf/2607.20981v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "survey covering KV-cache optimization in multimodal LLMs",
+      "llm_evidence_cn": "综述涵盖多模态大模型中的KV缓存优化",
+      "llm_evidence": "综述涵盖多模态大模型中的KV缓存优化",
+      "canonical_evidence": "综述涵盖多模态大模型中的KV缓存优化",
+      "llm_tldr_en": "Reviews interactions between compression, MoE routing, quantization and KV-cache optimization for multimodal edge intelligence.",
+      "llm_tldr_cn": "该综述讨论了多模态边缘智能中视觉令牌压缩、视频令牌管理、KV缓存优化、混合专家路由、低比特量化等技术之间的相互影响，指出这些技术不能独立优化。虽然缺乏具体方法，但系统梳理了KV缓存优化在整体推理效率中的角色，为后续研究提供了重要视角。",
+      "llm_tldr": "该综述讨论了多模态边缘智能中视觉令牌压缩、视频令牌管理、KV缓存优化、混合专家路由、低比特量化等技术之间的相互影响，指出这些技术不能独立优化。虽然缺乏具体方法，但系统梳理了KV缓存优化在整体推理效率中的角色，为后续研究提供了重要视角。",
+      "llm_tags": [
+        "query:llm-kv-cache:composite"
+      ],
+      "matched_query_tag": "query:llm-kv-cache:composite",
+      "matched_query_text": "Papers central to 我需要查找大模型领域KV Cache相关论文研究, especially work that connects or combines: key-value cache for large language models; transformer inference optimization using key-value cache; attention mechanism key-value caching; paged attention for efficient KV cache management; compression techniques for key-value cache in transformers; prefix caching for transformer inference; Find research papers on KV cache optimization techniques for large language models; Retrieve papers about memory efficient key value cache management in transformer decoders; Search for methods to reduce KV cache memory footprint during autoregressive generation.",
+      "matched_requirement_id": "req-composite-llm-kv-cache",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": []
+}

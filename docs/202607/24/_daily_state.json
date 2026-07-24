@@ -1,0 +1,41 @@
+{
+  "date": "20260724",
+  "date_label": "",
+  "generated_at": "2026-07-24 21:05:53 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.21475v1",
+      "route": "202607/24/2607.21475v1-error-certificates-for-kv-cache-eviction-via-randomized-design",
+      "title": "Error Certificates for KV-Cache Eviction via Randomized Design",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 10.0,
+      "evidence": "提出带错误证书的随机化KV缓存驱逐方法",
+      "first_seen_at": "2026-07-24 21:05:53 UTC",
+      "updated_at": "2026-07-24 21:05:53 UTC"
+    },
+    {
+      "paper_id": "2607.20981v1",
+      "route": "202607/24/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence",
+      "title": "Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "综述涵盖多模态大模型中的KV缓存优化",
+      "first_seen_at": "2026-07-24 21:05:53 UTC",
+      "updated_at": "2026-07-24 21:05:53 UTC"
+    }
+  ]
+}

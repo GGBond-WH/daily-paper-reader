@@ -1,0 +1,39 @@
+{
+  "label": "2026-07-24",
+  "date": "2026-07-24",
+  "generated_at": "2026-07-24T21:05:56",
+  "count": 2,
+  "papers": [
+    {
+      "paper_id": "202607/24/2607.21475v1-error-certificates-for-kv-cache-eviction-via-randomized-design",
+      "section": "deep",
+      "title_en": "Error Certificates for KV-Cache Eviction via Randomized Design",
+      "authors": "Peng Xie",
+      "date": "2026-07-23",
+      "pdf": "https://arxiv.org/pdf/2607.21475v1",
+      "score": "10.0",
+      "evidence": "提出带错误证书的随机化KV缓存驱逐方法",
+      "tldr": "确定性KV缓存驱逐无法估计被丢弃令牌引起的注意力输出误差，因为删除的值可被篡改而不改变保留部分。本文提出随机化驱逐，通过泊松采样尾部并记录包含概率，利用Hájek校正和调查采样方差构造逐步错误证书。在75%预算下证书达到0.97经验覆盖率且无精度损失，在故障归因任务上AUC达0.73-0.75，显著优于输出置信度的0.47-0.54。随机化提供的是归因能力而非预测能力，使系统能区分缓存导致和固有的失败，从而优化重计算调度。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Deterministic KV-cache eviction keeps the top-$k$ tokens under an importance score and deletes the rest. We prove that this design cannot know what it destroyed: evicted values can be altered so that everything the serving system retains is unchanged while the true attention-output error grows arbitrarily, so no serving-time estimator of that error is consistent. Randomized eviction restores identifiability. With a Poisson-sampled tail at known inclusion probabilities, one logit offset performs the Hájek correction inside the softmax, and a survey-sampling variance estimator over the retained set becomes a per-step error certificate with 0.97 empirical coverage at no accuracy cost. On real workloads we pre-registered seven claims and lost three: question-aware eviction at 25--50\\% budgets is nearly free; output log-probability predicts failure better than the certificate; certificate-gated budget escalation adds nothing. What survives is attribution: the certificate separates cache-induced from inherent failures (AUC 0.73--0.75, against 0.47--0.54 for output confidence) and schedules recomputation better than random or confidence gating. Randomization buys attribution, not prediction.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/24/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence",
+      "section": "deep",
+      "title_en": "Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence",
+      "authors": "Jay Gor, Karm Dave, Akshita Abrol, Rajesh Gupta, Sudeep Tanwar, Zhengkui Wang",
+      "date": "2026-07-23",
+      "pdf": "https://arxiv.org/pdf/2607.20981v1",
+      "score": "8.0",
+      "evidence": "综述涵盖多模态大模型中的KV缓存优化",
+      "tldr": "多模态边缘推理中，视觉token压缩、MoE路由、量化等优化常独立进行，忽视了深层交互。本文综述这些技术的相互影响：压缩改变特征分布进而扭曲路由决策，路由影响专家负载和量化敏感性，KV-cache策略决定保留的多模态证据。识别出精度与token预算、静态与自适应压缩等关键权衡，并引入Temporal Routing Consistency作为视频MoE模型的诊断工具。最终呼吁路由感知压缩、硬件感知协同设计等未来方向。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Efficient multimodal inference is increasingly constrained not only by model quality or FLOP count, but also by the cost of preserving, moving, routing, caching, and quantizing multimodal representations under latency, memory, and energy constraints. This paper reviews recent advances in efficient vision-language and multimodal large language models, covering visual token compression, video token management, KV-cache optimization, Mixture-of-Experts (MoE) routing, low-bit quantization, edge deployment, and hardware-aware benchmarking. We argue that these techniques cannot be treated as independent optimizations. Visual token compression alters downstream feature distributions and MoE routing decisions, routing behavior affects expert utilization and quantization sensitivity, quantized router logits influence expert assignment, KV-cache policies determine retained multimodal evidence, and hardware constraints often transform computational savings into memory and communication bottlenecks. We organize the literature around these interactions and identify key design trade-offs, including accuracy versus token budget, static versus adaptive compression, sparse routing efficiency versus expert collapse, and low-bit inference versus modality-specific degradation. Finally, we introduce Temporal Routing Consistency as a diagnostic for video MoE models and highlight open research directions in routing-aware compression, cross-modal cache management, hardware-aware co-design, and unified benchmarking for multimodal edge intelligence.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}
