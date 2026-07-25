@@ -1,0 +1,39 @@
+{
+  "label": "2026-07-25",
+  "date": "2026-07-25",
+  "generated_at": "2026-07-25T21:06:19",
+  "count": 2,
+  "papers": [
+    {
+      "paper_id": "202607/25/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence",
+      "section": "quick",
+      "title_en": "Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence",
+      "authors": "Jay Gor, Karm Dave, Akshita Abrol, Rajesh Gupta, Sudeep Tanwar, Zhengkui Wang",
+      "date": "2026-07-23",
+      "pdf": "https://arxiv.org/pdf/2607.20981v1",
+      "score": "7.0",
+      "evidence": "覆盖多模态大模型KV缓存优化",
+      "tldr": "多模态边缘推理受延迟、内存和能量约束，传统独立优化方法忽视技术间交互。本文综述视觉token压缩、MoE路由、量化等技术的耦合影响，发现压缩改变特征分布干扰路由决策，路由影响量化敏感度，硬件约束将计算节省转为通信瓶颈。提出时序路由一致性诊断，指出路由感知压缩与跨模态缓存管理方向。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Efficient multimodal inference is increasingly constrained not only by model quality or FLOP count, but also by the cost of preserving, moving, routing, caching, and quantizing multimodal representations under latency, memory, and energy constraints. This paper reviews recent advances in efficient vision-language and multimodal large language models, covering visual token compression, video token management, KV-cache optimization, Mixture-of-Experts (MoE) routing, low-bit quantization, edge deployment, and hardware-aware benchmarking. We argue that these techniques cannot be treated as independent optimizations. Visual token compression alters downstream feature distributions and MoE routing decisions, routing behavior affects expert utilization and quantization sensitivity, quantized router logits influence expert assignment, KV-cache policies determine retained multimodal evidence, and hardware constraints often transform computational savings into memory and communication bottlenecks. We organize the literature around these interactions and identify key design trade-offs, including accuracy versus token budget, static versus adaptive compression, sparse routing efficiency versus expert collapse, and low-bit inference versus modality-specific degradation. Finally, we introduce Temporal Routing Consistency as a diagnostic for video MoE models and highlight open research directions in routing-aware compression, cross-modal cache management, hardware-aware co-design, and unified benchmarking for multimodal edge intelligence.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202607/25/2607.17652v1-flowblock-wavefront-parallel-decoding-for-self-correcting-diffusion-language-models",
+      "section": "quick",
+      "title_en": "FlowBlock: Wavefront-Parallel Decoding for Self-Correcting Diffusion Language Models",
+      "authors": "Bing Tian, Haikun Liu, Xiaocheng Zhong, Zhuohui Duan, Zhaokai Luo, Huayi Jin, Zhiyong Wang, Xiaofei Liao",
+      "date": "2026-07-20",
+      "pdf": "https://arxiv.org/pdf/2607.17652v1",
+      "score": "6.0",
+      "evidence": "提出免训练并行解码，利用块间KV缓存复用",
+      "tldr": "块级扩散语言模型解码串行导致效率低。FlowBlock提出无训练并行框架：门控波前解码利用自校正机制让下游块仅需不精确推测而非精确结果，结合块内编辑打破依赖；异构波前打包为高效批量服务。在LLaDA上最高提速4倍，延迟降低77%，精度提升1.3点，吞吐量较D2F提升16倍。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Block-wise diffusion large language models (dLLMs) decode sequentially at the block level, enabling effective KV-cache reuse across blocks but making inter-block decoding strictly serial. Prior work has attempted to unlock inter-block parallelism through post-training methods, but achieves only modest speedups and often degrades accuracy. We observe that self-correcting dLLMs offer a training-free alternative: token-to-token (T2T) editing can repair tokens drafted with a slightly stale upstream context, so a downstream block requires only an informative draft rather than a finalized predecessor. This turns block finality from a hard dependency into a scheduling resource. We propose \\textbf{\\flowblock{}}, a training-free parallel decoding framework built on two mechanisms. (i) \\emph{Gated Wavefront Decoding} admits blocks into a bounded wavefront only when a readiness gate is satisfied, jointly refines active blocks via T2T editing, and commits blocks in order under a windowed block-causal mask that preserves exact frozen-prefix KV caches reuse. (ii) \\emph{Heterogeneous Wavefront Packing} assigns each request an independent wavefront while packing asynchronous windows into dense, shape-stable batched forwards. Across different benchmarks, \\flowblock{} improves tokens per second (TPS) over LLaDA-2.1 and LLaDA-2.0, two serial block-wise dLLMs, by up to 2.95$\\times$ and 4.01$\\times$, while reducing latency by up to 53.6\\% and 77.1\\%, respectively. It also improves average accuracy by 1.3 points. Compared with D2F, a training-based inter-block-parallel baseline, \\flowblock{} achieves higher accuracy and up to 16$\\times$ higher batched serving throughput.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

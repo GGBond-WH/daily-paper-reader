@@ -1,0 +1,41 @@
+{
+  "date": "20260725",
+  "date_label": "",
+  "generated_at": "2026-07-25 21:06:15 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.20981v1",
+      "route": "202607/25/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence",
+      "title": "Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "覆盖多模态大模型KV缓存优化",
+      "first_seen_at": "2026-07-25 21:06:15 UTC",
+      "updated_at": "2026-07-25 21:06:15 UTC"
+    },
+    {
+      "paper_id": "2607.17652v1",
+      "route": "202607/25/2607.17652v1-flowblock-wavefront-parallel-decoding-for-self-correcting-diffusion-language-models",
+      "title": "FlowBlock: Wavefront-Parallel Decoding for Self-Correcting Diffusion Language Models",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "提出免训练并行解码，利用块间KV缓存复用",
+      "first_seen_at": "2026-07-25 21:06:15 UTC",
+      "updated_at": "2026-07-25 21:06:15 UTC"
+    }
+  ]
+}
