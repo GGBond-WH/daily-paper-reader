@@ -1,0 +1,132 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-27T21:07:09.710718+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 2,
+    "deep_cap": 6,
+    "deep_selected": 2,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [
+    {
+      "id": "2607.18436v1",
+      "source": "arxiv",
+      "title": "Surprise Forcing: What to Remember, When to Skip in Long Video Generation",
+      "abstract": "Streaming autoregressive diffusion makes minute-scale video synthesis practical, but its bounded context and fixed denoising schedule allocate resources uniformly across a highly non-stationary sequence. A rolling key-value cache forgets distant visual evidence even when that evidence remains important, while every generated chunk receives the same number of denoising passes irrespective of its actual difficulty. We introduce Surprise Forcing, a training-free framework that treats both limitations as online resource-allocation problems. A Surprise-Gated Memory Bank summarizes evicted frames with value-token descriptors, evaluates them using complementary global-deviation and nearest-neighbor novelty signals, and regulates admission through a feedback-controlled budget in normalized score space. Priority-based replacement and relevance-aware routing then keep the external memory compact and useful. In parallel, Surprise-Aware Denoising estimates chunk difficulty from the maximum adjacent-frame cosine distance after the first denoising pass and uses a local percentile scheduler to skip intermediate steps for comparatively easy chunks. Experiments on VBench, VBench-Long, and VBench-2.0 show that the proposed allocation strategy improves long-horizon consistency and visual quality while retaining real-time streaming throughput.",
+      "authors": [
+        "Shuwei Shi",
+        "Zhen Li",
+        "Muyao Niu",
+        "Chuanhao Li",
+        "Bo Zheng",
+        "Kaipeng Zhang",
+        "Yinqiang Zheng"
+      ],
+      "primary_category": "cs.CV",
+      "categories": [
+        "cs.CV"
+      ],
+      "published": "2026-07-20T18:37:58+00:00",
+      "link": "https://arxiv.org/pdf/2607.18436v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "addresses rolling key-value cache forgetting and proposes memory bank for evicted frames",
+      "llm_evidence_cn": "针对滚动键值缓存的遗忘问题，提出了用于被逐出帧的内存银行",
+      "llm_evidence": "针对滚动键值缓存的遗忘问题，提出了用于被逐出帧的内存银行",
+      "canonical_evidence": "针对滚动键值缓存的遗忘问题，提出了用于被逐出帧的内存银行",
+      "llm_tldr_en": "Surprise Forcing introduces a training-free framework with a Surprise-Gated Memory Bank to manage key-value cache evictions in long video generation, improving memory utilization.",
+      "llm_tldr_cn": "长视频生成中的滚动键值缓存会遗忘远距离视觉信息，并且固定去噪调度导致计算不均。本文提出Surprise Forcing，一个无需训练的资源分配框架，通过惊喜门控内存银行（Surprise-Gated Memory Bank）汇总被逐出的帧，并使用全局偏差和最近邻新颖性信号来调节准入。该方法将缓存管理和去噪调度视为在线资源分配问题，显著提升了长视频生成的质量和效率。",
+      "llm_tldr": "长视频生成中的滚动键值缓存会遗忘远距离视觉信息，并且固定去噪调度导致计算不均。本文提出Surprise Forcing，一个无需训练的资源分配框架，通过惊喜门控内存银行（Surprise-Gated Memory Bank）汇总被逐出的帧，并使用全局偏差和最近邻新颖性信号来调节准入。该方法将缓存管理和去噪调度视为在线资源分配问题，显著提升了长视频生成的质量和效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.22389v1",
+      "source": "arxiv",
+      "title": "HiKV: Hierarchical Importance-Aware KV Cache with Hardware Acceleration for LLM Decoding",
+      "abstract": "With the rapid adoption of long-context large language models (LLMs), the continuously growing KV cache during decoding has become the critical memory bottleneck. To tackle this challenge, we propose HiKV, a novel algorithm-hardware co-design that exploits KV cache redundancy through hierarchical importance awareness. Algorithmically, HiKV compresses the KV cache at two granularities: Stage I evicts unimportant tokens within a fixed budget, and Stage II further loads only the significant elements of each retained token, reaching compression ratios unattainable at a single granularity. Architecturally, we develop a dedicated accelerator centered on a reconfigurable importance sorter that switches between the distinct sorting datapaths each stage requires, unifying the two-stage acceleration in one circuit with minimal overhead. Evaluated on representative LLMs, HiKV achieves up to 7.95x speedup and 90% energy reduction in the attention computation over the vanilla KV cache baseline within negligible 1% accuracy loss. Under iso-accuracy constraints, HiKV outperforms state-of-the-art importance-based methods by achieving an additional 1.82~4.87x reduction in external memory accesses. These benefits are enabled by specialized hardware components that add only 8% to the system area.",
+      "authors": [
+        "Chao Fang",
+        "Jun Yin",
+        "Man Shi",
+        "Marian Verhelst"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR",
+        "cs.AI",
+        "cs.LG"
+      ],
+      "published": "2026-07-24T15:15:10+00:00",
+      "link": "https://arxiv.org/pdf/2607.22389v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "hierarchical importance-aware KV cache compression with hardware acceleration",
+      "llm_evidence_cn": "层次重要性感知的KV缓存压缩与硬件加速",
+      "llm_evidence": "层次重要性感知的KV缓存压缩与硬件加速",
+      "canonical_evidence": "层次重要性感知的KV缓存压缩与硬件加速",
+      "llm_tldr_en": "HiKV proposes a two-stage hierarchical KV cache compression that first evicts unimportant tokens then loads only significant elements per token, combined with a dedicated hardware accelerator, achieving high compression ratios for LLM decoding.",
+      "llm_tldr_cn": "针对大模型解码中KV缓存不断增长的内存瓶颈，本文提出HiKV算法-硬件协同设计。算法层面分两阶段压缩：阶段I按重要性预算逐出不重要token；阶段II进一步只加载每个保留token中的显著元素，实现单粒度无法达到的压缩比。架构层面开发了可重配置的重要性排序器专用加速器，支持不同排序数据通路切换。实验结果表明，HiKV在保持模型精度的前提下显著减少内存占用，为长上下文LLM的部署提供高效方案。",
+      "llm_tldr": "针对大模型解码中KV缓存不断增长的内存瓶颈，本文提出HiKV算法-硬件协同设计。算法层面分两阶段压缩：阶段I按重要性预算逐出不重要token；阶段II进一步只加载每个保留token中的显著元素，实现单粒度无法达到的压缩比。架构层面开发了可重配置的重要性排序器专用加速器，支持不同排序数据通路切换。实验结果表明，HiKV在保持模型精度的前提下显著减少内存占用，为长上下文LLM的部署提供高效方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.21927v1",
+      "source": "arxiv",
+      "title": "RIS-Kernel: A Model-Agnostic Architecture for Long-Context LLM Inference via Sparse Attention",
+      "abstract": "Full self-attention in large language models scales as O(N^2), which limits long-context document analysis to 65,536 tokens and requires costly GPU clusters. The Reduced Interaction Sampling (RIS) inference engine addresses this constraint as a model-agnostic architecture. Without modifying weights, RIS reduces self-attention complexity to O(N log N) using sparse stochastic geometry that fits within commodity memory limits. We validate RIS on Qwen2-1.5B-Instruct across two regimes. In controlled evaluations at 32,768 tokens (where native dense attention serves as the upper bound), RIS-Stochastic at 1% density and 70 ensemble seeds achieves 75.00% accuracy, outperforming the native dense baseline (71.88%), while RIS-Stochastic at 5% density and 10 seeds matches it (71.88%). This demonstrates that sparse attention acts as a regularizer: low density (1%) over multiple seeds filters out sequence-level noise, whereas higher density (5%) reintroduces distractor noise. Under the tightest budget, RIS-Structural reaches 68.75% accuracy at 1% density with just 10 seeds, recovering 75% of the contextual gap relative to the zero-context floor (59.38%). At 65,536 tokens, where dense attention triggers out-of-memory faults, RIS yields retrieval gains of up to 14.06 percentage points over the zero-context floor (51.56%), which is confirmed as marginally significant under McNemar's paired test (p = 0.078 < 0.10). All evaluations run on commodity, unaccelerated CPU servers (16-128 GB of RAM), demonstrating that long-context LLM inference is feasible on standard academic hardware without GPU acceleration.",
+      "authors": [
+        "Anderson R. Santos"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-24T03:00:02+00:00",
+      "link": "https://arxiv.org/pdf/2607.21927v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "sparse attention for LLM inference optimization",
+      "llm_evidence_cn": "稀疏注意力优化大模型推理",
+      "llm_evidence": "稀疏注意力优化大模型推理",
+      "canonical_evidence": "稀疏注意力优化大模型推理",
+      "llm_tldr_en": "RIS-Kernel uses sparse stochastic geometry to reduce self-attention to O(N log N) for long-context LLM inference, improving accuracy over dense attention at 1% density.",
+      "llm_tldr_cn": "RIS-Kernel提出了一种模型无关的稀疏注意力架构，通过随机稀疏几何将自注意力复杂度降至O(N log N)，支持在普通内存上运行长上下文大模型。在32K token实验中，1%密度的RIS-Stochastic准确率75%，超过原生密集注意力的71.88%。该方法无需修改权重即可提升推理效率。",
+      "llm_tldr": "RIS-Kernel提出了一种模型无关的稀疏注意力架构，通过随机稀疏几何将自注意力复杂度降至O(N log N)，支持在普通内存上运行长上下文大模型。在32K token实验中，1%密度的RIS-Stochastic准确率75%，超过原生密集注意力的71.88%。该方法无需修改权重即可提升推理效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

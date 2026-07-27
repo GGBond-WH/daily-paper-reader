@@ -1,0 +1,57 @@
+{
+  "date": "20260727",
+  "date_label": "",
+  "generated_at": "2026-07-27 21:09:40 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.18436v1",
+      "route": "202607/27/2607.18436v1-surprise-forcing-what-to-remember-when-to-skip-in-long-video-generation",
+      "title": "Surprise Forcing: What to Remember, When to Skip in Long Video Generation",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "针对滚动键值缓存的遗忘问题，提出了用于被逐出帧的内存银行",
+      "first_seen_at": "2026-07-27 21:09:40 UTC",
+      "updated_at": "2026-07-27 21:09:40 UTC"
+    },
+    {
+      "paper_id": "2607.22389v1",
+      "route": "202607/27/2607.22389v1-hikv-hierarchical-importance-aware-kv-cache-with-hardware-acceleration-for-llm-decoding",
+      "title": "HiKV: Hierarchical Importance-Aware KV Cache with Hardware Acceleration for LLM Decoding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "层次重要性感知的KV缓存压缩与硬件加速",
+      "first_seen_at": "2026-07-27 21:09:40 UTC",
+      "updated_at": "2026-07-27 21:09:40 UTC"
+    },
+    {
+      "paper_id": "2607.21927v1",
+      "route": "202607/27/2607.21927v1-ris-kernel-a-model-agnostic-architecture-for-long-context-llm-inference-via-sparse-attention",
+      "title": "RIS-Kernel: A Model-Agnostic Architecture for Long-Context LLM Inference via Sparse Attention",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "稀疏注意力优化大模型推理",
+      "first_seen_at": "2026-07-27 21:09:40 UTC",
+      "updated_at": "2026-07-27 21:09:40 UTC"
+    }
+  ]
+}
