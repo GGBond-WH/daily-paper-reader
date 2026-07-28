@@ -1,0 +1,1916 @@
+Title: LOCKS: Page-Local Compact Key Summaries for Efficient Long-Context Decoding
+
+URL Source: https://arxiv.org/pdf/2607.24555v1
+
+Published Time: Tue, 28 Jul 2026 02:10:10 GMT
+
+Number of Pages: 42
+
+Markdown Content:
+# LOCKS : P AGE -L OCAL COMPACT KEY SUMMARIES FOR 
+
+# EFFICIENT LONG -C ONTEXT DECODING 
+
+Junsung Hwang 
+
+July 28, 2026 
+
+## ABSTRACT 
+
+Serving large language models at long context is bottlenecked by the key-value (KV) cache, which is read in full at every decode step. Attention keys are locally low-rank though globally high-rank: shared low-rank bases discard page-specific directions that a page’s own compact basis retains. L OCKS gives every page its own spectral summary (resident, about a tenth the cache’s size), reconstructs within-page logits, estimates each page’s attention mass by log-sum-exp, and attends only the top pages; selection itself reads no candidate keys or values. Selecting on this summary alone stays within about a point of the full cache on long-document QA (LongBench-v1), tracks the read-every-key oracle on retrieval-dense RULER down to the smallest budgets, and shows its largest margins on long-form reasoning (AIME26, MATH-500), where baseline selectors collapse. At its shipped 2048 -token budget L OCKS matches FullKV aggregate quality at 100 K+ context while attending about 2% of the tokens, and halves per-token decode latency ( 2.0× at 1M tokens) against dense attention. L OCKS 
+
+ships as a drop-in plugin for unmodified vLLM, with batched decode running in full CUDA graphs. 
+
+## 1 Introduction 
+
+Decoding a token requires reading both the model’s weights and the sequence’s key-value (KV) cache, and which one dominates depends on the serving regime. At short context and low concurrency a step is weight-bound, since the cache is small and attention a minor fraction of it; production serving increasingly runs at the opposite end, where the weight read amortizes across a growing batch while the cache does not, since every request reads its own. Memory binds independently of speed. For Llama-3.1-8B with bf 16 KV, a 128 K context occupies roughly 16 GiB of KV cache per request, more than its own weights, so the cache, not the weights, caps how much context and how many requests an accelerator can serve. KV capacity and KV-read bandwidth are distinct bottlenecks. L OCKS targets the latter: it keeps the full KV cache resident but avoids reading most of it at each decode step; reducing resident capacity is complementary and left to future tiering or offload. Decode attention is nonetheless sparse. A few pages carry almost all of a query’s attention mass at each step, and attending only those pages recovers most of the full-cache output [ 46 , 52 , 74 ]. Exact mass reads every key; selection therefore needs a resident summary. Attention keys are locally low-rank though globally high-rank: a page’s own rank-8
+
+eigenbasis captures most of its key energy, making it a high-fidelity compact surrogate for the page’s attention mass, so reconstructed-LSE selection from a tenth-of-KV resident summary tracks the read-every-key oracle down to the smallest budgets, because the carrier pages that decide tasks survive. Representation scope decides what a summary can preserve. A fixed projection shared across pages has provably unavoidable page-content blind directions; at page scope, rank 8 and a tenth of the bytes retain the oracle’s selection, and we measure the chain from page-local spectral concentration through logit and ranking fidelity (Fig. 1a,c) to carrier survival (Fig. 1b) and task quality (Fig. 1d). A page summary is worth only what selection can read back from it. Envelopes preserve extremes, the per-page min and max a query can align with [ 52 ]; block moments preserve spread, a centroid and a spread quadratic over the page’s keys [ 54 ]; HiLS learns a surrogate for the chunk log-sum-exp directly [ 26 ]. Existing summaries either preserve only coarse statistics, reuse a representation across pages, or require a trained surrogate. L OCKS instead reconstructs the within-page logits needed to evaluate the established LSE target directly, with a training-free page-local representation (Lemma 1, §4). arXiv:2607.24555v1 [cs.LG] 27 Jul 2026 A PREPRINT - J ULY 28, 2026 10 ¡6 10 ¡4 10 ¡2 1    
+
+> exact page mass share
+> 10 ¡6
+> 10 ¡4
+> 10 ¡2
+> 1
+> reconstructed share
+> page-local r= 8 int4 (768 B)
+> per-seq. r= 48 (780 B)
+> dot size = mass share
+
+(a) high-fidelity mass      
+
+> 0.5 12510 20
+> per-head budget (% of context)
+> 40
+> 60
+> 80
+> 100
+> carrier retention (%)
+> exact selection (ceiling)
+
+(b) carriers down to 0.5%    
+
+> LOCKS r8-int4
+> Quest
+> centroid
+> 1.52
+> 0.64
+> 0.36
+> 1.44
+> 0.50
+> 0.13
+> 0.59
+> 0.93
+> 1.00
+> 0.30
+> 0.67
+> 0.93
+> 0.36
+> 0.58
+> 0.98
+> global
+> 780 B
+> per-seq.
+> 780 B
+> per-page
+> 768 B
+> logit
+> MAE LSE
+> MAE
+> rank
+> ½top-64
+> rec. carr.
+> kept
+
+(c) chain at matched bytes 
+
+> single
+> needle
+> multi
+> key
+> multi
+> value
+> state
+> track
+> aggre-
+> gation
+> open
+> QA
+> 100
+> 25
+
+(d) task quality 
+
+> FullKV
+> oracle
+> LOCKS
+> Quest
+
+Figure 1: The locality thesis in one figure (Llama-3.1-8B, Qwen3-4B twin and full protocol in App. B). (a) Exact vs. reconstructed page-mass share at matched bytes. (b) Carrier retention vs. per-head budget; the ceiling is 100 by construction. (c) The error ladder at matched bytes, one scope per row. (d) RULER-16K capability families at a 
+
+256 -token budget. Page scope hugs the exact diagonal, keeps carriers down to a 0.5% budget, improves every link, and traces FullKV. The open question is the scope at which that representation is shared. Loki uses a shared PCA basis calibrated offline [49 ]; ShadowKV constructs a sequence-level low-rank representation [ 51 ]. Neither scope is where the structure lives (§3). A fixed projection shared across pages is provably blind to page-specific directions (Prop. 1), and broadening a shared basis to the same or greater per-page state still does not recover the fidelity of the page-local factor (§3). A page-local representation must still be cheap enough to deploy. Per-page and per-sequence bases have so far mostly lived in research forks of the serving stack, or required training a gate onto the model [ 17 ]. L OCKS ships as a drop-in attention-backend plugin for unmodified vLLM that builds each page’s basis from one small eigendecomposition when the page completes and replays its batched decode step inside full CUDA graphs; each GQA group folds its queries’ page-mass shares into one shared selection through a single share-average rule, one fused kernel scores and ranks every page (§4, §5). This is one chain, named once here: page-local spectral concentration ⇒ token-logit fidelity ⇒ LSE ranking fidelity 
+
+⇒ carrier survival ⇒ task quality at aggressive sparsity ⇒ practical end-to-end acceleration. Each link can fail; §3 exhibits rival summaries failing at different links, and the page-local representation is the one for which every link holds, theoretically through attention-output error (Thm. 1) and empirically to task quality (§5). We adopt exact page-level log-sum-exp mass as the established value-blind selection target (Lemma 1, App. A.1). LOCKS makes three contributions: • Locality finding and matched-state evidence. We show that the geometry relevant to page selection is concentrated at page scope rather than sequence or cache scope. This gap persists after matching representation state (§3). • Shared-projection impossibility and local construction. We prove that every fixed shared low-rank linear projection has page-content blind directions (Prop. 1), and introduce a per-page spectral summary whose unquantized form carries a composed bound from reconstruction error to coverage and attention-output error (Thm. 1); the deployed quantized summary’s fidelity is measured rather than bounded (§5.4). • Quality and deployability. We show oracle-tracking quality under aggressive budgets and integrate L OCKS 
+
+into unmodified vLLM, obtaining long-context end-to-end acceleration (§5). 
+
+## 2 What a Page Summary Must Preserve 
+
+Decode-time attention. A decoder layer holds per-head caches {(ki, vi)}Ti=1 ; a decode step forms a query q and outputs o = P 
+
+> i
+
+αivi with α = softmax( q⊤k/√d). Paged serving [ 29 ] stores the cache in pages of B consecutive tokens, page j’s tokens written Pj ; we operate at page granularity. The knob is a fixed per-head token budget b (page budget k = ⌈b/B ⌉; the always-kept sink page and most recent page fill two of the k slots, so they are counted within b,2A PREPRINT - J ULY 28, 2026 not added to it), held constant as the context grows: unlike a fixed fraction, it provisions the exact, context-independent cache a serving system must allocate. Coverage governs sparse decoding’s output error. For a page set S, let γS (q) be the fraction of total attention mass that falls in S, and let oS be attention restricted to S with the softmax renormalized. Selection precedes the value fetch in this regime, and the identity below pins down the optimal rule for it. Retained mass controls the output error of restricted attention. Dropping a page set’s complement changes the attention output by exactly ε(¯ vSc − ¯vS ), with ε = 1 − γS (q)
+
+and ¯vS , ¯vSc the mass-weighted mean values of the kept and dropped sets. The top-k pages by exact log-sum-exp mass maximize this retained mass, and among deterministic rules that do not read the values {vi} this ranking is worst-case optimal (Lemma 1, App. A.1). The exact identity is due to Tzachristas et al. [55] and the value-agnostic mass-criterion it implies is derived concurrently by Tian et al. [54] ; we claim neither as a contribution here, only the target they establish. Computing that exact mass, though, reads every key, the very traffic sparse decoding exists to avoid, so deployable selection needs a compact resident summary. The identity’s error term is exact, not just bounded. Shedding interchangeable bulk ( ¯vSc ≈ ¯vS ) is benign at any coverage, while shedding a single distinctive carrier token realizes the penalty near its ceiling however little mass that token carries. Exact page mass remains the selection target. Carrier-page recall is an empirical diagnostic: small average mass errors can conceal consequential ranking errors on the few task-critical pages, and the task collapses of §5 are the downstream consequence; §3 measures the split directly (full microscope in App. B). LOCKS stays value-blind; among deterministic rules that do not read the values, Lemma 1(ii) shows mass-ranking is worst-case optimal. Exact mass, however, reads every key (precisely the traffic sparse decoding exists to avoid), so selection needs a resident summary, and §3 takes up what such a summary must preserve to still find it. 
+
+## 3 Representation Scope Determines Selection Fidelity 
+
+§2 fixes exact log-sum-exp mass as the target and carrier-page recall as the diagnostic that average errors can hide; whether a resident summary preserves what the target needs is a question of scope , the set of pages it is fit to, not its size. Attention keys are locally low-rank though globally high-rank. A page’s own eigenbasis captures most of its within-page key energy at the shipped rank, while a per-sequence basis (ShadowKV [ 51 ]) captures a fraction of that and a single cache-wide basis (Loki [ 49 ]) almost none (Table D.11, App. D). The pattern is a dose-response that survives a matched-bytes control (Table D.11, matched-bytes rows). Grown to L OCKS ’s own per-page state or beyond, shared bases still trail the page-local basis on both mass and recall (Table D.15, App. D; Fig. 1a,c), which supports representation scope, rather than state size, as the source of the gap. Broadly shared low-rank bases lose page-specific directions, and increasing their rank or state does not recover the selection fidelity of page-local factors at comparable cost. Interpolating scope with position-bucketed shared bases degrades fidelity monotonically from page toward sequence scope, with recall, the carrier-side quantity, falling fastest (Table D.16). Two objections deserve pre-emption before the necessity question. First, a 16 -token page ( B=16 , App. D) has at most 
+
+B − 1 = 15 nonzero modes once centered, so an unbounded pool of structure was never on offer; measured against synthetic flat-spectrum (isotropic) pages at the same rank, real pages concentrate well above this isotropic null (App. D), so the concentration reflects genuine local structure rather than an artifact of the mode-count cap. Second, the per-page fit is not overfitting. The basis is never asked to generalize beyond the cloud it was built from, since the summary only ever scores the very page it summarizes, so a page-specific fit is exactly the right inductive bias, not a statistical liability. The concentration is a property of the keys themselves. It holds whether a basis is fit before or after rotary position embedding is applied, and page scope pays essentially no rotation penalty (Table D.16, App. D). Proposition 1 makes the failure structural rather than quantitative: a fixed shared projection carries zero information about a (d − ρ)-dimensional family of within-page content differences, so for summaries of the stated form the first link of §1’s chain does not merely degrade on that family, it vanishes. 
+
+Proposition 1 (Shared scope is content-blind) . Fix any W ∈ Rd×ρ with ρ < d and any scoring rule whose value on a page depends only on the query, the page centroid μ, and the sketched keys {W⊤ki}. For every unit u ⊥ span( W),every page P with at least two keys, and every c > 0, the page P ′ obtained by adding c u to one key of P and −c u
+
+to another receives the same score as P for every query, while for every query with q⊤u > 0 the exact log-masses separate without bound, sP ′ (q) − sP (q) → ∞ as c grows (proof in App. A.2). The envelope statistics of decode-time selectors admit the analogous statement (Lemma 2). 
+
+The statement covers shared linear sketches with a centroid, the class instantiated by the global- and sequence-basis baselines considered here; extreme-based bounds receive the same conclusion through Lemma 2, while codebooks and second-moment cores fall outside the linear-sketch hypothesis and are handled empirically instead, via the frontier table of App. D (Table D.11). Proposition 1 applies once the shared basis W is fixed; adaptive procedures that refit W as 3A PREPRINT - J ULY 28, 2026 the underlying cache changes fall outside this impossibility statement and are evaluated empirically through the scope frontier instead. Rivals break the chain at different links, not merely with worse constants. At the smallest budgets the envelope (Quest [ 52 ]) tracks the read-every-key ceiling (exact LSE, Table B.1, App. B) on raw mass yet loses the pages that carry the answer, giving up little total mass against the ceiling on both models while keeping the carrier less than half as often (Fig. 1b; Table B.1, App. B). Link 3 (LSE ranking fidelity) fails while the aggregate the envelope does preserve, total captured mass, stays nearly intact. The codebook [ 66 , 72 ] outranks the per-sequence basis on mass and recall, though captured energy is not even defined for it, since it is not a linear subspace (Table D.11). Captured energy is not what saves a rival, so it is not the quantity the chain actually needs. The moment core (COBS [ 54 ], concurrent work, and SPLA [ 56 ]) is exact for a Gaussian page, matching the page’s second-order statistics term for term, yet has its weakest worst-case control on the high-dynamic-range, peaky pages a carrier lives on (App. A.5). Link 2 is token-logit fidelity, strictly more than second-order energy. Each rival family breaks at least one link in the chain, though not necessarily the same one; the page-local representation is the one for which every link holds (Thm. 1 through attention-output error; §5 to task quality). §4 builds the construction that exploits this, one basis per page, and composes it into the retention guarantee (Thm. 1). 
+
+## 4 LOCKS : Every Page Its Own Basis 
+
+LOCKS keeps the full cache and selects, at every decode step and per KV head, the pages to attend under the fixed per-head token budget b of §2, from a resident per-page spectral summary of attention mass. It is training-free and applies to standard GQA decoder models. Exact mass (Lemma 1) would read every page’s keys, exactly the traffic sparsity exists to avoid, so L OCKS scores from a resident summary instead; that summary cannot be a shared projection, since a fixed, query-independent basis is provably content-blind (§3, Prop. 1), so L OCKS gives every page its own factorization. 
+
+Build (once, when a page completes). Center the page, ki = μj + δi with P 
+
+> i∈Pj
+
+δi = 0, stack the deviations as the rows of Dj ∈ RB×d, and eigendecompose the small Gram Dj D⊤ 
+
+> j
+
+= Uj Σ2 
+
+> j
+
+U⊤ 
+
+> j
+
+∈ RB×B (eigenvalues 
+
+σ2 
+
+> j, 1
+
+≥ σ2 
+
+> j, 2
+
+≥ · · · , the squared singular values of the page cloud, with right singular vectors vj,k ). Keep r components, namely per-key coefficients ci ∈ Rr (the rows of Cj = Uj,r Σj,r , so ci = V⊤ 
+
+> j
+
+δi) and the orthonormal basis 
+
+Vj = D⊤ 
+
+> j
+
+Uj,r Σ−1 
+
+> j,r
+
+= [ vj, 1 · · · vj,r ] ∈ Rd×r (zero modes, if any, are dropped and their coefficients set to zero, so 
+
+Σ−1 
+
+> j,r
+
+is always applied to nonzero singular values). Then δi = Vj ci exactly whenever r ≥ rank( Dj ), and up to the spectral tail τj,r = P 
+
+> k>r
+
+σ2 
+
+> j,k
+
+otherwise. The summary stores the basis in int4 and the coefficients and centroid in int8 (per-column and per-row scales). Its logical payload is ∼9.4% of the page’s KV bytes at r=8 , B=16 , or about a tenth once the quantization scales are counted (byte accounting in App. D); each summary is one B × B eigendecomposition per finalized page. A single batched pass at the prefill–decode boundary summarizes the prompt, and in steady state one incremental build per finalized page runs off the decode critical path; the model’s prefill attention path is unchanged. 
+
+Score (every step). Reconstruct all B within-page logits from the summary and reduce them by log-sum-exp, 
+
+ˆsj (q) = log X
+
+> i∈Pj
+
+exp q⊤μj + ( V⊤ 
+
+> j
+
+q)⊤ci
+
+√d , (1) normalize into a page-mass share, and rank directly by the group-averaged share ¯ˆmj defined next, with no exact rescore on the fast path; the retained-mass measurements of §5.4 justify ranking on ¯ˆmj alone. Selection reads no candidate key or value, and the per-page work, one r-dimensional projection plus a length-B log-sum-exp, fuses into the ranking kernel. The reconstruction error this induces, and its effect on the selected set, is characterized next. Across the GQA group, query qg normalizes its scores into a page-mass share ˆmg (j) = eˆsj (qg )/ P 
+
+> j′
+
+eˆsj′ (qg ), and the 
+
+share-average combine averages them, ¯ˆmj = 1
+
+> G
+
+P 
+
+> g≤G
+
+ˆmg (j). The sink and most recent page fill two of the k slots and the top-(k−2) remaining pages by ¯ˆmj fill the rest, one shared table all G heads attend at no extra traffic (KV is stored per KV head). Share-average maximizes the group-mean coverage 1
+
+> G
+
+P 
+
+> g
+
+γS (qg ) among shared sets (Cor. 3, App. A.4); its normalized-share form is TokenSelect’s head soft vote [ 58 ], and our contribution is that optimality and the worst-head measurements of §5.4. 
+
+Theorem 1 (Retention of the group-shared selection) . Fix a decode step, a KV head with pages {Pj } and value-norm bound R, and the group’s queries {qg }g≤G. Let ˆsj (qg ) be the scores of Eq. (1) from unquantized rank-r summaries, and η := max g,j ˆsj (qg ) − sj (qg ) the worst log-mass error. Then (i) η ≤ max g,j ∥(qg )⊥∥√τj,r /√d, where τj,r is 
+
+4A PREPRINT - J ULY 28, 2026 
+
+page j’s absolute spectral tail energy at rank r and (qg )⊥ the component of qg outside page j’s basis, with η = 0 
+
+whenever r ≥ rank( Dj ) for every j; (ii) the shared top-k set selected by the group-averaged estimated shares ¯ˆmj
+
+retains at least e−4η of the group-average coverage of exact-mass selection, always-kept pages included; (iii) hence the group-average output error obeys 
+
+1
+
+G
+
+X
+
+> g≤G
+
+oS (qg ) − o(qg ) ≤ 2R 1 − e−4η ¯γ⋆,
+
+with ¯γ⋆ the exact selection’s group-average coverage. Proof. App. A, composing the Lipschitz reconstruction bound (Prop. 2), the group-share sandwich, and the ranking-robustness bound (Cor. 2) at ∆ = 2 η.
+
+Remark. The bound covers the unquantized summary; the deployed int4/int8 summary’s log-mass error is measured rather than bounded analytically, small at the median, roughly double the unquantized error at matched percentiles, and heavy-tailed at the extremes (Table B.2, App. B; Fig. 1a). Because η is a maximum over every page in the head, those tail pages drive it, and the retention constant is qualitative at measured magnitudes; the quantitative weight is carried instead by the measured ranking fidelity and carrier retention of §5.4 and App. B, where quantization costs recall on interchangeable bulk pages while carrier retention is nearly unchanged. The per-page basis is also the best possible choice for this bound, because it minimizes the residual behind Prop. 2 among per-page rank-r summaries, uniquely so at a spectral gap (Cor. 1, App. A). The retained axes, by the same construction, also provably capture any single dominant key up to a slack set by the page’s (r+1) -th mode (Lemma 3, App. A), the mechanism behind carrier survival. A moment-only summary is the second-cumulant truncation of the same mass (exact for Gaussian pages, with its weakest worst-case control on the high-dynamic-range, peaky pages carriers live on; Prop. 3, App. A; cf. [14, 54]). 
+
+Implementation. LOCKS loads into an unmodified vLLM 0.24 [ 29 ] as a pip-installable general plugin , a drop-in attention backend that registers itself with the engine, no fork or patch required (App. F). Because r, the page size B,and the token budget b (hence the page budget k = ⌈b/B ⌉) are all fixed, the ranking kernel of §4 has fixed shapes too, so the entire batched decode step, selection included, replays inside full CUDA graphs. 
+
+## 5 Evaluation: Measuring Every Link 
+
+We test quality at a fixed attended budget and decode efficiency (§5.3), both under the fixed per-(layer, KV-head) token budget b of §2. Every quality figure sweeps b over the shared grid b ∈ { 64 , . . . , 2048 } against FullKV, the exact-LSE oracle (Lemma 1), L OCKS , and a suite of state-of-the-art selectors, evictors, and reasoning compressors named per benchmark (§5.1, §5.2). All methods run in the same engine against the same FullKV reference, on identical records. Per-arm sampling settings are stated with the per-task tables of App. C. The full protocol, model roster, and budget accounting are in App. C. 
+
+5.1 Retrieval and long-document QA 
+
+Retrieval and long-document QA are the regime where selection must find few, specific pages. L OCKS tracks the read-every-key oracle (exact-LSE selection, Lemma 1) down to the smallest budgets and stays within about a point of the full cache on LongBench-v1 [ 1], while four state-of-the-art selectors and evictors break away as the budget shrinks (Fig. 2), namely Quest [ 52 ], KVzip [ 28 ], ShadowKV [ 51 ], and RocketKV [ 2 ]. The gap is widest on retrieval-dense RULER [ 25 ] at the smallest budgets, where carrier-page retention decides the answer (Fig. 1b; §3, App. B). At 100 K+ context on InfiniteBench (GLM-4-9B-Chat-1M [ 53 ]) the same ordering holds: L OCKS tracks the exact-LSE oracle and achieves the highest measured mean of any deployable baseline at both a tight and a generous budget (Table 1); the full per-task grid across all budgets is in App. C. 
+
+5.2 Long-form reasoning 
+
+Reasoning decodes thousands of tokens, so selection runs over a cache the model itself is writing, and the working set is roughly fixed in size rather than a fraction of the context. Quality holds only once the budget covers it, so the sweep reveals a per-task budget floor (Fig. 3). The read-every-key oracle marks that floor for value-blind selection, and L OCKS ’s gap to the oracle isolates estimation fidelity from it, while four state-of-the-art baselines (Quest, R-KV, TriAttention, and LazyEviction) trail across the sweep. At the largest budget L OCKS nominally matches or exceeds both the oracle and FullKV on AIME26 (App. C). 5A PREPRINT - J ULY 28, 2026 64 128 256 512 1024 2048                       
+
+> per-head budget b(tokens)
+> 32.5
+> 35.0
+> 37.5
+> 40.0
+> 42.5
+> 45.0
+> 47.5
+> score
+> (a) LongBench-v1
+> 64 128 256 512 1024 2048
+> per-head budget b(tokens)
+> 20
+> 40
+> 60
+> 80
+> (b) RULER-16K
+> 64 128 256 512 1024 2048
+> per-head budget b(tokens)
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> (c) RULER-32K
+> FullKV LOCKS (ours) exact-LSE (oracle) Quest KVzip ShadowKV RocketKV
+
+Figure 2: Retrieval and QA vs. budget (Llama-3.1-8B [ 18 ], greedy, same-engine FullKV, identical records across methods): (a) LongBench-v1 (14-subset mean, average context ∼11 K tokens), (b) RULER-16K and (c) RULER-32K (13-task means). The x-axis is a common nominal budget; native budget semantics and measured traffic and residency differ across methods, audited in App. C.1. Table 1: InfiniteBench at 100K+ context (GLM-4-9B-Chat-1M [ 53 ], score , seeded subset of 50 records per task). Retrieval (Retr: passkey, number-string, KV-retrieval), long-document QA (LongQA: book QA/choice/sum, dialogue), and the 11 -task average (Avg). FullKV and the exact-LSE oracle (Lemma 1) are references, above the rule; L OCKS 
+
+achieves the highest measured mean among deployable selectors at both budgets ( bold ). Scores are by capability group; the full 11 -task per-task grid is Table C.8, App. C. Each cell is the mean with its 95% bootstrap CI half-width ( ±); we bootstrap records within each task and recompute the task-averaged capability score. budget b=512 budget b=2048 
+
+Method Retr LongQA Avg Retr LongQA Avg FullKV 76.0 ±4.1 35.3 ±3.4 43.0 ±2.1 76.0 ±4.1 35.3 ±3.4 43.0 ±2.1 
+
+Oracle (exact-LSE) 74.7 ±3.9 35.1 ±3.7 42.3 ±3.0 76.7 ±4.2 36.2 ±3.7 43.9 ±2.8 
+
+LOCKS 71.3 ±3.2 33.6 ±3.7 41.1 ±2.4 76.0 ±4.1 36.6 ±3.8 43.6 ±2.6 
+
+RocketKV 64.0 ±5.2 33.6 ±4.1 38.5 ±2.7 75.3 ±4.8 35.0 ±4.2 42.3 ±2.4 
+
+ShadowKV 66.0 ±1.3 29.1 ±3.4 36.0 ±2.1 71.3 ±3.2 33.1 ±3.8 40.3 ±2.3 
+
+Quest 62.7 ±3.0 26.7 ±3.5 34.7 ±2.7 58.0 ±4.0 31.0 ±3.8 35.7 ±2.6 
+
+5.3 Efficiency 
+
+LOCKS keeps the cache resident on the accelerator, so its footprint is the full cache plus the summary, traded for less per-step read traffic, since decode attends only the selected pages. We measure decode efficiency on an H200 NVL node, where FA3 is native. Every number here is measured in vLLM 0.24 on the H200 NVL node (App. C.6, F); kernels and CUDA-graph capture ship with the code. At a budget where selection matches the full cache on the quality suites of §5.1 and §5.2, L OCKS reads far fewer KV bytes per decode step than a dense engine and turns that into lower per-token latency, adding only the one-time summary build to time to first token; both gaps widen with context (Fig. 4). Batching decode rows amplifies the gap. As more requests share the step, the dense engine’s per-row cache read comes to dominate while L OCKS ’s selected read does not, so the speedup grows with batch size at every context (Table 2). 
+
+5.4 Ablations 
+
+The representation-scope frontier (page-local structure, at matched state, is what tracks the exact-LSE ranking) is established in §3. Here we ablate L OCKS ’s own design choices, namely rank and basis precision, and the GQA combine rule. 6A PREPRINT - J ULY 28, 2026 64 128 256 512 1024 2048                
+
+> per-head budget b(tokens)
+> 0
+> 20
+> 40
+> 60
+> accuracy (%)
+> (a) AIME26
+> 64 128 256 512 1024 2048
+> per-head budget b(tokens)
+> 0
+> 20
+> 40
+> 60
+> 80
+> (b) MATH-500
+> FullKV LOCKS exact-LSE R-KV Quest TriAttention LazyEvict
+
+Figure 3: Reasoning vs. budget (Qwen3-4B [ 62 ], thinking on; per-arm sampling settings in App. C): (a) AIME26, 
+
+(b) MATH-500 [21, 34] ( 16384 -token cap) 16K 64K 256K 1M 
+
+> context length
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> TPOT (ms)
+
+(a)     
+
+> FA3
+> FI
+> LOCKS 2.0x
+> 16K 64K 256K 1M
+> context length
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> TTFT (s)
+
+(b)    
+
+> 16K 64K 256K 1M
+> context length
+> 0
+> 20
+> 40
+> 60
+> 80
+> bytes read / step (GB)
+
+(c) 
+
+> 9.8x
+
+Figure 4: Decode efficiency at long and extreme context (GLM-4-9B-Chat-1M [ 53 ], H200 NVL node; full measure-ment protocol in App. C.6, software and hardware in App. F). Measured at budget b=2048 , where L OCKS matches the full cache on the quality suites of §5.1 and §5.2. (a) Per-token latency versus context, 2.0× below the dense baselines (FA3, FlashInfer) at 1M. (b) Steady prefill TTFT remains at parity; the one-time summary build is material at short context but becomes negligible relative to prefill at extreme context (App. C). (c) Bytes read per decode step; for L OCKS 
+
+this is the summary scan plus selected-page KV, 9.8× below dense at 1M, the mechanism behind the latency gap. Rank and basis precision trade fidelity for state independently, and Fig. 5 sweeps both across page sizes at matched attended tokens. An int8 basis closely tracks the unquantized basis; an int4 basis costs a few recall points and stops improving past moderate rank, so added rank cannot buy back quantization noise, which is why the shipped summary is r8i4; an int2 basis collapses toward centroid-level ranking at every rank, so int4 is the lowest tested precision that preserves the benefit of added rank. Larger pages need more rank at the same attended tokens, consistent with the scope pattern of §3 (state costs in App. D). The share-average combine of §4 retains more of every measured statistic (mean, worst head, p5) than group-max or group-mass. It trails a per-head oracle costing up to G× the selected-page traffic and attention work by only ∼2
+
+coverage points (full table App. D). Decode-time verification recorded zero violations of the paper’s proven bounds on every audited page, an implementation check over the traces of App. B. 
+
+## 6 Related Work 
+
+KV-cache efficiency methods span several largely orthogonal axes [ 44 ]; we group them by what is removed, what a selector stores, and what is proved or trained. 7A PREPRINT - J ULY 28, 2026 Table 2: Batched decode, GLM-4-9B-Chat-1M. Throughput speedup of L OCKS over the faster dense backend (FA3/FI) at each (context, batch size), measured matched-pair on one H200 NVL at the deployed 2048 -token budget. The per-context frontier (largest batch that fits) is in bold ; the right column is L OCKS ’s decode throughput there (tokens/s). The speedup grows with both context and batch as the full-KV read comes to dominate the step, reaching 
+
+1.80 × at 256 K; at short context with small batch it sits at parity, where the per-step selection cost matches the KV read it removes. A cell is marked OOM if either member of the matched pair cannot complete the requested batch without fallback.                                                                   
+
+> batch size frontier context 124816 32 LOCKS (tok/s)
+> 256 K1.30 1.43 1.80 OOM OOM OOM 275 128 K1.06 1.21 1.44 1.59 OOM OOM 483 64 K1.08 1.08 1.17 1.33 1.43 OOM 872 32 K0.96 1.01 1.02 1.07 1.14 1.26 1503 1247
+> rank r
+> 60
+> 80
+> 100
+> recall vs exact (%)
+> B= 8
+> 124815
+> rank r
+> B= 16
+> 124816 31
+> rank r
+> B= 32
+> 124816 32 63
+> rank r
+> B= 64
+> bf16 basis int8 basis int4 basis int2 basis
+
+Figure 5: Rank and basis precision at matched attended tokens (1024 per head; Llama-3.1-8B). Recall vs. the exact ranking up to each page size’s cap ( r=B−1, where the bf16 basis reaches 100 by construction). int8 tracks bf16; int4 costs a few points and flattens past r∼16 ; int2 stays near centroid level at every rank, so int4 is the lowest tested precision that preserves the benefit of added rank. Full grid released with the artifact. 
+
+Eviction and selection before the query. Discard entries before the query that will use them exists, namely attention-frequency heuristics [ 33 , 74 ], sink-and-window structure [ 60 ], adaptive head budgets [ 16 ], reconstruction-scored eviction [ 28 ], and synthesis into compact surrogates [ 77 ]; DuoAttention keeps a full cache only for retrieval heads, giving streaming heads a constant-length window instead [ 61 ]; and R-KV [ 4] evicts redundancy-scored entries during 
+
+reasoning decode, committing periodically rather than once. 
+
+Query-aware sparse attention and what a selector stores. Keep the full cache, attend a subset each step. Static patterns fix the subset by position [ 3, 10 , 70 ]; query-aware selection chooses it per query. What organizes the family is 
+
+what a selector stores per page , namely rank-0 statistics, extremes, centroids, or representative keys [ 24 , 51 , 52 , 59 ]; a shared global or offline basis [ 30 , 32 , 43 , 49 ]; codebooks [ 66 , 72 ]; block moments [ 54 , 56 ]; or scores and votes at token or head granularity [ 37 , 40 , 58 ]. HiLS [ 26 ] trains a landmark surrogate for the chunk log-sum-exp [ 42 ]. Twilight and Tactic [ 35 , 75 ] estimate masses toward a coverage target; TidalDecode [ 65 ] instead cuts the cost of selection itself by reusing one layer’s ranking across others; Prism [ 57 ] selects blocks spectrally; and several further directions cheapen sampling, retrieval, or prefill sparsity [8, 27, 36, 46]. 
+
+Theory of sparse decoding. An exact error identity for top-k attention truncation [ 55 ] underlies this line of work; Expected Attention [ 14 ] estimates per-token attention mass in closed form from the query and key distributions; VATP [ 19 ] weighs importance by value norm rather than attention weight alone. vAttention [ 12 ] unifies top-k with sampling under statistical guarantees; BLASST [ 68 ] instead bounds error via a global softmax-mass threshold rather than a fixed top-k budget; VaSE [7] argues for value-aware stochastic eviction. 8A PREPRINT - J ULY 28, 2026 
+
+Quantization. Keep every token, reduce bits per entry [ 20 , 22 , 23 , 39 , 63 ], orthogonal to which tokens are attended. Runtime-certified bounded-error quantized attention [5] bounds the resulting output error. 
+
+Low-rank and architectural. Grouped-query and multi-query attention reduce the number of distinct key/value projections cached in the first place [ 48 ]. Low-rank compression and graded-precision storage change what is stored, not which pages are read [ 6, 31 , 47 , 76 ]. Guarantee-flavored kernels and two-stage selectors [ 2, 9 , 13 ] target the same exact-top-k ceiling that a resident summary approaches more cheaply. 
+
+Trained sparsity and hybrids. The frontier increasingly bakes efficiency into pretraining, trained sparsity, or linear/recurrent attention alike [ 11 , 45 , 69 , 71 ], needing pretraining control; SeerAttention [ 17 ] instead distills a sparse-attention gate onto an already-pretrained model. HARD-KV [ 67 ] adapts per-head compression during decoding. A reasoning-specific line targets the budget under long chain-of-thought traces. R-KV [ 4] evicts redundancy-scored entries during reasoning decode, ReasonAlloc [ 38 ] allocates the budget hierarchically across the reasoning trace, and LongFlow [ 50 ] estimates importance from an intermediate attention quantity as the trace grows. Adaptive Mass-Segmented KV Compression [ 64 ] instead imposes region-wise quotas over long reasoning traces and is complementary to the per-page mass estimator studied here. 
+
+Concurrent work. The exact truncation identity appears independently in [ 55 ] and [ 54 ], with the latter also deriving the value-agnostic mass criterion; SPLA [ 56 ] instead trains a second-order metric to select blocks; and Prism [ 57 ]selects blocks spectrally. L OCKS ’s per-page exact-logit reconstruction, its shared-projection impossibility (Prop. 1), and its composed retention guarantee (Thm. 1) are the elements that distinguish it within this concurrent cluster. 
+
+## 7 Conclusion 
+
+Attention keys are locally low-rank though globally high-rank: a page’s own rank-8 eigenbasis captures most of its key energy, making it a high-fidelity compact surrogate for the page’s attention mass, so reconstructed-LSE selection from a tenth-of-KV resident summary tracks the read-every-key oracle down to the smallest budgets, because the carrier pages that decide tasks survive. We measured every link in this chain, and each held. Page-local spectral concentration carried through to logit fidelity, ranking fidelity, carrier survival, task quality under aggressive sparsity, and end-to-end serving throughput. The resulting selector, L OCKS , ships as a training-free plugin for vLLM, its decode step running fully inside CUDA graphs. 
+
+Limitations. Selection ranks summaries directly. The resulting error is characterized for the unquantized summary (Thm. 1); the deployed quantized summary’s retention is measured empirically, not certified per step. The summary costs about a tenth of the cache; the page size is fixed at 16 . Because selection reads only the resident summaries and never the keys or values, a fully offloaded serving path that keeps only summaries on the accelerator is a natural extension we leave to future work. The page-level measurements of App. B expand a small number of records per model, characterizing the estimator in depth rather than establishing coverage across tasks and models. 
+
+Scope of the claims. Our optimality claims are class-relative. Mass-ranking is minimax-optimal among deterministic value-blind selectors (Lemma 1, App. A.1), and the spectral basis is residual-optimal among orthogonal rank-r
+
+per-page linear reconstructions (Cor. 1); neither reaches past that class. L OCKS is empirically strongest among the evaluated deployable summaries at matched state (§3, App. D). Two directions complement rather than compete with ours. Better mass estimators help where a deterministic summary cannot (vAttention [ 12 ] unifies top-k with sampling under statistical guarantees), refining how mass is estimated at the cost of the reads our summary avoids, whereas we refine what each page stores .
+
+Reproducibility statement. All proofs are in App. A; the evaluation protocol and budget accounting are in App. C; code, kernels, container stacks, and the measurement harnesses are released (App. F). 
+
+## References 
+
+[1] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 3119–3137. Association for Computational Linguistics, 2024. doi: 10.18653/v1/2024.acl-long.172. 9A PREPRINT - J ULY 28, 2026 [2] Payman Behnam, Yaosheng Fu, Ritchie Zhao, Po-An Tsai, Zhiding Yu, and Alexey Tumanov. RocketKV: Accelerating long-context LLM inference via two-stage KV cache compression. In Proceedings of the 42nd International Conference on Machine Learning (ICML) , pages 3358–3392. PMLR, 2025. arXiv:2502.14051. [3] Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer. arXiv preprint arXiv:2004.05150 , 2020. [4] Zefan Cai, Wen Xiao, Hanshi Sun, Cheng Luo, Yikai Zhang, Ke Wan, Yucheng Li, Yeyang Zhou, Li-Wen Chang, Jiuxiang Gu, Zhen Dong, Anima Anandkumar, Abedelkadir Asi, and Junjie Hu. R-KV: Redundancy-aware KV cache compression for reasoning models. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. arXiv:2505.24133. [5] Dean Calver. Runtime-certified bounded-error quantized attention, 2026. arXiv:2605.20868. [6] Chi-Chih Chang, Wei-Cheng Lin, Chien-Yu Lin, et al. Palu: Compressing KV-cache with low-rank projection. In 
+
+International Conference on Learning Representations (ICLR) , 2025. arXiv:2407.21118. [7] Ting-Yun Chang, Harvey Yiyun Fu, Deqing Fu, Chenghao Yang, Jesse Thomason, and Robin Jia. Value-aware stochastic KV cache eviction for reasoning models, 2026. arXiv:2606.03928. [8] Zhuoming Chen, Ranajoy Sadhukhan, Zihao Ye, et al. MagicPIG: LSH sampling for efficient LLM generation. In 
+
+International Conference on Learning Representations (ICLR) , 2025. Spotlight; OpenReview ALzTQUgW8a. [9] Long Cheng, Ritchie Zhao, Timmy Liu, Mindy Li, Xianjie Qiao, Kefeng Duan, Yu-Jung Chen, Xiaoming Chen, Bita Darvish Rouhani, and June Yang. Guess-verify-refine: Data-aware top-K for sparse-attention decoding on Blackwell via temporal correlation, 2026. arXiv:2604.22312. [10] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. 
+
+arXiv preprint arXiv:1904.10509 , 2019. [11] DeepSeek-AI. DeepSeek-V4: Towards highly efficient million-token context intelligence. arXiv preprint arXiv:2606.19348 , 2026. [12] Aditya Desai, Kumar Krishna Agrawal, Shuo Yang, Alejandro Cuadron, Luis Gaspar Schroeder, Matei Zaharia, Joseph E. Gonzalez, and Ion Stoica. vAttention: Verified sparse attention. In International Conference on Learning Representations (ICLR) , 2026. arXiv:2510.05688. [13] Dhruv Deshmukh, Saurabh Goyal, Nipun Kwatra, and Ramachandran Ramjee. Kascade: A practical sparse attention method for long-context LLM inference, 2025. arXiv:2512.16391. [14] Alessio Devoto, Maximilian Jeblick, and Simon Jégou. Expected attention: KV cache compression by estimating attention from future queries distribution, 2025. arXiv:2510.00636. [15] Carl Eckart and Gale Young. The approximation of one matrix by another of lower rank. Psychometrika , 1(3): 211–218, 1936. [16] Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S. Kevin Zhou. Ada-KV: Optimizing KV cache eviction by adaptive budget allocation for efficient LLM inference. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. OpenReview tcisuhGsQZ; arXiv:2407.11550. [17] Yizhao Gao, Zhichen Zeng, Dayou Du, et al. SeerAttention: Learning intrinsic sparse attention in your LLMs. 
+
+arXiv preprint arXiv:2410.13276 , 2024. [18] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [19] Zhiyu Guo, Hidetaka Kamigaito, and Taro Watanabe. Attention score is not all you need for token importance indicator in KV cache reduction: Value also matters, 2024. arXiv:2406.12335. [20] Yefei He, Luoming Zhang, Weijia Wu, Jing Liu, Hong Zhou, and Bohan Zhuang. ZipCache: Accurate and efficient KV cache quantization with salient token identification. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. arXiv:2405.14256. [21] Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset. In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks , 2021. [22] Yankun Hong, Xing Li, Hui-Ling Zhen, Xianzhi Yu, Wulong Liu, and Mingxuan Yuan. SVDq: 1.25-bit and 410x key cache compression for LLM attention. arXiv preprint arXiv:2502.15304 , 2025. [23] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. KVQuant: Towards 10 million context length LLM inference with KV cache quantization. In 
+
+NeurIPS , 2024. 10 A PREPRINT - J ULY 28, 2026 [24] Coleman Hooper, Sebastian Zhao, Luca Manolache, et al. Multipole attention for efficient long context reasoning. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. arXiv:2506.13059. [25] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. Ruler: What’s the real context size of your long-context language models? arXiv preprint arXiv:2404.06654 , 2024. [26] Xiang Hu, Xinyu Wei, Hao Gu, et al. Hierarchical sparse attention done right: Toward infinite context modeling. 
+
+arXiv preprint arXiv:2607.02980 , 2026. [27] Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, et al. MInference 1.0: Accelerating pre-filling for long-context LLMs via dynamic sparse attention. In NeurIPS , 2024. [28] Jang-Hyun Kim, Jinuk Kim, Sangwoo Kwon, Jae W. Lee, Sangdoo Yun, and Hyun Oh Song. KVzip: Query-agnostic KV cache compression with context reconstruction. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Oral; OpenReview JFygzwx8SJ; arXiv:2505.23416. [29] Woosuk Kwon et al. Efficient memory management for large language model serving with pagedattention. In 
+
+SOSP , 2023. [30] Wonbeom Lee, Jungi Lee, Junghwan Seo, and Jaewoong Sim. InfiniGen: Efficient generative inference of large language models with dynamic KV cache management. In OSDI , 2024. [31] Damien Lesens, Beheshteh T. Rakhshan, and Guillaume Rabusseau. KQ-SVD: Compressing the KV cache with provable guarantees on attention fidelity, 2025. arXiv:2512.05916. [32] Tenghui Li, Guoxu Zhou, Xuyang Zhao, Yuning Qiu, and Qibin Zhao. Efficient low rank attention for long-context inference in large language models. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. arXiv:2510.23649. [33] Yuhong Li et al. Snapkv: LLM knows what you are looking for before generation. In NeurIPS , 2024. [34] Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations (ICLR) , 2024. [35] Chaofan Lin, Jiaming Tang, Shuo Yang, Hanshuo Wang, Tian Tang, Boyu Tian, Ion Stoica, Song Han, and Mingyu Gao. Twilight: Adaptive attention sparsity with hierarchical top-p pruning. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Spotlight; OpenReview Ve693NkzcU; arXiv:2502.02770. [36] Di Liu, Meng Chen, Baotong Lu, et al. RetrievalAttention: Accelerating long-context LLM inference via vector retrieval. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. [37] Guangda Liu, Chengwei Li, Jieru Zhao, Chenqi Zhang, and Minyi Guo. ClusterKV: Manipulating LLM KV cache in semantic space for recallable compression, 2024. arXiv:2412.03213. [38] Wenhao Liu, Hao Shi, Yunhe Li, Weizhi Fei, Xiangyuan Wang, Mengzhe Ruan, Hanxu Hou, Peisong Wang, Linqi Song, and Shuang Qiu. ReasonAlloc: Hierarchical decoding-time KV cache budget allocation for reasoning models, 2026. arXiv:2606.11164. [39] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. KIVI: A tuning-free asymmetric 2bit quantization for KV cache. In ICML , 2024. [40] Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu, Weiran He, Enming Yuan, Yuzhi Wang, Zhiqi Huang, Huan Yuan, Suting Xu, Xinran Xu, Guokun Lai, Yanru Chen, Huabin Zheng, Junjie Yan, Jianlin Su, Yuxin Wu, Neo Y. Zhang, Zhilin Yang, Xinyu Zhou, Mingxing Zhang, and Jiezhong Qiu. MoBA: Mixture of block attention for long-context LLMs, 2025. arXiv:2502.13189. [41] Weian Mao, Xi Lin, Wei Huang, Yuxin Xie, Tianfu Fu, Bohan Zhuang, Song Han, and Yukang Chen. TriAttention: Efficient long reasoning with trigonometric KV compression. arXiv preprint arXiv:2604.04921 , 2026. [42] Amirkeivan Mohtashami and Martin Jaggi. Random-access infinite context length for transformers. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Landmark Attention; arXiv:2305.16300. [43] Junlin Mu, Hantao Huang, Jihang Zhang, Minghui Yu, Tao Wang, and Yidong Li. SALS: Sparse attention in latent space for KV cache compression. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. arXiv:2510.24273. [44] Piotr Nawrot et al. The sparse frontier: Sparse attention trade-offs in transformer LLMs. arXiv preprint arXiv:2504.17768 , 2025. [45] Qwen Team. Qwen3.5: Towards native multimodal agents. https://qwen.ai/blog?id=qwen3.5 , 2026. 11 A PREPRINT - J ULY 28, 2026 [46] Luka Ribar, Ivan Chelombiev, Luke Hudlass-Galley, Charlie Blake, Carlo Luschi, and Douglas Orr. SparQ attention: Bandwidth-efficient LLM inference. In ICML , 2024. [47] Utkarsh Saxena, Gobinda Saha, Sakshi Choudhary, and Kaushik Roy. Eigen attention: Attention in low-rank space for KV cache compression. In Findings of the Association for Computational Linguistics: EMNLP 2024 ,pages 15332–15344, 2024. [48] Noam Shazeer. Fast transformer decoding: One write-head is all you need. arXiv preprint arXiv:1911.02150 ,2019. [49] Prajwal Singhania, Siddharth Singh, Shwai He, Soheil Feizi, and Abhinav Bhatele. Loki: Low-rank keys for effi-cient sparse attention. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. arXiv:2406.02542. [50] Yi Su, Zhenxu Tian, Dan Qiao, Yuechi Zhou, Juntao Li, and Min Zhang. LongFlow: Efficient KV cache compression for reasoning models, 2026. arXiv:2603.11504. [51] Hanshi Sun, Li-Wen Chang, Wenlei Bao, et al. ShadowKV: KV cache in shadows for high-throughput long-context LLM inference. In Proceedings of the 42nd International Conference on Machine Learning (ICML) . PMLR, 2025. Spotlight. [52] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context LLM inference. In ICML , 2024. [53] Team GLM. ChatGLM: A family of large language models from GLM-130B to GLM-4 all tools. arXiv preprint arXiv:2406.12793 , 2024. [54] Alexander Tian, Aditya Ghai, Sanjit Neelam, Zaal Vasania, and Akshay Mishra. COBS: Cumulant order block sparse attention. arXiv preprint arXiv:2607.09052 , 2026. [55] Georgios Tzachristas, Lei Deng, Ioannis Tzachristas, Gong Zhang, and Renhai Chen. A mathematical theory of top-k sparse attention via total variation distance, 2025. arXiv:2512.07647. [56] Bailin Wang, Dan Friedman, Tao Lei, and Chong Wang. SPLA: Block sparse plus linear attention for long context modeling. arXiv preprint arXiv:2601.22379 , 2026. [57] Xinghao Wang, Pengyu Wang, Xiaoran Liu, Fangxu Liu, Jason Chu, Kai Song, and Xipeng Qiu. Prism: Spectral-aware block-sparse attention, 2026. arXiv:2602.08426. [58] Wei Wu, Zhuoshi Pan, Chao Wang, Liyi Chen, Yunchu Bai, Tianfu Wang, Kun Fu, Zheng Wang, and Hui Xiong. TokenSelect: Efficient long-context inference and length extrapolation for LLMs via dynamic token-level KV cache selection. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2025. arXiv:2411.02886. [59] Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and Maosong Sun. InfLLM: Training-free long-context extrapolation for LLMs with an efficient context memory. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. arXiv:2402.04617. [60] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In ICLR , 2024. [61] Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. DuoAttention: Efficient long-context LLM inference with retrieval and streaming heads. In International Conference on Learning Representations (ICLR) , 2025. arXiv:2410.10819. [62] An Yang, Anfeng Li, Baosong Yang, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [63] June Yong Yang, Byeongwook Kim, Jeongin Bae, et al. No token left behind: Reliable KV cache compression via importance-aware mixed precision quantization. arXiv preprint arXiv:2402.18096 , 2024. [64] Junzhe Yang and Xiaoyu Shen. Adaptive mass-segmented KV compression for long-context reasoning. arXiv preprint arXiv:2605.23200 , 2026. [65] Lijie Yang, Zhihao Zhang, Zhuofu Chen, Zikun Li, and Zhihao Jia. TidalDecode: Fast and accurate LLM decoding with position persistent sparse attention. In International Conference on Learning Representations (ICLR) , 2025. [66] Xu Yang, Jiapeng Zhang, Dongyang Zhao, Guo Chen, and Zhuo Tang. Self-indexing KVCache: Predicting sparse attention from compressed keys, 2026. arXiv:2603.14224. [67] Yuxuan Yang, Feiyang Ren, Bowen Zeng, Dalin Zhang, Jinpeng Chen, Gang Chen, and Huan Li. HARD-KV: Head-adaptive regularization for decoding-time KV compression. arXiv preprint arXiv:2606.28831 , 2026. [68] Jiayi Yuan, Cameron Shinn, Kai Xu, Jingze Cui, George Klimiashvili, Guangxuan Xiao, Perkz Zheng, Bo Li, et al. BLASST: Dynamic BLocked attention sparsity via softmax thresholding. In Proceedings of Machine Learning and Systems (MLSys) , 2026. MLSys 2026 (Oral); arXiv:2512.12087. 12 A PREPRINT - J ULY 28, 2026 [69] Jingyang Yuan, Huazuo Gao, Damai Dai, et al. Native sparse attention: Hardware-aligned and natively trainable sparse attention. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 23078–23097, 2025. Best Paper Award; arXiv:2502.11089. [70] Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, et al. Big bird: Transformers for longer sequences. In 
+
+NeurIPS , 2020. [71] Z.ai. GLM-5.2: Built for long-horizon tasks. https://z.ai/blog/glm-5.2 , 2026. Open-weight model release, June 2026; arXiv:2602.15763 is the GLM-5 series report, not GLM-5.2. [72] Hailin Zhang, Xiaodong Ji, Yilin Chen, et al. PQCache: Product quantization-based KVCache for long context LLM inference. Proceedings of the ACM on Management of Data , 3(3):201:1–201:30, 2025. arXiv:2407.12820. [73] Haoyue Zhang, Hualei Zhang, Xiaosong Ma, Jie Zhang, and Song Guo. LazyEviction: Lagged KV eviction with attention pattern observation for efficient long reasoning. In Proceedings of the 64th Annual Meeting of the Asso-ciation for Computational Linguistics (Volume 1: Long Papers) , pages 36335–36352, 2026. arXiv:2506.15969. [74] Zhenyu Zhang et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. In 
+
+NeurIPS , 2023. [75] Kan Zhu, Tian Tang, Qinyu Xu, et al. Tactic: Adaptive sparse attention with clustering and distribution fitting for long-context LLMs. arXiv preprint arXiv:2502.12216 , 2025. [76] Yuxuan Zhu, David H. Yang, Mohammad Mohammadi Amiri, Keerthiram Murugesan, Tejaswini Pedapati, and Pin-Yu Chen. OjaKV: Context-aware online low-rank KV cache compression. In Findings of the Association for Computational Linguistics: ACL 2026 , 2026. arXiv:2509.21623. [77] Adam Zweiger, Xinghong Fu, Han Guo, and Yoon Kim. Fast KV compaction via attention matching. arXiv preprint arXiv:2602.16284 , 2026. Accepted as a poster at ICML 2026. 13 Appendix 
+
+## Table of Contents 
+
+A Proofs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 
+
+A.1 Coverage and mass-ranking . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.2 Content-blindness and the local spectral basis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.3 The composed retention guarantee . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.4 Group-shared selection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 A.5 The moment core and score-error characterization . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 
+
+B The Microscope: Selection Fidelity and Estimator Error . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 
+
+C Extended Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 
+
+C.1 Per-method budget accounting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 C.2 Reasoning baselines (MATH-500, AIME26) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24 C.3 Retrieval and long-document QA . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25    
+
+> C.3.1 LongBench-v1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 C.3.2 RULER-16K . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26 C.3.3 RULER-32K . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28
+
+C.4 Long-form reasoning . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30   
+
+> C.4.1 MATH-500 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30 C.4.2 AIME26 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30
+
+C.5 Long context: InfiniteBench . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 C.6 Decode efficiency: measurement protocol and full numbers . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 33 
+
+D Representation-Scope Frontier and State Accounting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 35 
+
+E Decode Kernel: Critical Path and Overlap Schedule . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 40 
+
+F Reproducibility . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 42 14 A PREPRINT - J ULY 28, 2026 
+
+## A Proofs 
+
+This appendix collects the proofs of the results stated in the main text, each placed adjacent to the construction it supports and given in order of appearance. 
+
+A.1 Coverage and mass-ranking (Lemma 1) 
+
+§2 introduces this result in prose. The formal statement, proved in the remainder of this subsection, is: 
+
+Lemma 1 (Coverage, the exact deficit, and mass-optimal selection) . Let R = max i ∥vi∥ bound the cached value norms. (i) For any nonempty page set S and query q, ∥oS (q) − o(q)∥ ≤ 2R (1 − γS (q)) , and, with ε = 1 − γS (q)
+
+and ¯vS , ¯vSc the mass-weighted mean values of the kept and dropped sets, exactly o(q) − oS (q) = ε (¯ vSc − ¯vS ).(ii) Fix a budget of k pages: the top-k pages by exact log-mass sj (q) = log P 
+
+> i∈Pj
+
+eq⊤ki/√d maximize γS (q), hence minimize the bound in (i); among deterministic selection rules that do not read the values {vi}, this worst-case error is minimax-optimal (proof and the formal selector class below). 
+
+Throughout, for a page set S a sum over i ∈ S ranges over the tokens of its pages, i ∈ S 
+
+> j∈S
+
+Pj .
+
+Proof of Lemma 1(i): the exact identity and the truncation bound. Let pi = αi be the softmax weights over all tokens, ZS = P 
+
+> i∈S
+
+pi = γS , and ¯vS = 1
+
+> ZS
+
+P 
+
+> i∈S
+
+pivi, ¯vSc = 11−ZS
+
+P 
+
+> i / ∈S
+
+pivi. The renormalized restricted output is oS = ¯ vS , while o = ZS ¯vS + (1 − ZS )¯ vSc . Subtracting, o − oS = (1 − ZS )(¯ vSc − ¯vS ) = ε(¯ vSc − ¯vS ),the exact identity. (Softmax weights are strictly positive, so ZS > 0 for nonempty S; if Sc is empty, ε = 0 and the identity reads o = oS .) The mass-weighted means are convex combinations of the vi, so ∥¯vSc ∥, ∥¯vS ∥ ≤ R and 
+
+∥o − oS ∥ ≤ 2Rε = 2 R(1 − γS ).
+
+Formal value-blind selector class. Definition 1 (Deterministic value-blind selection rule) . Fix a budget k. A selection rule is a map from the keys and query, ({ki}, q), to a k-subset of pages. It is deterministic value-blind if its output does not depend on the cached values {vi}: two problem instances with identical keys and query but different values receive the same selected set. 
+
+Proof of Lemma 1(ii): mass-ranking maximizes coverage and is minimax value-blind optimal. Coverage 
+
+γS = P 
+
+> j∈S
+
+mj with page-mass share mj = esj / P 
+
+> j′
+
+esj′ . Maximizing an additive set function over k-subsets is attained by the k largest mj , i.e. the top-k by sj ; this minimizes ε = 1 − γS and the bound of part (i). For minimax optimality among the rules of Definition 1, fix the keys and the query, so each candidate set S determines its dropped mass εS , independent of any rule’s knowledge of {vi}. A deterministic value-blind rule picks S without seeing 
+
+{vi}, and the exact identity of part (i) gives error εS ∥¯vSc − ¯vS ∥. Over assignments with max i ∥vi∥ ≤ R this never exceeds 2Rε S , and the assignment vi = Ru on Sc, vi = −Ru on S (any unit u) attains it, so any fixed deterministic value-blind rule’s worst-case error at the set it picks is exactly 2Rε S . It is minimized by minimizing εS via the mass top-k.
+
+Remark (the deterministic qualifier is necessary). The bound is worst-case over value assignments committed before any coin toss. With three equal-mass single-token pages and budget k = 1 , every deterministic choice has worst-case error 2Rε S = 43 R. Selecting the kept page uniformly at random instead gives, for every such value assignment, expected error 13
+
+P 
+
+> i
+
+∥vi − ¯v∥ ≤ R (by Cauchy–Schwarz, P 
+
+> i
+
+∥vi − ¯v∥2 = P 
+
+> i
+
+∥vi∥2 − 3∥¯v∥2 ≤ 3R2,so P 
+
+> i
+
+∥vi − ¯v∥ ≤ √3√3R2 = 3 R), strictly below 43 R. A randomized value-blind rule can therefore strictly lower the worst case, so the deterministic qualifier of Lemma 1 is not cosmetic. 15 A PREPRINT - J ULY 28, 2026 
+
+A.2 Content-blindness and the local spectral basis (Prop. 1, Lemma 2, Cor. 1) Envelope bounds are content-blind. A cheap surrogate must still distinguish pages by content, which the extreme-based bounds decode-time selectors rank by cannot do. 
+
+Lemma 2 (Envelope content-blindness) . The envelope score of Tang et al. [52] , divided by √d, upper-bounds every within-page logit, but depends on a page only through its per-dimension key extremes: pages with equal extremes receive identical scores for every query. 
+
+Pages that differ only in identifiers, exactly where selection decides the answer, receive identical envelope scores, and no tie-break recovers the distinction; at extreme budgets the envelope loses carrier pages, not just average mass (Table B.1). LOCKS instead ranks by a resident factorization of the mass itself (§4). 
+
+Proof of Lemma 2. The envelope score of page j for query q is ej (q) = Pdc=1 max  qc uj,c , q c ℓj,c 
+
+, where 
+
+uj,c = max i∈Pj ki,c and ℓj,c = min i∈Pj ki,c are the page’s per-dimension key extremes. For any i ∈ Pj , coordinatewise 
+
+qcki,c ≤ max( qcuj,c , q cℓj,c ) since ki,c ∈ [ℓj,c , u j,c ]; summing over c gives q⊤ki ≤ ej (q), and dividing by √d upper-bounds every within-page logit. By construction ej is a function of (uj , ℓj ) alone, so two pages with equal extremes receive identical scores for every query. 
+
+Proof of Proposition 1. Let a, b be the two perturbed keys, k′ 
+
+> a
+
+= ka + c u, k′ 
+
+> b
+
+= kb − c u, and k′ 
+
+> i
+
+= ki otherwise. The centroid is unchanged, μ′ = μ + ( c u − c u)/B = μ, so only the deviations at a, b move, by ±c u (δ′ 
+
+> a
+
+= δa + c u,
+
+δ′ 
+
+> b
+
+= δb − c u, δ′ 
+
+> i
+
+= δi otherwise). Since W⊤u = 0, every sketched key is unchanged, W⊤k′ 
+
+> i
+
+= W⊤ki, and so are the centered sketches W⊤δ′ 
+
+> i
+
+= W⊤δi; with μ itself unchanged, any rule of the stated form scores the two pages identically. For the masses, sP ′ (q) ≥ q⊤k′
+
+> a
+
+/√d = q⊤ka/√d + c q⊤u/√d → ∞ when q⊤u > 0, while sP (q) does not move. For queries with q⊤u < 0, swap a and b (equivalently, perturb by −u), so the blind family is closed under sign. 
+
+Corollary 1 (The per-page basis is residual-optimal) . Fix a page j and rank r < d. Among summaries 
+
+(μj , W, {W⊤δi}) over orthonormal W ∈ Rd×r , the spectral basis Vj minimizes the residual energy τj,r (W) = 
+
+P 
+
+> i∈Pj
+
+∥δi − WW ⊤δi∥2. When σj,r > σ j,r +1 the minimizing subspace span( W) = span( Vj ) is unique; since 
+
+τj,r (W) depends on W only through the projector WW ⊤, every orthonormal basis of that subspace attains the same minimum residual and the same worst-case-over-queries error bound (the second, Cauchy–Schwarz, inequality of Prop. 2); uniqueness is of the subspace, not of any particular basis for it. 
+
+Proof of Corollary 1. τj,r (W) = ∥Dj − Dj WW ⊤∥2 
+
+> F
+
+is the error of a rank-r approximation of Dj of the projected form; the unconstrained rank-r minimum is P 
+
+> k>r
+
+σ2
+
+> j,k
+
+, attained by the truncated singular value decomposition [ 15 ], which is of the projected form with W = Vj (Dj Vj V⊤ 
+
+> j
+
+= Uj,r Σj,r V⊤ 
+
+> j
+
+); hence Vj minimizes τj,r . When 
+
+σj,r > σ j,r +1 the rank-r eigenspace of D⊤ 
+
+> j
+
+Dj is the unique minimizing subspace (a strict spectral gap rules out any other rank-r projector attaining the same residual); as noted above, τj,r depends on W only through WW ⊤, so every orthonormal basis of that subspace, related to Vj by an r × r orthogonal change of basis, is an equally valid minimizer, and Vj is simply one such basis. For the bound, over ∥q∥ ≤ 1, sup ∥q⊥∥pτj,r (W)/√d = pτj,r (W)/√d, attained by any unit q ⊥ span( W) (nonempty since r < d ), and this is monotone in τj,r (W).16 A PREPRINT - J ULY 28, 2026 
+
+A.3 The composed retention guarantee (Thm. 1) 
+
+This proof composes three pieces (a per-query score-error bound, a group-share sandwich, and a ranking-robustness corollary) into the single end-to-end guarantee stated as Theorem 1. No new mathematics is introduced; each piece is proved here, adjacent to where it is used. 
+
+Step 1: per-query, per-page score error. Proposition 2 (Score error characterization) . Fix q and a page j; let ˆsj be the score of Eq. (1) with unquantized summaries, δ⊥ 
+
+> i
+
+= δi − Vj ci the reconstruction residuals, and q⊥ = q − Vj V⊤ 
+
+> j
+
+q. Then 
+
+ˆsj (q) − sj (q) ≤ max 
+
+> i∈Pj
+
+q⊤⊥δ⊥
+
+> i
+
+√d ≤ ∥q⊥∥ √τj,r 
+
+√d ,
+
+and ˆsj = sj whenever r ≥ rank( Dj ).
+
+Proof. For each i ∈ Pj the reconstructed logit differs from the true one by q⊤(Vj ci − δi)/√d = −q⊤δ⊥ 
+
+> i
+
+/√d =
+
+−q⊤⊥δ⊥ 
+
+> i
+
+/√d, using V⊤ 
+
+> j
+
+δ⊥ 
+
+> i
+
+= 0. Log-sum-exp is 1-Lipschitz in the sup norm of its arguments (its gradient is a softmax, hence a convex combination), which gives the first inequality; Cauchy–Schwarz with ∥δ⊥ 
+
+> i
+
+∥2 ≤ P 
+
+> i′
+
+∥δ⊥ 
+
+> i′
+
+∥2 =tr  (I − Vj V⊤ 
+
+> j
+
+)Sj
+
+ = P 
+
+> k>r
+
+σ2 
+
+> j,k
+
+= τj,r gives the second. If r ≥ rank( Dj ), every residual vanishes and ˆsj = sj .Quantizing the basis and coefficients to int4/int8 adds a further per-logit perturbation that propagates through the same Lipschitz step; the bound above is for the unquantized summary, and we do not derive the magnitude of the quantization perturbation. Maximizing over the group’s queries {qg }g≤G and the head’s pages gives Theorem 1(i) directly, namely η := max g,j |ˆsj (qg ) − sj (qg )| ≤ max g,j ∥(qg )⊥∥√τj,r /√d, with η = 0 whenever r ≥ rank( Dj ) for every page j the group ranks. 
+
+Step 2: the group-share sandwich. Write η = max g≤G max j |ˆsj (qg ) − sj (qg )| as above. Termwise, eˆsj (qg ) ∈
+
+[e−η , e η ] · esj (qg ) for every page j and every query qg in the group; normalizing (which multiplies numerator and denominator by factors in the same range) doubles the exponent, giving ˆmg (j) ∈ [e−2η , e 2η ] · mg (j) for every query in the group. Averaging a family of ratios each sandwiched in [e−2η , e 2η ] preserves the sandwich on the average, 
+
+¯ˆmj = 1
+
+> G
+
+P 
+
+> g
+
+ˆmg (j) ∈ [e−2η , e 2η ] · 1
+
+> G
+
+P 
+
+> g
+
+mg (j) = [ e−2η , e 2η ] · ¯mj , i.e. 
+
+log ¯ˆmj − log ¯ mj ≤ 2η for every page j. 
+
+Step 3: robustness to bounded score error. Corollary 2 (Selection is robust to any bounded score error) . Fix q with exact page log-masses {sj (q)}, and let 
+
+{gj } be any ranking scores for which some page-independent constant c has max j |gj − sj (q) − c| ≤ ∆. Then any top-k selection under g retains at least e−2∆ of the attention mass of the top-k selection under the exact log-masses, always-kept pages included (Prop. 3 bounds ∆ for the moment core, with c = − log B; Prop. 2 for the spectral summary). 
+
+Proof. Subtracting c from every gj changes no top-k set, so take c = 0 . Let Sg and S⋆ be top-k sets under g and under the exact log-masses; since Sg maximizes P 
+
+> p∈S
+
+egp over k-subsets, 
+
+X
+
+> p∈Sg
+
+esp(q) ≥ e−∆ X
+
+> p∈Sg
+
+egp ≥ e−∆ X
+
+> p∈S⋆
+
+egp ≥ e−2∆ X
+
+> p∈S⋆
+
+esp(q),
+
+the outer inequalities holding termwise from |gj − sj | ≤ ∆. Dividing by the partition function turns the sums into attention masses, and adding the always-kept (sink, recent) mass A to both sides preserves the bound, since 
+
+A ≥ e−2∆ A.Applying Cor. 2 to gj = log ¯ˆmj against the exact sj = log ¯ mj (both already normalized page-mass shares, so c = 0 ), with ∆ = 2 η from Step 2, the shared top-(k−2) set selected on ¯ˆmj retains at least e−4η of the attention mass that the top-(k−2) set selected on the exact group-average share ¯mj would retain, always-kept pages included. By Cor. 3 the latter set maximizes ¯γ(S) := 1
+
+> G
+
+P 
+
+> g
+
+γS (qg ) over shared k-page sets containing the sink and most recent page, attaining the exact group-average coverage ¯γ⋆. This is Theorem 1(ii). The group-averaged-share top-k set retains at least e−4η of exact group-average coverage. 17 A PREPRINT - J ULY 28, 2026 
+
+Step 4: from coverage to output error. Lemma 1(i) applies to every query in the group against the one shared selection S. Every query qg reads the same KV head, hence the same cached values and the same bound R, so 
+
+∥oS (qg ) − o(qg )∥ ≤ 2R(1 − γS (qg )) for every g. Averaging over the group, 
+
+1
+
+G
+
+X
+
+> g≤G
+
+oS (qg ) − o(qg ) ≤ 2R
+
+
+
+1 − 1
+
+G
+
+X
+
+> g≤G
+
+γS (qg )
+
+
+
+= 2 R 1 − ¯γ(S).
+
+Substituting the Step 3 bound ¯γ(S) ≥ e−4η ¯γ⋆ gives 
+
+1
+
+G
+
+X
+
+> g≤G
+
+oS (qg ) − o(qg ) ≤ 2R 1 − e−4η ¯γ⋆,
+
+Theorem 1(iii). 18 A PREPRINT - J ULY 28, 2026 
+
+A.4 Group-shared selection (Cor. 3) Corollary 3 (Group-shared selection) . Let mg (j) be query qg ’s exact normalized page-mass share and ¯mj =
+
+> 1
+> G
+
+P 
+
+> g
+
+mg (j) its group average. For k ≥ 2, among shared sets of k pages that always include the sink and most recent page, the top-(k−2) by ¯mj over the remaining pages maximizes the equal-weight group-average coverage 
+
+> 1
+> G
+
+P 
+
+> g
+
+γS (qg ), hence minimizes the correspondingly averaged bound of Lemma 1(i). 
+
+Proof. Let mg (j) = esj (qg )/Z g be query qg ’s normalized page-mass share, so γS (qg ) = P 
+
+> j∈S
+
+mg (j) by definition of coverage. A shared set S therefore has 1
+
+> G
+
+P 
+
+> g
+
+γS (qg ) = 1
+
+> G
+
+P
+
+> g
+
+P 
+
+> j∈S
+
+mg (j) = P 
+
+> j∈S
+
+¯mj , additive over pages, so among all k-subsets the k largest ¯mj maximize it. With the sink and most recent page forced into every candidate S,their contribution to P 
+
+> j∈S
+
+¯mj is the same constant across every such S, so maximizing the sum over the remaining 
+
+k−2 free slots is exactly the top-(k−2) by ¯mj among the other pages. Every query in the group shares one KV head, hence one value-norm bound R, so the same bound of Lemma 1(i) applied to each γS (qg ) and averaged gives 
+
+2R 1 − 1
+
+> G
+
+P 
+
+> g
+
+γS (qg ) = 2 R 1 − P 
+
+> j∈S
+
+¯mj
+
+, minimized by the same set. 19 A PREPRINT - J ULY 28, 2026 
+
+A.5 The moment core and score-error characterization (Prop. 3, Lemma 3) 
+
+The moment core of §4, in the notation used there, with aj = q⊤μj /√d and zi = q⊤δi/√d, the exact mass factors as 
+
+sj (q) = aj + log X
+
+> i∈Pj
+
+ezi = aj + log B + log Ei
+
+ezi , (A.1) with Ei the average over the page’s B keys, so the last term is the CGF of the centered deviations at argument 1 (log B
+
+is page-independent for ranking); truncating it at second order gives 
+
+ˆs q 
+
+> j
+
+(q) = q⊤μj
+
+√d + 12Bd q⊤Sj q, Sj = X
+
+> i∈Pj
+
+δiδ⊤ 
+
+> i
+
+= D⊤ 
+
+> j
+
+Dj , (A.2) whose rank-r form (the same symbol) keeps P 
+
+> k≤r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2. Prop. 3 is positioned against the closest rivals that also score by a quadratic truncation of the mass (COBS [ 54 ] and Expected Attention [ 14 ]) by making precise where that truncation is exact (Gaussian pages) and where its worst-case bound is weakest (the high-dynamic-range, peaky pages a carrier lives on). 
+
+Proposition 3 (The moment core is the second-cumulant truncation of the mass) . Fix a query q and page j; let {zi} be the centered per-key logits of Eq. (A.1) with empirical cumulants κm, and let Lj = max i∈Pj |zi|. Define Rcum  
+
+> j
+
+and 
+
+Rrank  
+
+> j
+
+by 
+
+sj (q) − log B
+
+| {z }
+
+> exact
+
+=
+
+
+
+aj + 12 κ2
+
+
+
++ Rcum  
+
+> j
+
+, 12 κ2 − 12Bd 
+
+X
+
+> k≤r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2
+
+| {z }
+
+> rank truncation
+
+= 12Bd 
+
+X
+
+> k>r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2
+
+| {z }
+
+Rrank 
+
+> j
+
+,
+
+so that sj − log B = ˆ s q 
+
+> j
+
++ Rcum  
+
+> j
+
++ Rrank  
+
+> j
+
+exactly: ˆs q 
+
+> j
+
+is the second-cumulant, rank-r truncation of the mass. The remainders obey, unconditionally, 
+
+|Rcum  
+
+> j
+
+| ≤ L3 
+
+> j
+
+/3, Rrank  
+
+> j
+
+≤ min 
+
+
+
+σ2
+
+> j,r +1
+
+, P 
+
+> k>r
+
+σ2
+
+> j,k
+
+
+
+∥q∥2/(2 Bd ).Rcum  
+
+> j
+
+measures the page’s departure from Gaussianity: for a Gaussian law the CGF is exactly quadratic and the remainder vanishes. 
+
+Proof of Proposition 3. By Eq. (A.1) , K(t) := log Ei[etz i ] is the cumulant generating function of the empirical deviations {zi}, finite and smooth for all real t, with K(0) = 0 , K′(0) = κ1 = 0 (the page is centered), K′′ (0) = κ2,and sj (q) − aj − log B = K(1) . Taylor’s theorem with integral remainder at t = 1 gives 
+
+K(1) = 12 κ2 +
+
+Z 10(1 −t)2 
+
+> 2
+
+K′′′ (t) dt 
+
+| {z }
+
+> Rcum
+> j
+
+.
+
+Here K′′′ (t) is the third cumulant of the exponentially tilted law Pt(i) ∝ etz i , which is supported on the same deviations. Under it |z| ≤ Lj , so its variance is at most L2 
+
+> j
+
+and, since |z − Etz| ≤ 2Lj pointwise, |K′′′ (t)| =
+
+|Et(z − Etz)3| ≤ 2Lj Var t(z) ≤ 2L3 
+
+> j
+
+. Integrating, |Rcum  
+
+> j
+
+| ≤ 2L3
+
+> j
+
+R 10(1 −t)2 
+
+> 2
+
+dt = L3 
+
+> j
+
+/3. For a Gaussian law the CGF is 12 σ2t2, whose third derivative vanishes identically, so the corresponding remainder is zero; Rcum  
+
+> j
+
+thus measures the deviations’ departure from Gaussianity. For the rank term, κ2 = Eiz2 
+
+> i
+
+= q⊤Sj q/(Bd ) with Sj = P 
+
+> k
+
+σ2
+
+> j,k
+
+vj,k v⊤
+
+> j,k
+
+, so  
+
+> 12
+
+κ2 − 12Bd 
+
+P 
+
+> k≤r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2 = 12Bd 
+
+P 
+
+> k>r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2. Each (v⊤
+
+> j,k
+
+q)2 ≤ ∥ q∥2 and, the vj,k being orthonormal, 
+
+P 
+
+> k>r
+
+(v⊤
+
+> j,k
+
+q)2 ≤ ∥ q∥2; the two give Rrank  
+
+> j
+
+≤ min  P  
+
+> k>r
+
+σ2
+
+> j,k
+
+, σ 2
+
+> j,r +1
+
+∥q∥2/(2 Bd ).
+
+Lemma 3 (Outlier capture) . Fix q, a page j with centered deviations {δi}, and 1 ≤ r < d . For every i⋆ ∈ Pj ,
+
+X
+
+> k≤r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2 ≥ (q⊤δi⋆ )2 − σ2 
+
+> j,r +1
+
+∥q∥2, σ2 
+
+> j,r +1
+
+≤ λr
+
+P 
+
+> i̸=i⋆
+
+δiδ⊤
+
+> i
+
+
+
+,
+
+with λr the r-th largest eigenvalue. 
+
+Proof of Lemma 3. Write Sj = δi⋆ δ⊤ 
+
+> i⋆
+
++ E with E = P 
+
+> i̸=i⋆
+
+δiδ⊤ 
+
+> i
+
+⪰ 0. First, with the eigenvalues in nonincreasing order, P 
+
+> k>r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2 ≤ σ2
+
+> j,r +1
+
+P 
+
+> k>r
+
+(v⊤
+
+> j,k
+
+q)2 ≤ σ2
+
+> j,r +1
+
+∥q∥2, so P 
+
+> k≤r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2 =
+
+q⊤Sj q−P 
+
+> k>r
+
+σ2
+
+> j,k
+
+(v⊤
+
+> j,k
+
+q)2 ≥ q⊤Sj q−σ2
+
+> j,r +1
+
+∥q∥2. Second, Sj ⪰ δi⋆ δ⊤ 
+
+> i⋆
+
+gives q⊤Sj q ≥ (q⊤δi⋆ )2. Third, Weyl’s inequality for the rank-one split, λr+1 (Sj ) ≤ λ2(δi⋆ δ⊤ 
+
+> i⋆
+
+) + λr (E) = λr (E), since a rank-one positive-semidefinite matrix has λ2 = 0 .20 A PREPRINT - J ULY 28, 2026 
+
+## B The Microscope: Selection Fidelity and Estimator Error 
+
+Tables B.1 and B.2 come from a single instrumented decode harness, released with our code (App. F). Queries and cached keys are captured exactly as attention consumes them (a scaled_dot_product_attention hook at decode steps; keys from the KV cache, verified bit-identical to what the kernel received), during greedy decoding of five RULER-32K records ( niah_single_2 , niah_multikey_2 , niah_multiquery , vt , qa_1 ) per model; every generated answer was correct, so the captured queries are genuine retrieval-regime decode queries. Statistics are computed in fp64 per (record, layer, query head, decode step) over pages of B=16 keys; ground-truth carrier pages come from the answer strings’ token spans. The same instrumented traces also produce the measured-error, rotation-control, and registry files reported elsewhere in the paper (Table B.2; App. D). Over these traces the harness also verifies the proven bounds numerically, finding on every audited page zero violations of the envelope bound (Lemma 2), the outlier inequalities (Lemma 3), or the reconstruction bound of Prop. 2. 
+
+Small mass errors, large carrier-ranking errors. Table B.1 separates the two failure modes. Both are measured against exact-mass selection itself, whose conditional carrier retention is total by construction, so every deficit is estimator error rather than a mischosen target. The envelope gives up little of the ceiling’s mass yet collapses on the carrier pages that decide tasks at the smallest budgets, the mechanism behind the task-score collapses of envelope selection reported in §5. 
+
+Figure 1 protocol. Panel (a) draws a mass-stratified seeded subsample of the released pairs, binned in log-decades of the exact mass share for legibility. Exact and reconstructed page shares are normalized over the same complete candidate-page set before plotting; the mass-stratified plotting subsample is not renormalized. Panel (b)’s carrier retention is conditional on the exact ranking already keeping the carrier, which isolates estimator identity error from the budget’s information limit; the sink, recent window, and tail stay always-kept and excluded from candidacy, and the measured 0.25% point is left undrawn, since the baselines’ conditional estimates turn noisy and non-monotone there, with its values kept in the released CSV. Panel (c) scores all three scope rows unquantized so no row is favored, since quantization cost is measured separately in Fig. 1a–b and Fig. 5; its global row is KV-head-0’s sequence basis per record and layer, each head against its own centroid. Panel (d) maps its six RULER-16K families to their constituent tasks (single-needle, multi-key, multi-value, state tracking, aggregation, open QA), with the full sweep in 
+
+data/payoff_curves.csv . Fig. 5 draws on the same microscope traces at the matched-attended-tokens operating point, with coefficients and centroid held int8 throughout. 21 A PREPRINT - J ULY 28, 2026 Table B.1: Selection fidelity at extreme and moderate budgets (RULER-32K, greedy decode; mean over records, layers, query heads, decode steps; sink, recent window, and tail always kept). rN denotes rank N , i M an int-M basis, fp an unquantized basis; coefficients and centroid are int8 throughout. γc: contested attention mass captured (always-kept share excluded from numerator and denominator); γ: total mass captured. Recall: overlap with the exact-mass top-k.Needle: carrier pages kept, conditional on the exact ranking keeping them. The deployed summary sits near the ceiling on both mass and carrier retention. The envelope loses little of the ceiling’s mass yet collapses on carrier retention at the smallest budgets, and quantization costs recall on bulk pages while carrier retention stays nearly unchanged.                                                                                               
+
+> Llama-3.1-8B (32K) Qwen3-4B (32K) Budget Scorer γcγrecall needle γcγrecall needle
+> 0.5%
+> exact LSE (ceiling) 32 86.0 100 100 52 81.5 100 100 LOCKS r8fp 32 86.0 90 95 51 81.3 90 94 LOCKS r8i4 (deployed) 32 85.9 85 93 49 80.1 77 93 centroid only 24 84.4 55 47 21 65.7 34 78 min/max envelope (Quest) 24 84.0 39 45 36 74.5 47 39
+> 5%
+> exact LSE (ceiling) 63 92.1 100 100 82 93.5 100 100 LOCKS r8fp 63 92.1 94 98 82 93.3 93 96 LOCKS r8i4 (deployed) 62 92.0 90 97 81 92.9 87 94 centroid only 53 90.2 67 69 44 73.9 61 57 min/max envelope (Quest) 53 89.9 55 75 73 90.1 55 60
+
+Table B.2: Measured log-mass error of the deployed summary. Pooled over all pages, decode steps, query heads, and layers of both models’ RULER-32K microscope traces, for the r8fp and r8i4 (deployed) variants (notation of Table B.1). The absolute score error |ˆs − s| is measured per page and query against the exact log-sum-exp mass, and the group-share log error is measured on the group-averaged page-mass shares ¯ˆmj , the quantity the retention argument of Thm. 1 bounds via the group-share sandwich. Percentiles come from fine log 10 histograms (0.01-dex bins); the max is exact. Quantization roughly doubles the error at matched percentiles, while the heavy tail is driven by a small set of outlier pages, which is what makes the worst-case constant loose.                                      
+
+> abs. score error |ˆs−s|group-share log error Model Variant p50 p95 max p50 p95 max Llama-3.1-8B (32K) r8fp 0.084 0.422 11.02 0.072 0.335 6.38 r8i4 (deployed) 0.119 0.507 10.87 0.180 0.700 6.74 Qwen3-4B (32K) r8fp 0.114 0.610 17.32 0.088 0.484 12.95 r8i4 (deployed) 0.180 0.923 16.72 0.248 1.244 18.01
+
+22 A PREPRINT - J ULY 28, 2026 
+
+## C Extended Results 
+
+This appendix reports the full per-subtask breakdown behind the quality figures, for readers who want the underlying numbers, namely the measured methods at every budget b ∈ { 64 , . . . , 2048 }, on each LongBench-v1 subset and each RULER task (at 16 K and 32 K), on the InfiniteBench 100 K+ context suite (Table C.8), plus AIME26 and MATH-500. Retrieval and QA use Llama-3.1-8B; the InfiniteBench long-context suite uses GLM-4-9B-Chat-1M (its native 1Mcontext; 11 tasks on a seeded subset of 50 records per task, math_calc excluded); reasoning uses Qwen3-4B (thinking on). Every score is a same-engine measurement on identical records; L OCKS r denotes the local rank-r summary, and 
+
+Oracle (also labelled exact-LSE ) is exact-LSE selection with the shipped share-average (nrm) group combine. On InfiniteBench the deployed L OCKS (rank-8 int-4) is measured directly and tracks that oracle within 0.1–1.4 points. Every entry is a direct read of the measured per-run metrics. 
+
+C.1 Per-method budget accounting 
+
+A nominal b does not buy the same number of reads in every method, so a comparison at equal b is not a comparison at equal cost. The four baselines differ as follows. • Quest. Selects independently per QUERY head, so the pages a GQA group reads are the union over its G
+
+heads: at most Gb tokens, at least b, with G=4 for Llama-3.1-8B. The upper bound is reached when the G
+
+heads select disjoint pages. Every other arm here selects per KV head and therefore pays no such union. • ShadowKV. Selects per KV head via the group max, so no union, but the always-attended outlier block ( 48 
+
+chunks of 8) and local window ( 32 tokens) are a fixed 416 tokens that we count inside b. Actual selection is therefore 96 , 608 and 1632 tokens at b = 512 , 1024 and 2048 . At b ≤ 256 the fixed block does not fit, the chunk solve returns zero selected chunks, and the method degenerates to dense; we do not report those points. • RocketKV. Spends b as decode TRAFFIC rather than residency, split evenly between the attention half and the top-k estimator, so attended tokens are b/ 2 and measured traffic is 0.77 to 1.00 × nominal. Its budget does not bound the resident cache, which stays at prompt plus generated. • KVzip. Bounds only the retained CONTEXT. It never evicts the question or the generated turn, so decode reads are b + |q| + g with g the tokens generated so far: about 2.4× nominal at b=64 , and 1.05 × at b=2048 .It is also the one arm run at max_num_seqs = 1 : its selection is bound outside the attention path through a single active kept-set, so a second concurrent decode row would read another record’s selection. Every other arm runs at max_num_seqs = 4 .The shared axis is b tokens per (layer, KV-head) at page size 16 , with the always-kept sink and most-recent pages counted inside b, never added on top (§2). Each port lives in src/<method>/ , with the run wiring in benchmarks/registry.py and vllm/integration/runner_common.py ; every cell below is produced by 
+
+benchmarks/run.py , which refuses to record a sparse cell whose measured sparse-decode activation is not 1.00 on every decode row. 
+
+Budget counting. Every method’s per-(layer, KV-head) token budget b is counted the same way. The always-kept sink and most-recent pages fill two of the k = ⌈b/B ⌉ page slots, counted within b, never added on top of it (§2). Each baseline runs at its native block or page granularity mapped onto this shared budget grid, and the per-suite table notes below state each arm’s configuration, record subset, and sampling. 23 A PREPRINT - J ULY 28, 2026 
+
+C.2 Reasoning baselines (MATH-500, AIME26) 
+
+The reasoning suite adds three decode-time eviction baselines, each a parity-gated faithful port, using the published configuration where compatible with the shared budget; any budget-mapping deviation is stated explicitly below. R-KV and LazyEviction are approximately residency-matched to b, though LazyEviction meters its budget per query head, so its resident set carries the GQA-group factor G detailed in its entry below. TriAttention is run in its native prompt-protected reasoning configuration; therefore b controls only its generated-region selection and its actual resident/read state can exceed the nominal budget. The shared always-kept sink and recent pages are counted inside b as elsewhere. • R-KV [ 4 ]. Redundancy-aware eviction for reasoning: each token is scored by importance (attention mass) and non-redundancy (feature dissimilarity to already-kept tokens), mixed by λ, with a fixed retained buffer plus a recent-token buffer. We run the published reasoning config ( λ=0 .1, buffer 128 , retain ratio 0.2; an earlier draft used λ=0 .07 /buffer 64 , which our config audit corrected to the reported values). It is a strong reasoning-specific baseline. • TriAttention [ 41 ]. Trigonometric KV compression: keys are scored per query head via a complex-domain (real, imaginary, magnitude) query-mean functional, reduced by the max over each GQA group, and the top pages are selected while the full prompt and a local window are always retained. Our port protects the entire prompt span and selects only over the generated region with the published HF-reasoning selection order; TriAttention reports outperforming R-KV on long reasoning, which reproduces here. • LazyEviction [73 ]. Lagged eviction for reasoning: prefill stays dense, and during decode it tracks each token’s maximum recurrence interval (the longest lag between successive steps at which a query head attends to it) and evicts only once every W decode steps, at which point it retains the highest-importance tokens (softmax attention above threshold α) up to budget and always keeps the W most recent tokens, so a token re-attended on a lag survives an intervening lull. We run the published reasoning config ( α=10 −4 on Qwen3-4B, 5×10 −4
+
+on Llama; a single decode path, parity-gated against the official implementation). The published absolute recent-window ( 363 tokens at the published 1492 capacity on Qwen-AIME) does not fit our tighter budgets, so we hold W at its published window-to-capacity ratio ( ≈ 0.243 ) across the shared 64 –2048 grid rather than at a fixed absolute size; this ratio-mapping is a harness convenience to keep W below the budget, not an official knob. Its budget is metered per query head , so its resident set is not directly comparable to a per-KV-head method’s b without the GQA-group factor G, the same residency-accounting caveat that applies to the other decode-time arms here. Because all three commit their eviction irreversibly during decode, once a chain-relevant token is dropped it cannot be recovered: at tight b the model loses coherence and generates to the length cap (a ≈ 2× decode-cost inflation, measured on our cells), which is why their accuracy collapses while L OCKS , which retains the selection state and re-selects exactly each step, tracks the read-every-key oracle and degrades far more gracefully. 24 A PREPRINT - J ULY 28, 2026 
+
+C.3 Retrieval and long-document QA 
+
+Llama-3.1-8B; LongBench-v1 per-subset score (full split), RULER per-task at 16 K and 32 K. FullKV is the budget-independent same-engine reference. All baselines are parity-gated ports at a common per-KV-head budget b.
+
+C.3.1 LongBench-v1 
+
+Table C.3: LongBench-v1 per subset (Llama-3.1-8B, score), all methods at each budget b.Subtask FullKV Oracle LOCKS Quest KVzip ShadowKV RocketKV 
+
+budget b = 64 
+
+narrativeqa 29.4 28.7 29.3 17.3 21.2 N/A 26.3 qasper 47.2 44.9 45.5 27.3 21.1 N/A 28.0 multifieldqa_en 55.4 56.6 56.0 35.8 34.7 N/A 55.9 hotpotqa 58.2 59.5 58.5 42.8 52.0 N/A 57.1 2wikimqa 51.9 50.9 50.8 36.0 44.8 N/A 48.4 musique 32.9 33.0 31.7 21.6 24.5 N/A 28.5 dureader 33.3 32.2 31.9 14.1 19.7 N/A 23.1 gov_report 35.4 29.5 29.8 16.3 15.7 N/A 22.2 qmsum 24.8 24.2 24.1 18.0 20.4 N/A 22.5 multi_news 27.2 25.9 25.8 18.2 18.6 N/A 23.6 trec 29.5 28.0 29.0 22.8 9.5 N/A 19.5 triviaqa 92.1 91.6 92.0 85.1 91.5 N/A 91.2 samsum 40.9 38.5 38.6 25.1 38.6 N/A 37.6 passage_retrieval_en 100.0 98.5 97.5 62.5 99.5 N/A 98.5 
+
+Avg 47.0 45.9 45.7 31.6 36.6 N/A 41.6 
+
+budget b = 128 
+
+narrativeqa 29.4 28.7 28.8 22.0 21.9 N/A 26.7 qasper 47.2 46.5 46.6 37.5 27.6 N/A 40.3 multifieldqa_en 55.4 57.1 56.6 46.3 40.5 N/A 57.1 hotpotqa 58.2 59.1 59.1 52.5 51.2 N/A 58.9 2wikimqa 51.9 52.8 51.0 47.0 45.7 N/A 51.0 musique 32.9 31.6 31.6 26.0 25.0 N/A 31.0 dureader 33.3 34.1 35.0 20.1 20.1 N/A 27.1 gov_report 35.4 34.1 33.6 21.1 17.0 N/A 24.2 qmsum 24.8 24.1 24.5 19.8 21.0 N/A 23.3 multi_news 27.2 26.3 26.3 24.2 23.6 N/A 24.0 trec 29.5 28.0 30.0 25.5 11.0 N/A 23.5 triviaqa 92.1 91.7 91.8 90.0 91.5 N/A 91.4 samsum 40.9 38.7 38.4 33.4 38.9 N/A 38.8 passage_retrieval_en 100.0 99.5 100.0 92.2 99.5 N/A 99.5 
+
+Avg 47.0 46.6 46.7 39.8 38.2 N/A 44.1 
+
+budget b = 256 
+
+narrativeqa 29.4 28.6 28.1 26.0 23.2 N/A 29.6 qasper 47.2 45.8 46.5 44.0 39.5 N/A 43.8 multifieldqa_en 55.4 56.9 56.8 51.9 50.5 N/A 56.9 hotpotqa 58.2 58.3 58.6 55.6 52.5 N/A 58.4 2wikimqa 51.9 52.5 51.6 49.3 48.5 N/A 51.9 musique 32.9 32.0 31.8 30.1 25.1 N/A 32.2 dureader 33.3 34.0 33.7 27.1 19.6 N/A 30.3 gov_report 35.4 34.4 34.2 29.4 20.8 N/A 26.6 qmsum 24.8 24.4 25.0 22.0 22.2 N/A 24.5 multi_news 27.2 27.1 26.8 26.7 25.8 N/A 24.5 trec 29.5 30.0 30.5 26.6 21.1 N/A 30.0 triviaqa 92.1 91.8 92.1 90.8 91.5 N/A 91.7 samsum 40.9 39.5 38.5 37.4 39.0 N/A 40.0 passage_retrieval_en 100.0 99.5 100.0 97.0 99.0 N/A 100.0 
+
+Avg 47.0 46.8 46.7 43.8 41.3 N/A 45.7 
+
+budget b = 512 
+
+narrativeqa 29.4 29.0 29.1 28.5 24.9 29.5 29.9 qasper 47.2 45.9 46.6 45.3 44.4 45.6 46.4 multifieldqa_en 55.4 55.6 56.0 52.8 54.0 56.7 58.3 hotpotqa 58.2 58.4 59.0 57.9 55.3 58.6 59.1 2wikimqa 51.9 51.8 51.8 51.7 49.8 51.0 50.2 musique 32.9 32.4 32.4 32.3 28.3 33.1 32.6 dureader 33.3 33.1 33.9 32.3 24.0 32.1 32.2 gov_report 35.4 34.8 34.8 33.8 26.4 32.7 30.3 qmsum 24.8 24.9 24.9 24.4 23.6 24.8 25.1 multi_news 27.2 27.2 27.2 27.7 26.8 26.8 25.8 trec 29.5 30.0 30.5 28.0 28.5 29.5 30.0 
+
+25 A PREPRINT - J ULY 28, 2026 
+
+Table C.3 (cont.) Subtask FullKV Oracle LOCKS Quest KVzip ShadowKV RocketKV triviaqa 92.1 92.1 92.2 91.0 91.9 91.7 92.2 samsum 40.9 40.4 40.4 37.3 39.3 38.4 40.2 passage_retrieval_en 100.0 100.0 100.0 99.5 97.0 98.0 99.5 
+
+Avg 47.0 46.8 47.1 45.9 43.9 46.3 46.6 
+
+budget b = 1024 
+
+narrativeqa 29.4 29.5 30.0 28.7 28.3 29.8 28.7 qasper 47.2 47.0 47.3 45.7 46.4 46.3 47.0 multifieldqa_en 55.4 55.8 55.8 53.7 56.2 57.0 56.3 hotpotqa 58.2 58.8 59.6 57.5 58.9 59.2 59.0 2wikimqa 51.9 52.4 52.1 52.2 51.7 50.7 51.5 musique 32.9 32.5 33.0 32.8 32.2 33.7 31.6 dureader 33.3 33.9 33.2 33.5 31.0 33.2 32.6 gov_report 35.4 35.2 35.0 34.8 31.7 33.9 32.7 qmsum 24.8 24.9 24.8 25.0 24.5 24.9 25.4 multi_news 27.2 27.1 26.9 27.3 26.8 26.9 26.5 trec 29.5 30.5 30.0 29.0 30.0 30.0 29.5 triviaqa 92.1 92.1 92.1 91.1 91.9 91.8 92.2 samsum 40.9 40.2 40.5 39.5 39.2 40.6 40.3 passage_retrieval_en 100.0 100.0 100.0 99.5 91.0 99.5 100.0 
+
+Avg 47.0 47.1 47.2 46.5 45.7 47.0 46.7 
+
+budget b = 2048 
+
+narrativeqa 29.4 30.3 30.2 29.7 29.1 29.6 30.1 qasper 47.2 47.0 47.3 46.2 47.6 46.4 46.9 multifieldqa_en 55.4 54.8 55.0 55.3 56.4 56.2 55.0 hotpotqa 58.2 59.0 59.5 57.7 59.2 59.4 58.7 2wikimqa 51.9 51.7 51.6 52.4 51.5 50.7 51.6 musique 32.9 32.9 33.1 31.6 33.4 33.1 32.3 dureader 33.3 33.6 33.2 34.2 33.4 32.6 32.8 gov_report 35.4 35.1 35.5 35.7 34.3 34.5 33.8 qmsum 24.8 25.3 25.1 25.3 24.9 25.1 24.9 multi_news 27.2 27.1 27.1 26.9 26.9 26.9 27.2 trec 29.5 30.0 30.0 29.5 30.5 30.0 30.5 triviaqa 92.1 92.1 92.2 91.6 92.1 91.8 92.2 samsum 40.9 40.4 40.9 40.5 40.0 40.7 40.6 passage_retrieval_en 100.0 100.0 100.0 100.0 98.5 99.5 100.0 
+
+Avg 47.0 47.1 47.2 46.9 47.0 46.9 46.9 
+
+C.3.2 RULER-16K 
+
+Table C.4: RULER-16K per task (Llama-3.1-8B), all methods at each budget b.Subtask FullKV Oracle LOCKS Quest KVzip ShadowKV RocketKV 
+
+budget b = 64 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 N/A 100.0 NIAH-S2 100.0 100.0 100.0 74.0 0.0 N/A 100.0 NIAH-S3 100.0 100.0 100.0 4.0 0.0 N/A 100.0 NIAH-MK1 100.0 100.0 100.0 88.0 0.0 N/A 100.0 NIAH-MK2 100.0 98.0 98.0 12.0 0.0 N/A 98.0 NIAH-MK3 98.0 70.0 44.0 0.0 0.0 N/A 86.0 NIAH-MV 98.5 79.5 82.5 26.5 0.0 N/A 44.0 NIAH-MQ 99.0 90.0 87.5 25.5 0.0 N/A 37.5 VT 100.0 82.8 78.4 59.6 88.4 N/A 20.8 CWE 87.4 5.0 6.6 6.0 0.2 N/A 0.8 FWE 96.7 75.3 78.0 44.0 0.0 N/A 76.7 QA-1 84.0 82.0 82.0 44.0 56.0 N/A 84.0 QA-2 62.0 58.0 58.0 30.0 38.0 N/A 54.0 
+
+Avg 94.3 80.0 78.1 39.5 21.7 N/A 69.4 
+
+budget b = 128 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 N/A 100.0 NIAH-S2 100.0 100.0 100.0 88.0 2.0 N/A 100.0 NIAH-S3 100.0 100.0 100.0 32.0 0.0 N/A 100.0 NIAH-MK1 100.0 100.0 100.0 98.0 2.0 N/A 100.0 NIAH-MK2 100.0 100.0 100.0 40.0 0.0 N/A 100.0 NIAH-MK3 98.0 100.0 100.0 0.0 0.0 N/A 100.0 NIAH-MV 98.5 96.0 96.5 65.0 0.0 N/A 84.5 NIAH-MQ 99.0 97.5 97.0 59.0 0.0 N/A 93.0 
+
+26 A PREPRINT - J ULY 28, 2026 
+
+Table C.4 (cont.) Subtask FullKV Oracle LOCKS Quest KVzip ShadowKV RocketKV VT 100.0 95.6 94.0 81.2 96.8 N/A 89.2 CWE 87.4 19.4 19.2 7.8 0.2 N/A 5.8 FWE 96.7 82.7 80.0 62.7 0.0 N/A 86.7 QA-1 84.0 86.0 88.0 76.0 62.0 N/A 88.0 QA-2 62.0 60.0 62.0 42.0 38.0 N/A 60.0 
+
+Avg 94.3 87.5 87.4 57.8 23.2 N/A 85.2 
+
+budget b = 256 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 N/A 100.0 NIAH-S2 100.0 100.0 100.0 98.0 16.0 N/A 100.0 NIAH-S3 100.0 100.0 100.0 58.0 0.0 N/A 100.0 NIAH-MK1 100.0 100.0 100.0 98.0 16.0 N/A 100.0 NIAH-MK2 100.0 100.0 100.0 80.0 46.0 N/A 100.0 NIAH-MK3 98.0 100.0 100.0 0.0 0.0 N/A 100.0 NIAH-MV 98.5 98.0 98.0 88.0 3.0 N/A 97.5 NIAH-MQ 99.0 99.0 98.0 79.5 7.5 N/A 98.0 VT 100.0 99.6 99.6 84.8 98.0 N/A 95.6 CWE 87.4 43.4 46.0 21.6 0.2 N/A 16.4 FWE 96.7 90.0 86.7 75.3 1.3 N/A 84.0 QA-1 84.0 88.0 88.0 86.0 64.0 N/A 84.0 QA-2 62.0 60.0 62.0 52.0 38.0 N/A 62.0 
+
+Avg 94.3 90.6 90.6 70.9 30.0 N/A 87.5 
+
+budget b = 512 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S2 100.0 100.0 100.0 98.0 94.0 100.0 100.0 NIAH-S3 100.0 100.0 100.0 82.0 50.0 100.0 98.0 NIAH-MK1 100.0 100.0 100.0 100.0 94.0 100.0 100.0 NIAH-MK2 100.0 100.0 100.0 96.0 100.0 98.0 100.0 NIAH-MK3 98.0 98.0 98.0 18.0 68.0 78.0 100.0 NIAH-MV 98.5 98.5 97.0 94.5 38.5 91.5 98.0 NIAH-MQ 99.0 98.5 98.0 92.0 65.0 95.0 98.5 VT 100.0 99.6 99.6 94.8 98.4 92.4 98.4 CWE 87.4 58.6 57.2 30.0 0.2 16.6 36.4 FWE 96.7 90.0 90.0 81.3 37.3 83.3 88.0 QA-1 84.0 86.0 88.0 86.0 76.0 84.0 86.0 QA-2 62.0 60.0 60.0 58.0 52.0 60.0 62.0 
+
+Avg 94.3 91.5 91.4 79.3 67.2 84.5 89.6 
+
+budget b = 1024 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S2 100.0 100.0 100.0 96.0 100.0 100.0 100.0 NIAH-S3 100.0 100.0 100.0 94.0 100.0 100.0 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-MK2 100.0 100.0 100.0 98.0 100.0 100.0 100.0 NIAH-MK3 98.0 98.0 98.0 44.0 98.0 94.0 98.0 NIAH-MV 98.5 98.0 98.0 97.5 77.5 94.0 98.0 NIAH-MQ 99.0 99.5 99.5 95.5 92.5 98.0 99.0 VT 100.0 100.0 100.0 96.4 98.8 96.8 99.2 CWE 87.4 69.2 72.2 50.0 3.8 59.0 54.6 FWE 96.7 93.3 93.3 84.0 76.7 93.3 88.7 QA-1 84.0 86.0 88.0 82.0 88.0 86.0 86.0 QA-2 62.0 64.0 60.0 54.0 56.0 60.0 62.0 
+
+Avg 94.3 92.9 93.0 84.0 83.9 90.9 91.2 
+
+budget b = 2048 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S2 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S3 100.0 100.0 100.0 98.0 100.0 100.0 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-MK2 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-MK3 98.0 98.0 98.0 82.0 100.0 98.0 98.0 NIAH-MV 98.5 98.5 98.0 98.0 97.0 92.5 98.0 NIAH-MQ 99.0 99.5 98.5 98.0 98.0 98.0 99.0 VT 100.0 100.0 100.0 97.2 100.0 100.0 99.6 CWE 87.4 80.4 79.6 67.6 50.4 73.8 73.2 FWE 96.7 94.0 94.0 89.3 92.0 92.7 92.7 QA-1 84.0 86.0 88.0 84.0 88.0 86.0 86.0 QA-2 62.0 62.0 62.0 60.0 62.0 62.0 64.0 
+
+Avg 94.3 93.7 93.7 90.3 91.3 92.5 93.1 
+
+27 A PREPRINT - J ULY 28, 2026 
+
+C.3.3 RULER-32K 
+
+Table C.5: RULER-32K per task (Llama-3.1-8B), all methods at each budget b.Subtask FullKV Oracle LOCKS Quest KVzip ShadowKV RocketKV 
+
+budget b = 64 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 N/A 100.0 NIAH-S2 100.0 100.0 100.0 78.0 0.0 N/A 100.0 NIAH-S3 100.0 100.0 100.0 0.0 0.0 N/A 100.0 NIAH-MK1 100.0 100.0 98.0 82.0 0.0 N/A 98.0 NIAH-MK2 100.0 92.0 86.0 10.0 0.0 N/A 90.0 NIAH-MK3 100.0 20.0 20.0 0.0 0.0 N/A 10.0 NIAH-MV 99.5 80.0 79.5 22.5 0.0 N/A 26.0 NIAH-MQ 99.5 89.5 85.0 25.5 0.0 N/A 2.0 VT 100.0 80.4 80.4 66.8 80.0 N/A 11.6 CWE 28.8 1.0 1.8 2.6 0.0 N/A 0.4 FWE 82.7 58.7 61.3 38.0 0.0 N/A 56.0 QA-1 90.0 88.0 88.0 48.0 62.0 N/A 86.0 QA-2 54.0 50.0 50.0 28.0 34.0 N/A 44.0 
+
+Avg 88.8 73.8 73.1 38.6 21.2 N/A 55.7 
+
+budget b = 128 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 N/A 100.0 NIAH-S2 100.0 100.0 100.0 92.0 0.0 N/A 100.0 NIAH-S3 100.0 100.0 100.0 28.0 0.0 N/A 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 0.0 N/A 100.0 NIAH-MK2 100.0 100.0 100.0 38.0 0.0 N/A 100.0 NIAH-MK3 100.0 90.0 84.0 0.0 0.0 N/A 98.0 NIAH-MV 99.5 95.0 96.0 49.5 0.0 N/A 84.0 NIAH-MQ 99.5 96.5 97.5 53.5 0.0 N/A 95.0 VT 100.0 89.6 90.4 75.2 85.2 N/A 80.0 CWE 28.8 4.0 1.8 3.6 0.0 N/A 0.2 FWE 82.7 68.7 68.7 53.3 0.0 N/A 65.3 QA-1 90.0 90.0 90.0 72.0 62.0 N/A 90.0 QA-2 54.0 52.0 56.0 32.0 38.0 N/A 56.0 
+
+Avg 88.8 83.5 83.4 53.6 21.9 N/A 82.2 
+
+budget b = 256 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 N/A 100.0 NIAH-S2 100.0 100.0 100.0 92.0 2.0 N/A 100.0 NIAH-S3 100.0 100.0 100.0 44.0 0.0 N/A 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 2.0 N/A 100.0 NIAH-MK2 100.0 100.0 100.0 58.0 6.0 N/A 100.0 NIAH-MK3 100.0 100.0 96.0 0.0 0.0 N/A 100.0 NIAH-MV 99.5 97.5 98.5 76.5 0.0 N/A 97.0 NIAH-MQ 99.5 99.0 99.0 81.0 2.0 N/A 98.0 VT 100.0 93.6 92.4 84.4 91.2 N/A 91.6 CWE 28.8 5.6 8.4 4.0 0.0 N/A 1.6 FWE 82.7 71.3 71.3 66.0 0.0 N/A 67.3 QA-1 90.0 90.0 90.0 80.0 64.0 N/A 90.0 QA-2 54.0 54.0 56.0 48.0 36.0 N/A 54.0 
+
+Avg 88.8 85.5 85.5 64.1 23.3 N/A 84.6 
+
+budget b = 512 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S2 100.0 100.0 100.0 98.0 42.0 100.0 100.0 NIAH-S3 100.0 100.0 100.0 70.0 2.0 100.0 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 30.0 98.0 100.0 NIAH-MK2 100.0 100.0 100.0 88.0 46.0 96.0 100.0 NIAH-MK3 100.0 100.0 100.0 0.0 0.0 30.0 100.0 NIAH-MV 99.5 98.5 98.5 92.5 8.0 90.0 98.5 NIAH-MQ 99.5 97.5 98.0 90.0 25.0 95.5 99.5 VT 100.0 96.4 94.0 84.8 92.8 86.0 92.4 CWE 28.8 14.4 12.6 6.2 0.0 1.0 5.4 FWE 82.7 70.7 70.7 74.0 0.0 71.3 70.0 QA-1 90.0 90.0 90.0 86.0 70.0 90.0 90.0 QA-2 54.0 56.0 56.0 48.0 40.0 52.0 56.0 
+
+Avg 88.8 86.4 86.1 72.1 35.1 77.7 85.5 
+
+budget b = 1024 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S2 100.0 100.0 100.0 98.0 96.0 100.0 100.0 NIAH-S3 100.0 100.0 100.0 86.0 66.0 100.0 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 96.0 100.0 100.0 
+
+28 A PREPRINT - J ULY 28, 2026 
+
+Table C.5 (cont.) Subtask FullKV Oracle LOCKS Quest KVzip ShadowKV RocketKV NIAH-MK2 100.0 100.0 100.0 98.0 98.0 100.0 100.0 NIAH-MK3 100.0 100.0 100.0 22.0 42.0 92.0 100.0 NIAH-MV 99.5 99.0 99.5 96.0 46.0 98.5 99.0 NIAH-MQ 99.5 98.0 97.5 94.0 76.5 98.5 99.0 VT 100.0 96.8 97.2 88.8 94.8 93.2 94.8 CWE 28.8 18.4 16.0 12.8 0.0 14.6 15.0 FWE 82.7 72.7 73.3 76.0 20.0 70.7 66.7 QA-1 90.0 90.0 90.0 86.0 84.0 90.0 90.0 QA-2 54.0 56.0 60.0 50.0 44.0 54.0 56.0 
+
+Avg 88.8 87.0 87.2 77.5 66.4 85.5 86.2 
+
+budget b = 2048 
+
+NIAH-S1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-S2 100.0 100.0 100.0 96.0 100.0 100.0 100.0 NIAH-S3 100.0 100.0 100.0 90.0 100.0 100.0 100.0 NIAH-MK1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 NIAH-MK2 100.0 100.0 100.0 98.0 100.0 100.0 100.0 NIAH-MK3 100.0 100.0 98.0 64.0 96.0 100.0 100.0 NIAH-MV 99.5 99.5 99.5 98.0 76.0 99.0 99.5 NIAH-MQ 99.5 99.0 98.5 97.5 91.0 99.0 98.0 VT 100.0 98.0 98.8 93.6 96.0 96.8 96.8 CWE 28.8 25.2 25.0 13.0 0.2 20.0 32.2 FWE 82.7 74.0 74.7 80.7 63.3 72.7 71.3 QA-1 90.0 90.0 90.0 90.0 86.0 90.0 90.0 QA-2 54.0 58.0 60.0 56.0 54.0 54.0 56.0 
+
+Avg 88.8 88.0 88.0 82.8 81.7 87.0 88.0 
+
+29 A PREPRINT - J ULY 28, 2026 
+
+C.4 Long-form reasoning 
+
+Qwen3-4B (thinking on); MATH-500 ( 16384 -token cap) and AIME 2026 I+II ( 30 problems), avg@ 4 sampling (seeds 
+
+0–3). Retrieval-only ports (KVzip, ShadowKV) carry no reasoning data. RocketKV is omitted here because its stage-1 eviction is inert on long generation: the prompt budget PB = tcb − max _new approaches the prompt length, so almost nothing is evicted and residency is prompt plus all generated tokens. Its READ budget is not the reason: RocketKV sizes its chunk size and per-chunk dimension against prompt plus generation length, so decode traffic stays at approximately the nominal budget ( 0.93 –0.99 × measured on our cells), matching the method’s own accounting. 
+
+C.4.1 MATH-500 
+
+We evaluate MATH-500 with a 16384 -token generation cap, the reasoning-model protocol of R-KV [ 4] (which reports no accuracy gain beyond it); the common 4096 cap is an instruction-tuned convention that truncates 42% of Qwen3-4B’s thinking chains and depresses the FullKV reference to a spurious truncation floor rather than the model’s true ability. At 
+
+16384 only 2–4% of chains are capped and FullKV reaches 94 .0. As on AIME26, L OCKS tracks the exact-LSE Oracle within a couple of points across the sweep and reaches FullKV once the budget clears the task floor ( 94 .0=94 .0 at 
+
+b=1024 ), while every deployable baseline collapses at tight budgets: even R-KV, a strong reasoning-specific baseline, falls to 5–8% at b≤128 (vs. L OCKS at 54 –80% ) and recovers only with a large budget. Baselines are the same parity-gated faithful ports at their published configs as in the AIME26 comparison. Table C.6: MATH-500 accuracy (Qwen3-4B, thinking on, avg@ 4) vs. per-(layer, KV-head) token budget b, all reasoning methods. MATH-500 (16384-token generation cap). L OCKS tracks the exact-LSE Oracle across the sweep and approaches FullKV as the budget clears the task floor; every deployable baseline collapses at tight budgets and only partly recovers. Baselines are parity-gated faithful ports at their published configs.                                                  
+
+> bFullKV Oracle LOCKS Quest R-KV TriAtt LazyEvict 64 94.0 56.0 54.5 1.5 5.0 11.5 0.5 128 94.0 78.0 80.5 3.0 8.0 20.5 1.5 256 94.0 92.0 91.0 9.0 31.5 44.5 19.5 512 94.0 94.0 92.0 43.5 60.0 66.0 45.0 1024 94.0 94.0 94.0 68.5 77.0 81.5 75.0 2048 94.0 93.5 93.5 87.5 90.5 91.5 92.0
+
+C.4.2 AIME26 
+
+AIME26 here is the combined AIME 2026 I and II set ( 30 problems; AIME I on Feb 5 and AIME II on Feb 11, 
+
+2026 ), which post-dates Qwen3’s public release and therefore could not have appeared in Qwen3’s public release-era evaluation suite. Every deployable baseline here is a parity-gated faithful port at its published config: R-KV at the reported reasoning hyperparameters ( λ=0 .1, buffer 128 ) and TriAttention with the prompt-protecting HF-reasoning selection and GQA max-over-group. L OCKS closely tracks the exact-LSE Oracle throughout the budget sweep and approaches FullKV once the task’s intrinsic budget floor is reached, while all baselines collapse at tight budgets and only partly recover. Table C.7: AIME26 accuracy (Qwen3-4B, thinking on, avg@ 4) vs. per-(layer, KV-head) token budget b, all reasoning methods. AIME26 is the combined AIME 2026 I+II set ( 30 problems), post-dating Qwen3’s public release. L OCKS 
+
+closely tracks the exact-LSE Oracle across the budget sweep and approaches FullKV once the task’s intrinsic budget floor is reached; every deployable baseline collapses at tight budgets and only partly recovers. Baselines are parity-gated faithful ports at their published configs.                                                  
+
+> bFullKV Oracle LOCKS Quest R-KV TriAtt LazyEvict 64 59.2 0.0 0.0 0.0 0.0 0.0 0.0 128 59.2 28.3 25.8 0.0 0.0 0.0 0.0 256 59.2 52.5 51.7 0.0 0.0 0.0 0.0 512 59.2 62.5 60.8 0.0 0.0 3.3 1.7 1024 59.2 62.5 65.0 5.8 4.2 22.5 6.7 2048 59.2 59.2 63.3 33.3 24.2 45.0 34.2
+
+30 A PREPRINT - J ULY 28, 2026 
+
+C.5 Long context: InfiniteBench 
+
+GLM-4-9B-Chat-1M, 11 tasks, seeded subset of 50 records per task ( math_calc excluded: a prompting artifact plus 
+
+30 K-token generation the baselines cannot serve fairly). exact-LSE is the certified-exact selection; on this 100 K-context benchmark it reaches FullKV parity ( 43 .9 vs 43 .0 at b=2048 ) while every baseline trails. 
+
+Table C.8: InfiniteBench per task (GLM-4-9B-Chat-1M, score , seeded subset of 50 records per task), all methods at each budget b; each cell is the mean with its 95% bootstrap CI half-width ( ±) over the 
+
+50 records. exact-LSE is the certified-exact selection (the retrieval tables’ Oracle); ShadowKV has no 
+
+b ≤ 256 (its 416 -token fixed block cannot fit). KVzip is excluded (Llama-family reconstruction scorer). Task FullKV exact-LSE LOCKS RocketKV ShadowKV Quest 
+
+budget b = 64 
+
+passkey 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 86.0 ±9.6 N/A 100.0 ±0.0 
+
+num-str 100.0 ±0.0 98.0 ±3.9 100.0 ±0.0 68.0 ±12.8 N/A 70.0 ±12.7 
+
+kv-retr 28.0 ±12.7 2.0 ±3.9 0.0 ±0.0 6.0 ±6.6 N/A 0.0 ±0.0 
+
+dialog-qa 34.0 ±12.9 20.0 ±10.9 16.0 ±10.3 2.0 ±3.9 N/A 12.0 ±8.9 
+
+book-sum 27.6 ±2.1 18.0 ±2.3 16.4 ±2.3 14.2 ±1.8 N/A 14.9 ±1.1 
+
+book-choice 82.0 ±10.6 86.0 ±9.5 82.0 ±10.4 78.0 ±11.5 N/A 60.0 ±13.5 
+
+book-qa-en 16.2 ±5.7 19.2 ±7.2 18.2 ±6.8 10.4 ±5.7 N/A 8.1 ±4.9 
+
+book-qa-zh 16.8 ±3.8 14.7 ±4.9 16.7 ±4.9 13.8 ±5.1 N/A 7.4 ±2.8 
+
+math-find 30.0 ±12.6 24.0 ±11.7 26.0 ±12.0 22.0 ±11.3 N/A 28.0 ±12.3 
+
+code-run 6.0 ±6.5 0.0 ±0.0 0.0 ±0.0 0.0 ±0.0 N/A 0.0 ±0.0 
+
+code-debug 32.0 ±13.0 28.0 ±12.5 34.0 ±13.2 36.0 ±13.3 N/A 32.0 ±12.6 
+
+Avg 43.0 ±2.1 37.3 ±2.0 37.2 ±2.2 30.6 ±2.4 N/A 30.2 ±2.6 
+
+budget b = 128 
+
+passkey 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 98.0 ±3.9 N/A 100.0 ±0.0 
+
+num-str 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 66.0 ±13.1 N/A 84.0 ±10.1 
+
+kv-retr 28.0 ±12.7 2.0 ±3.9 2.0 ±3.8 16.0 ±10.2 N/A 0.0 ±0.0 
+
+dialog-qa 34.0 ±12.9 36.0 ±13.3 28.0 ±12.4 10.0 ±8.3 N/A 24.0 ±11.8 
+
+book-sum 27.6 ±2.1 17.8 ±2.1 18.1 ±2.3 15.5 ±2.0 N/A 13.8 ±1.6 
+
+book-choice 82.0 ±10.6 82.0 ±10.6 84.0 ±10.2 82.0 ±10.6 N/A 72.0 ±12.5 
+
+book-qa-en 16.2 ±5.7 18.6 ±6.9 20.0 ±6.8 14.3 ±6.5 N/A 14.7 ±6.9 
+
+book-qa-zh 16.8 ±3.8 14.3 ±3.9 14.9 ±4.5 16.9 ±6.0 N/A 6.3 ±2.2 
+
+math-find 30.0 ±12.6 32.0 ±12.8 30.0 ±12.6 26.0 ±12.1 N/A 30.0 ±12.4 
+
+code-run 6.0 ±6.5 0.0 ±0.0 0.0 ±0.0 0.0 ±0.0 N/A 2.0 ±3.8 
+
+code-debug 32.0 ±13.0 38.0 ±13.5 34.0 ±13.2 38.0 ±13.5 N/A 14.0 ±9.7 
+
+Avg 43.0 ±2.1 40.1 ±2.4 39.2 ±2.3 34.8 ±2.2 N/A 32.8 ±2.0 
+
+budget b = 256 
+
+passkey 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 98.0 ±3.9 N/A 100.0 ±0.0 
+
+num-str 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 84.0 ±10.2 N/A 96.0 ±5.4 
+
+kv-retr 28.0 ±12.7 16.0 ±10.3 6.0 ±6.6 18.0 ±11.0 N/A 0.0 ±0.0 
+
+dialog-qa 34.0 ±12.9 32.0 ±12.9 30.0 ±12.9 24.0 ±11.9 N/A 16.0 ±10.1 
+
+book-sum 27.6 ±2.1 21.5 ±2.4 21.4 ±2.3 18.8 ±1.8 N/A 14.8 ±1.2 
+
+book-choice 82.0 ±10.6 82.0 ±10.6 82.0 ±10.6 82.0 ±10.6 N/A 76.0 ±11.9 
+
+book-qa-en 16.2 ±5.7 21.0 ±7.5 21.6 ±7.5 18.7 ±7.3 N/A 17.9 ±7.3 
+
+book-qa-zh 16.8 ±3.8 16.5 ±4.5 16.3 ±4.6 18.3 ±5.8 N/A 10.8 ±3.6 
+
+math-find 30.0 ±12.6 32.0 ±12.9 30.0 ±12.6 26.0 ±12.0 N/A 32.0 ±12.8 
+
+code-run 6.0 ±6.5 2.0 ±3.9 2.0 ±3.8 0.0 ±0.0 N/A 0.0 ±0.0 
+
+code-debug 32.0 ±13.0 38.0 ±13.5 36.0 ±13.4 36.0 ±13.5 N/A 36.0 ±13.4 
+
+Avg 43.0 ±2.1 41.9 ±2.6 40.5 ±2.4 38.5 ±2.7 N/A 36.3 ±2.3 
+
+budget b = 512 
+
+passkey 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 96.0 ±5.4 100.0 ±0.0 100.0 ±0.0 
+
+num-str 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 68.0 ±13.0 98.0 ±3.8 88.0 ±9.1 
+
+kv-retr 28.0 ±12.7 24.0 ±11.9 14.0 ±9.7 28.0 ±12.7 0.0 ±0.0 0.0 ±0.0 
+
+dialog-qa 34.0 ±12.9 28.0 ±12.4 26.0 ±12.2 26.0 ±12.2 14.0 ±9.4 24.0 ±11.5 
+
+book-sum 27.6 ±2.1 24.8 ±2.4 23.3 ±2.2 21.6 ±2.1 17.6 ±2.0 12.9 ±1.5 
+
+book-choice 82.0 ±10.6 84.0 ±10.1 82.0 ±10.6 84.0 ±10.2 78.0 ±11.5 72.0 ±12.4 
+
+book-qa-en 16.2 ±5.7 20.5 ±7.5 19.0 ±7.4 19.5 ±7.5 19.1 ±7.0 14.5 ±5.8 
+
+book-qa-zh 16.8 ±3.8 18.0 ±4.6 17.9 ±4.6 16.7 ±5.1 17.0 ±5.2 10.0 ±3.1 
+
+math-find 30.0 ±12.6 32.0 ±12.8 34.0 ±13.0 24.0 ±11.6 22.0 ±11.4 32.0 ±12.8 
+
+code-run 6.0 ±6.5 2.0 ±3.8 2.0 ±3.8 0.0 ±0.0 0.0 ±0.0 0.0 ±0.0 
+
+code-debug 32.0 ±13.0 32.0 ±13.1 34.0 ±13.2 40.0 ±13.6 30.0 ±12.4 28.0 ±12.5 
+
+Avg 43.0 ±2.1 42.3 ±3.0 41.1 ±2.4 38.5 ±2.7 36.0 ±2.1 34.7 ±2.7 
+
+budget b = 1024 
+
+passkey 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 
+
+num-str 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 98.0 ±3.8 100.0 ±0.0 82.0 ±10.7 
+
+kv-retr 28.0 ±12.7 28.0 ±12.5 28.0 ±12.5 36.0 ±13.5 6.0 ±6.6 0.0 ±0.0 
+
+31 A PREPRINT - J ULY 28, 2026 
+
+Table C.8 (cont.) Task FullKV exact-LSE LOCKS RocketKV ShadowKV Quest dialog-qa 34.0 ±12.9 32.0 ±13.0 36.0 ±13.3 28.0 ±12.5 34.0 ±13.0 26.0 ±11.9 
+
+book-sum 27.6 ±2.1 24.9 ±2.1 26.5 ±2.1 22.1 ±2.2 19.3 ±2.3 15.6 ±1.9 
+
+book-choice 82.0 ±10.6 84.0 ±10.1 82.0 ±10.6 84.0 ±10.2 78.0 ±11.5 76.0 ±11.7 
+
+book-qa-en 16.2 ±5.7 19.0 ±7.4 18.7 ±7.2 19.6 ±7.6 19.3 ±7.5 17.2 ±6.0 
+
+book-qa-zh 16.8 ±3.8 18.0 ±4.6 18.5 ±4.8 16.0 ±3.8 19.2 ±4.1 13.7 ±4.1 
+
+math-find 30.0 ±12.6 32.0 ±12.8 32.0 ±12.8 30.0 ±12.6 28.0 ±12.3 30.0 ±12.7 
+
+code-run 6.0 ±6.5 4.0 ±5.4 4.0 ±5.4 2.0 ±3.8 0.0 ±0.0 2.0 ±3.8 
+
+code-debug 32.0 ±13.0 34.0 ±13.2 36.0 ±13.4 36.0 ±13.4 32.0 ±12.7 32.0 ±12.8 
+
+Avg 43.0 ±2.1 43.3 ±2.9 43.8 ±2.6 42.9 ±2.4 39.6 ±2.0 35.9 ±2.6 
+
+budget b = 2048 
+
+passkey 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 98.0 ±3.9 100.0 ±0.0 100.0 ±0.0 
+
+num-str 100.0 ±0.0 100.0 ±0.0 100.0 ±0.0 92.0 ±7.5 100.0 ±0.0 74.0 ±12.1 
+
+kv-retr 28.0 ±12.7 30.0 ±12.7 28.0 ±12.6 36.0 ±13.6 14.0 ±9.7 0.0 ±0.0 
+
+dialog-qa 34.0 ±12.9 34.0 ±13.1 38.0 ±13.5 32.0 ±13.0 32.0 ±12.7 26.0 ±12.0 
+
+book-sum 27.6 ±2.1 27.6 ±2.1 27.4 ±2.3 23.7 ±2.3 20.1 ±2.0 16.4 ±2.0 
+
+book-choice 82.0 ±10.6 84.0 ±10.1 82.0 ±10.6 82.0 ±10.6 76.0 ±11.8 80.0 ±11.1 
+
+book-qa-en 16.2 ±5.7 17.9 ±6.8 18.0 ±6.8 20.5 ±7.6 17.5 ±6.8 16.8 ±5.8 
+
+book-qa-zh 16.8 ±3.8 17.3 ±4.2 17.8 ±4.2 17.0 ±4.5 20.0 ±5.4 16.0 ±4.9 
+
+math-find 30.0 ±12.6 32.0 ±12.8 32.0 ±12.8 30.0 ±12.6 32.0 ±12.8 32.0 ±12.9 
+
+code-run 6.0 ±6.5 6.0 ±6.6 4.0 ±5.4 0.0 ±0.0 2.0 ±3.8 2.0 ±3.8 
+
+code-debug 32.0 ±13.0 34.0 ±13.2 32.0 ±13.0 34.0 ±13.2 30.0 ±12.4 30.0 ±12.5 
+
+Avg 43.0 ±2.1 43.9 ±2.8 43.6 ±2.6 42.3 ±2.4 40.3 ±2.3 35.7 ±2.6 
+
+32 A PREPRINT - J ULY 28, 2026 Table C.9: Decode efficiency, full numbers with dispersion. bs = 1 , TP = 1 , GLM-4-9B-Chat-1M, one H200 NVL, deployed path verified per cell. TPOT is mean ± sd over 192 timed steps. Speedup is L OCKS against the faster 
+
+dense backend at each context (the conservative comparison). TTFT is the steady (prefill-only) mean; L OCKS steady TTFT matches FA3 within measurement noise (prefill is byte-identical stock FA3). Build is the one-time first-token summary-build overhead (§C.6); mean ± sd over 8–10 boots per rung, 16 K– 1M.                                                                                                                   
+
+> TPOT (ms) steady TTFT (s) build ctx FA3 FI LOCKS speedup FA3 LOCKS (ms) 16K 6.93 ±0.05 7.20 ±0.05 7.08 ±0.21 0.98 ×0.63 0.63 547 ±349
+> 32K 7.33 ±0.03 6.91 ±0.04 7.24 ±0.21 0.96 ×1.56 1.57 810 ±525
+> 64K 7.97 ±0.08 8.06 ±0.04 7.38 ±0.20 1.08 ×4.42 4.41 916 ±395
+> 128K 8.98 ±0.05 8.74 ±0.05 8.27 ±0.22 1.06 ×13 .914 .12904 ±2282
+> 256K 11 .63 ±0.09 11 .89 ±0.08 8.96 ±0.23 1.30 ×49 .649 .71323 ±317
+> 512K 17 .24 ±0.18 16 .17 ±0.18 10 .47 ±0.28 1.54 ×184 .1184 .21993 ±253
+> 1M 27 .50 ±0.40 26 .19 ±0.45 12 .95 ±0.51 2.02 ×699 .0699 .43717 ±756
+
+C.6 Decode efficiency: measurement protocol and full numbers 
+
+Figure 4 in §5 reports decode efficiency as a banner; this section states the measurement protocol in full and gives the underlying numbers with dispersion, so that no cell is read as a single lucky draw. 
+
+Configuration. All cells are batch size 1, tensor parallel degree 1, on one H200 NVL GPU ( sm_90a ), model GLM-4-9B-Chat-1M ( 40 layers, 4 KV heads, head dim 128 , page size 16 , bf16 ), at the shipped budget of 2048 tokens per (layer, KV head). The dense controls are FlashAttention-3 (FA3) and FlashInfer (FI); L OCKS runs its deployed kernel set (the packed rank-8 int-4 page score, the fused selection, the co-scheduled Q/KV projection, and the tail-refresh graph). Every cell is verified to have executed the deployed path and nothing else: the engine log must carry the 
+
+[locks] ACTIVE and score=r8i4 banners and must not carry a fallback marker, else the cell is discarded rather than published. FA3, not FI, is the reference for the parity claim, because L OCKS delegates prefill to FA3; comparing against FI would fold in the FA3-versus-FI prefill kernel gap. 
+
+What one cell measures. A cell first runs a warm prefill and a clock-ramp decode that absorbs one-time costs (kernel JIT, FlashInfer autotuning, CUDA-graph capture) and detects a stable SM clock; only then does it run one measurement prefill followed by three consecutive windows of 64 decode steps on the same live batch, for 192 timed per-token steps. Requests are aborted rather than finished, so the decode metric is not contaminated by end-of-sequence effects. Two guards protect each window: a lockstep check (every step must emit exactly the batch’s worth of tokens, since KV pressure can silently shrink the batch) and a throttle check (windows whose NVML sample shows a real hardware slowdown are dropped); a cell with zero clean windows is refused outright. Time-to-first-token (TTFT) is measured separately with three repeated prefills. That series is bimodal: the single high sample is the first prefill that follows a request which actually ran decode steps, and it carries the one-time summary build; the remaining samples are prefill-only. We report the low-sample mean as the steady TTFT and the high sample as the build-inclusive first token. 
+
+Error semantics. TPOT is the mean over the 192 timed steps, reported as mean ± standard deviation; the coefficient of variation is 0.5–1.7% for the dense backends and 2.5–4.0% for L OCKS , the extra variance being the per-step selection and the periodic page-crossing refresh. Steady TTFT is the mean over all prefill-only repeats ( 9–20 per rung at 
+
+16 K– 256 K, two per boot); its standard deviation is 5–280 ms on a 0.6 to 50 second prefill (under 0.6% ), so prefill timing is essentially exact and the dispersion column is omitted for it. The build column is reported as mean ± sd over 
+
+8–10 boots per rung at every context ( 16 K– 1M; the bimodal TTFT series yields exactly one build-inclusive draw per boot). It is a genuinely heavy-tailed one-time cost, dominated by first-request allocator and cache effects rather than by the O(L) summary work itself, so at the shorter rungs its standard deviation is comparable to its mean and its profile across context is non-monotone (the wide 128 K reading is one boot’s stall in the tail: its median, 2.5 s, sits below the 
+
+2.9 s mean). We report the full dispersion at every rung, 512 K and 1M included ( n=8 boots each), rather than hide the noise; the build does grow with context overall ( 0.5 s at 16 K to 3.7 s at 1M), consistent with its O(L) page-summary work. 
+
+Reading the table. The decode saving grows with context, because the selected budget is a fixed 2048 tokens while the dense cache it replaces grows linearly: L OCKS attends and reads a nearly constant amount per step while the dense backends read the whole cache. Below the crossover near 30 K tokens the per-step selection and the always-attended summary cost slightly more than the attention they remove, so L OCKS is at parity or marginally slower there (the 
+
+0.96 –0.98 × rows); from 64 K onward it wins, reaching 2.02 × the faster dense backend at 1M. Steady TTFT is at parity at every context: L OCKS does not touch the prefill kernel, and the two steady columns agree to within their 33 A PREPRINT - J ULY 28, 2026 few-millisecond noise. The only first-token cost L OCKS adds is the one-time summary build, which is a substantial fraction (roughly half) of the first token at 16 K but falls to about half a percent by 1M, where prefill itself is quadratic; in absolute terms it is a small one-time cost that grows only slowly with context ( 0.5 s at 16 K to 3.7 s at 1M, its O(L)
+
+page-summary work) against a prefill that spans 0.6 to 699 seconds. 
+
+Batched ( bs > 1) decode (Table 2). The batched numbers extend this protocol to concurrent serving. For each (backend, context) we boot one engine and sweep the batch size on a single live batch : one warm prefill and clock-ramp, then the same 192 -step windowed measurement – with the identical lockstep and throttle guards – at each batch size in turn, with no re-prefill between them. L OCKS and the two dense controls (FA3, FI) are therefore measured matched-pair in the same session at every context, and the reported speedup is L OCKS against the faster dense backend per cell (the conservative choice), the ratio of L OCKS ’s decode throughput to that backend’s at fixed batch. Cells run the landed decode kernel, whose batched prefetch (§E) engages only at bs ≥ 8 and is byte-identical to the single-sequence path elsewhere, so the bs=1 column reproduces the single-sequence ladder of Table C.9 exactly rather than being remeasured. The per-context frontier is the largest batch that fits one H200 NVL at 0.90 utilization – model weights, the full resident KV cache, and the int4 selector state – and (context, batch) combinations that exceed it are marked OOM (the memory frontier is why the high-context / high-batch corner is unreachable on a single GPU). 34 A PREPRINT - J ULY 28, 2026 
+
+## D Representation-Scope Frontier and State Accounting 
+
+State accounting. Per (page, KV head) at B=16 , d=128 , against 4Bd = 8 ,192 B of bf16 KV, the basis costs d r 
+
+elements, the coefficients B r elements, and the centroid d elements (coefficients and centroid always int8). The percentages below report the logical payload , which excludes the per-column and per-row quantization scales; counting those scales raises the shipped r8i4 figure to about 10% of the page’s KV bytes. Neither figure is a measured allocation. Alignment, padding, page metadata, and ranking workspace are not included. L OCKS ships r=8 with an int4 basis. Table D.10 gives the full rank ×precision grid this implies, and is the source of every rank/precision number quoted in §5.4. 
+
+What each summary in the frontier tables below stores. All six are audited at the same B=16 , d=128 page against the same 4Bd = 8 ,192 B of bf16 KV. Bytes are the exact record from the state-accounting formula above; percentages are of the 8,192 B page. • LOCKS (local rank-r): the page’s own top-r spectral directions and per-token coefficients; 768 B, 9.4% of KV at r=8 with an int4 basis (Table D.10). • Envelope (Quest-style) : two length-d bf16 vectors, the per-dimension key minimum and maximum over the page: 2d·2 = 512 B, 6.25% of KV. • Moment core (COBS-style) : the page’s mean key, a rank-8 within-page key covariance factor and its eigenvalues (the second-order scoring form), bf16: (d + 8 d + 8) ·2 = 2 ,320 B, 28 .3% of KV. • Sequence-basis (ShadowKV-style) : a single rank-8 per-sequence SVD basis (amortized across all its pages) plus 8 int8 coordinates per token: 8P + (8 d+d)·2/npg ≈ 130 B, 1.6% of KV at the marginal. • Global-basis (Loki-style) : one shared, offline-fit rank-8 projection amortized across every page, so its marginal per-page cost is only its coordinates: ≈ 130 B, 1.6% of KV. • Codebook-128 : a shared, amortized 128 -entry product-quantization codebook plus one 7-bit code index per token: 16 ·7/8 + 128 d·2/npg ≈ 46 B, 0.6% of KV. 
+
+Condensed dose-response (moved from §3). What these six representations’ costs buy, at L OCKS ’s shipped rank (or a matched byte budget where noted), is Table D.11, both models; the full per-rank sweep behind §3’s scope claims is Table D.12, and the full per-rank, per-budget byte sweep follows below (Table D.15). 
+
+Spectral tails. The exactness margin of Prop. 2 is set by the per-page absolute tail energy τj,r = P 
+
+> k>r
+
+σ2
+
+> j,k
+
+of the within-page key Gram; we summarize its concentration scale-free by the normalized residual fraction 
+
+¯ρj,r = τj,r 
+
+ P  
+
+> k
+
+σ2
+
+> j,k
+
+. Median over pages, ¯ρj, 8 = 0 .11 (both models; rank-8 captures ∼89% of per-page key en-ergy, Table D.12), ¯ρj, 4 = 0 .32 –0.33 , and ¯ρj, 2 = 0 .54 –0.56 (Llama-3.1-8B/Qwen3-4B range). The captured fraction rises steeply with rank because the per-page spectrum decays fast, which is why r=8 suffices and r=2 does not. A flat (isotropic) spectrum is the relevant null. At B=16 a page has at most B − 1 = 15 nonzero centered modes, so an unbounded pool of structure was never on offer, yet a rank-8 basis fit to N =20 ,000 synthetic isotropic pages captures only a median 67 .8% of their variance (mean 0.679 , std 0.009 ; CPU simulation, no model or checkpoint involved). Real pages clear this isotropic null by a wide margin, so the observed concentration is genuine local structure, not an artifact of the mode-count cap. 
+
+Full frontier, tabulated. Table D.13 gives every point of the attention-mass-preserved-vs-budget curve and Table D.14 every point of the per-step-bytes-touched-to-preserve-mass curve (summary read plus selected-page KV, not resident footprint), Qwen3-4B, so the curves are verifiable point by point rather than only drawn. At moderate-to-high retention, particularly in the regime associated with preserved downstream quality, the local basis forms the strongest traffic-quality frontier; cheaper sketches can touch fewer bytes at low target mass. Table D.15 answers the matched-bytes question head on, both models. Grown to L OCKS ’s per-page budget (rank 48 , ∼780 B) or beyond (rank 64 , 1040 B), a global or shared representation still captures far less within-page geometry and cannot match the local rank-8 basis. At 780 B a global basis reaches 0.60 mass / 0.47 recall (Qwen3-4B; 0.47 /0.30 Llama-3.1-8B) and a per-sequence basis 0.71 /0.73 
+
+(Qwen3-4B; 0.62 /0.67 Llama-3.1-8B) versus L OCKS ’s 0.89 /0.92 (Qwen3-4B; 0.88 /0.93 Llama-3.1-8B) at 768 B, and a product codebook would need thousands of entries to reach L OCKS ’s per-page bytes while still trailing on recall. Page-local structure, at matched state, is what tracks the exact-LSE ranking. 
+
+The rotation control. Table D.16 backs §3’s rotation objection in full, giving the before-rotation and after-rotation fit of every scope, plus the position-bucketed interpolation between page and sequence scope, both models, at L OCKS ’s shipped rank. 35 A PREPRINT - J ULY 28, 2026 Table D.10: Quantization ablation of the per-page summary , full rank ×precision grid (exact logical-payload bytes; coefficients and centroid int8 throughout), in the rN/i M notation of Table B.1 (App. B: rank N , an int-M basis). Adjacent rows at the same rank isolate the cost of quantization; adjacent rows at the same precision isolate the cost of rank. L OCKS ships r8i4 .              
+
+> Notation Bytes/page % of KV r2i4 288 B 3.5%
+> r2i8 416 B 5.1%
+> r4i4 448 B 5.5%
+> r4i8 704 B 8.6%
+> r8i4 768 B 9.4%
+> r8i8 1280 B 15 .6%
+
+Table D.11: The dose-response of scope. Per (page, KV head) at the shipped rank ( r=8 ; 128 codewords for the codebook row), both models. Captured energy is the median fraction of within-page key variance the representation preserves; retained mass and recall of the true top pages are at 1024 tokens/head. Broadening scope from a page to a sequence to the whole cache degrades every column in lockstep, independent of bytes spent, for both models; only the 
+
+local per-page basis captures the within-page geometry, which is why it alone tracks the oracle. Grown to L OCKS ’s own byte budget (matched-bytes rows), shared scopes still trail, which supports representation scope, rather than state size, as the source of the gap (full sweep Table D.12). The codebook row is measured for Qwen3-4B only (its original vintage sweep, kept as-is); “–” marks the unmeasured Llama-3.1-8B cells; the codebook is not a linear subspace, so its captured energy is not defined and is marked N/A.                                                           
+
+> Llama-3.1-8B Qwen3-4B Representation B/pg % KV capt. E mass recall capt. E mass recall LOCKS local per-page basis 768 9.489 %0.88 0.93 89 %0.89 0.92
+> per-sequence basis (ShadowKV) 130 1.615% 0.23 0.29 28% 0.43 0.38
+> one global basis (Loki) 130 1.65% 0.18 0.12 10% 0.29 0.23
+> per-sequence, matched bytes ( r=48 )780 9.566% 0.62 0.67 72% 0.71 0.73
+> one global, matched bytes ( r=48 )780 9.539% 0.47 0.30 49% 0.60 0.47 128 -codeword codebook 46 0.6–––N/A 0.66 0.53
+
+GQA combine ablation. Table D.17 (moved from the main-text ablations) isolates the combine rule from summary error (every rule scores the same exact per-head shares, so only the combine rule differs) and the share-average rule of Cor. 3 is shipped, because it beats group-max and group-mass on every statistic, including the worst head, and trails a per-head oracle costing up to G× the selected-page traffic and attention work by only ∼2 coverage points. 36 A PREPRINT - J ULY 28, 2026 Table D.12: The scope ×rank registry. Captured energy, retained mass, and carrier recall for every scope and rank arm measured, both models, at the 1024 -token/head operating point (RULER-32K microscope traces, App. B; full page population, no page cap or layer stride). Captured energy is the median fraction of within-page key variance each representation preserves (projected variance for the shared-subspace scopes); mass and recall are group-LSE top-k page selection at the stated operating point. This table is the definitive computation behind Table D.11 and Table D.15, and backs §3’s scope claims in full. 
+
+Llama-3.1-8B Qwen3-4B Scope Rank r capt. energy mass recall capt. energy mass recall per-page 2 0.4412 0.8467 0.7883 0.4590 0.8599 0.7711 4 0.6727 0.8652 0.8577 0.6797 0.8853 0.8442 8 0.8899 0.8792 0.9345 0.8865 0.8926 0.9212 15 1.0000 0.8801 0.9995 1.0000 0.8950 0.9994 global 8 0.0549 0.1807 0.1173 0.0997 0.2919 0.2277 16 0.1129 0.2716 0.1602 0.1850 0.3935 0.2964 32 0.2448 0.4001 0.2411 0.3524 0.5212 0.3982 48 0.3886 0.4655 0.3008 0.4900 0.6004 0.4722 64 0.5275 0.5355 0.3648 0.6081 0.6788 0.5470 per-seq 8 0.1520 0.2266 0.2936 0.2777 0.4319 0.3835 16 0.2700 0.3851 0.4193 0.4138 0.5400 0.5098 32 0.4885 0.5321 0.5671 0.6042 0.6407 0.6511 48 0.6555 0.6182 0.6666 0.7240 0.7073 0.7282 64 0.7789 0.7053 0.7355 0.8153 0.7538 0.7821 
+
+Table D.13: Attention mass preserved vs. per-head budget , by summary family (Qwen3-4B). Every value is a plotted point. Unlike the microscope population of Table D.12, this is the original Qwen3-4B frontier sweep over a different record set, so its absolute mass values are not directly comparable with that table’s (e.g. local r=8 at 1024 /head reads 
+
+0.836 here versus 0.893 there). 
+
+Representation b=64 b=128 b=256 b=512 b=1024 b=2048 b=4096 b=8192 
+
+LOCKS local basis ( r=8 ) 0.571 0.630 0.694 0.770 0.836 0.896 0.948 0.986 LOCKS local basis ( r=4 ) 0.554 0.615 0.680 0.759 0.827 0.889 0.945 0.985 LOCKS local basis ( r=2 ) 0.438 0.512 0.587 0.681 0.770 0.852 0.929 0.981 Quest min/max envelope 0.479 0.524 0.580 0.648 0.719 0.800 0.883 0.957 codebook-128 0.364 0.415 0.479 0.560 0.664 0.765 0.859 0.953 Moment core (COBS-style) 0.112 0.155 0.213 0.298 0.419 0.558 0.714 0.876 ShadowKV-style seq. basis 0.134 0.179 0.243 0.332 0.446 0.588 0.735 0.891 Loki-style global basis 0.110 0.152 0.207 0.275 0.363 0.485 0.632 0.838 exact-LSE (all-K oracle) 0.575 0.634 0.699 0.774 0.839 0.898 0.949 0.986 
+
+Table D.14: Per-step bytes touched to preserve a target mass , by summary family (Qwen3-4B). Per-step bytes touched (summary read for scoring + selected-page KV) as % of the dense per-step KV read needed to preserve a target attention mass, per representation. This is selection-plus-attention traffic, not resident footprint: L OCKS ’s resident footprint is the full cache plus the summary. At moderate-to-high retention, particularly in the regime associated with preserved downstream quality, the local summaries form the strongest traffic-quality frontier; cheaper sketches can use fewer bytes at low target mass. “–” means the target mass is unreachable within the plotted budget. 
+
+Representation 0.60 0.70 0.80 0.90 0.95 0.97 0.99 
+
+per-step bytes touched (% of dense read) to preserve mass 
+
+LOCKS local basis ( r=8 ) 9.8 10.9 13.7 22.7 35.4 47.5 67.8 LOCKS local basis ( r=4 ) 6.4 7.6 10.6 20.3 33.5 45.2 65.6 LOCKS local basis ( r=2 ) 5.7 7.7 12.2 23.6 37.6 47.6 67.3 Quest min/max envelope 8.3 11.6 18.9 36.1 53.7 66.0 84.8 codebook-128 4.7 8.7 17.0 34.8 50.0 60.2 73.0 Moment core (COBS-style) 44.0 52.3 65.8 85.3 100.1 107.7 117.0 ShadowKV-style seq. basis 15.0 23.1 35.4 54.1 66.2 71.8 82.9 Loki-style global basis 23.4 33.4 46.2 64.7 77.7 86.6 94.3 exact-LSE (all-K oracle) 50.6 51.6 54.4 63.2 75.7 88.6 108.5 
+
+37 A PREPRINT - J ULY 28, 2026 Table D.15: Matched-bytes frontier , per (page, KV head), both models. Each family is grown by rank (or codeword count) so its per-page state can exceed LOCKS ’s 768 B. Even at several times the bytes, a global or shared representation neither captures the within-page geometry nor matches the mass/recall of the local rank-8 basis. Page-local structure, at matched state, is what tracks the exact-LSE ranking. Mass/recall at 1024 tokens/head. The codebook rows are measured for Qwen3-4B only (their original vintage sweep, kept as-is); “–” marks the unmeasured Llama-3.1-8B cells. 
+
+Llama-3.1-8B Qwen3-4B Representation size B/pg % KV capt. E mass recall capt. E mass recall LOCKS local r=2 288 3.5 44% 0.847 0.788 46% 0.860 0.771 LOCKS local r=4 448 5.5 67% 0.865 0.858 68% 0.885 0.844 
+
+LOCKS local r=8 768 9.4 89% 0.879 0.934 89% 0.893 0.921 
+
+LOCKS local r=15 1328 16.2 100% 0.880 1.000 100% 0.895 0.999 global (Loki) r=8 130 1.6 5% 0.181 0.117 10% 0.292 0.228 global (Loki) r=16 260 3.2 11% 0.272 0.160 18% 0.394 0.296 global (Loki) r=32 520 6.3 24% 0.400 0.241 35% 0.521 0.398 global (Loki) r=48 780 9.5 39% 0.466 0.301 49% 0.600 0.472 global (Loki) r=64 1040 12.7 53% 0.535 0.365 61% 0.679 0.547 per-seq (ShadowKV) r=8 130 1.6 15% 0.227 0.294 28% 0.432 0.384 per-seq (ShadowKV) r=16 260 3.2 27% 0.385 0.419 41% 0.540 0.510 per-seq (ShadowKV) r=32 520 6.3 49% 0.532 0.567 60% 0.641 0.651 per-seq (ShadowKV) r=48 780 9.5 66% 0.618 0.667 72% 0.707 0.728 per-seq (ShadowKV) r=64 1040 12.7 78% 0.705 0.736 82% 0.754 0.782 codebook N =128 46 0.6 – – – – 0.667 0.531 codebook N =256 81 1.0 – – – – 0.718 0.579 codebook N =512 147 1.8 – – – – 0.750 0.632 codebook N =1024 279 3.4 – – – – 0.795 0.680 
+
+Table D.16: The before-rotation/after-rotation scope matrix. Rank-8 bases at the 1024 -token/head operating point (RULER-32K microscope traces, App. B), both models. Captured energy is the reconstruction-energy form; it is negative when a basis fit in one regime badly mismatches the geometry it reconstructs in the other, and coincides with projected variance for matched-fit projection rows. Before-rotation arms are fit on exactly inverse-rotated keys, with reconstructions re-rotated per position before scoring (round-trip verified). Page scope is nearly unaffected by rotation while every shared scope degrades, and fidelity falls monotonically as a shared basis widens from a few pages toward the sequence. 
+
+Llama-3.1-8B Qwen3-4B Regime Scope capt. energy mass recall capt. energy mass recall before rotation global 0.1695 0.2546 0.4330 0.1287 0.3950 0.4087 seq 0.5549 0.4804 0.6192 0.5191 0.5011 0.5826 page 0.9191 0.8794 0.9442 0.9088 0.8930 0.9275 after rotation global -1.1261 0.1807 0.1173 -0.6649 0.2919 0.2277 seq -0.6680 0.2266 0.2936 -0.3172 0.4319 0.3835 page 0.8899 0.8792 0.9345 0.8865 0.8926 0.9212 after rotation (bucketed) bucket-4 0.5101 0.8022 0.7572 0.5707 0.8344 0.7537 bucket-16 0.1505 0.6070 0.6272 0.3061 0.6216 0.6050 bucket-64 -0.1748 0.5281 0.5186 0.0936 0.5502 0.5280 
+
+38 A PREPRINT - J ULY 28, 2026 Table D.17: GQA combine ablation at budget b=2048 : per-query-head attention coverage under each rule’s single shared page selection, on exact per-head scores so the combine rule is isolated from summary error (Qwen3-4B, G=4 ;ordering holds across the 512 –2048 sweep). Columns: mean (group-average coverage, what Cor. 3 maximizes), worst 
+
+(minimum over the group’s heads, the starved-head test), and p5 (the 5th percentile). Share-average stays within ∼2
+
+points of a per-head oracle at up to G× the selected-page traffic and attention work. Bold: shipped.                                        
+
+> reasoning retrieval Combine rule mean worst p5 mean worst p5
+> Share-average 0.872 0.785 0.595 0.879 0.787 0.612
+> Group-max 0.850 0.748 0.504 0.860 0.757 0.544
+> Group-mass 0.856 0.756 0.523 0.866 0.763 0.563
+> Per-head oracle (up to G×traffic/work) 0.893 0.812 0.655 0.898 0.812 0.663
+> FullKV 1.000 1.000 1.000 1.000 1.000 1.000
+
+39 A PREPRINT - J ULY 28, 2026 
+
+## E Decode Kernel: Critical Path and Overlap Schedule 
+
+This section gives a high-level picture of what one L OCKS decode step does on the GPU, and where the two design choices that keep it at or below dense TPOT live. L OCKS decode is two stages – score-then-select (Stage A) and sparse paged attention (Stage B) – but the win is as much about what is kept off the step’s critical path as about the stages themselves. Figure E.1 shows the schedule for one attention layer. 
+
+The critical path. Stage A projects the decode query ( ht → q), scores every resident page by contracting the query with that page’s rank-8 int4 summary, and keeps the k highest-scoring pages per KV-head (the union table, §A.4). Stage B then runs paged attention over only those k pages. Everything on this path is fixed-shape and allocation-free, so the whole step is captured in one CUDA graph. 
+
+(i) Splitting the QKV GEMM. A fused QKV projection would place the KV projection on the critical path even though the newly written token is not what Stage A scores. We instead split the projection: the Q-GEMV stays on the path (the score needs q), while the KV-GEMV, its RoPE, and the cache write are issued as a separate kernel that runs concurrently with the selector . The selector is intentionally barrier-bound and occupies only a handful of SMs, so the KV projection executes on the idle remainder and its latency is hidden rather than added. This is the schedule the deployed kernel set uses for non-QK-norm architectures at context ≤ 64 K; for QK-norm models (per-head q/k norm) the rope-absorbing variant is disabled and the projection reverts to a standard fused form (§C). 
+
+(ii) Building the summary off the hot path. The page summary is a function of the page’s keys alone, not of any decode query, so it is built once when a page is finalized during prefill (or on a page-crossing refresh), not per decode step. The decode step reads the resulting int4 basis and never pays the eigendecomposition. This is what lets Stage A cost a compact-summary scan rather than a re-projection of the full keys, and it is the reason L OCKS touches the prefill kernel not at all (TTFT parity, §C). 40 A PREPRINT - J ULY 28, 2026 
+
+ht Q-GEMV r8i4 score 
+
+> (int4 summaries)
+
+select top-k
+
+sparse decode  
+
+> (kpages)
+
+O-GEMV 
+
+KV-GEMV + RoPE + KV-write      
+
+> (i) split out of the fused QKV; covered on the selector’s idle SMs ( 4of 132 busy)
+
+summary build      
+
+> gram →eigh →int4 basis
+> (ii) off the hot path : query-independent, built once when a page fills
+
+Figure E.1: Decode-step critical path (one attention layer). The hot path (solid) is Q-GEMV → r8i4 score → top-k
+
+select → sparse decode → O-GEMV: the query is projected, every resident page’s compact int4 summary is scored, the top-k pages per KV-head are kept, and paged attention runs over only those k pages. Two costs are pushed off 
+
+this path (dashed). (i) The KV projection, RoPE, and cache write are split out of the fused QKV and covered under the selector, which occupies only 4 of the GPU’s 132 SMs, so they add no exposed time (deployed non-QK-norm schedule, context ≤ 64 K; above it the split reverts to a standard fused QKV). (ii) The per-page summary (page-gram →
+
+eigendecomposition → rank-8 int4 basis) is query-independent and built once when a page fills, so the decode step only 
+
+reads it, never recomputes it. The exposed work is therefore a scan over the compact summary, selection, and sparse attention over the fixed k-page ( b-token) working set, instead of dense attention over the full KV cache. 41 A PREPRINT - J ULY 28, 2026 
+
+## F Reproducibility 
+
+Code availability. LOCKS is released as a pip-installable vLLM general plugin (pip install locks-kv ), a drop-in attention backend that registers itself with an unmodified engine, no fork or patch required (§4). Source code, the Hopper kernels, and the measurement harness behind App. B are available at https://github.com/Js-Hwang1/locks.git .
+
+Software. Every number is measured in vLLM 0.24 .0 on PyTorch 2.11 .0 (cu130 ), CUDA 13 .0 runtime (cuBLAS 13 .0.0) under a 13 .2 driver, with a bfloat16 KV cache, full CUDA graphs, and prefix caching off. Every cell runs inside one pinned container image, NGC PyTorch 25.08-py3 (Singularity), so the toolchain is identical across all measurements. 
+
+Hardware. Efficiency cells are single-GPU on one NVIDIA H200 NVL ( 143 ,771 MiB HBM3e; the node holds 8,one used per cell). Each node carries two Intel Xeon 6530P CPUs ( 64 cores total, one thread per core), 1512 GiB RAM, and driver 595 .71 .05 .42

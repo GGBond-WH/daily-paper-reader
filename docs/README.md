@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-27 21:09:40 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-28 20:56:11 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日推荐3篇论文，精读2篇聚焦长视频生成与LLM解码优化，速读1篇探讨稀疏注意力架构。最值得关注的是《Surprise Forcing》中“何时跳过”的视频生成记忆机制，以及《HiKV》中硬件加速的重要性感知KV缓存方案。建议后续从这两个方向入手，了解长序列处理的前沿思路。</p>
+<p>今日精读8篇，重点关注多头潜在注意力分离内容与位置、知识选择与运行时消耗两大突破。</p>
+<p>最值得深读的是10分《Through the Bottleneck》揭示注意力机制解耦原理，以及9分《KAP》搭建知识选择与推理效率的桥梁。</p>
+<p>建议从《Through the Bottleneck》入手理解模型内部机制，再结合《KAP》学习系统级优化思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Surprise Forcing: What to Remember, When to Skip in Long Video Generation">Surprise Forcing: What to Remember, When to Skip in Long Video Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="HiKV: Hierarchical Importance-Aware KV Cache with Hardware Acceleration for LLM Decoding">HiKV: Hierarchical Importance-Aware KV Cache with Hardware Acceleration for LLM Decoding</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Through the Bottleneck: How Multi-head Latent Attention Separates Content from Position in Language Models">Through the Bottleneck: How Multi-head Latent Attention Separates Content from Position in Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="KAP: Bridging the Knowledge Selection-Runtime Consumption Gap in LLM Systems">KAP: Bridging the Knowledge Selection-Runtime Consumption Gap in LLM Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="DynaCalKV: Key-Value Cache Compression via Head Grouping and Adaptive Rank Allocation">DynaCalKV: Key-Value Cache Compression via Head Grouping and Adaptive Rank Allocation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RIS-Kernel: A Model-Agnostic Architecture for Long-Context LLM Inference via Sparse Attention">RIS-Kernel: A Model-Agnostic Architecture for Long-Context LLM Inference via Sparse Attention</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Kalypso: Relational LLM Serving">Kalypso: Relational LLM Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention">PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
 </div>
 

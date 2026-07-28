@@ -1,0 +1,137 @@
+{
+  "date": "20260728",
+  "date_label": "",
+  "generated_at": "2026-07-28 20:56:11 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.23054v1",
+      "route": "202607/28/2607.23054v1-through-the-bottleneck-how-multi-head-latent-attention-separates-content-from-position-in-language-models",
+      "title": "Through the Bottleneck: How Multi-head Latent Attention Separates Content from Position in Language Models",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 10.0,
+      "evidence": "通过多头潜在注意力瓶颈减少KV缓存",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.24260v1",
+      "route": "202607/28/2607.24260v1-kap-bridging-the-knowledge-selection-runtime-consumption-gap-in-llm-systems",
+      "title": "KAP: Bridging the Knowledge Selection-Runtime Consumption Gap in LLM Systems",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "提出弥合知识选择-运行时消耗差距，减少解码时的KV缓存占用和内存流量",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.24331v1",
+      "route": "202607/28/2607.24331v1-dynacalkv-key-value-cache-compression-via-head-grouping-and-adaptive-rank-allocation",
+      "title": "DynaCalKV: Key-Value Cache Compression via Head Grouping and Adaptive Rank Allocation",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "通过头部分组和自适应秩分配进行KV缓存压缩",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.24555v1",
+      "route": "202607/28/2607.24555v1-locks-page-local-compact-key-summaries-for-efficient-long-context-decoding",
+      "title": "LOCKS: Page-Local Compact Key Summaries for Efficient Long-Context Decoding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "提出页局部谱摘要以减少KV缓存读取",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.24667v1",
+      "route": "202607/28/2607.24667v1-eviction-as-estimation-a-fixed-lag-smoothing-view-of-test-time-memory-and-when-measuring-beats-accumulating",
+      "title": "Eviction as Estimation: A Fixed-Lag Smoothing View of Test-Time Memory, and When Measuring Beats Accumulating",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "基于固定滞后平滑的LLM KV缓存驱逐策略",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.23693v1",
+      "route": "202607/28/2607.23693v1-compute-globally-materialize-locally-the-memory-contract-of-sparse-event-kv",
+      "title": "Compute Globally, Materialize Locally: The Memory Contract of Sparse Event-KV",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "通过驱逐和语义物化实现内存高效的KV缓存管理",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.23815v1",
+      "route": "202607/28/2607.23815v1-kalypso-relational-llm-serving",
+      "title": "Kalypso: Relational LLM Serving",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "语义算子流水线中的KV缓存重用",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    },
+    {
+      "paper_id": "2607.24593v1",
+      "route": "202607/28/2607.24593v1-pivot-efficient-query-group-indexing-for-token-level-sparse-attention",
+      "title": "PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "稀疏注意力中的高效索引，与KV缓存管理相关",
+      "first_seen_at": "2026-07-28 20:56:11 UTC",
+      "updated_at": "2026-07-28 20:56:11 UTC"
+    }
+  ]
+}

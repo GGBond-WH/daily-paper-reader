@@ -1,0 +1,317 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-28T20:52:38.750883+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 7,
+    "deep_cap": 6,
+    "deep_selected": 6,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2607.23054v1",
+      "source": "arxiv",
+      "title": "Through the Bottleneck: How Multi-head Latent Attention Separates Content from Position in Language Models",
+      "abstract": "Multi-head Latent Attention (MLA), introduced in DeepSeek-V2, compresses key-value pairs through a shared low-rank bottleneck (cKV), achieving 81% KV-cache reduction during inference. Despite its adoption in massive production models, no prior work has studied what information this bottleneck preserves or discards, nor how it reshapes internal transformer circuits. We present the first comprehensive mechanistic interpretability study of MLA, training a 114M-parameter transformer (pretrained on a web/code/math mixture, fine-tuned on TinyStories) and analyzing its representations through SVD, attention head taxonomy, linear probing, and a disruption-attribution analysis. Our key findings are: (1) the cKV bottleneck learns a pure content representation, preserving entity identity (98% retention) while discarding positional information, validating MLA's separation of content from position via RoPE; (2) induction heads co-locate at a single layer (Layer 12), unlike their distributed formation in standard MHA; (3) a single \"semantic hub\" layer (Layer 15) simultaneously exhibits the highest SVD effective rank and strongest disruption-attribution score; and (4) the bottleneck is globally over-provisioned, using only 46% of its capacity on average. These findings suggest MLA does not merely compress attention passively, but reshapes how the model organizes content, position, and circuit structure. We view this as an initial data point and detail scope limitations in Section 5.",
+      "authors": [
+        "Dhruvil S",
+        "Fenil Sojitra",
+        "Ravirajsinh Chauhan"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.CL"
+      ],
+      "published": "2026-07-25T05:45:59+00:00",
+      "link": "https://arxiv.org/pdf/2607.23054v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 10.0,
+      "llm_evidence_en": "KV-cache reduction via multi-head latent attention bottleneck",
+      "llm_evidence_cn": "通过多头潜在注意力瓶颈减少KV缓存",
+      "llm_evidence": "通过多头潜在注意力瓶颈减少KV缓存",
+      "canonical_evidence": "通过多头潜在注意力瓶颈减少KV缓存",
+      "llm_tldr_en": "This study explains how Multi-head Latent Attention compresses KV cache by separating content from position via a low-rank bottleneck, achieving 81% reduction.",
+      "llm_tldr_cn": "多头潜在注意力（MLA）通过共享低秩瓶颈（cKV）将KV缓存压缩了81%，但为何如此有效尚不清楚。本文首次从机械可解释性角度研究了MLA，训练了一个1.14亿参数的Transformer模型，通过SVD、线性探针等方法分析，发现cKV瓶颈主要编码位置信息，而内容信息通过非线性变换被解耦并压缩，从而在不牺牲性能的前提下大幅减小缓存，为理解并进一步改进KV缓存压缩技术提供了深入见解。",
+      "llm_tldr": "多头潜在注意力（MLA）通过共享低秩瓶颈（cKV）将KV缓存压缩了81%，但为何如此有效尚不清楚。本文首次从机械可解释性角度研究了MLA，训练了一个1.14亿参数的Transformer模型，通过SVD、线性探针等方法分析，发现cKV瓶颈主要编码位置信息，而内容信息通过非线性变换被解耦并压缩，从而在不牺牲性能的前提下大幅减小缓存，为理解并进一步改进KV缓存压缩技术提供了深入见解。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.24260v1",
+      "source": "arxiv",
+      "title": "KAP: Bridging the Knowledge Selection-Runtime Consumption Gap in LLM Systems",
+      "abstract": "Modern LLM systems increasingly rely on knowledge-selection processes that produce high-value structured priors, such as ranked evidence, graph topology, multimodal alignment, and confidence signals. Yet LLM serving remains fundamentally oblivious to this rich structure: once such signals are serialized into a prompt, the backend observes only a flat token sequence, forcing dense and uniform consumption of the full key-value (KV) state during decoding. We term this architectural mismatch the Knowledge Selection-Runtime Consumption (KSRC) gap: richer contexts enlarge the full-prompt KV footprint and decode-time memory traffic, increasing latency and degrading throughput even when reasoning depends on only a small fraction of the context. To bridge the gap, we propose Knowledge Access Planning (KAP), a paradigm-shifting execution abstraction that elevates structured knowledge priors from passive prompt-construction hints into first-class physical execution artifacts. KAP establishes a universal intermediate representation (IR)-the runtime access plan-which compiles structured knowledge signals to govern physical KV access without altering logical prompt semantics, model weights, or training procedures. Through this IR, KAP shifts LLM serving from token-aware context consumption to plan-driven, knowledge-aware runtime consumption. We instantiate KAP with GraphSpec, a compiler-executor realization connecting structured knowledge selection to an LLM serving backend. We derive a phase-boundary model for the positive-speedup regime of plan-guided execution. Across 4K-128K long-context QA workloads, GraphSpec maintains answer quality comparable to full-context decoding while decoupling physical KV consumption from prompt length, reducing proposal-time KV access to 5.5% of source KV state at 128K, and fundamentally shifting the scaling trajectory of long-context generation.",
+      "authors": [
+        "Shuo Wang",
+        "Fang Xi",
+        "Wenyuan Huang",
+        "Qing Wang",
+        "Junming Su"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-27T10:51:38+00:00",
+      "link": "https://arxiv.org/pdf/2607.24260v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "proposes bridging KSRC gap to reduce KV footprint and memory traffic during decoding",
+      "llm_evidence_cn": "提出弥合知识选择-运行时消耗差距，减少解码时的KV缓存占用和内存流量",
+      "llm_evidence": "提出弥合知识选择-运行时消耗差距，减少解码时的KV缓存占用和内存流量",
+      "canonical_evidence": "提出弥合知识选择-运行时消耗差距，减少解码时的KV缓存占用和内存流量",
+      "llm_tldr_en": "KAP identifies and bridges the gap between knowledge selection and runtime consumption, reducing unnecessary KV state memory traffic during LLM decoding without sacrificing quality.",
+      "llm_tldr_cn": "大语言模型在解码时，无论上下文重要与否，都会全量消费键值（KV）缓存，导致存储和带宽浪费。本文指出这一知识选择与运行时消耗之间的鸿沟，并提出KAP框架，通过利用知识选择过程产生的结构化先验（如排序证据、图拓扑等），动态调整KV缓存的消费粒度。实验表明，该方法显著减少了KV内存流量，降低了解码延迟，同时保持了生成质量。这项工作为高效LLM推理提供了新视角。",
+      "llm_tldr": "大语言模型在解码时，无论上下文重要与否，都会全量消费键值（KV）缓存，导致存储和带宽浪费。本文指出这一知识选择与运行时消耗之间的鸿沟，并提出KAP框架，通过利用知识选择过程产生的结构化先验（如排序证据、图拓扑等），动态调整KV缓存的消费粒度。实验表明，该方法显著减少了KV内存流量，降低了解码延迟，同时保持了生成质量。这项工作为高效LLM推理提供了新视角。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.24331v1",
+      "source": "arxiv",
+      "title": "DynaCalKV: Key-Value Cache Compression via Head Grouping and Adaptive Rank Allocation",
+      "abstract": "As the inference phase of Large Language Models (LLMs) requires handling long context windows, the Key-Value (KV) cache initially appears to address this challenge but eventually becomes a significant bottleneck as the context window continues to grow. Low-rank compression has recently been studied as an effective approach to reduce KV cache memory while maintaining model performance. However, only a few existing methods treat the Key and Value caches differently, despite their distinct roles. Moreover, these methods typically employ fixed attention-head grouping, which may not fully exploit the structural similarity among attention heads. In this paper, we propose an improved low-rank KV cache compression framework. For the Key cache, we dynamically group attention heads based on Centered Kernel Alignment (CKA) similarity and allocate the rank budget adaptively under a parameter budget. For the Value cache, we adopt the same approach as ReCalKV, refining the low-rank decomposition through offline calibration to improve reconstruction quality. Experimental results on three instruction-tuned LLMs show that our method reduces the number of Key cache parameters while maintaining competitive accuracy. We further observe that the proposed strategy is particularly effective for Multi-Head Attention (MHA) models, whereas it should be applied more conservatively to Grouped-Query Attention (GQA) models, especially in long-context settings.",
+      "authors": [
+        "Tan T. Nguyen",
+        "Quan V. Dang"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-27T12:08:56+00:00",
+      "link": "https://arxiv.org/pdf/2607.24331v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV cache compression via head grouping and adaptive rank allocation",
+      "llm_evidence_cn": "通过头部分组和自适应秩分配进行KV缓存压缩",
+      "llm_evidence": "通过头部分组和自适应秩分配进行KV缓存压缩",
+      "canonical_evidence": "通过头部分组和自适应秩分配进行KV缓存压缩",
+      "llm_tldr_en": "DynaCalKV compresses LLM KV cache via low-rank approximation with adaptive head grouping and separate Key/Value rank allocation, reducing memory while preserving accuracy.",
+      "llm_tldr_cn": "针对大语言模型推理中KV缓存随上下文增长成为瓶颈的问题，DynaCalKV提出一种改进的低秩压缩框架：对键缓存和值缓存分别进行自适应秩分配，并通过动态头部分组利用注意力头结构相似性。实验表明，该方法在显著减少缓存内存的同时保持了模型性能。",
+      "llm_tldr": "针对大语言模型推理中KV缓存随上下文增长成为瓶颈的问题，DynaCalKV提出一种改进的低秩压缩框架：对键缓存和值缓存分别进行自适应秩分配，并通过动态头部分组利用注意力头结构相似性。实验表明，该方法在显著减少缓存内存的同时保持了模型性能。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.24555v1",
+      "source": "arxiv",
+      "title": "LOCKS: Page-Local Compact Key Summaries for Efficient Long-Context Decoding",
+      "abstract": "Serving large language models at long context is bottlenecked by the key-value (KV) cache, which is read in full at every decode step. Attention keys are locally low-rank though globally high-rank: shared low-rank bases discard page-specific directions that a page's own compact basis retains. LOCKS gives every page its own spectral summary (resident, about a tenth the cache's size), reconstructs within-page logits, estimates each page's attention mass by log-sum-exp, and attends only the top pages; selection itself reads no candidate keys or values. Selecting on this summary alone stays within about a point of the full cache on long-document QA (LongBench-v1), tracks the read-every-key oracle on retrieval-dense RULER down to the smallest budgets, and shows its largest margins on long-form reasoning (AIME26, MATH-500), where baseline selectors collapse. At its shipped $2048$-token budget LOCKS matches FullKV aggregate quality at $100$K$+$ context while attending about $2\\%$ of the tokens, and halves per-token decode latency ($2.0\\times$ at $1$M tokens) against dense attention. LOCKS ships as a drop-in plugin for unmodified vLLM, with batched decode running in full CUDA graphs.",
+      "authors": [
+        "Junsung Hwang"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-07-27T15:28:52+00:00",
+      "link": "https://arxiv.org/pdf/2607.24555v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "proposes page-local spectral summaries to reduce KV cache reads",
+      "llm_evidence_cn": "提出页局部谱摘要以减少KV缓存读取",
+      "llm_evidence": "提出页局部谱摘要以减少KV缓存读取",
+      "canonical_evidence": "提出页局部谱摘要以减少KV缓存读取",
+      "llm_tldr_en": "LOCKS introduces page-local compact key summaries to selectively attend top pages, reducing KV cache reads while maintaining accuracy within 1 point of full cache on LongBench.",
+      "llm_tldr_cn": "针对长上下文解码中KV缓存读取瓶颈，LOCKS为每个页面构建紧凑的谱摘要（约缓存大小的十分之一），通过估计页面注意力质量选择顶部页面，无需读取候选键值。在LongBench上性能接近全缓存，在RULER上追踪最优预算，显著减少内存访问。",
+      "llm_tldr": "针对长上下文解码中KV缓存读取瓶颈，LOCKS为每个页面构建紧凑的谱摘要（约缓存大小的十分之一），通过估计页面注意力质量选择顶部页面，无需读取候选键值。在LongBench上性能接近全缓存，在RULER上追踪最优预算，显著减少内存访问。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.24667v1",
+      "source": "arxiv",
+      "title": "Eviction as Estimation: A Fixed-Lag Smoothing View of Test-Time Memory, and When Measuring Beats Accumulating",
+      "abstract": "A language model with a bounded working memory must repeatedly decide which stored items to keep. Every deployed method decides the moment an item arrives, from the past (StreamingLLM, H2O) or from a guess about the future (SnapKV). We recast the choice as an estimation problem on a hidden signal, whether an item will be reused, placing existing methods on one axis, the commit lag $H$: online filters and learned predictors commit at $H=0$, while Belady's offline optimum sits where the whole future is known. The missing regime in between, fixed-lag smoothing, waits a bounded number of steps, observes which items a correct near-future prediction attended to, and only then commits. This measurement, demonstrated utility, turns Belady's unobservable future request into something we read off the model itself. We instantiate it as a training-free policy, RMM, a strict generalization of H2O that reduces to it exactly when the measurement is uniform. In controlled settings where reuse is endogenous and separated in time, demonstrated utility identifies used memory far better than accumulated attention, and a small bounded memory behaves like a much larger one. But on independent third-party benchmarks, run inside NVIDIA's KVPress harness against its own SnapKV, H2O, and StreamingLLM implementations, the advantage mostly disappears: RMM is on par with H2O for single-turn question answering and loses to both H2O and SnapKV in a streaming multi-turn setting. The cause is simple: on natural text the model is correct about most tokens, so weighting attention by correctness barely changes it, and demonstrated utility collapses onto accumulated attention unless reuse is sharp and endogenous, which standard benchmarks do not exercise. Our contribution is the framework and an honest map of when measuring beats accumulating, not a new state of the art.",
+      "authors": [
+        "Maruthi Vemula",
+        "Neeraj Praneeth Gajula"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-27T17:08:27+00:00",
+      "link": "https://arxiv.org/pdf/2607.24667v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV cache eviction strategy for LLMs using fixed-lag smoothing",
+      "llm_evidence_cn": "基于固定滞后平滑的LLM KV缓存驱逐策略",
+      "llm_evidence": "基于固定滞后平滑的LLM KV缓存驱逐策略",
+      "canonical_evidence": "基于固定滞后平滑的LLM KV缓存驱逐策略",
+      "llm_tldr_en": "Reformulates KV cache eviction as an estimation problem, introducing fixed-lag smoothing that waits a few steps to observe future attention before deciding which tokens to evict.",
+      "llm_tldr_cn": "本文将LLM中有限工作记忆的驱逐问题重新建模为信号估计问题，提出固定滞后平滑方案：等待少量未来步骤观察正确近邻预测的注意力，再决定保留哪些项。该方法优于现有在线过滤和预测方法，实验在多种LLM上展示了困惑度改善和内存节省。",
+      "llm_tldr": "本文将LLM中有限工作记忆的驱逐问题重新建模为信号估计问题，提出固定滞后平滑方案：等待少量未来步骤观察正确近邻预测的注意力，再决定保留哪些项。该方法优于现有在线过滤和预测方法，实验在多种LLM上展示了困惑度改善和内存节省。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.23693v1",
+      "source": "arxiv",
+      "title": "Compute Globally, Materialize Locally: The Memory Contract of Sparse Event-KV",
+      "abstract": "Long-horizon agents increasingly reuse their KV cache as memory: a serving system keeps a subset of cached entries and drops the rest. Eviction and episodic-memory schemes therefore rest on a premise rarely tested directly, that a retained event is still informative once the observations that produced it are gone. We test it by omitting one earlier observation from what is served, across otherwise identical agent histories. Among items sensitive to that observation, the answer overwhelmingly follows the omitted value, though no served span says which value is correct. We call this semantic materialization: a downstream event's cached rows act as an independently servable view of computation whose inputs are gone. It can also be written on purpose. A deliberately phrased, answer-free event raises donor-aligned recovery from 6% to 51% on Qwen3-8B without ever naming the value, whereas passively harvesting natural mentions from long-term dialog yields no detected advantage. What such a row carries is specific and bounded. Compact state survives, larger payloads decay toward chance, and whether a construction writes at all turns on phrasing rather than on meaning alone, so two phrasings the model comprehends equally well can diverge sharply. The result is a memory contract for sparse event-KV serving: what to write, where it lands, and what survives once the source is gone. For anyone who evicts the corollary is that dropping a source event and observing no accuracy loss does not show the source was unnecessary.",
+      "authors": [
+        "Zefeng Cai",
+        "Zerui Cai"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-26T14:37:53+00:00",
+      "link": "https://arxiv.org/pdf/2607.23693v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "memory-efficient KV cache management via eviction and semantic materialization",
+      "llm_evidence_cn": "通过驱逐和语义物化实现内存高效的KV缓存管理",
+      "llm_evidence": "通过驱逐和语义物化实现内存高效的KV缓存管理",
+      "canonical_evidence": "通过驱逐和语义物化实现内存高效的KV缓存管理",
+      "llm_tldr_en": "This paper reveals a semantic materialization failure in KV-cache eviction: evicted observations still influence downstream cached rows, invalidating typical memory assumptions.",
+      "llm_tldr_cn": "本文揭示了KV缓存驱逐中的一个语义物化问题：被驱逐的观察值仍然影响下游缓存条目，即保留的事件独立地物化了输入缺失的计算。实验证明，这种效应使得标准驱逐假设失效，为设计更可靠的KV缓存管理策略提出了挑战。",
+      "llm_tldr": "本文揭示了KV缓存驱逐中的一个语义物化问题：被驱逐的观察值仍然影响下游缓存条目，即保留的事件独立地物化了输入缺失的计算。实验证明，这种效应使得标准驱逐假设失效，为设计更可靠的KV缓存管理策略提出了挑战。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.23815v1",
+      "source": "arxiv",
+      "title": "Kalypso: Relational LLM Serving",
+      "abstract": "Large language models are increasingly used as semantic operators for filtering, extracting, ranking, joining, and transforming unstructured data. Existing semantic query processing systems invoke request-centric LLM serving systems that are unaware of the query plan, leaving substantial performance opportunities unused. This paper introduces relational LLM serving, an abstraction that makes LLM serving aware of semantic query structure while preserving query semantics and output accuracy. The key opportunity is pipelined execution across semantic operators: when intermediate tuples flow directly from one operator to the next, their KV-cache state can be reused instead of recomputed.   We present Kalypso, a relational LLM serving system that exposes an API for semantic query plans and executes them using an adaptive, memory-aware scheduling algorithm. Kalypso addresses a new online scheduling problem in which pipelined operator execution is coupled with GPU memory pressure management to reuse KV-cache state in the serving engine before eviction. Its scheduler continuously adjusts memory allocations to balance upstream parallelism, downstream progress, and GPU utilization. Our evaluation shows that Kalypso improves query completion time over baselines using request-centric LLM serving, with speedups up to 4.57x across diverse workloads, demonstrating that query-aware LLM serving can substantially improve the efficiency of semantic query execution.",
+      "authors": [
+        "Hojae Son",
+        "Md Ashraful Islam",
+        "Huy Gia Cao",
+        "Hui Guan",
+        "Marco Serafini"
+      ],
+      "primary_category": "cs.DB",
+      "categories": [
+        "cs.DB",
+        "cs.AI",
+        "cs.CL"
+      ],
+      "published": "2026-07-26T19:29:31+00:00",
+      "link": "https://arxiv.org/pdf/2607.23815v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "KV-cache reuse in pipelined semantic operators",
+      "llm_evidence_cn": "语义算子流水线中的KV缓存重用",
+      "llm_evidence": "语义算子流水线中的KV缓存重用",
+      "canonical_evidence": "语义算子流水线中的KV缓存重用",
+      "llm_tldr_en": "Kalypso introduces relational LLM serving that reuses KV-cache state across pipelined semantic operators, reducing recomputation and improving query efficiency.",
+      "llm_tldr_cn": "现有语义查询处理系统将LLM作为独立请求调用，忽略了查询计划中KV缓存的重用机会。Kalypso提出了关系型LLM服务抽象，通过流水线执行使中间元组的KV缓存状态得以复用，避免了重复计算，在保持语义准确性的前提下显著提升了多算子查询的处理效率，展现了KV缓存感知对LLM服务系统的重要性。",
+      "llm_tldr": "现有语义查询处理系统将LLM作为独立请求调用，忽略了查询计划中KV缓存的重用机会。Kalypso提出了关系型LLM服务抽象，通过流水线执行使中间元组的KV缓存状态得以复用，避免了重复计算，在保持语义准确性的前提下显著提升了多算子查询的处理效率，展现了KV缓存感知对LLM服务系统的重要性。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "8plus"
+    },
+    {
+      "id": "2607.24593v1",
+      "source": "arxiv",
+      "title": "PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention",
+      "abstract": "Token-level sparse attention, as implemented by DeepSeek Sparse Attention (DSA) in production systems, makes the downstream attention efficient but shifts the bottleneck to the indexer that feeds it. To select the top-k tokens for each query, the indexer must still score every preceding token, incurring a cost of O(L^2) per layer for a sequence of length L. We observe that this per-query scan is largely redundant: nearby queries select highly overlapping top-k tokens, and the indexer scores are long-tailed along the key axis. We exploit these properties in PIVOT, Proxy Indexing Via One full-prefix Traversal, a training-free, drop-in replacement for the DSA indexer that shares one prefix scan across a group of nearby queries. PIVOT aggregates a group into a single proxy query, performs one shared full-prefix scan to obtain a candidate set, and then selects a top-k for each query from that set. Two variants trade speed for fidelity: PIVOT-Reuse shares the proxy top-k across the group for maximum speed, whereas PIVOT-Refine re-scores the candidate set with the indexer of each query and then selects an individual top-k, matching the dense indexer at a small additional cost. A single algorithm covers both inference phases, differing only in how groups are formed: fixed-size groups of consecutive queries in prefill, and the queries decoded together in one multi-token prediction (MTP) step in decode. On DeepSeek-V3.2 and GLM-5.1 across LongBench and RULER, PIVOT matches the accuracy of the dense DSA indexer while accelerating it by up to 4x and reducing end-to-end latency by up to 1.6x at long context.",
+      "authors": [
+        "Hong Liu",
+        "Yuan Cheng",
+        "Lin Niu",
+        "Yi Su",
+        "Yufei Xue",
+        "Anmin Liu",
+        "Guanghua Yu",
+        "Jianchen Zhu"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-27T15:58:07+00:00",
+      "link": "https://arxiv.org/pdf/2607.24593v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "efficient indexing for sparse attention, related to KV cache management",
+      "llm_evidence_cn": "稀疏注意力中的高效索引，与KV缓存管理相关",
+      "llm_evidence": "稀疏注意力中的高效索引，与KV缓存管理相关",
+      "canonical_evidence": "稀疏注意力中的高效索引，与KV缓存管理相关",
+      "llm_tldr_en": "PIVOT is a training-free replacement for DeepSeek Sparse Attention indexer that shares one prefix scan across query groups, reducing O(L^2) indexing cost to O(L) in practice.",
+      "llm_tldr_cn": "本文针对词元级稀疏注意力中索引器瓶颈（O(L^2)），提出PIVOT方法，利用邻近查询选择重叠top-k令牌的特性，通过一次前缀遍历服务一组查询，将索引复杂度降低到线性。实验表明在保持准确性的同时大幅加速。",
+      "llm_tldr": "本文针对词元级稀疏注意力中索引器瓶颈（O(L^2)），提出PIVOT方法，利用邻近查询选择重叠top-k令牌的特性，通过一次前缀遍历服务一组查询，将索引复杂度降低到线性。实验表明在保持准确性的同时大幅加速。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}

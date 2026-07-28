@@ -1,0 +1,826 @@
+Title: Kalypso: Relational LLM Serving
+
+URL Source: https://arxiv.org/pdf/2607.23815v1
+
+Published Time: Tue, 28 Jul 2026 01:18:18 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Kalypso: Relational LLM Serving 
+
+# Hojae Son 
+
+UMass Amherst, USA Amherst, Massachusetts, USA hojaeson@umass.edu 
+
+# Md Ashraful Islam 
+
+UMass Amherst, USA Amherst, Massachusetts, USA mdashrafulis@umass.edu 
+
+# Huy Gia Cao 
+
+UMass Amherst, USA Amherst, Massachusetts, USA hcao@umass.edu 
+
+# Hui Guan 
+
+UMass Amherst, USA Amherst, Massachusetts, USA huiguan@cs.umass.edu 
+
+# Marco Serafini 
+
+UMass Amherst, USA Amherst, Massachusetts, USA marco@cs.umass.edu 
+
+## ABSTRACT 
+
+Large language models are increasingly used as semantic oper-ators for filtering, extracting, ranking, joining, and transforming unstructured data. Existing semantic query processing systems in-voke request-centric LLM serving systems that are unaware of the query plan, leaving substantial performance opportunities unused. This paper introduces relational LLM serving, an abstraction that makes LLM serving aware of semantic query structure while pre-serving query semantics and output accuracy. The key opportu-nity is pipelined execution across semantic operators: when inter-mediate tuples flow directly from one operator to the next, their KV-cache state can be reused instead of recomputed. We present Kalypso, a relational LLM serving system that ex-poses an API for semantic query plans and executes them using an adaptive, memory-aware scheduling algorithm. Kalypso addresses a new online scheduling problem in which pipelined operator ex-ecution is coupled with GPU memory pressure management to reuse KV-cache state in the serving engine before eviction. Its sched-uler continuously adjusts memory allocations to balance upstream parallelism, downstream progress, and GPU utilization. Our eval-uation shows that Kalypso improves query completion time over baselines using request-centric LLM serving, with speedups up to 4.57 × across diverse workloads, demonstrating that query-aware LLM serving can substantially improve the efficiency of semantic query execution. 
+
+## 1 INTRODUCTION 
+
+Large language models (LLMs) have emerged as a foundational ab-straction for processing unstructured data in modern data man-agement systems. Operators such as semantic filtering, extraction, ranking, and transformation can now be expressed declaratively over natural language inputs, allowing unstructured corpora to be queried and manipulated using relational-style operators [16, 19]. This shift enables a new class of data-intensive applications in ana-lytics, retrieval-augmented reasoning, and agentic AI. To integrate LLM inference into query processing, recent semantic query pro-cessing systems (SQPSs) introduce semantic operators , which ex-tend traditional relational algebra operators to encapsulate LLM-inference with user-defined prompts [11, 14, 19, 22]. These op-erators act on tables whose rows may contain unstructured text fields—for example, product descriptions, clinical notes, or con-tract clauses—and each row’s content is serialized into an LLM prompt for processing. For example, a semantic filter can retain products relevant to the natural-language query "{product.review} Does this review criticize battery life?" [18], while a semantic join can match patients to clinical trials using a natural-language predi-cate across tables [10]. Semantic queries combine multiple semantic operators into a query plan. The high cost of LLM inference represents the main bottleneck in the execution of semantic queries. SQPSs invoke inference re-quests on LLM models using LLM serving systems [1, 2, 13, 29, 33]. These systems optimize request scheduling, GPU memory man-agement, and prefix caching through optimizations such as paged attention, prefix sharing, or continuous batching. However, they are request-centric: they see the workload as a sequence of sepa-rate inference requests and lack a high-level understanding of the semantic query. On the other hand, existing SQPS are aware of semantic queries but use this knowledge to reduce the number of LLM inference re-quests or introduce LLM model approximations rather than making LLM serving itself more efficient , which is the focus of this paper. Much prior work on semantic query execution has focused on re-ducing the number of expensive oracle LLM calls through cascaded execution with cheaper proxy models [6, 17, 19, 23], similarity-based pruning and pipeline decomposition [9, 11, 20, 22], request reordering to improve prefix sharing [15], and query optimiza-tion to find efficient plans [14, 21]. These techniques are effective but they still leave running inference on the LLM (or oracle LLM for implementations using cascading) as the major performance bottleneck. These optimizations are complementary to increasing LLM serving efficiency, and introduce a tradeoff between the ac-curacy of the query results and query running time, which is an orthogonal concern. In this paper, we propose relational LLM serving , an approach that optimizes LLM serving on tabular data by making it aware of the semantic query plan. A relational serving layer sits between SQPSs and the underlying request-centric inference engine: rather than issuing LLM requests independently, the SQPS delegates a query plan, and the serving layer decides which tuples enter which operators, when requests launch, and how KV-cache memory is allocated. This scheduling is an execution optimization that does not change query semantics or output accuracy. The key benefit of relational LLM serving is improving the KV cache hit rate through pipelining . Semantic operators process tuples by including them in the prompt of the associated LLM requests. arXiv:2607.23815v1 [cs.DB] 26 Jul 2026 Son et al. 
+
+The prefill cost of computing KV cache entries for tuples is a ma-jor bottleneck in LLM serving for these workloads. By knowing the query plan, relational LLM serving systems can leverage pipelin-ing opportunities, where an operator is invoked on intermediate tuples as soon as they are produced. When a tuple is processed by an operator and then immediately passed to the next operator, the corresponding KV cache prefix can be reused and it does not need to be recomputed. This is in contrast with the operator-at-a-time strategy common in existing SQPSs, which materialize intermedi-ate results without using pipelining. This paper describes the design and implementation of Kalypso, the first relational LLM serving system. We start by defining an API for relational LLM serving . Recent SQPSs have proposed many effi-cient semantic operator semantics and implementations. Kalypso exposes a simple API to define semantic operator implementations and query plans that is general enough to support these optimiza-tions, for example enabling the use of external proxy models or tools such as vector indexes, but also expressive enough to expose pipelining opportunities. Leveraging pipelining for semantic queries requires addressing a challenging and novel problem: online scheduling of dependent (pipelined) operators under bounded KV-cache capacity . To achieve high GPU utilization, a scheduler must process many tuples con-currently, which induces GPU memory pressure. If the scheduler runs too many upstream operator instances, memory pressure can evict cached prefixes before all its dependent downstream opera-tors can reuse them. Conversely, if upstream operators run with too little parallelism, downstream operators may be starved for in-put, reducing GPU utilization. The right degree of parallelism is also influenced by data- and query-dependent factors, such as filter selectivity and join fanout, which are revealed only online , during query execution. Kalypso addresses this problem through adaptive memory-aware scheduling : it reserves a memory budget to each operator it launches, which is used to cache its prefix. It then uses memory utilization information to control how many operator instances can run con-currently without undesired prefix evictions. Making memory management robust is also challenging. The memory required by a semantic operator is not known statically, because LLM requests may generate a variable number of tokens. The memory allocation algorithm of Kalypso needs estimates of each operator’s memory demand for a tuple before executing it. Overestimating this demand reduces parallelism by reserving mem-ory unnecessarily, whereas underestimating it may force an oper-ator to be rerun with a larger allocation, and can cause unplanned evictions of prefixes. Kalypso also offers multiple options for pin-ning KV cache memory and introduces mechanisms for deadlock detection and recovery. We evaluate Kalypso on four semantic-query workloads span-ning fact verification, biomedical entity matching, medical error correction, and contract entailment. Compared with request-centric execution in existing SQPSs, Kalypso reduces end-to-end query completion time by up to 4.57 × while issuing a similar number of LLM calls. Controlled ablations isolate the effects of Kalypso’s key design choices. In summary, this paper makes the following contributions: 
+
+• We propose a new architecture (Section 3) and a general API for relational LLM serving that supports existing se-mantic operator implementations (Section 4). 
+
+• We describe an adaptive scheduler for relational LLM serv-ing, which supports pipelining and high parallelism while controlling cache evictions (Section 5). 
+
+• We discuss memory management techniques such as mem-ory estimation, pinning, and deadlock detection and recov-ery (Sections 6). 
+
+• We compare the performance of Kalypso to existing SQPS, which rely on materialization and request-centric LLM serv-ing systems (Section 7). 
+
+## 2 BACKGROUND AND MOTIVATION 2.1 Background 
+
+Autoregressive LLM inference [27] consists of two phases. Dur-ing prefill , the model processes all prompt tokens in parallel and materializes per-layer key-value (KV) tensors. During decode , the model generates one token at a time, attending over all previously computed KV tensors. To avoid recomputing these tensors at ev-ery step, inference engines store them in GPU memory as the KV cache . The KV cache grows linearly with sequence length and is often the primary memory bottleneck in LLM serving. 
+
+Prefix caching. When multiple requests share an identical prompt prefix, the corresponding KV tensors are identical and can be com-puted once and reused, avoiding redundant prefill. Modern serving systems such as vLLM [13] and SGLang [33] support this through automatic prefix caching: if a new request’s prompt begins with the same tokens as a recently served request, the engine reuses the cached KV entries and only computes the novel suffix. However, this reuse is opportunistic : once a request completes, its KV-cache blocks become reclaimable and may be evicted at any time under memory pressure. There is no mechanism to guarantee that a pre-fix remains resident for a future request. 
+
+vLLM memory model. Kalypso builds on vLLM [13], which man-ages KV-cache memory as a global pool of fixed-size blocks, anal-ogous to virtual memory pages. Blocks are allocated from the pool when a request is admitted and returned when it completes; if in-sufficient blocks are available, new requests are deferred. 
+
+Prefix sharing in semantic operators. Semantic operators natu-rally exhibit prefix sharing. When consecutive operators in a query plan are invoked on the same tuple, their prompts often begin with the same system instructions and tuple context. Only the trailing task instruction changes from one operator to the next. The KV-cache entries for this shared prompt prefix are therefore valid for the downstream operator, as long as they remain resident in GPU memory. Figure 1 illustrates this structure for a filter → map query over a paper dataset. Let 𝑆 denote the system prompt and 𝐶 (𝑡 ) the paper text for tuple 𝑡 . The filter prompt is [𝑆 | 𝐶 (𝑡 ) | 𝐼 filter ], where 𝐼 filter 
+
+asks whether the paper is relevant to Alzheimer’s prevention. The downstream map prompt is [𝑆 | 𝐶 (𝑡 ) | 𝐼 map ], where 𝐼 map asks to extract the key points. The shared reusable prefix is therefore 
+
+[𝑆 | 𝐶 (𝑡 )] . The filter’s boolean output only determines whether the tuple reaches sem_map ; it is not included in the map prompt. Kalypso : Relational LLM Serving System    
+
+> Prompt
+> This paper explains
+> Alzheimer....
+> Map
+> Prompt
+> System
+> Prompt
+> Filter
+> Prompt True / False
+> sem_map
+> sem_filter
+> Filter Prompt - Is the paper relevant to Alzheimer's prevention?
+> Map Prompt - Extract the key points.
+> Shared Prefix
+
+Figure 1: Prompt structure for a filter → map query. 10 30 50 70 90 110 130 
+
+> # Tuples
+> 010 20 30 40 50
+> Runtime (s)
+> SemOp_1 SemOp_2 0.0 0.5 1.0 1.5 2.0
+> Throughput (tuples/sec) Throughput
+
+Figure 2: When the input table exceeds available GPU KV-cache memory, downstream operators incur cache misses and must recompute the prefix. 
+
+If the shared prefix remains cached, the map reuses its KV-cache state and only prefills the map-specific suffix. 
+
+## 2.2 Motivation 
+
+The importance of KV cache hits. Existing SQPSs execute queries operator-at-a-time, materializing intermediate results between op-erators. This design leads to KV-cache evictions under memory pressure, forcing downstream operators to recompute prefixes. We now quantify the impact of these cache misses on end-to-end query execution time. We run a semantic filter on Lotus using Llama-3.2-3B on an NVIDIA A16 GPU (16 GB). Each tuple is padded to 750 tokens, consuming approximately 84 MB of KV-cache memory per tuple (112 KB/token × 750 tokens). After model weights and runtime overheads, roughly 6 GB remains for KV cache, enough to hold at most ∼70 tuples simultaneously. With this setup, we run a query consisting of two concatenated filters on the same table, varying the number of tuples in the table. We adopt the approach of Lotus, which executes the first opera-tor on the entire table and fully materializes the intermediate table before executing the second operator. The results are reported in Figure 2. The first operator prefills the KV cache for each input tuple, so its running time scales linearly as the number of tuples increases. When the table has fewer than 70 tuples, the second op-erator does not need to execute the prefill again because it hits the KV cache, so its running time is minimal. However, if the table is larger than 70 tuples, the LLM serving system starts evicting tu-ples before the first operator completes, inducing cache misses for the second operator. The second operator now needs to execute KALYPSO 
+
+> Query API
+> LLM
+> Scheduler
+> KV Cache
+> Manager
+> LLM Engine
+> Query Parser
+> Scheduler
+> KV Memory Monitor
+> Ops
+> Executor
+> Stage
+> rebalance
+> enqueue
+> Query Plan
+> Deadlock Monitor
+> Data
+> Query
+> Memory Estimator
+
+Figure 3: Kalypso architecture. Kalypso sits between the query client and the LLM engine. Solid arrows indicate data flow; dashed arrows indicate scheduling control. 
+
+prefill on the tuple again and takes the same time as the first one, which results in a spike in end-to-end running time and a drop in throughput. Using an MRU eviction policy instead of the default LRU would improve cache hits only by a constant factor, whose impact in the end-to-end query runtime decreases as the size of the table increases. 
+
+The challenge of memory-aware pipelining. The experiment above shows that an operator-at-a-time execution strategy cannot achieve prefix reuse under memory pressure. Pipelining operators— scheduling the downstream operator on a tuple promptly after the upstream produces it — can potentially exploit the serving en-gine’s opportunistic prefix caching, but it needs to strike a balance between multiple objectives. High GPU utilization requires pro-cessing many tuples concurrently, which introduces high mem-ory pressure. In this regime, the serving engine must evict cached blocks to admit new requests. Reliable cross-operator reuse there-fore requires a memory-aware scheduler , which controls operator launches based on the available memory to consume reusable pre-fixes before memory pressure evicts them. Admitting too many upstream tasks increases memory pressure and can evict reusable prefixes, while admitting too few upstream tasks can generate too little work for downstream progress. This is the challenging sched-uling problem we address in this paper. 
+
+## 3 OVERVIEW OF KALYPSO 
+
+We now give an overview of Kalypso, a relational LLM serving sys-tem that executes semantic queries and maximizes cross-operator KV-cache reuse. The main components are shown in Figure 3. Kalypso acts as a layer between the query client, which could be a SQPS like Lotus, and an LLM engine, such as vLLM. The query client specifies a query plan consisting of semantic operators. These are implemented by the SQPS as user-defined functions (UDFs) through Kalypso’s API. Operators invoke LLM requests through Kalypso’s Executor, which acts as a wrapper to keep track of re-quest completions and context (see Section 4). Kalypso’s scheduler coordinates pipelined query execution by launching operators, which are organized into pipelined fragments called stages. The scheduler is memory-aware: it uses GPU mem-ory occupancy information from the underlying LLM engine to decide which operators to launch concurrently, control memory pressure, and ensure that cached prefixes are not evicted while Son et al. 
+
+Table 1: Characteristics of common semantic operators and their execution properties. 𝑀 (· , 𝑙 ) denotes LLM evaluation under natural-language specification 𝑙 , and 𝐺 (· , 𝑙 ) denotes label generation for classification.                                                                       
+
+> Operator Description Logical Definition Pipelining Predicate CP
+> sem_filter (l) Select tuples satisfying a language predicate {𝑡 ∈𝑇 |𝑀 (𝑡, 𝑙 )=1}YYN
+> sem_map (l) Transform each tuple via a language instruction {𝑀 (𝑡, 𝑙 ) | 𝑡 ∈𝑇 }YNN
+> sem_join (l) Join two relations via language predicate { ( 𝑡 𝑖 , 𝑡 𝑗 ) | 𝑀 ( ( 𝑡 𝑖 , 𝑡 𝑗 ), 𝑙 )=1}YYY
+> sem_classify (l) Assign category labels to each tuple { ( 𝐺 (𝑡, 𝑙 ) ) | 𝑡 ∈𝑇 }YNN
+> sem_agg (l) Aggregate multiple tuples using a language reducer 𝑀 ( { 𝑡 1, . . . , 𝑡 𝑛 }, 𝑙 )NNN
+> sem_topk (l,k) Select top-𝑘 tuples according to language ranking Top 𝑘 (𝑇 , 𝑙 )NNN
+
+they are still being consumed. Kalypso’s scheduler acts as an ad-mission control system for operators, while the actual execution of LLM requests is scheduled on the GPU by the LLM engine (see Section 5). The system includes additional components to manage memory. The memory estimator is used to predict the number of tokens required to run an operator on a tuple. Optionally, this information can be used to pin GPU memory in the LLM engine’s KV cache manager. The deadlock manager ensures progress when pinning introduces deadlocks (see Section 6). This architecture allows Kalypso to execute semantic queries as memory-aware pipelines: the scheduler continuously launches new operators as memory becomes available, supporting pipelin-ing and keeping GPU utilization high throughout query execution while avoiding undesired cache evictions. 
+
+## 4 KALYPSO API 
+
+The Kalypso API can be used by SQPSs such as Lotus to register their semantic operators and their implementations with Kalypso. Query clients can then submit query plans using these operators to Kalypso, which takes care of their execution. 
+
+Implementing semantic operators. With Kalypso, SQPSs im-plement each operator as a User-Defined Function (UDF). The UDF logic is opaque to Kalypso, except that the LLM requests it serves must be invoked through a wrapper. Kalypso requires each operator implementation to declare an execution contract specifying three properties, which are essential for scheduling query execution: (1- Pipelining) can the operator be pipelined or it is blocking? (2- Predicate) can the operator prune its input tuple, interrupting downstream processing for that tuple? (3-Cartesian Product) does the operator join tuples from two tables? Table 1 classifies semantic operators introduced in [19] according to Kalypso’s API. A pipelining operator takes one tuple as input and produces at most one tuple as output. For example, semantic filter and map op-erators are pipelining. Operators that are not pipelining are treated as blocking: Kalypso materializes their entire input table before executing them. Aggregation and top-𝑘 are examples of blocking operators because they combine data from multiple tuples. A predicate operator returns a boolean value indicating whether its output should be forwarded to downstream operators. If the predicate prunes a tuple, the memory caching its prefix can be freed. Operators that are not predicates always forward their out-put to the dowstream operator. Semantic filter operators are a com-mon example of predicate operators. A Cartesian Product (CP) operator combines tuples from a left and a right table. The execution of the actual Cartesian product must be performed by calling a Kalypso procedure. This gives the system control over the scheduling of downstream operators, as we will describe. The left-side table must be either a static input table or the output of another operator, since Kalypso supports pipelining on the left side of Cartesian products. The right-side table is another static input table. This allows implementing joins as a CP operator followed by a filter operator. 
+
+Prompt format and prefix sharing. Kalypso enables prefix shar-ing by scheduling dependent pipelined operators before the rele-vant cached prefixes are evicted. It is up to the SQPS’s operator im-plementations to format tuples and, more generally, the prompts to the LLM in a way that maximizes prefix sharing opportunities among pipelined operators, as shown in the example of Figure 1. 
+
+Cascading, vector indexes, and other optimizations. Defin-ing operators as UDFs allows a wide range of efficient operator implementations that are common in SQPSs. For example, filter operators may be implemented as a cascade of a cheaper proxy LLM and a more expensive oracle LLM, which is invoked only if the proxy has low confidence in its decision. Operator UDFs can also use external tools besides LLMs, such as embedding models or vector indexes. The API also supports optimized join implementations that avoid full Cartesian products, which are expensive. CP operators can op-tionally include a UDF that takes each left-side tuple and returns a smaller subset of right-side tuples to be joined. The UDF can be used, for example, to integrate a vector index as a cheaper proxy implementation of a join, an implementation that we call Indexed Cartesian Product (ICP). Suppose that the tuples in the right-side table of the join are indexed using a vector index or vector data-base. The UDF can use each left-side tuple as a query to the vec-tor index. Then, the UDF can use the response to select the right-side tuples that should be joined with the left-side tuple. The final Cartesian product between the tuples is executed by Kalypso. 
+
+Queries. At query execution time, Kalypso receives static left-deep 
+
+query plans. It schedules the execution of the operators in the plan to maximize GPU utilization, KV-cache hits, and prefix sharing. It then returns the output of the query to the client. 
+
+## 5 SCHEDULING 
+
+We now describe how Kalypso schedules query execution and LLM inference calls to achieve pipelining and KV-cache reuse. Kalypso : Relational LLM Serving Queue                                
+
+> op 3C
+> op 4
+> output
+> blocking op
+> op 6
+> X
+> op 2
+> op 1
+> Query Plan
+> A
+> B
+> X
+> stage 1
+> stage 2
+> stage 3
+> stage 4
+> a' 1,b 1
+> task 2.1
+> op 3
+> scheduler
+> deque & scan
+> table A
+> scheduler
+> launches
+> a' 1b*on
+> Stage 2
+> Queue
+> (a' 1,b 2)',c 1
+> task 3.1
+> op 4d1
+> (a' 1,b 2)',c k
+> task 3.k
+> op 4dk
+> Stage 1: Bounded parallelism
+> on multiple Atuples
+> Stage 2: Bounded parallelism
+> on multiple Btuples
+> Stage 3: Bounded parallelism
+> on multiple Ctuples
+> blocking
+> op
+> scheduler
+> enqueues
+> (a' 1, b*),
+> (a' 3, b*)
+> a1
+> task 1.1
+> op 1op 2a' 1
+> a3
+> task 1.3
+> op 1op 2a' 3
+> a2
+> task 1.2
+> op 1op 2
+> scheduler
+> launches
+> a' 1b'2c*on
+> Stage 3
+> scheduler
+> enqueues
+> (a' 1, b2, c*)
+> Stage 4: new stage
+> on new pipeline
+> d1
+> task 4.1
+> op 6d' 1
+> dj
+> task 4.j
+> op 6d' j
+> scan table B,
+> concat with a' 1
+> a' 1,b 2
+> task 2.2
+> op 3(a' 1,b 2)' deque
+> scan table C,
+> concat with (a' 1,b 2)'
+> deque
+> Cartesian product:
+> iterate over A' tuples
+> Cartesian product:
+> iterate over (A', B)' tuples
+
+Figure 4: Executing a semantic query plan with pipelining. 
+
+## 5.1 Executing Query Plans 
+
+The query plan is processed by the query parser, which groups operators into pipelines (separated by blocking operators) and fur-ther into stages within each pipeline (separated by Cartesian prod-ucts such as joins). Each stage is a sequence of one or more op-erators that execute sequentially on a tuple—for example, a filter followed by a map. Running a stage on one tuple constitutes a task ,the atomic scheduling unit. Consider the left-deep query plan on the left of Figure 4 as a running example. The plan has four stages: the first three consti-tute one pipeline, the fourth in is a separate pipeline. Tuples flow within tasks and across stages of the same pipeline without mate-rialization: downstream tasks are scheduled to reuse the upstream task’s prefix through the serving engine’s prefix cache. The scheduler runs multiple tasks concurrently—each task ex-ecutes a stage on one input tuple. In the first stage, the scheduler scans table 𝐴 and launches three tasks. Task 1.1 takes tuple 𝑎 1 and produces 𝑎 ′ 
+
+> 1
+
+(extending the tuple with generated content); task 1.2 filters out 𝑎 2; task 1.3 similarly takes 𝑎 3 and produces 𝑎 ′
+
+> 3
+
+.When a task completes, its output is either materialized, if the task belongs to the final stage of a pipeline, or pushed into a queue for the next stage’s Cartesian product. The Cartesian product com-bines output tuples with a right-side table to create dependent tasks .In Figure 4, 𝑎 ′ 
+
+> 1
+
+enters the queue for the second stage; the Cartesian product combines it with tuples from table 𝐵 , producing tasks 2.1 and 2.2 as dependent tasks of task 1.1. These dependent tasks are launched by the scheduler. Figure 4 says that the queue contains the outputs of the tasks. The rest of the paper, including Figure 5 and 6 and the scheduling algorithm, say that the queue contains the new tasks. 
+
+## 5.2 Memory-Aware Scheduling 
+
+The query execution framework described previously and illus-trated in the example of Figure 4 still needs a scheduling algo-rithm to decide which task should be launched and when. To en-able prefix reuse, the scheduler should leverage pipelining, that is, prioritize launching dependent downstream tasks can reuse the KV-cache state of a completed task without recomputation. For ex-ample, in Figure 4, after completing task 1.1, the scheduler should prioritize launching its dependent tasks. However, simply priori-tizing dependent tasks is not sufficient to achieve high cache hit rates: ideally, all dependent tasks should be launched before mem-ory pressure evicts the prefix for 𝑎 ′
+
+> 1
+
+. If the scheduler launches too many concurrent tasks, it could create memory pressure that could lead to the eviction of the prefix for 𝑎 ′ 
+
+> 1
+
+before the dependent tasks execute. Therefore, besides doing basic pipelining, the scheduler also needs to control the launching of tasks, and their associated memory pressure, in order to control the timing of cache evictions. Kalypso’s scheduler times the launching of tasks based on mem-ory availability , so that cached prefixes that are still needed by de-pendent tasks don’t need to be evicted. It controls memory avail-ability by keeping track of the size of the cached prefixes that are still needed. It also bounds the amount of memory each task is allowed to use, using a memory estimator, and optionally offers support for memory pinning, as we discuss in Section 6. 
+
+## 5.3 The Kalypso Scheduling Algorithm 
+
+Pipelined execution creates a unique online scheduling problem because KV-cache reuse couples operator dependencies with GPU memory pressure. This makes it challenging to achieve high paral-lelism. When a tuple crosses an operator boundary, Kalypso must reserve memory and admit downstream operators while avoiding that memory pressure evicts the reusable prefix. Admitting too many early-stage tasks can exhaust memory and limit parallelism for downstream stages, while admitting too few can leave down-stream stages without enough input to keep the GPU busy. We now illustrate this problem and introduce the insights that motivate the Kalypso scheduling algorithm by first discussing three baseline algorithms: a simple sequential algorithm, which creates minimal memory pressure but underutilizes the GPU, a parallel depth-first algorithm, which can starve upstream operators and re-duce pipeline throughput, and a parallel breadth-first algorithm, which can saturate KV-cache capacity by admitting too much up-stream work. Each algorithm addresses some aspects of the sched-uling problem but also reveals some of its challenges. We then com-bine these insights and ideas in the Kalypso scheduling algorithm. 
+
+Sequential depth-first execution. The simplest way to execute queries would be for the scheduler to launch tasks sequentially in a nested loop, completing each task and its dependents before moving on to maximize prefix reuse. This, however, would run at most one LLM request at any point in time, which is not sufficient to fully utilize GPU resources. In Figure 4, this policy runs task 1.1, then tasks 2.1 and 2.2, and then all task 3.x instances dependent on Son et al. scheduler  
+
+> scan table A
+> scheduler
+> Cartesian product:
+> iterate over A' tuples
+> Queue
+> No pending tasks task 1.1
+> Stage 1
+> task 2.1
+> task 2.2
+> task 2.m
+> Stage 2: Starving ,
+> Previous stage does not spawn
+> enough dependent tasks
+
+Figure 5: A parallel depth-first policy can starve downstream stages. 
+
+task 2.2, one for each tuple in table 𝐶 . When the next operator is blocking, such as SemTopK or SemAgg , the pipeline stalls until that operator has consumed its dependent inputs and produced output. After this barrier, task 4.x starts a new single-stage pipeline using the available memory capacity. Although simple, this policy keeps at most one task active and underutilizes the GPU. Therefore, the Kalypso scheduler launches multiple tasks in parallel, but keeping high GPU utilization has some challenges, as we now discuss. 
+
+Parallel depth-first execution and starvation. A natural ex-tension of the sequential depth-first policy is to parallelize the last stage of a pipeline by assigning it a large static memory budget and launching as many tasks as possible within that budget. This strategy tries to finish dependent tasks as soon as possible: once an upstream task has produced downstream tasks, it launches many parallel last stage tasks so that the upstream tuple’s reusable prefix can be consumed quickly and then evicted. The limitation of this policy is that it can starve the later stages. Figure 5 illustrates this effect in a two-stage pipeline. In the figure, task 1.1 has just completed and all dependent tasks of tasks 1.1 are immediately launched in parallel, leaving the queue empty. When these tasks complete, the earlier stage runs task 1.2 in isolation, since only the last stage is parallelized, which underutilizes GPU resources. Meanwhile, the last stage is starving because it has no work to do. This policy minimizes the amount of memory dedi-cated to caching prefixes, freeing up the rest of the memory for running a large number of last-stage tasks. However, it can under-feed the pipeline since upstream stages are not given enough mem-ory budget run tasks in parallel and produce downstream work. 
+
+Parallel breadth-first execution and saturation. A solution to the problem of starvation is to statically allocate more memory to the first stage so that it can run multiple parallel tasks. This breadth-first strategy admits more upstream tasks concurrently, exposing parallelism and creating a larger pool of dependent down-stream work and avoiding starvation. However, if these static mem-ory budgets are not tuned carefully, this policy can saturate the KV-cache budget with admitted upstream work. Figure 6 illustrates this effect: many early-stage tasks are admitted because the stage has a large budget. When they complete, the queue fills up and the reusable prefixes stay cached until all their dependent tasks are completed. This constraints the amount of memory available for launching later-stage tasks. Thus, breadth-first parallelism in-creases the supply of work, but it can overcommit memory to early stages and block progress at later stages. 
+
+The need for adaptive scheduling. The starvation and satura-tion examples show that no fixed allocation of stage memory bud-gets is robust across semantic query workloads. The right budget split depends on properties such as operator selectivity and join fanout, i.e., how many right-side tuples join with each left-side tu-ple. With high selectivity, few tuples survive, or with low fanout, each tuple creates little downstream work, so the later stages starve for ready tasks; with low selectivity and high fanout, many tu-ples survive and create large amounts of downstream work, so ad-mitted upstream work can saturate the KV-cache budget. Kalypso therefore adapts stage budgets online, shifting budget toward ear-lier stages when the pipeline is starved for new downstream work and toward later stages when admitted upstream work is saturat-ing the KV-cache budget. We now detail how Kalypso detects these conditions and reassigns budget across stages during execution. 
+
+The Kalypso scheduling algorithm. The previous algorithms show why the scheduling algorithm of Kalypso has three goals: (1) avoid starvation , where later stages run out of ready dependent tasks because upstream stages do not receive enough budget, (2) 
+
+avoid saturation , where upstream stages fill up the KV-cache and leave too little budget for downstream tasks to make progress, and (3) adapting online to the characteristics of different queries and datasets. To achieve these goals, the scheduler assigns a dynamic memory budget to each stage, tracking per-stage queue pressure to determine when new tasks can be launched, and adapts these budgets online by rebalancing across operators. Algorithm 1 illustrates the scheduling algorithm for a single pipeline. Each stage maintains a waiting task queue per-stage (tasks awaiting to be launched) and a running task set (tasks with re-served budget currently executing). The algorithm iterates until the query is completed, so there are no more waiting or running tasks. In each iteration, the scheduler (1) admits waiting tasks whose stage has available memory given its budget, (2) processes any completed task, and (3) rebalances stage budgets. The Launch procedure checks each stage’s waiting queue and launches tasks only when the stage has enough remaining budget. The check is done by the memory manager, which keeps track of how much memory has been allocated to each task in each stage. The Complete procedure deals with completed tasks. First, as discussed in Section 5.2, each task is run with a maximum amount of tokens it can generate (details in Section 6). If the task gener-ates more tokens, it is interrupted by the LLM serving engine. In this case, the scheduler reruns the task with an increases token amount (lines 24-27). If the task completed successfully and it did not include a predicate operator that filtered its input, the sched-uler continues query execution. If the stage is not the last stage in the pipeline and ends with a Cartesian product, the scheduler executes the Cartesian product to create dependent children tasks, taking the right-side table tuples as input, and enqueues them for the next stage (lines 29-33). The Cartesian product can optionally execute a UDF to select a subset of tuples from the right-side table to join. The memory manager keeps track of the dependencies be-tween tasks and uses this information to release the memory for Kalypso : Relational LLM Serving    
+
+> Algorithm 1 Kalypso’s Scheduling Algorithm (Single Pipeline).
+> 1procedure Schedule
+
+(stages ) 
+
+> 2
+
+running ← ∅ , out ← [ ]  
+
+> 3
+
+firstStage ← stages [0] 
+
+> 4
+
+tasks ← firstStage .inputTable ()  
+
+> 5
+
+firstStage .waiting .enqueue (tasks )  
+
+> 6while
+
+stages .hasWaitingTasks () or running ≠ ∅ do  
+
+> 7Launch
+
+(stages , running )  
+
+> 8for each
+
+(stage , task , result ) ∈ running .completedTasks () do  
+
+> 9
+
+running .delete (task ) 
+
+> 10 Complete
+
+(stage , task , result ) 
+
+> 11 Rebalance
+
+(stages )  
+
+> 12 return
+
+out   
+
+> 13 procedure Launch
+
+(stages , running )  
+
+> 14 for each
+
+stage ∈ stages do   
+
+> 15 while
+
+stage .waiting ≠ ∅ do  
+
+> 16
+
+task ← stage .waiting .peek ()   
+
+> 17 if
+
+memoryManager .admit (stage , task ) then  
+
+> 18
+
+task ← stage .waiting .dequeue ()  
+
+> 19
+
+memoryManager .allocateMemory (stage , task ) 
+
+> 20
+
+running .add (task ) 
+
+> 21
+
+launchWorker (task )   
+
+> 22 else break
+> 23 procedure Complete
+
+(stage , task , result )  
+
+> 24 if
+
+result .retry () then  
+
+> 25
+
+task .updateBudget (result ) 
+
+> 26
+
+stage .waiting .enqueue (task )   
+
+> 27 return
+> 28 if
+
+result .filtered () = false then   
+
+> 29 if
+
+stage ≠ stages .lastStage () then  
+
+> 30
+
+nextStage ← stages [stage .id + 1] 
+
+> 31
+
+childrenTasks ← ExecuteCP (result , nextStage .inputTable () )  
+
+> 32
+
+nextStage .waiting .enqueue (childrenTasks ) 
+
+> 33
+
+memoryManager .trackDependency (task , children )  
+
+> 34 else
+> 35
+
+out .append (result )  
+
+> 36 if
+
+result .filtered () = true or stage = stages .lastStage () then  
+
+> 37
+
+memoryManager .releaseMemory (task )  
+
+> 38 procedure Rebalance
+
+(stages )  
+
+> 39 for each
+
+stage ∈ stages do   
+
+> 40 if
+
+memoryManager .isSaturated (stage ) and stage ≠ stages [0] then  
+
+> 41
+
+memoryManager .transferMem (from =stage , to =stages .lastStage () )   
+
+> 42 for
+
+𝑖 ∈ [ stages .lastStage () .id , 1] do  
+
+> 43
+
+stage = stages [𝑖 ] 
+
+> 44
+
+prevStage = stages [𝑖 − 1]  
+
+> 45 if
+
+memoryManager .isStarving (stage )  
+
+> 46 and not
+
+memoryManager .isStarving (prevStage ) then  
+
+> 47
+
+memoryManager .transferMem (from =stage , to =prevStage )
+
+the parent task only when all the children tasks have completed. If the stage is the last stage in the pipeline, the result is appended to the materialized output (lines 34-35). Finally, if a task has been filtered or it belongs to the last stage, the memory of the task is released, possibly together with the budget of the parent tasks if all the other sibling tasks have completed too (lines 36-37). The Rebalance procedure adaptively rebalances memory bud-gets among stages. The budget for each stage is always larger than 
+
+minBudget 𝑠 , which is the amount of memory required to execute one task and keep its prefix cached. This ensures that the query can make progress at each stage without requiring evictions. Initially, all stages except the last are assigned a budget equal to minBudget 𝑠 ,while the last stage is assigned all the remaining memory. Rebal-ancing is triggered whenever a stage is detected to be starving or saturated based on the size of its waiting queue. scheduler              
+
+> scan table A
+> Stage 1: Bounded parallelism
+> on multiple Atuples
+> Cartesian product:
+> iterate over A' tuples
+> Stage 2: Saturated ,
+> Stage budget is not enough
+> to consume pending tasks
+> task 1.2
+> task 1.(n-1)
+> task 1.n
+> scheduler
+> Queue
+> task 2.3 (A' 1xB3)
+> task 2.4 (A' 1xB4)
+> task 2.5 (A' 1xB5)
+> task 2.n '(A' 1xBm)
+> pending tasks
+> task 2.1
+> task 2.2
+
+Figure 6: A parallel breadth-first policy can saturate the KV-cache budget. 
+
+The memory manager keeps a low and high queue threshold for each stage 𝑠 , initialized as: 
+
+high 𝑠 = 𝛼 · budget 𝑠 
+
+minBudget 𝑠 
+
+, low 𝑠 = 𝛽 · budget 𝑠 
+
+minBudget 𝑠 
+
+,
+
+where budget 𝑠 is the current memory budget assigned to 𝑠 and 
+
+𝛼, 𝛽 ∈ ( 0, 1) are configurable static parameters with 𝛼 > 𝛽 . The memory manager then classifies the stage 𝑠 as starving if the size of its waiting queue is smaller than low 𝑠 or saturated if it is larger than high 𝑠 .
+
+Rebalance uses these states to transfer budget between stages. If a stage is saturated (lines 40-41), this is an indication that its downstream stages cannot consume tuples at a sufficient rate, mak-ing tasks queue up. Like in the example of Figure 6, the solution is to transfer memory from the saturated stage to the last stage. This helps complete dependent tasks faster, evict cached prefixes, and use the budget that is now available to launch more waiting tasks. The first stage is always saturated by design, so the algorithm does not apply this rule to it. The memory manager transfers memory that has been just freed up by completed tasks. If a stage is starving (lines 42-47), this means that the upstream tasks cannot produce enough tasks so they need a larger budget. Therefore, the stage transfer its budget to the upstream task, sim-ilar to the situation depicted in Figure 5. It could happen that the upstream stage is also starving, in which case the algorithm re-cursively transfers memory from downstream stages to upstream ones until it finds a non-starving stage. 
+
+## 6 MEMORY MANAGEMENT 
+
+In Kalypso, each task is assigned a maximum amount of tokens it can use, which is used to determine when it can be launched. The previous discussion assumed, for simplicity, that memory es-timation was perfect. We now describe how the memory estimator component of Kalypso predicts the expected memory usage of a task and how Kalypso deals with incorrect estimates. We also dis-cuss dealing with deadlocks that can arise with explicit pinning. 
+
+Token bound estimation. Compared to traditional LLM serving workloads, relational workloads make it easier to predict the num-ber of tokens generated by each LLM request, for multiple rea-sons. Semantic operators often issue prefill-heavy requests, which Son et al. 
+
+generate few tokens or no tokens at all. This is for example the case with filter operators, which have to output a binary value, and classifiers, which are used for aggregations and group-by op-erators. More in general, semantic operators repeatedly execute the same instruction on many input tuples. The number of gen-erated tuples per requests depends on the instruction and can be predicted through online monitoring, which is the approach used by Kalypso. We base our memory estimator on these insights. For each stage, Kalypso keeps a peak token usage bound for an entire task execution. The user can decide whether to specify a static token bound for an operator, as is common for filter oper-ators, or delegate the estimation of the bound to Kalypso, which is useful for map-like operators that generate variable-length out-put. For the latter case, Kalypso monitors completed requests and records the ratio of generated output tokens to input (prompt) to-kens. The scheduler uses the calibrated 99th percentile of this output-to-input token ratio as the token bound for future invocations of the same operator. This estimate keeps the bound conservative enough to cover most requests while avoiding the loss of paral-lelism caused by reserving memory for the worst case. If an LLM request terminates because it reaches its bound, Kalypso interrupts the task, increases the bound for the task, and re-enqueues it. 
+
+Explicit and virtual pinning. A core principle of Kalypso is to manage memory and schedule task launches to avoid evicting pre-fixes that are still needed. Kalypso offers two mechanisms to con-trol evictions. The first is explicit pinning to prevent eviction of cached prefixes that will be reused by dependent tasks. This re-quires pinning support by the underlying LLM serving system. The second is virtual pinning , which is a best-effort alternative: the scheduler implicitly controls evictions by controlling which oper-ators are launched and how much memory they use, assuming that the KV cache system uses an LRU eviction policy, and without ex-plicit pinning. The Kalypso scheduling algorithm works with both variants. Kalypso offer both options because virtual pinning has some advantages over explicit pinning: it does not require opera-tors to implement a pinning logic or LLM serving systems to sup-port pinning, and avoids memory deadlocks, a problem we now discuss. In our evaluation, we found that virtual pinning achieves only slightly lower performance than explicit pinning. 
+
+Deadlock detection, avoidance, and recovery. Explicit pinning can induce deadlocks when upstream tasks retain memory needed by downstream tasks, but that pinned memory cannot be released until the downstream tasks complete. In this setting, progress at one stage can depend on memory held by another stage, creating a circular wait across the pipeline. A similar situation can arise when the system retries interrupted tasks that exceeded their to-ken bound. These tasks can further reduce the memory available to admit downstream work and can lead to deadlock. The Kalypso scheduling algorithm mitigates the risk of dead-locks by limiting how many concurrent tasks are launched. Dead-locks, however, can still occur, so the system detects them by peri-odically querying the internal scheduler of the LLM serving engine and checking if there are waiting LLM requests but no running re-quests. Upon detection, Kalypso unpins all memory and temporar-ily switches to virtual pinning, making it possible for the LLM en-gine to evict KV cache entries as needed. In our experiments, we only observed deadlocks during stress-tests. 
+
+## 7 EVALUATION 
+
+We evaluate Kalypso from two complementary perspectives. First, we compare against existing semantic-operator systems [14, 19] to measure end-to-end latency and LLM invocation cost under com-parable semantic tasks. Second, we study Kalypso’s internal exe-cution knobs, including pipelined versus blocking execution, adap-tive memory budgeting, virtual versus explicit pinning, and output-token budget estimation, to understand which system mechanisms drive the observed performance differences. 
+
+## 7.1 Experimental Setup 
+
+Baseline systems. We compare our Kalypso system with two base-line SQPSs that use request-centric LLM serving with operator-at-a-time execution. We configure all systems to use vLLM as the underlying LLM engine. 
+
+• Lotus (v1.1.4) [19] proposes efficient implementations of those operators based on cascading: it first runs a cheap proxy implementation, which could use embedding simi-larity or a cheaper LLM model, and falls back to a more ex-pensive reference LLM-based implementation if the proxy has low confidence. Lotus runs user-defined query plans. 
+
+• Palimpzest (v1.5.3) [14], unlike Lotus, lets users specify a plan and then uses a query optimizer to improve it by re-ordering operators and selecting efficient implementations. These systems focus on operator implementations and query optimization, which are complementary to Kalypso’s serving-layer optimizations. 
+
+System configuration. All systems use the same operator imple-mentations and manually-optimized query plan and oracle model (Llama-3.3-70B-Instruct) for each workload, isolating the effect of the serving layer. We detail the workload implementations in Sec-tion 7.2. For Lotus and Palimpzest, we use the default maximum batch size of 64. For all systems, we set a static maximum token bound of 8 for predicate LLM calls, such as filter and join operators. This avoids cases where an LLM non-deterministically produces many extra tokens for an otherwise short operator output. For Palimpzest, we disable reasoning_effort to remove few-shot rea-soning prompts that would otherwise make Palimpzest prompts longer, ensuring a fair comparison of serving performance. For Lo-tus and Kalypso, we evaluate also proxy operator implementations that use a smaller LLM than the default LLM. We configure them to use a separate vLLM instance running the Llama-3.1-8B model, which is small enough to fit in one GPU. We do not use Kalypso to optimize LLM serving for the small model. We set the 𝛼 and 𝛽 
+
+parameters used by Kalypso for rebalancing (see Section 5.3) to 1
+
+and 0.5 respectively. We use virtual pinning by default. 
+
+Hardware and software configuration. We run all experiments on a server with 4 × NVIDIA RTX Pro 6000 GPUs (96 GB of HBM), and AMD EPYC 9575F Processor CPU with 8 cores and 300GB of RAM. All systems we evaluate run on top of vLLM v0.13.0rc4, with Automatic Prefix Caching (APC) enabled and the Llama-3.3-70B-Instruct model distributed across all GPUs using tensor par-allelism and the Triton attention backend. By default, we assign 90% of the total GPU memory to vLLM. We configure vLLM to Kalypso : Relational LLM Serving 
+
+Table 2: Summary of Workloads. 
+
+# LLM calls Workload Data # Tuples Avg. tok. Lotus Palimp Kalypso FEVER Claims Wikipedia 1,000 5,416,568 11.8 126.0 1,183 - 1,243 (0) MEDEC Patients 1,000 397.1 2,098 2,338 2,143 (21) BioDEX Articles Reactions 500 11,271 2,680.1 6.3 6,881 - 7,016 (0) Contract NLI Contracts Hypotheses 607 17 2,145.3 36.8 17,445 16,370 17,342 (167) 
+
+make query execution as deterministic as possible across multi-ple runs, following vLLM’s reproducibility guidance [28]. We set VLLM_ENABLE_V1_MULTIPROCESSING=0, which makes offline scheduling deterministic. We use greedy decoding with tempera-ture 0, top-𝑝 1.0, frequency penalty 0.5, and repetition penalty 1.3 to disable sampling and reduce repetitive generations. This does not completely eliminate non-determinism [3, 30], so we also run each experiment three times and report average measurements. 
+
+## 7.2 Workloads and Implementations 
+
+We consider four workloads that exercise different operator com-binations, including both multi-operator multi-stage pipelines and single-stage pipelines. We reimplement the same operator seman-tics on top of Kalypso’s API, including Lotus’ proxies where ap-plicable. Our goal is to stress-test the performance of LLM serv-ing and to show that it is possible to implement diverse operators and queries on top of Kalypso’s API. A summary of the workloads and their datasets is shown in Table 2. We also report the average number of tokens per tuple and the average number of oracle LLM requests generated by the implementations in different systems, without considering proxy LLM calls for cascading implementa-tions. The numbers are slightly different across systems due to the inherent non-determinism of AI-based query execution. The num-ber in brackets for Kalypso are the number of retried LLM requests due to incorrect memory estimations. For the two workloads taken from the Lotus paper, FEVER and BioDEX, we follow the imple-mentations described in [19]. 
+
+FEVER fact verification.         
+
+> 1claims.sem_map(
+> 2"Generate two concise Wikipedia search queries."
+> 3).index_search(
+> 4index_table=wikipedia_collection, top_k=5
+> 5).sem_filter(
+> 6"Based on retrieved Wikipedia content, is the claim supported?",
+> 7cascade=True
+> 8)
+
+FEVER is a fact verification workload, where each claim is checked against evidence taken from Wikipedia [25]. We sample 1,000 FEVER claims, as done in the Lotus paper [19], and use that same query plan for all systems. For each claim, the sem_map operator gener-ates two concise search queries, which are issued to a ColBERT in-dex search built over a 5M-document Wikipedia corpus to retrieve candidate evidence passages. This retrieval step is implemented as a tuple-independent index_search operator, which concatenates the retrieved evidence with the claim. The final sem_filter oper-ator verifies the claim based on the evidence. It uses a small LLM as a proxy model, falling back to the oracle model if the proxy is not confident. For Lotus, this implementation yields 183.3 oracle fallbacks over 1,000 claims. The Kalypso implementation has 243.6 oracle fallbacks. Palimpzest does not support merging the results of an index search into a single tuple so we don’t include it in the evaluation of this workload. Overall, this plan consists of a single-stage pipeline with three operators. 
+
+MEDEC medical error detection and correction.         
+
+> 1notes_df.sem_filter(
+> 2"Answer true if any numbered sentence in the patient note "
+> 3"is medically inconsistent."
+> 4).sem_map(
+> 5"Identify the numbered sentence that contains the medical error."
+> 6).sem_map(
+> 7"Generate the corrected version of the erroneous sentence."
+> 8)
+
+The MEDEC workload [4] captures medical error detection and correction on clinical notes through three subtasks: predicting whether the note contains a medical error, identifying the sentence that contains the error when one is present, and generating a corrected version of that sentence. We use a 1,000-patient sample from the MEDEC dataset. We implement the query plan described in [4]: a 
+
+sem_filter operator performs error detection, the first sem_map 
+
+operator identifies the erroneous sentence ID, and the second one generates the corrected sentence. The Lotus implementation uses a cascading implementation with a smaller proxy LLM for the first filter. We found that the behavior of the small LLM is highly non-deterministic for this workload, resulting in a high variance of or-acle LLM calls across different runs. Therefore, to ensure fairness, we use cascading only for Lotus and disable it for Kalypso. Al-though Palimpzest discusses cascades as a possible optimization, it does not yet implement the threshold-based fallback logic needed for these cascades, so we use an oracle-only implementation for Palimpzest too. This plan has three operators and a single stage. 
+
+BioDEX biomedical reaction matching.         
+
+> 1articles.sem_map(
+> 2"Extract adverse drug reaction labels described for the patient."
+> 3).sem_join(
+> 4right_table=reactions, icp=True
+> 5).sem_filter(
+> 6icp_predicate="Does the article describe this adverse drug reaction?",
+> 7cascade_low_threshold=low, cascade_high_threshold=high
+> 8)
+
+The BioDEX workload matches each biomedical article with the adverse drug reactions it describes [7]. The set of reactions is taken from a large database. For all systems, we use the query plan and the operator implementations described in [19]. Given a biomed-ical article, the sem_map operator extracts adverse drug reaction labels described in the article. The sem_join is implemented as an Index Cartesian Product (ICP) operator that retrieves matching candidate reactions from the reaction table using a vector index lookup with the intfloat/e5-base-v2 embedding model. The join then outputs all pairs of articles and retrieved candidate re-actions, together with the vector distance between the two. The following sem_filter operator uses a proxy implementation that Son et al. FEVER      
+
+> 0
+> 100
+> 200
+> 300
+> Latency (s)  1.00x
+> 1.49x
+> MEDEC
+> 0
+> 500
+> 1000
+> 1.00x 0.88x
+> 1.54x
+> BioDEX
+> 0
+> 500
+> 1000 1.00x
+> 1.29x
+> ContractNLI
+> 0
+> 3000
+> 6000 1.00x 2.05x
+> 4.57x
+> Lotus Kalypso Palimpzest
+
+Figure 7: End-to-end latency and speedup across workloads. 
+
+checks the vector distance of each pair. Pairs with distances above a high threshold are rejected, those below a low threshold are ac-cepted, and uncertain candidates between the two thresholds fall back to the oracle model. We follow this implementation for both Lotus and Kalypso. Palimpzest does not support distance-based in-dex search so we don’t include it in the evaluation. This plan con-sists of three operators and two stages, divided by the ICP operator. 
+
+ContractNLI contract entailment.           
+
+> 1contracts.sem_filter(
+> 2"Is this document a valid contract or agreement text "
+> 3"with enough clauses to evaluate confidentiality obligations?"
+> 4).sem_join(
+> 5right_table=hypotheses, "Given the contract and hypothesis, "
+> 6"does the contract entail the hypothesis?"
+> 7).sem_map(
+> 8"Explain briefly why the contract entails the hypothesis, "
+> 9"citing the relevant obligation or clause."
+> 10 )
+
+ContractNLI [12] is a document-level contract entailment work-load: given a contract and a proposed legal statement (hypothesis), decide whether the contract supports (entails) that statement. The 
+
+sem_filter operator removes documents that are not valid con-tracts or do not contain enough substantive content to evaluate confidentiality obligations. The sem_join operator is a full Carte-sian Product (CP) that pairs each remaining contract with each hypothesis, followed by a semantic filter that checks whether the contract entails that statement using an LLM. The final sem_map 
+
+operator generates a concise explanation citing the relevant clause or obligation. For Lotus, we consider a cascading implementation with a smaller proxy LLM implementations for the first filter op-erators. Like for MEDEC, we the small LLM shows a highly non-deterministic behavior that is hard to consistently reproduce, so we use an oracle-only implementation for Kalypso. We do the same for Palimpzest because it does not support cascading. This plan has three operators and two stages, separated by the CP operator. 
+
+## 7.3 End-to-End Query Completion Time 
+
+Figure 7 summarizes the end-to-end query latency of Kalypso and the baseline semantic-query systems across the four workloads. Kalypso reduces latency for all workloads by executing semantic operators as a pipeline and by reusing KV-cache state across de-pendent operator calls, while the baselines execute operators one at a time and materialize intermediate results between operators. LLM-call counts are similar across systems, as shown in Table 2, so the speedup comes primarily from execution efficiency and de-pends on workload structure. Overall, the benefit depends on how much dependent LLM work can be pipelined and how often downstream operators reuse the same tuple prefix. For FEVER, Kalypso reduces latency from 258.1s for Lotus to 172.6s, a 1.49 × speedup. Palimpzest does not support this work-load, as we described previously. The workload has no Cartesian product, so the entire memory budget is allocated to one stage. Kalypso improves latency by pipelining the map, retrieval, and fil-ter operators and by preserving reusable KV-cache state across the dependent LLM operators. It controls concurrent task launches to ensure that each task can complete without having its KV cache state evicted. MEDEC also has no Cartesian product and, compared to Fever, it has more downstream operators that can reuse the prefix com-puted by the first operator. The speedups of pipelining grow ac-cordingly, reducing latency from 714.6s for Lotus and 808.2s for Palimpzest to 464.3s, corresponding to 1.54 × and 1.74 × speedups. It is worth noting that Kalypso only uses an oracle LLM, unlike Lotus which uses a cheaper but potentially unreliable proxy model for the filter. BioDEX is a two-stage workload. We cannot run Palimpzest on this workload, as described previously. Kalypso reduces latency from 910.3s to 703.4s (1.29 ×) by pipelining and reusing the prefixes for the articles across the ICP join and the final filter. Articles are long, averaging 2,680 tokens, which boosts speedups by increasing the benefit of prefix caching and reuse. Gains are bounded by the use of a proxy implementation for the final filter operator, which skips LLM invocations in some cases based on the vector distances. Although the ICP join can create many second-stage tasks, the size of the right-hand reaction tuples averages only 6.3 tokens. Extra memory in this stage is therefore less effective. ContractNLI is a two-stage workload combining long contract inputs, averaging 2,145 tokens, with 17 hypotheses per contract. The long contract prefix can be reused by the join predicate and the final sem_map . Kalypso preserves this large reusable state across stage boundaries, avoiding repeated prefill work. Against the lower-latency Palimpzest baseline, Kalypso reduces latency from 2,373.4 to 1,062.4, a 2.23 × speedup. Compared with Lotus, the speedup is 4.57 ×. This is despite the fact that Kalypso only uses an oracle LLM, whereas Lotus uses a proxy LLM for the filter operator. Kalypso : Relational LLM Serving 0.9 0.8 0.7 0.6 0.5 
+
+> 180
+> 200
+> 220
+> 240
+> 260
+> Runtime (s)
+
+FEVER Fact Verification 
+
+0.9 0.8 0.7 0.6 0.5 
+
+> 600
+> 800
+> 1000
+
+MEDEC 
+
+0.9 0.8 0.7 0.6 0.5 
+
+> 700
+> 800
+> 900
+> 1000
+
+BioDEX Classification 
+
+0.9 0.8 0.7 0.6 0.5  
+
+> 0
+> 1500
+> 3000
+> 4500
+> 6000
+
+ContractNLI   
+
+> Lotus Kalypso Palimpzest
+
+Figure 8: Effect of GPU memory utilization on end-to-end latency across workloads. 
+
+## 7.4 Execution Policy Ablations FEVER MEDEC BioDEX ContractNLI   
+
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> Runtime (s)
+> 506 602 946 1940
+> 1.20x
+> 421
+> 1.30x
+> 464
+> 1.34x
+> 703
+> 1.83x
+> 1062
+> Blocking Pipelined
+
+Figure 9: Latency for Kalypso in blocking mode (operator-at-a-time, no cross-operator KV-cache reuse or pinning) vs. pipelined mode (default). Blocking vs. pipelined execution. To isolate the benefit of pipelined query execution over blocking, we modify Kalypso to execute op-erators in a blocking, operator-at-a-time manner. In this variant, each operator runs over the full input before the next operator begins. As a result, downstream operators can no longer inherit pinned KV-cache state from upstream execution and may need to recompute the same tuple prefix instead of reusing it. Figure 9 shows that pipelined execution is faster on all four workloads, improving latency by 1.20–1.83 × over blocking execution. Across workloads, the gains reflect both pipeline overlap and cross-operator prefix reuse. The speedup trends are consistent with the results shown previously. These results therefore capture both sources of improvement in Kalypso’s execution policy: pipelining increases overlap across operators, and memory-aware scheduling preserves reusable KV-cache state long enough for downstream operators to benefit from it. Speeups are larger for workloads where pipelined tuples are larger and pipelines consist of more operators. 
+
+Impact of scheduling algorithms. Kalypso uses an adaptive al-gorithm to allocate memory budgets across stages. We now show that a simpler static per-stage budget cannot consistently achieve similar performance across multiple workloads, as motivated in Section 5.3. We use BioDEX and ContractNLI because they are multi-stage workloads and compare adaptive budgeting against static two-stage memory-allocation ratios. In each static-ratio base-line, the scheduler assigns a constant fraction of the available KV-cache budget to the first stage and the remainder to the second stage throughout the query. We sweep the fixed split across the ratios shown in Figure 10. All these baselines still rely on the same 1:9 3:7 5:5 7:3 9:1                      
+
+> Stage budget ratio
+> 0
+> 500
+> 1000
+> 1500
+> 0.9 vLLM memory
+> Runtime (s)
+> 723 705
+> 898 1017 1116
+> Adaptive 703
+> BioDEX
+> 1:9 3:7 5:5 7:3 9:1
+> Stage budget ratio
+> 0
+> 600
+> 1200
+> 1800
+> 2400
+> 1163 1176
+> 1555 1654
+> 2068
+> Adaptive 1062
+> ContractNLI
+> 1:9 3:7 5:5 7:3 9:1
+> Stage budget ratio
+> 0
+> 500
+> 1000
+> 1500
+> 0.6 vLLM memory
+> Runtime (s)
+> 785 724
+> 900 1004
+> 1362
+> Adaptive 704
+> BioDEX
+> 1:9 3:7 5:5 7:3 9:1
+> Stage budget ratio
+> 0
+> 800
+> 1600
+> 2400
+> 3200
+> 1165 1190
+> 1593 1761
+> 2827
+> Adaptive 1185
+> ContractNLI
+
+Figure 10: End-to-end latency under fixed two-stage memory-allocation ratios and adaptive budgeting at 0.9 and 0.6 vLLM memory utilization. 
+
+memory-aware scheduling approach introduced by Kalypso: they organize operators in tasks and launch them only when memory is available, based on their estimated token bound. Figure 10 shows that no single static ratio is best across work-loads. The results also confirm that both starvation and saturation can impact system performance negatively. ContractNLI performs best with a 10%–90% allocation across the first and second stage, while BioDEX performs best with a 30%–70% allocation. The best split therefore depends on workload-specific properties such as tu-ple size, selectivity, join fanout, and the amount of downstream work created by each stage. The impact of these factors is diffi-cult to know before execution and can change as the query pro-gresses. Adaptive budgeting avoids choosing this ratio ahead of time: it remains better than the best static allocation on both work-loads by shifting memory toward the stage that is currently limit-ing pipeline progress. We repeated the experiment after reducing the memory avail-able to vLLM to 60% and found similar results. The best runtime across static allocation ratios varies, and the adaptive strategy re-mains the best. 
+
+Virtual vs. explicit pinning. The default for this paper’s evalu-ation is to use virtual pinning, which preserves reusable prefixes Son et al. FEVER MEDEC BioDEX ContractNLI   
+
+> 0
+> 400
+> 800
+> 1200
+> Latency (s)
+> 421 464 703 1062 401 516 685 1054 Virtual Explicit
+
+Figure 11: Latency with virtual pinning and explicit pinning. 
+
+through scheduling and admission control, rather than explicit pin-ning, which requires KV-cache pinning support from the LLM serv-ing engine. We now compare the two variants. Implementing ex-plicit pinning required only modest changes to vLLM, totaling around 200 LoC across core vLLM components responsible for KV-cache management, block allocation, and request state. These changes prevent pinned KV-cache blocks from being evicted until they are explicitly unpinned by Kalypso’s scheduler. Figure 11 compares explicit pinning against virtual pinning. The two modes have similar performance across workloads: explicit pinning is slightly faster on FEVER, BioDEX, and ContractNLI, while virtual pinning is faster on MEDEC. This result suggests that virtual pinning is sufficient to capture the main scheduling bene-fit without requiring explicit KV-cache pinning support from the serving engine. Explicit pinning can still be used as an optional backend feature when the serving engine provides it. 
+
+Token bound sensitivity. Kalypso assigns a token bound to all LLM requests, which is the basis of memory-aware scheduling. Its memory estimator avoids both overly conservative and overly op-timistic bounds. A worst-case budget reduces concurrency, while a very small budget can create retry overheads. We evaluate output-token budget sensitivity on MEDEC by set-ting the GPU memory utilization limit to 0.9, which is the default, and 0.6, which induces additional memory pressure. As described in Section 6, the scheduler must reserve KV-cache memory before knowing how many tokens a generative operator will actually pro-duce. Figure 12 shows that conservative and overly large fixed bud-gets substantially increase latency because the scheduler admits fewer concurrent requests. At the other extreme, with a one-token generation budget, the scheduler allocates memory for each re-quest’s prefix, which includes data and instructions, and only one extra token. The scheduler admits more concurrent requests, speed-ing up prefills, but it also needs to retry most requests. The first execution of a request is fast, since it generates only one token. For most requests, the subsequent retry execution finds the prefix still in the cache. However, since re-executions use larger budgets, some prefixes might have been evicted. Kalypso’s token budgeting achieves the best latency in the sweep without requiring the user to know the workload’s output-token distribution in advance. 1 500 1k 2k 4k 8k     
+
+> Fixed output-token budget
+> 500
+> 700
+> 900
+> 1100
+> Latency (s)
+> 639 565 598 698 746 1051 508 495 500 540 606 799 0.6 Kalypso 507s 0.9 Kalypso 495s
+> 0.6 vLLM memory 0.9 vLLM memory
+
+Figure 12: Latency under fixed output-token budgets. The dashed line shows Kalypso’s default token budgeting. Resource sensitivity. We now stress the memory-management component of Kalypso: as less KV-cache memory is available, cached prefixes are more likely to be evicted unless the scheduler pre-serves them for downstream operators. We vary the GPU mem-ory budget available to vLLM across five settings: 0.9, 0.8, 0.7, 0.6, and 0.5, corresponding to approximately 190.6, 152.6, 114.6, 76.6, and 38.6 GB of KV-cache capacity. Figure 7 summarizes the high-memory setting, while Figure 8 shows that Kalypso remains fast and robust as the KV-cache budget shrinks. Across all five memory settings, Kalypso is faster than the baselines on every workload. The advantage is stable on FEVER and BioDEX, where reducing the budget does not substantially change the relative ordering. Un-der stronger memory pressure, Kalypso also avoids the large slow-downs seen in the baselines: on MEDEC, reducing the budget from 190.6 GB to 38.6 GB increases Kalypso’s latency by only 9% (464.3s to 507.3s), compared with 44% for Lotus and 29% for Palimpzest. ContractNLI shows the same robustness at larger scale: Kalypso stays below 1348.3s across the sweep, while Palimpzest remains above 2296.5s and Lotus remains above 4854.0s. 
+
+## 8 RELATED WORK 
+
+LLM Serving Systems. Modern LLM serving systems optimize the execution of independent inference requests. Orca introduces iteration-level scheduling and selective batching [29]; vLLM im-proves KV-cache memory efficiency through PagedAttention [13]; and Sarathi reduces prefill–decode interference through chunked prefills [1]. DistServe disaggregates prefill and decode across sepa-rately provisioned GPUs [34], while Llumnix dynamically migrates requests among model instances to improve load balance and iso-lation [24]. These systems schedule requests without visibility into the semantic query plan. Kalypso leverages these optimizations by runing on top LLM serving systems. It uses operator dependencies to pipeline execution and coordinate KV-cache retention across re-lated requests. 
+
+Prefix-Aware LLM Serving. Several LLM serving systems exploit repeated prompt prefixes to avoid recomputing KV-cache state. SGLang uses RadixAttention to organize cached prefixes in a radix tree for structured and multi-turn language-model programs [33], while vLLM supports automatic prefix caching for requests with Kalypso : Relational LLM Serving 
+
+shared prompt prefixes [13]. Prompt-caching mechanisms simi-larly reuse attention state for stable prompt components such as system messages, templates, and long context documents [8]. These system support prefix reuse opportunistically among requests vis-ible to them, as long as the relevant prefixes remain in they KV-cache. However, they do not control the higher-level workload that generates these requests, and therefore cannot actively restruc-ture query execution to maximize cross-operator prefix reuse. Ka-lypso relies on these systems’ prefix reuse capabilities to optimize pipelining. 
+
+Optimizing Semantic Operator Implementations. Prior work reduces expensive LLM calls using model cascades and proxy mod-els [6, 19, 23, 31]. For semantic joins, feature decomposition ex-tracts relevant fields once per record and rewrites the join condi-tion as a logical expression over inexpensive feature comparisons, replacing quadratic pairwise LLM evaluation while providing sta-tistical precision and recall guarantees [32]. Block-based joins in-stead place batches from both inputs in each prompt, reducing the quadratic number of pairwise LLM invocations, although batching can degrade output accuracy [26]. Other systems organize docu-ment chunks for prompt-cache discounts [23] or fuse semantic op-erators in streaming query plans [5], but they do not account for the serving engine memory pressure, parallelism, and scheduling. Kalypso complements them by optimizing the LLM serving layer. 
+
+## 9 CONCLUSION 
+
+We presented Kalypso, a query-aware execution system for se-mantic queries that bridges semantic query processing and LLM serving. Existing semantic query systems execute operator invoca-tions in a query-agnostic manner, missing opportunities for cross-operator prefix reuse and incurring unnecessary KV-cache evic-tion and recomputation under memory pressure. By characteriz-ing operators according to their execution behavior, Kalypso iden-tifies pipelining opportunities, executes query plans as stages and tasks, and manages KV-cache state through memory-aware admis-sion control. These mechanisms enable Kalypso to turn semantic query plans into memory-aware execution pipelines that preserve reusable prefixes across operators under bounded GPU memory. 
+
+## REFERENCES 
+
+[1] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav Gulavani, Alexey Tumanov, and Ramachandran Ramjee. 2024. Tam-ing Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . USENIX Association, Santa Clara, CA, 117–134. https://www.usenix.org/ conference/osdi24/presentation/agrawal [2] Reza Yazdani Aminabadi, Samyam Rajbhandari, Ammar Ahmad Awan, Cheng Li, Du Li, Elton Zheng, Olatunji Ruwase, Shaden Smith, Minjia Zhang, Jeff Rasley, et al. 2022. Deepspeed-inference: enabling efficient inference of trans-former models at unprecedented scale. In SC22: International Conference for High Performance Computing, Networking, Storage and Analysis . IEEE, 1–15. [3] Berk Atıl, Sarp Aykent, Alexa Chittams, Lisheng Fu, Rebecca J. Passonneau, Evan Radcliffe, Guru Rajan Rajagopal, Adam Sloan, Tomasz Tudrej, Ferhan Ture, Zhe Wu, Lixinyu Xu, and Breck Baldwin. 2025. Non-Determinism of “Deter-ministic” LLM System Settings in Hosted Environments. In Proceedings of the 5th Workshop on Evaluation and Comparison of NLP Systems , Mousumi Ak-ter, Tahiya Chowdhury, Steffen Eger, Christoph Leiter, Juri Opitz, and Erion Çano (Eds.). Association for Computational Linguistics, Mumbai, India, 135– 148. doi:10.18653/v1/2025.eval4nlp-1.12 [4] Asma Ben Abacha, Wen-wai Yim, Yujuan Fu, Zhaoyi Sun, Meliha Yetisgen, Fei Xia, and Thomas Lin. 2025. MEDEC: A Benchmark for Medical Error Detection and Correction in Clinical Notes. In Findings of the Association for Computa-tional Linguistics, ACL 2025, Vienna, Austria, July 27 - August 1, 2025 . Associ-ation for Computational Linguistics, 22539–22550. https://aclanthology.org/ 2025.findings-acl.1159/ [5] Shu Chen, Deepti Raghavan, and Uğur Çetintemel. 2025. Continuous Prompts: LLM-Augmented Pipeline Processing over Unstructured Streams. arXiv:2512.03389 [cs.DB] https://arxiv.org/abs/2512.03389 [6] Yeounoh Chung, Rushabh Desai, Jian He, Yu Xiao, Thibaud Hottelier, Yves-Laurent Kom Samo, Pushkar Khadilkar, Xianshun Chen, Sam Idicula, Fatma Oz-can, Alon Halevy, and Yannis Papakonstantinou. 2026. 100x Cost & Latency Re-duction: Performance Analysis of AI Query Approximation using Lightweight Proxy Models: [Experiments & Analysis]. Proceedings of the ACM on Manage-ment of Data 4, 3 (May 2026), 1–23. doi:10.1145/3802002 [7] Karel D’Oosterlinck, François Remy, Johannes Deleu, Thomas Demeester, Chris Develder, Klim Zaporojets, Aneiss Ghodsi, Simon Ellershaw, Jack Collins, and Christopher Potts. 2023. BioDEX: Large-Scale Biomedical Adverse Drug Event Extraction for Real-World Pharmacovigilance. In Findings of the Association for Computational Linguistics: EMNLP 2023 , Houda Bouamor, Juan Pino, and Kalika Bali (Eds.). Association for Computational Linguistics, Singapore, 13425–13454. doi:10.18653/v1/2023.findings-emnlp.896 [8] In Gim, Guojun Chen, Seung-seob Lee, Nikhil Sarda, Anurag Khandelwal, and Lin Zhong. 2024. Prompt cache: Modular attention reuse for low-latency infer-ence. Proceedings of Machine Learning and Systems 6 (2024), 325–338. [9] Guoyu Hu, Shaofeng Cai, Tien Tuan Anh Dinh, Zhongle Xie, Cong Yue, Gang Chen, and Beng Chin Ooi. 2025. HAKES: Scalable Vector Database for Em-bedding Search Service. Proceedings of the VLDB Endowment 18, 9 (May 2025), 3049–3062. doi:10.14778/3746405.3746427 [10] Qiao Jin, Zifeng Wang, Charalampos S. Floudas, Fangyuan Chen, Changlin Gong, Dara Bracken-Clarke, Elisabetta Xue, Yifan Yang, Jimeng Sun, and Zhiy-ong Lu. 2024. Matching patients to clinical trials with large language models. 
+
+Nature Communications 15, 1 (2024), 9074. doi:10.1038/s41467-024-53081-z [11] Saehan Jo and Immanuel Trummer. 2024. Thalamusdb: Approximate query pro-cessing on multi-modal data. Proceedings of the ACM on Management of Data 2, 3 (2024), 1–26. [12] Yuta Koreeda and Christopher Manning. 2021. ContractNLI: A Dataset for Document-level Natural Language Inference for Contracts. In Findings of the Association for Computational Linguistics: EMNLP 2021 , Marie-Francine Moens, Xuanjing Huang, Lucia Specia, and Scott Wen-tau Yih (Eds.). Association for Computational Linguistics, Punta Cana, Dominican Republic, 1907–1919. doi:10.18653/v1/2021.findings-emnlp.164 [13] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th symposium on operating systems principles . 611–626. [14] Chunwei Liu, Matthew Russo, Michael Cafarella, Lei Cao, Peter Baile Chen, Zui Chen, Michael Franklin, Tim Kraska, Samuel Madden, Rana Shahout, et al. 2025. Palimpzest: Optimizing ai-powered analytics with declarative query processing. In Proceedings of the Conference on Innovative Database Research (CIDR) . 2. [15] Shu Liu, Asim Biswal, Amog Kamsetty, Audrey Cheng, Luis Gaspar Schroeder, Liana Patel, Shiyi Cao, Xiangxi Mo, Ion Stoica, Joseph E. Gonzalez, and Matei Zaharia. 2025. Optimizing LLM Queries in Relational Data Analytics Workloads. In Eighth Conference on Machine Learning and Systems . https://openreview.net/ forum?id=R7bK9yycHp [16] Shicheng Liu, Jialiang Xu, Wesley Tjangnaka, Sina Semnani, Chen Yu, and Mon-ica Lam. 2024. SUQL: Conversational Search over Structured and Unstructured Data with Large Language Models. In Findings of the Association for Computa-tional Linguistics: NAACL 2024 , Kevin Duh, Helena Gomez, and Steven Bethard (Eds.). Association for Computational Linguistics, Mexico City, Mexico, 4535– 4555. doi:10.18653/v1/2024.findings-naacl.283 [17] Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E. Gonzalez, M Waleed Kadous, and Ion Stoica. 2025. RouteLLM: Learning to Route LLMs from Preference Data. In The Thirteenth International Conference on Learning Representations . https://openreview.net/forum?id= 8sSqNntaMr [18] Olga Ovcharenko, Matthias Boehm, and Sebastian Schelter. 2026. SemPipes: Optimizable Semantic Data Operators for Tabular Machine Learning Pipelines. arXiv:2602.05134 [cs.LG] doi:10.48550/arXiv.2602.05134 VLDB Demo 2026. [19] Liana Patel, Siddharth Jha, Melissa Pan, Harshit Gupta, Parth Asawa, Carlos Guestrin, and Matei Zaharia. 2025. Semantic Operators and Their Optimiza-tion: Enabling LLM-Based Data Processing with Accuracy Guarantees in LO-TUS. Proceedings of the VLDB Endowment 18, 11 (2025), 4171–4184. [20] Ori Ram, Yoav Levine, Itay Dalmedigos, Dor Muhlgay, Amnon Shashua, Kevin Leyton-Brown, and Yoav Shoham. 2023. In-context retrieval-augmented lan-guage models. Transactions of the Association for Computational Linguistics 11 (2023), 1316–1331. [21] Matthew Russo and Tim Kraska. 2026. Deep Research is the New Analytics System: Towards Building the Runtime for AI-Driven Analytics. In Proceedings of the Conference on Innovative Data Systems Research (CIDR) . arXiv:2509.02751. Son et al. 
+
+[22] Shreya Shankar, Tristan Chambers, Tarak Shah, Aditya G Parameswaran, and Eugene Wu. 2025. DocETL: Agentic Query Rewriting and Evaluation for Com-plex Document Processing. Proceedings of the VLDB Endowment 18, 9 (2025), 3035–3048. [23] Shreya Shankar, Sepanta Zeighami, and Aditya Parameswaran. 2026. Task Cascades for Efficient Unstructured Data Processing. In Proceedings of the 2026 ACM SIGMOD International Conference on Management of Data .arXiv:2601.05536 [cs.DB] https://arxiv.org/abs/2601.05536 [24] Biao Sun, Ziming Huang, Hanyu Zhao, Wencong Xiao, Xinyi Zhang, Yong Li, and Wei Lin. 2024. Llumnix: Dynamic Scheduling for Large Language Model Serving. In 18th USENIX Symposium on Operating Systems Design and Imple-mentation (OSDI 24) . https://arxiv.org/abs/2406.03243 [25] James Thorne, Andreas Vlachos, Christos Christodoulopoulos, and Arpit Mit-tal. 2018. FEVER: a Large-scale Dataset for Fact Extraction and VERifica-tion. In Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers) , Marilyn Walker, Heng Ji, and Amanda Stent (Eds.). Association for Computational Linguistics, New Orleans, Louisiana, 809–819. doi:10.18653/v1/N18-1074 [26] Immanuel Trummer. 2025. Implementing Semantic Join Operators Efficiently. arXiv:2510.08489 [cs.DB] doi:10.48550/arXiv.2510.08489 [27] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz Kaiser, and Illia Polosukhin. 2017. Attention Is All You Need. In Advances in Neural Information Processing Systems , Vol. 30. [28] vLLM Project. 2026. Reproducibility - vLLM. https://docs.vllm.ai/en/latest/ usage/reproducibility/ [29] Gyeong-In Yu, Jeongmin Jeong, Gyuhong Kim, Soojeong Shin, and Byung-Gon Kim. 2022. Orca: A Distributed Serving System for Transformer-Based Gener-ative Models. 16th USENIX Symposium on Operating Systems Design and Imple-mentation (OSDI 22) (2022), 521–538. [30] Jiayi Yuan, Hao Li, Xinheng Ding, Wenya Xie, Yu-Jhe Li, Wentian Zhao, Kun Wan, Jing Shi, Xia Hu, and Zirui Liu. 2026. Understanding and Mitigating Nu-merical Sources of Nondeterminism in LLM Inference. In The Thirty-ninth An-nual Conference on Neural Information Processing Systems . https://openreview. net/forum?id=Q3qAsZAEZw [31] Sepanta Zeighami, Shreya Shankar, and Aditya Parameswaran. 2026. Cut Costs, Not Accuracy: LLM-Powered Data Processing with Guarantees. In 
+
+Proceedings of the 2026 International Conference on Management of Data .arXiv:2509.02896 [cs.DB] doi:10.48550/arXiv.2509.02896 To appear. [32] Sepanta Zeighami, Shreya Shankar, and Aditya Parameswaran. 2026. Featurized-Decomposition Join: Low-Cost Semantic Joins with Guaran-tees. Proceedings of the VLDB Endowment (2026). arXiv:2512.05399 [cs.DB] doi:10.48550/arXiv.2512.05399 To appear. [33] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. 2024. Sglang: Efficient execution of structured language model programs. Advances in neural information processing systems 37 (2024), 62557–62583. [34] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu, Xin Jin, and Hao Zhang. 2024. DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. In 18th USENIX Sym-posium on Operating Systems Design and Implementation (OSDI 24) . https: //arxiv.org/abs/2401.09670

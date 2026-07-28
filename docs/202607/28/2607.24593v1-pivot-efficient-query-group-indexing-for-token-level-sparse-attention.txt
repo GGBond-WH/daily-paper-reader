@@ -1,0 +1,1090 @@
+Title: PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention
+
+URL Source: https://arxiv.org/pdf/2607.24593v1
+
+Published Time: Tue, 28 Jul 2026 02:13:00 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention 
+
+Hong Liu ∗ Yuan Cheng ∗ Lin Niu ∗ Yi Su Yufei Xue Anmin Liu Guanghua Yu † Jianchen Zhu 
+
+Tencent 
+
+lucayu@tencent.com, irisxliu@tencent.com 
+
+Abstract 
+
+Token-level sparse attention, as implemented by DeepSeek Sparse Attention (DSA) in production systems, makes the downstream attention efficient but shifts the bottleneck to the indexer that feeds it. To select the top-k tokens for each query, the indexer must still score every preceding token, incurring a cost of O(L2) per layer for a sequence of length L. We observe that this per-query scan is largely redundant: nearby queries select highly overlapping top-k tokens, and the in-dexer scores are long-tailed along the key axis. We exploit these properties in PIVOT , Proxy Indexing Via One full-prefix Traversal, a training-free, drop-in replacement for the DSA indexer that shares one prefix scan across a group of nearby queries. PIVOT aggregates a group into a single proxy query, performs one shared full-prefix scan to obtain a candi-date set, and then selects a top-k for each query from that set. Two variants trade speed for fidelity: PIVOT -Reuse shares the proxy top-k across the group for maximum speed, whereas 
+
+PIVOT -Refine re-scores the candidate set with the indexer of each query and then selects an individual top-k, matching the dense indexer at a small additional cost. A single algorithm covers both inference phases, differing only in how groups are formed: fixed-size groups of consecutive queries in prefill, and the queries decoded together in one multi-token predic-tion (MTP) step in decode. On DeepSeek-V3.2 and GLM-5.1 across LongBench and RULER, PIVOT matches the accuracy of the dense DSA indexer while accelerating it by up to 4× and reducing end-to-end latency by up to 1.6× at long context. 
+
+Introduction 
+
+Long-context inference has become a central challenge for LLM serving as context windows grow toward millions of tokens (Dettmers et al. 2022; Touvron et al. 2023; Yang et al. 2025; Team et al. 2025; Xiaomi et al. 2025). At this scale, the quadratic cost of full attention dominates both latency and memory (Keles, Wijewardena, and Hegde 2023). DeepSeek Sparse Attention (DSA) (DeepSeek-AI 2025) addresses this by allowing each query to attend to only a small subset of the k most relevant tokens rather than the entire prefix, re-ducing the main attention cost from O(L2) to O(Lk ) for a sequence of length L with k ≪ L. Concretely, DSA employs a lightweight indexer to score every preceding token for each query and select the k highest-scoring ones, which are then 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 4K 8K 16K 32K 64K 128K 256K 
+
+> Context Length
+> 1
+> 2
+> 3
+> 4
+> 5
+> Speedup over DSA
+> DSA 1×
+> 1.6× e2e
+
+Figure 1: PIVOT - faster long-context indexing passed to a downstream Sparse Multi-head Latent Attention (Sparse MLA) operator. This design supports production-scale models such as DeepSeek-V3.2 (DeepSeek-AI 2025) and GLM-5.1 (Zeng et al. 2026). This efficiency, however, shifts the cost rather than elim-inating it. Although the downstream Sparse MLA operator becomes cheap, the indexer that feeds it remains dense: to de-termine which tokens matter, every query must still be scored against the entire prefix. Summed over an L-token sequence, these per-query prefix scores yield an O(L2) indexing cost per layer. As context grows, the indexer can therefore turns from a negligible preprocessing step into the dominant cost, accounting for about 81% of end-to-end latency in prefill and 
+
+41% in decode at 200 K tokens (Bai et al. 2026). Recent work has reduced this indexer cost from several angles: lowering the precision of each score, or reducing indexer computation along the token axis (HISA (Xu et al. 2026)), the head axis (MISA (Zhou et al. 2026a)), or the layer axis (IndexCache (Bai et al. 2026)). These methods, however, leave the query axis untouched: the indexer is still invoked separately for each query, and each call still scans the full prefix. We instead examine the query axis and find this per-query search largely redundant. Figure 2a plots the pairwise top-k overlap between queries: nearby queries lie on a bright near-diagonal band, meaning they select almost the same tokens. Figure 2b further shows that, for a group of g queries, the union of their top-k sets remains close to k
+
+and far below its worst case of g k . Thus, a candidate set only slightly larger than k suffices to cover the whole group. This redundancy suggests a new axis for reducing indexer cost: sharing one full-prefix scan across a group of nearby queries arXiv:2607.24593v1 [cs.CL] 27 Jul 2026 0 20 40 60 80 100                              
+
+> query position (% of 128k sequence)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> query position  (%)
+> 0.4 0.6 0.8
+> dot = median, bar = middle 75%
+> L3
+> L30
+> L58
+> g = 4 shared top-k (∩/k)
+> 0.78
+> 0.65
+> 0.78
+> 1.0
+> 1.5
+> 2.0
+> 2.5 L3 (Shallow)
+> candidate budget c = 2k
+> k(single-query lower bound)
+> 1.32
+> 1.51
+> 1.72
+> g=4 g=8 g=16
+> 1.0
+> 1.5
+> 2.0
+> 2.5 L30 (Mid)
+> candidate budget c = 2k
+> k(single-query lower bound)
+> 1.49
+> 1.87
+> 2.40
+> 20 40 60 80 100
+> query position (% of 128k sequence)
+> 1.0
+> 1.5
+> 2.0
+> 2.5 L58 (Deep)
+> candidate budget c = 2k
+> k(single-query lower bound)
+> 1.30
+> 1.55
+> 1.89
+> 10 010 1
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> normalized score  Is=∑
+> h
+> whReLU(q h⋅k s)
+> normalized score Is/I max
+> cumulative mass (top-r)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> cumulative score mass
+> k/2
+> 3k/4
+> top-k = 2048
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> shared top-k  |S i ∩ S j|/k
+> group candidate set / k  (| ⋃ top-k|/k) (a) Pairwise shared top-k heatmap (b) Group top-k union across depth (c) Indexer score & cumulative mass
+> key rank (keys sorted by indexer score I s)
+
+Figure 2: Observational study on the redundancy and sparsity of indexer top-k selection . DeepSeek-V3.2, RULER-QA 128K, deep queries ( ke > 20 K), budget k = 2048 . (a) Local. The shared-key fraction |Si∩Sj |/k forms a bright diagonal: adjacent queries share ≈ 0.8–0.9 of their top-k from shallow to deep layers(L3/L30/L58), and 0.6–0.8 even across a full g = 4 group. 
+
+(b) Group-shareable. A group’s top-k union stays near the candidate budget c = 2 k over the 128K context ( ≈ 1.3–1.9 k for 
+
+g ≤ 8). (c) Sparse. Indexer scores Is = P 
+
+> h
+
+wh ReLU( qh·ks) concentrate on a small active set, saturating far below k/ 2, 3k/ 4, k .instead of repeating it for each. Motivated by this observation, we propose PIVOT (Proxy Indexing Via One full-prefix Traversal ), a training-free, drop-in replacement for the DSA indexer that shares one prefix scan across a group of nearby queries instead of running one per query. PIVOT proceeds in two steps. First, it aggregates a group into a single proxy query, scans the prefix once, and retains the top-c scoring tokens as a shared candidate set C.As Figure 2 shows, nearby queries select heavily overlap-ping top-k tokens and the indexer scores are long-tailed, so a budget only slightly above k and far below the sequence length L suffices ( k < c ≪ L) for C to cover most to-kens needed by the group. Second, each query obtains its top-k through one of two varians: PIVOT -Refine re-scores C
+
+with the exact indexer of each query and selects an individ-ual top-k, whereas the cheaper PIVOT -Reuse skips this step and assigns the proxy top-k to every query in the group. A group of g queries therefore replaces g full-prefix scans with one shared scan and a lightweight per-query step, reducing the group indexing cost from O(gL ) to O(L + gc ) for Re-fine or O(L) for Reuse, while the exact re-scoring in Refine preserves accuracy. The resulting top-k indices are passed to Sparse MLA through the same interface as in DSA, so the downstream operator remains unchanged. A single algo-rithm serves both phases, differing only in how groups are formed: prefill partitions the simultaneously available query positions into fixed-size groups of g, whereas decode takes the d+1 tokens of one multi-token-prediction (MTP) (Zeng et al. 2026) step as a group. PIVOT thus rides on top of MTP at no additional cost, and the two speedups compound. 
+
+PIVOT saves indexing cost entirely along the query axis. We summarize our contributions as follows: 
+
+• A new efficiency axis. We identify substantial cross-query redundancy in DSA indexing: nearby queries select highly overlapping top-k tokens. This redundancy defines a fourth efficiency axis for accelerating token-level sparse attention, which is orthogonal to prior methods that oper-ate along the token, head, and layer axes. 
+
+• PIVOT . We introduce PIVOT , a training-free, drop-in in-dexer that preserves the DSA interface while amortizing one full-prefix scan over a group of queries. PIVOT pro-vides two variants: PIVOT -Refine re-scores each query within a small shared candidate set to obtain its top-k,whereas PIVOT -Reuse shares the proxy top-k across the group. This reduces the per-group indexing cost from 
+
+O(gL ) toward O(L), and the same algorithm serves both inference phases by using fixed-size groups in prefill and same-step MTP groups in decode. 
+
+• Results. On DeepSeek-V3.2 and GLM-5.1 across Long-Bench and RULER, PIVOT matches the accuracy of the dense DSA indexer while accelerating the indexer opera-tor by up to 4× and lowering end-to-end latency by up to 
+
+1.6× at long context. 
+
+Related Work 
+
+Sparse attention. Sparse attention reduces the cost of long-context inference by allowing each query to attend to only a subset of tokens. Block-level methods estimate the im-portance of contiguous key blocks either online (Jiang et al. 2024; Lai et al. 2025; Niu et al. 2026; Wang et al. 2025; Xu et al. 2025; Tang et al. 2024) or through learned block rout-ing during training, as in MoBA (Lu et al. 2025), InfLLM-V2 (Zhao et al. 2025), and NSA (Yuan et al. 2025). Other approaches induce block-sparse attention with lightweight training, including SeerAttention (Gao et al. 2024, 2025), DuoAttention (Xiao et al. 2025), and RTPurbo (Zhou et al. 2026b). These block-level designs are hardware-friendly but coarse, because all tokens in a block are kept or dropped together. Token-level methods, in contrast, score individual tokens for finer selection. DSA (DeepSeek-AI 2025) is rep-resentative: a lightweight indexer scores every prefix token for each query and selects the top-k. This finer granularity shifts the bottleneck to the indexer, which must still scan the full prefix for every query in long-context settings. PIVOT 
+
+preserves the token-level selection of DSA while amortizing these redundant per-query scans. 
+
+Accelerating the DSA indexer. A growing line of work accelerates the DSA indexer itself. HISA (Xu et al. 2026) replaces the flat token scan with a block-to-token hierarchy, in which each query first filters candidate blocks and then q1
+
+q2
+
+q3
+
+q4
+
+qproxy 
+
+> Proxy Query
+
+q1
+
+qdraft1 
+
+qdraft2 
+
+qdraft3            
+
+> Query Top-K Indexer Scores
+> Prefill Decode
+> 1xfull scan gxfull scan
+> Proxy Top-C
+> XX
+> Re-Score
+> q1
+> Top-K
+> q3 q4 q2
+> Proxy Top-K
+> XXXXXX
+> q4 q1 q2 q3
+> Proxy Indexer Scores
+> higher accuracy
+> Top-K
+
+q2
+
+q1
+
+> Query Group
+
+q3
+
+q4 
+
+> All Prefix Keys All Prefix Keys
+> faster
+
+DSA Indexer 
+
+> Repeated Full Scans
+
+🥹 
+
+PIVOT Indexer 
+
+> Grouping & Shared Proxy Scan
+
+😊 
+
+> PIVOT-Reuse
+
+😊 
+
+> PIVOT-Refine
+
+😊 Figure 3: PIVOT amortizes the DSA indexer’s per-query prefix scans across a query group. Left (DSA): To select its top-k,every query q1, . . . , q g independently scores all prefix keys, so a group of g queries incurs g full-prefix scans. Right ( PIVOT ): 
+
+The queries of a group (fixed-size in prefill ; the current token together with its MTP draft tokens in decode ) are aggregated into a single proxy query qproxy which performs one shared full-prefix scan to produce proxy indexer scores. Two variants then select each query’s k highest-scoring key tokens as its top-k: PIVOT -Refine keeps the proxy’s top-c candidates and re-scores them per query for higher accuracy, whereas PIVOT -Reuse directly reuses the proxy’s top-k for the whole group for higher speed. refines the selection within them. MISA (Zhou et al. 2026a) treats indexer heads as a mixture of experts and activates only a query-dependent subset. IndexCache (Bai et al. 2026) exploits cross-layer redundancy by reusing the top-k set of one layer in nearby layers. SparDA (Fu et al. 2026) uses a lightweight predictor to prefetch next-layer KV blocks. These methods reduce indexer cost along the token, head, and layer axes by making individual indexer calls cheaper or by skipping some layer-wise calls. However, they leave the query axis untouched: the indexer is still invoked separately for each query over the full prefix. 
+
+Sharing computation across queries. Cross-query shar-ing has appeared primarily in token pruning and KV-cache compression. LazyLLM (Fu et al. 2024) progressively prunes prefix tokens during prefill, so tokens dropped for earlier queries remain unavailable to later ones. H2O (Zhang et al. 2023) and TOVA (Oren et al. 2024) evict low-scoring entries from the KV cache based on accumulated or recent atten-tion scores, and SnapKV (Li et al. 2024) uses an observation window to select important KV positions that later decoding steps reuse. In each case, sharing amounts to permanently discarding tokens. PIVOT differs in this respect: it discards no token, the downstream attention still sees the full prefix, and only the index-selection step is shared. 
+
+Preliminary 
+
+Background 
+
+We build on DSA (DeepSeek-AI 2025), a token-level sparse attention mechanism with two components: a lightning in-dexer that selects the preceding tokens each query should attend to, and a Sparse MLA operator that attends only to the selected tokens. For a query at position t and a preceding token at position s, the indexer estimates their relevance with 
+
+HI lightweight heads, 
+
+It,s =
+
+> HI
+
+X
+
+> j=1
+
+wIt,j ReLU  qIt,j · kIs
+
+, (1) where the indexing query qIt,j and gating weight wIt,j are projected from token t, the indexing key kIs is projected from token s, and HI denotes the number of indexer heads. The indexer retains the k highest-scoring tokens as the index set Tt = TopK( It, :, k ), over which Sparse MLA attends. This reduces the main attention cost from O(L2) to O(Lk )
+
+for a sequence of length L with k ≪ L. Thus, Tt is the sole interface between the indexer and Sparse MLA, and PIVOT 
+
+only changes how Tt is produced, leaving Sparse MLA and the KV cache unchanged. 
+
+Cost. Sparse MLA is now efficient, but producing Tt is not: by (1), every query must still be scored against the entire pre-fix, at O(L2) per layer in prefill and O(L) per step in decode. As context grows, the indexer therefore turns from a negligi-ble preprocessing step into the dominant cost, accounting for about 81% of end-to-end latency in prefill and 41% in decode at 200 K tokens (Bai et al. 2026). This per-query full-prefix scan is exactly the cost that PIVOT reduces. 
+
+Observations 
+
+The DSA indexer runs an independent full-prefix scan for every query, which is what makes it expensive at long context. To determine whether this per-query cost is truly necessary, we examine how the indexer behaves on DeepSeek-V3.2 at 
+
+128 K, and identify three properties, summarized in Figure 2. 
+
+O1: neighboring queries overlap heavily. Neighbouring queries select highly similar token sets. Figure 2a plots the pairwise shared top-k fraction |T i ∩T j |/k : a bright band hugs the diagonal, and a group of four shares a median of 65 –78% 
+
+of its top-k from shallow to deep layers (L3/L30/L58), lowest in the middle layers but still a clear majority. The band fades only slowly off the diagonal, so queries several positions apart still agree on most of their selection. This property follows from locality: adjacent queries share almost the same prefix and carry similar hidden states, hence similar indexing queries, so the keys they score as relevant drift gradually rather than jump. 
+
+O2: a whole group’s top-k has a small union. Across a whole group, the combined top-k can in principle range from 
+
+k tokens, when all members select identically, to g k , when they select disjointly. Figure 2b shows that it sits near the low end of this range. Averaged over depths, the union | S 
+
+> i
+
+Ti|/k 
+
+over a group of g queries measures only 1.3–1.5 × k at g=4 ,and it grows sub-linearly, far below the worst-case slope of 
+
+g, reaching just 1.7–2.4 × k at g=16 . The group therefore concentrates on a shared core and adds only a thin, slowly widening margin of query-specific tokens. 
+
+O3: indexer scores are long-tailed. The index score in (1) is heavily long-tailed along the key axis, as Figure 2c shows. The per-head ReLU is the cause: each dot product qIt,j ·kIs
+
+is near zero-mean, ReLU zeros out the negative interactions, and only keys that align positively across many heads ac-cumulate a large score. This produces a sharp separation between a few dominant keys and a bulk that collapses to-ward zero: the cumulative-mass curve rises steeply and then flattens, so a small fraction of keys already carries most of the total score mass. This long-tailed shape holds across depths, although its steepness varies from layer to layer. Taken together, these three properties motivate a simple design. Since neighbouring queries select highly overlapping top-k tokens (O1), a single proxy query can represent an en-tire group, replacing g separate prefix scans with one shared scan. Because the union of the group selections remains small (O2), the tokens needed by the group members fit within a shared candidate set of size c ≈ 2k ≪ L, far below the worst case of g · k. Because indexer scores are long-tailed (O3), re-scoring each query within this small set recovers nearly the same top-k as a full-prefix search. These three properties play complementary roles: O1 enables sharing, O2 makes it efficient, and O3 preserves accuracy. Motivated by these properties, we propose PIVOT , a training-free, drop-in replacement for the DSA indexer that amortizes prefix scans across nearby queries. PIVOT aggre-gates each group into a proxy query, performs one shared scan to obtain a candidate set C of size c, and then selects a top-k for each query from C.
+
+Method 
+
+PIVOT replaces the DSA indexer with a drop-in module that exposes the same interface, the per-query index set Tt. In-stead of running a full-prefix traversal for every query, it amortizes one scan over a group of nearby queries, which is sound because neighbouring queries select highly overlap-ping tokens (O1). The group is aggregated into a single proxy query that scans the prefix once and scores every token (the coarse step), and each query then derives its top-k from these shared scores (the fine step). This yields two variants, in in-creasing order of fidelity. PIVOT -Reuse skips the fine step and shares the proxy top-k across the group. PIVOT -Refine keeps a top-c candidate set from the coarse scores and re-scores it per query. Here O2 allows the budget to stay small (k < c ≪ L), and O3 makes the re-ranking reliable. Both variants keep Tt as the sole interface, leaving Sparse MLA and the KV cache unchanged. The same algorithm applies to both inference phases, which differ only in how a group is formed. Figure 3 contrasts PIVOT with the per-query DSA indexer and shows its shared proxy scan and two variants. 
+
+Grouping 
+
+PIVOT groups queries that are available simultaneously, so one proxy scan is amortized across them within a single step, with no state carried across steps. 
+
+Prefill. All query positions of a sequence are available at once, so PIVOT partitions them into contiguous groups of a fixed size g. A group starting at position t is 
+
+GP 
+
+> t
+
+= { qt, q t+1 , . . . , q t+g−1 }, (2) where qt is the query at position t. A group never crosses a request boundary, and the last group of a request may be smaller. Partitioning the L positions of a layer into groups of size g reduces the indexing cost from O(L2) to O(L2/g ) up to the fine step, which is the dominant saving at long context. 
+
+Decode. Decoding generates one token at a time, leaving no natural query group. PIVOT obtains one for free from MTP, a speculative decoding scheme used in production-scale models such as DeepSeek-V3.2 and GLM-5.1. At step 
+
+t, the target model produces the current query qt, and an MTP draft head, conditioned on the target hidden state, autoregres-sively proposes d future queries ˜qt+1 , . . . , ˜qt+d. Since these queries are already evaluated within the same decoding step, 
+
+PIVOT takes them as one group, 
+
+GD 
+
+> t
+
+= { qt, ˜qt+1 , . . . , ˜qt+d }, g = d + 1 . (3) 
+
+PIVOT thereby reuses the query batch already formed by MTP at no additional cost ( d=3 , hence g=4 , in both models). 
+
+PIVOT thus complements MTP rather than competing with it, and the two speedups compound. 
+
+The Shared Proxy Scan 
+
+Given a group G (from either phase), PIVOT runs the coarse step once for the entire group. It first aggregates the group into a single proxy query , whose indexing query and gating weight are the per-head averages over the members of G,
+
+¯qIj = 1
+
+g
+
+X
+
+> t′∈G
+
+qIt′,j , ¯wIj = 1
+
+g
+
+X
+
+> t′∈G
+
+wIt′,j , (4) for each indexer head j = 1 , . . . , H I . The proxy then scores the entire prefix once through the indexer function in Eq. (1), 
+
+¯Is =
+
+> HI
+
+X
+
+> j=1
+
+¯wIj ReLU  ¯qIj · kIs
+
+, s ≤ t, (5) 4K 8K 16K 32K 64K 128K 256K               
+
+> Context Length
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> DSA Indexer Speedup
+> (a) Pre fi ll: indexer kernel speedup
+> DSA
+> PIVOT-Reuse
+> PIVOT-Re fi ne
+> 2.56×
+> 3.15×
+> 3.46×
+> 4.28×
+> 4.03× 4.12×
+> 4.77×
+> 1.00×
+> 0.55×
+> 0.93×
+> 1.70×
+> 2.19×
+> 2.86×
+> 3.87×
+> 4K 8K 16K 32K 64K 128K 256K
+> Context Length
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> DSA Indexer Speedup
+> (b) Decode: indexer kernel speedup
+> DSA
+> PIVOT-Reuse
+> PIVOT-Re fi ne
+> 2.65×
+> 3.08×
+> 3.47×
+> 3.72×
+> 4.08× 4.09× 3.98×
+> 1.00× 0.93×
+> 1.40×
+> 2.05×
+> 2.85×
+> 3.16×
+> 3.42×
+> 8K 16K 32K 64K 128K
+> Context Length
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> End-to-end Speedup
+> (c) End-to-end speedup
+> DSA
+> PIVOT-Reuse
+> PIVOT-Re fi ne
+> 1.09×
+> 1.13×
+> 1.20×
+> 1.35×
+> 1.61×
+> 0.97×
+> 1.01×
+> 1.07×
+> 1.21×
+> 1.45×
+
+Figure 4: Indexer speedup over the DSA baseline on DeepSeek-V3.2 , from 4K to 256K. (a) Prefill and (b) decode report the indexer-kernel speedup, while (c) reports the end-to-end speedup, with the DSA baseline normalized to 1×. PIVOT -Refine falls back to DSA at 4K (dashed, 1×). where the causal cutoff at the first position of the group, t,keeps the scan valid for every member of G. This single scan, at a cost of O(L), is shared by the group. The two variants below build on the proxy scores { ¯Is} without scanning the prefix again: PIVOT -Reuse directly takes their top-k, while 
+
+PIVOT -Refine forms a candidate set and re-scores it per query. We use mean pooling for the proxy, as it works best among the aggregations we examined. 
+
+PIVOT-Reuse 
+
+The simplest option is to skip the fine step and let the proxy selection serve the entire group. PIVOT -Reuse takes the top-
+
+k of the proxy scores over the prefix and assigns it to every query in the group, 
+
+Tt = TopK  { ¯Is | s ≤ t }, k  for all t ∈ G. (6) Because neighbouring queries select highly overlapping sets of tokens (O1), the proxy top-k is already a close approxima-tion of what each member of the group would select on its own. This variant performs no per-query scoring: the group is served entirely by the shared scan of (5) together with a sin-gle top-k selection, giving an indexing cost of O(L) against 
+
+O(gL ) for DSA. Reuse is therefore the faster variant. A sin-gle shared selection, however, cannot capture query-specific differences. Although small under O1, these differences are nonzero and can cost some accuracy at very long context, which motivates the refinement of PIVOT -Refine. 
+
+PIVOT -Refine 
+
+PIVOT -Refine preserves the shared scan while restoring the per-query specificity discarded by Reuse. It first forms a shared candidate set from the proxy top-c scores, 
+
+C = TopK  { ¯Is | s ≤ t }, c , (7) where the budget c exceeds k because C must cover the 
+
+union of the group’s top-k sets, not just the k tokens of a single query. How large c must be is governed by O2: since this union stays close to k, a small budget already suffices, and we use c = 2 k throughout ( k < c ≪ L). Each query then re-scores these candidates with its own indexing query and gate, applying the exact indexer of (1) over C,
+
+It,s =
+
+> HI
+
+X
+
+> j=1
+
+wIt,j ReLU  qIt,j · kIs
+
+, s ∈ C , (8) and selects its own top-k from these query-specific scores, 
+
+Tt = TopK  { It,s | s ∈ C } , k . (9) Because the exact scoring runs over the c candidates rather than the full prefix, refinement adds only O(gc ) per group on top of the shared scan. With c ≪ L this overhead is small, and a group costs O(L + gc ), which lies between O(L)
+
+for Reuse and O(gL ) for DSA. Refinement also preserves accuracy well: because the indexer scores are long-tailed (O3), most of the truly high-scoring tokens for each query already lie within the shared candidate set C, so re-ranking C
+
+closely approximates the top-k that a full-prefix scan would return. In practice, we take the union of C with a small per-query local window so that each query retains its most recent tokens, see Appendix for details. 
+
+Experiments 
+
+Experimental Settings 
+
+Models and benchmarks. We evaluate PIVOT on two production-scale models that adopt the DSA indexer, DeepSeek-V3.2 (DeepSeek-AI 2025) and GLM-5.1 (Zeng et al. 2026). Both are served with MTP of depth d = 3 , emit-ting one decode token and three draft tokens per step, which fixes the decode group size to g = d + 1 = 4 . We report on two long-context suites: RULER (Hsieh et al. 2024), which probes retrieval and reasoning over controllable lengths from 
+
+4K to 128 K (20 samples per task-length pair), and Long-Bench (Bai et al. 2024), which covers realistic long-document tasks across multiple domains. Together they test synthetic long-range recall and real-world long-context understanding. 
+
+Baselines. Since PIVOT replaces only the indexer, we com-pare it against the original dense DSA indexer and against two orthogonal accelerators of that indexer: HISA (token axis) and IndexCache (layer axis). We also report PIVOT 
+
+composed with IndexCache ( +IC ). 
+
+Implementation. We serve all models with vLLM (Kwon et al. 2023) on NVIDIA H20 GPUs and use identical settings for all methods. PIVOT has three hyperparameters: group size g, candidate budget c, and proxy aggregation strategy. We set g = 4 by default in prefill and tie it to the MTP width in decoding, which is also 4. We use k = 2048 , set c = 2 k =4096 , and form the proxy by mean pooling (within a local LongBench RULER Method SQA MQA Sum FS Syn Code AVG 4K 8K 16K 32K 64K 128K AVG DeepSeek-V3.2                                                                                                                                                                                                                                     
+
+> DSA 50.88 53.11 22.32 64.85 69.67 74.84 55.95 96.41 95.71 96.12 95.77 91.32 90.45 94.30 HISA 51.09 52.98 22.37 64.11 69.83 74.70 55.85 95.90 95.44 92.21 83.83 77.08 62.46 84.49 MISA 51.16 51.93 22.38 63.97 69.33 73.80 55.43 95.90 94.64 95.29 94.28 90.50 84.91 92.59 IndexCache 51.23 52.55 22.09 65.06 69.67 75.81 56.07 96.03 96.37 95.38 96.33 92.19 88.67 94.16
+> PIVOT -Reuse 51.04 52.59 22.50 65.27 69.50 75.55 56.08 96.03 95.86 94.81 95.16 90.97 86.46 93.22
+> ,→+ IC 51.18 53.02 22.43 64.44 69.61 75.60 56.05 96.41 95.80 96.12 95.37 88.47 85.23 92.90
+> PIVOT -Refine 51.14 52.77 22.34 65.38 69.78 75.66 56.18 96.41 95.86 96.06 96.02 90.46 90.63 94.24
+> ,→+ IC 50.97 52.38 22.33 64.85 69.83 75.37 55.96 96.41 95.15 95.58 95.85 90.05 89.07 93.69
+> GLM-5.1
+> DSA 49.40 56.20 23.80 66.56 69.04 75.73 56.79 95.51 96.15 96.03 96.03 95.27 92.14 95.19 HISA 48.75 55.05 23.76 66.60 69.61 75.26 56.51 95.51 96.15 93.77 88.00 80.12 73.06 87.77 MISA 49.56 55.03 23.76 67.14 71.96 75.39 57.14 96.41 95.64 96.54 96.04 94.51 74.40 92.26 IndexCache 49.00 55.78 23.70 67.52 68.86 76.22 56.85 95.00 95.64 95.77 96.33 95.31 92.99 95.17 PIVOT -Reuse 48.92 55.09 23.76 67.14 68.84 75.94 56.62 94.62 96.15 96.06 95.62 93.59 88.86 94.15
+> ,→+ IC 49.17 55.41 23.86 66.57 68.80 75.83 56.61 95.13 96.03 95.98 93.06 92.67 86.28 93.19
+> PIVOT -Refine 49.31 55.85 23.73 67.22 69.18 76.42 56.95 95.42 96.15 96.15 96.46 95.03 91.79 95.17
+> ,→+ IC 49.16 55.19 23.81 67.70 69.33 76.34 56.92 94.87 96.41 95.31 96.50 94.41 91.88 94.90
+
+Table 1: Results (%) on LongBench and RULER. We evaluate DeepSeek-V3.2 and GLM-5.1 across LongBench categories spanning Single-Document QA (SQA), Multi-Document QA (MQA), Summarization (Sum), Few-Shot Learning (FS), Synthetic (Syn), and Code Completion (Code), and across RULER context lengths from 4K to 128K. AVG is the macro-average within each benchmark, and IC denotes IndexCache. Shaded rows indicate our methods; +IC composes PIVOT with IndexCache. Boldface and underlining indicate the best and second-best sparse methods in each column, respectively (DSA excluded). window of size w = 4 , details can see in Appendix). PIVOT -Reuse does not use a candidate set. We report sensitivity to g,
+
+c, and aggregation strategy in the ablation study (in prefill). 
+
+Accuracy Results 
+
+We evaluate both models on LongBench and RULER against the dense DSA indexer and two axis baselines, HISA (token) and IndexCache (layer). Table 1 reports the results. 
+
+LongBench. At these lengths, every sparse indexer stays within roughly half a point of the dense DSA baseline, so the benchmark does not stress the indexer and all methods pre-serve DSA-level quality. Within this narrow band, PIVOT is on par with dense DSA on both models, with PIVOT -Refine the stronger of the two variants (e.g., 56 .18 on DeepSeek-V3.2, just above the dense baseline). The subtask pattern is more informative than averages: PIVOT gains most where queries are locally structured and a shared proxy summa-rizes them well (code completion, few-shot learning), and is slightly weaker where a query draws on dispersed evidence that a group-level proxy fits less tightly (multi-document QA). The two variants are nearly indistinguishable here, and composing with IndexCache is quality-neutral, consistent with the redundancy being real and the shared scan being lossless at these lengths. 
+
+RULER. RULER separates the methods only as the con-text grows: through moderate lengths all of them stay close to dense DSA, and the gaps open up at 64 K– 128 K. HISA degrades sharply here, 19 –28 points below dense at 128 K, as block-level pruning discards tokens later queries need. MISA stays closer through mid-lengths but still trails by 6–18 at the extreme. PIVOT -Refine, in contrast, tracks the dense baseline across all lengths, ending on par with both dense DSA and IndexCache. The two variants now diverge: PIVOT -Reuse holds up through moderate lengths but declines faster at the extreme, because a group of queries attends to increasingly diverse content and a single shared selection loses recall that only per-query re-scoring can restore. This widening gap be-tween Reuse and Refine is direct evidence that the fine step matters more as the context grows. Stacking IndexCache on top of PIVOT remains lossless through moderate lengths and costs only a small margin at the longest contexts. Since 
+
+PIVOT alone already matches dense DSA, we treat +IC as an optional setting that trades this margin for additional speed. 
+
+Efficiency Results 
+
+Figure 4 reports indexer speedups of PIVOT over the dense DSA baseline, from short to very long context, for both the prefill and decode kernels and end-to-end. 
+
+Kernel speedup. Both variants speed up the indexer, and the gain grows with context length, because the shared full-prefix scan that PIVOT amortizes is exactly the term that dominates as the prefix lengthens. At the longest context, the indexer kernel is several times faster (up to about 4.8×). The two variants differ by design at short context: PIVOT -Reuse is faster throughout, while PIVOT -Refine, which addi-tionally re-scores candidates per query, is slower than dense DSA on short sequences and becomes favourable only once the prefix is long enough to amortize its extra work. This short-sequence overhead is exactly what our guardrail avoids: 
+
+PIVOT falls back to a dense scan for short groups, so it never runs slower than DSA in deployment. 
+
+End-to-end speedup. The kernel gains carry over to end-to-end latency, but only once the indexer accounts for a meaningful fraction of total inference: at short context the indexer is negligible and PIVOT is essentially on par with the baseline, while at long context both variants become faster (reaching roughly 1.6× end-to-end). This is consistent with the cost model in Method, in which the amortized O(L2)
+
+term dominates only as the context grows, so the speedup is largest exactly where long-context serving needs it most. Throughout, Reuse is the faster variant, and Refine trades part of that speed for the per-query accuracy, giving a clear speed–accuracy operating range between the two. 
+
+Ablation Studies 
+
+The defaults of PIVOT are guided by the observations rather than chosen purely by tuning. We ablate the four design choices on RULER (DeepSeek-V3.2; full two-model tables are provided in Appendix), and the results are consistent with the analysis behind our observations.                                             
+
+> Context Length Overall Variant Pool 8K 16K 32K 64K 128K AVG PIVOT -Reuse
+> Mean 95.99 95.48 95.30 88.71 87.96 92.69
+> First 94.37 89.13 89.56 85.22 79.56 87.57 Last 92.81 92.98 90.11 85.71 82.33 88.79
+> PIVOT -Refine
+> Mean 95.86 96.22 95.81 90.47 90.40 93.75
+> First 95.54 93.24 90.06 86.17 77.62 88.53 Last 95.77 93.62 90.15 86.90 80.01 89.29
+
+Table 2: Proxy aggregation ablation on DeepSeek-V3.2 (RULER, %). Mean pooling vs. first/last query for PIVOT -Reuse and PIVOT -Refine, with g = 4 and c = 4096 .
+
+Query aggregation. Averaging the group into a proxy is far more robust than taking a single endpoint query: mean pooling stays close to dense DSA at all lengths, whereas an endpoint proxy tracks it only while the context fits the group’s local span and then degrades sharply at long context (at 128 Kthe first-query proxy loses more than ten points to mean). A single query reflects only its own position and cannot repre-sent the group as its members attend to increasingly diverse content, whereas the per-head mean captures the shared core identified by O1. We therefore adopt mean pooling.                                                         
+
+> Context Length Overall Variant g8K 16K 32K 64K 128K AVG PIVOT -Refine
+> 495.86 96.22 95.81 90.47 90.40 93.75
+> 695.51 95.38 93.62 89.67 85.63 91.96 895.96 95.10 94.34 87.44 82.90 91.15 16 96.70 94.39 90.80 82.74 72.70 87.47
+> PIVOT -Reuse
+> 495.99 95.48 95.30 88.71 87.96 92.69
+> 695.45 95.19 93.10 87.22 83.69 90.93 895.67 93.62 91.38 83.49 78.38 88.51 16 95.38 91.41 83.88 76.84 65.16 82.53
+
+Table 3: Group size ablation on DeepSeek-V3.2 (RULER, %). Results use mean pooling and c = 4096 during prefill. 
+
+Group size g. Accuracy decreases as the group size grows, and the loss concentrates at long context. This is the trade-off predicted by O2: a group shares a fixed candidate budget, but the union of its top-k sets grows with g, so beyond a certain size the budget can no longer cover every member, and recall falls most where the union is largest. A small group such as 
+
+g=4 keeps accuracy near-lossless while still amortizing the scan several-fold, which is why we adopt it.                                
+
+> Context Length Overall budget 8K 16K 32K 64K 128K AVG 3072 95.99 96.06 95.37 90.03 87.31 92.95
+> 4096 95.86 96.22 95.81 90.47 90.40 93.75
+> 6144 95.90 95.96 95.92 90.63 89.85 93.65
+> 8192 95.51 95.58 95.54 92.24 90.55 93.88
+
+Table 4: Candidate budget ablation on DeepSeek-V3.2 (RULER, %). PIVOT -Refine, mean pooling, g = 4 , prefill. 
+
+Candidate budget c. Accuracy saturates quickly in c: en-larging the budget beyond the default yields only marginal gains, whereas shrinking it well below the default starts to cost accuracy. This follows from O3: because the indexer scores are long-tailed, the relevant tokens for each query lie in a small high-scoring set that a modest budget already captures, so a larger budget mostly adds low-scoring tokens that do not change the top-k. Since a larger c also raises the per-query re-scoring and sort cost, keeping c near this knee maintains efficiency at no accuracy cost.                                
+
+> Context Length Overall Applied to 8K 16K 32K 64K 128K AVG DSA 95.71 96.12 95.77 91.32 90.45 93.87 Prefill only 95.86 96.22 95.81 90.47 90.40 93.75
+> Decode only 95.56 96.15 95.60 91.87 90.01 93.84
+> Both 95.86 96.06 96.02 90.46 90.63 93.81
+
+Table 5: Deployment phase ablation on DeepSeek-V3.2 (RULER, %). PIVOT -Refine with mean pooling, g = 4 ,
+
+c = 4096 , “Both” applies PIVOT to both prefill and decode. 
+
+Where PIVOT is applied. PIVOT is near-lossless whether enabled in prefill, in decode, or in both, all staying within a small margin of dense DSA. This confirms that a single algorithm serves both phases: it can be applied to either in-dependently or to both jointly, allowing deployment to place the acceleration where it is most useful. 
+
+Conclusion 
+
+We presented PIVOT , a group-shared indexer for token-level sparse attention. PIVOT aggregates a group of queries into one proxy, runs a shared full-prefix scan to recall a candidate set, and lets each query take its top-k from it. It offers two variants: the faster PIVOT -Reuse, which shares the proxy’s selection, and the default PIVOT -Refine, which rescores per query to match the dense DSA indexer. One algorithm covers both inference stages, which differ only in grouping: by posi-tion in prefill, and by the tokens of one MTP step in decode. 
+
+PIVOT is training-free, leaves the Sparse MLA operator and KV cache unchanged, and is orthogonal to existing DSA accelerations. On DeepSeek-V3.2 and GLM-5.1 it retains dense-level accuracy on LongBench and RULER while ac-celerating the indexer by up to 4×, and reducing end-to-end latency by up to 1.6× at long context. Combining the query axis with the token, head, and layer axes, and extending to broader model families, is promising future work. References 
+
+Bai, Y.; Dong, Q.; Jiang, T.; Lv, X.; Du, Z.; Zeng, A.; Tang, J.; and Li, J. 2026. IndexCache: Accelerating Sparse Attention via Cross-Layer Index Reuse. arXiv preprint arXiv:2603.12201 .Bai, Y.; Lv, X.; Zhang, J.; Lyu, H.; Tang, J.; Huang, Z.; Du, Z.; Liu, X.; Zeng, A.; Hou, L.; et al. 2024. Longbench: A bilingual, multitask benchmark for long context under-standing. In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , 3119–3137. DeepSeek-AI. 2025. DeepSeek-V3.2: Pushing the Fron-tier of Open Large Language Models. arXiv preprint arXiv:2512.02556 .Dettmers, T.; Lewis, M.; Belkada, Y.; and Zettlemoyer, L. 2022. Gpt3. int8 (): 8-bit matrix multiplication for trans-formers at scale. Advances in Neural Information Processing Systems , 35: 30318–30332. Fu, Q.; Cho, M.; Merth, T.; Mehta, S.; Rastegari, M.; and Najibi, M. 2024. LazyLLM: Dynamic Token Pruning for Efficient Long Context LLM Inference. arXiv preprint arXiv:2407.14057 .Fu, Y.; Xiao, G.; Dong, X.; Han, S.; and Villa, O. 2026. SparDA: Sparse Decoupled Attention for Efficient Long-Context LLM Inference. arXiv preprint arXiv:2606.04511 .Gao, Y.; Guo, S.; Cao, S.; Xia, Y.; Cheng, Y.; Wang, L.; Ma, L.; Sun, Y.; Ye, T.; Dong, L.; et al. 2025. Seerattention-r: Sparse attention adaptation for long reasoning. arXiv preprint arXiv:2506.08889 .Gao, Y.; Zeng, Z.; Du, D.; Cao, S.; Zhou, P.; Qi, J.; Lai, J.; So, H. K.-H.; Cao, T.; Yang, F.; et al. 2024. Seeratten-tion: Learning intrinsic sparse attention in your llms. arXiv preprint arXiv:2410.13276 .Hsieh, C.-P.; Sun, S.; Kriman, S.; Acharya, S.; Rekesh, D.; Jia, F.; Zhang, Y.; and Ginsburg, B. 2024. RULER: What’s the Real Context Size of Your Long-Context Language Mod-els? arXiv preprint arXiv:2404.06654 .Jiang, H.; Li, Y.; Zhang, C.; Wu, Q.; Luo, X.; Ahn, S.; Han, Z.; Abdi, A. H.; Li, D.; Lin, C.-Y.; et al. 2024. Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse attention. Advances in Neural Information Processing Systems , 37: 52481–52515. Keles, F. D.; Wijewardena, P. M.; and Hegde, C. 2023. On the computational complexity of self-attention. In International conference on algorithmic learning theory , 597–619. PMLR. Kwon, W.; Li, Z.; Zhuang, S.; Sheng, Y.; Zheng, L.; Yu, C. H.; Gonzalez, J. E.; Zhang, H.; and Stoica, I. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP) .Lai, X.; Lu, J.; Luo, Y.; Ma, Y.; and Zhou, X. 2025. Flexpre-fill: A context-aware sparse attention mechanism for efficient long-sequence inference. arXiv preprint arXiv:2502.20766 .Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024. SnapKV: LLM Knows What You are Looking for Before Generation. arXiv:2404.14469. Lu, E.; Jiang, Z.; Liu, J.; Du, Y.; Jiang, T.; Hong, C.; Liu, S.; He, W.; Yuan, E.; Wang, Y.; et al. 2025. Moba: Mix-ture of block attention for long-context llms, 2025. URL https://arxiv. org/abs/2502.13189 .Niu, L.; Luo, X.; Xie, L.; Sun, Y.; Yu, G.; Zhu, J.; and Zhou, S. K. 2026. Stem: Rethinking Causal Information Flow in Sparse Attention. arXiv preprint arXiv:2603.06274 .Oren, M.; Hassid, M.; Yarden, N.; Adi, Y.; and Schwartz, R. 2024. Transformers are multi-state rnns. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 18724–18741. Tang, J.; Zhao, Y.; Zhu, K.; Xiao, G.; Kasikci, B.; and Han, S. 2024. Quest: Query-aware sparsity for efficient long-context llm inference. arXiv preprint arXiv:2406.10774 .Team, K.; Bai, Y.; Bao, Y.; Charles, Y.; Chen, C.; Chen, G.; Chen, H.; Chen, H.; Chen, J.; Chen, N.; et al. 2025. Kimi k2: Open agentic intelligence. arXiv preprint arXiv:2507.20534 .Touvron, H.; Martin, L.; Stone, K.; Albert, P.; Almahairi, A.; Babaei, Y.; Bashlykov, N.; Batra, S.; Bhargava, P.; Bhosale, S.; et al. 2023. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 .Wang, Y.; He, H.; Bao, S.; Wu, H.; Wang, H.; Zhu, Q.; and Che, W. 2025. ProxyAttn: Guided Sparse Attention via Representative Heads. arXiv preprint arXiv:2509.24745 .Xiao, G.; Tang, J.; Zuo, J.; Guo, J.; Yang, S.; Tang, H.; Fu, Y.; and Han, S. 2025. Duoattention: Efficient long-context llm inference with retrieval and streaming heads. In Inter-national Conference on Learning Representations , volume 2025, 37228–37253. Xiaomi, L.; Xia, B.; Shen, B.; Zhu, D.; Zhang, D.; Wang, G.; Zhang, H.; Liu, H.; Xiao, J.; Dong, J.; et al. 2025. MiMo: Unlocking the Reasoning Potential of Language Model–From Pretraining to Posttraining. arXiv preprint arXiv:2505.07608 .Xu, R.; Xiao, G.; Huang, H.; Guo, J.; and Han, S. 2025. Xattention: Block sparse attention with antidiagonal scoring. 
+
+arXiv preprint arXiv:2503.16428 .Xu, Y.; Meng, F.; Jiang, F.; Wang, Y.; Zhou, R.; Wang, Z.; Wu, J.; Pan, Z.; Tang, X.; Pei, W.; Liu, T.; Yin, D.; Sun, X.; and Zhang, M. 2026. HISA: Efficient Hierarchical In-dexing for Fine-Grained Sparse Attention. arXiv preprint arXiv:2603.28458 .Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.; Huang, C.; Lv, C.; et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Yuan, J.; Gao, H.; Dai, D.; Luo, J.; Zhao, L.; Zhang, Z.; Xie, Z.; Wei, Y.; Wang, L.; Xiao, Z.; et al. 2025. Native sparse attention: Hardware-aligned and natively trainable sparse at-tention. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 23078–23097. Zeng, A.; Lv, X.; Hou, Z.; Du, Z.; Zheng, Q.; Chen, B.; Yin, D.; Ge, C.; Huang, C.; Xie, C.; et al. 2026. Glm-5: from vibe coding to agentic engineering. arXiv preprint arXiv:2602.15763 .Zhang, Z.; Sheng, Y.; Zhou, T.; Chen, T.; Zheng, L.; Cai, R.; Song, Z.; Tian, Y.; Ré, C.; Barrett, C.; et al. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Process-ing Systems , 36: 34661–34710. Zhao, W.; Zhou, Z.; Su, Z.; Xiao, C.; Li, Y.; Li, Y.; Zhang, Y.; Zhao, W.; Li, Z.; Huang, Y.; et al. 2025. Infllm-v2: Dense-sparse switchable attention for seamless short-to-long adaptation. arXiv preprint arXiv:2509.24663 .Zhou, R.; Meng, F.; Xu, Y.; Liu, T.; Lu, G.; Zhang, M.; and Pei, W. 2026a. MISA: Mixture of Indexer Sparse Attention for Long-Context LLM Inference. arXiv preprint .Zhou, Y.; Li, Y.; Tang, H.; Li, M.; Liu, K.; Lan, T.; Qu, L.; Yao, Y.; and Ma, X. 2026b. Full Attention Strikes Back: Transferring Full Attention into Sparse within Hun-dred Training Steps. arXiv preprint arXiv:2605.16928 .Appendix 
+
+A The DSA Indexer in Detail 
+
+Lightning indexer. We expand the indexer summarized in Section Preliminary. DSA augments each layer with a lightning indexer that, for a query token ht ∈ Rd and a preceding token hs ∈ Rd, computes an index score 
+
+It,s =
+
+> HI
+
+X
+
+> j=1
+
+wIt,j ReLU  qIt,j · kIs
+
+, (10) over HI indexer heads, where the indexing queries qIt,j ∈ RdI
+
+and gating weights wIt,j ∈ R are linear projections of ht, and the indexing key kIs ∈ RdI
+
+is a linear projection of hs. Two design choices keep the indexer lightweight: it uses far fewer heads and a smaller head dimension dI than the main attention, and the ReLU activation is chosen for throughput over a softmax-style normalizer. Together these let the indexer be implemented in FP8, so that—despite scanning the full prefix—its per-score cost is small relative to the main attention. 
+
+Fine-grained token selection. Given the scores {It,s }s≤t, the fine-grained token-selection mechanism retrieves the key–value entries {cs} of the k highest-scoring tokens and computes the attention output over only that subset, 
+
+ut = Attn  ht, {cs | It,s ∈ Top -k(It, :)},
+
+Tt = {s : It,s ∈ Top -k(It, :)}. (11) Writing Tt for this selected index set, the indexer and the Sparse MLA operator communicate through Tt alone. This makes 
+
+Tt the sole interface PIVOT must preserve: it changes only how Tt is produced and leaves the operator, the selection size k, and the KV cache unchanged. Setting the group size to one recovers the original per-query indexer exactly. 
+
+Instantiation under MLA. For continued training from a Multi-head Latent Attention (MLA) backbone, DSA instantiates the selected attention in the MQA mode of MLA: each latent key–value entry cs is shared across all query heads of token t,so the top-k selection is made once per token rather than once per head. This is what makes the token-level selection Tt well defined at the token granularity that PIVOT groups over. In the FP8 kernel implementation, the score (1) is realized as 
+
+It,s =
+
+ P 
+
+> j
+
+wt,j ReLU  qfp8  
+
+> t,j
+
+· kfp8 
+
+> s
+
+
+
+· kscale  
+
+> s
+
+, (12) where the per-token key scale kscale  
+
+> s
+
+restores the FP8-quantized magnitudes and the gating weights wt,j absorb the con-stant factor qscale · softmax_scale · (HI )−1/2. The dense logits are materialized in chunks: the fused MQA-logits kernel (fp8_fp4_mqa_logits ) is subject to a 512 MB workspace bound, so long prefixes are tiled along the key axis. 
+
+B The Local Window 
+
+Why a local window. The shared candidate set C is recalled by a single proxy scan, and a query’s most recent tokens (those closest to its own position) are the ones most likely to be selected yet also the ones a group-level proxy represents least well, especially for later members of the group whose recent context was not yet present when C was formed. PIVOT therefore augments C with a per-query local window Wt = [ t − W + 1 , t ], the W most recent tokens up to position t (including t
+
+itself), and refines each query over C ∪ Wt. This guarantees that every query retains its local context regardless of the proxy, at negligible cost since W is small. 
+
+Decode. Each decode step builds its own candidate pool, so the window is applied per step with width W : with a group of 
+
+g = d+1 queries at consecutive positions, we require W ≥ g so that the window covers every token generated within the step (which are absent from the pool recalled at the step’s first position). Each query then refines over (pool ∪ its own Wt), with duplicates removed. 
+
+Prefill. In prefill the g queries of a group share one candidate set, so their windows must all fit inside it. The per-query windows 
+
+[ t − W + 1 , t ] of g consecutive positions are staggered, and their union spans W + g − 1 tokens. To keep the total candidate budget fixed at c, we reserve wg = W + g − 1 slots for this union and let the proxy fill the remaining top-(c − wg ); the two parts concatenate to exactly c candidates, so the refine width does not grow with W . Using wg = W + g − 1 (rather than W )ensures each row obtains its full W -token window, matching the per-step behavior of decode; reserving only W would drop up to g − 1 of the oldest window tokens for the earliest rows of the group. Setting W = 0 recovers the plain top-c candidate set. C Per-layer analysis of query locality in indexer top-k selection 
+
+Observation O1 states that neighbouring queries select nearly the same top-k keys, and Figure 2 summarizes it across the model. Here we verify that this locality is not an artifact of any single layer but holds throughout the network, and we quantify how it decays with query distance and group size, which is what determines a safe operating point for the group size g. We measure it on DeepSeek-V3.2 over RULER-QA at 128K, on deep queries ( ke > 20 K) with budget k = 2048 , at a shallow, a middle, and a deep layer (L3, L30, L58); Figure 5 reports three views. The pairwise shared-key heatmaps (a) show a bright diagonal band at every layer: adjacent queries overlap heavily in their selected keys, and the band, if anything, sharpens with depth. Quantifying this decay (b), the shared fraction falls from 0.84 –0.90 
+
+for immediate neighbours to 0.07 –0.23 across the full 128K span, so locality is strong locally but does not extend arbitrarily far, matching the group-shared design rather than a global one. Finally, the joint shared fraction over a group of g consecutive queries (c) decreases gracefully with g and remains high for small groups ( 0.83 –0.90 at g = 2 ), degrading only for large g
+
+(0.12 –0.47 at g = 64 ); the default g = 4 sits well inside the high-overlap regime. Together, these confirm that the query locality 
+
+PIVOT exploits holds from shallow to deep layers and justify a moderate group size. 0 20 40 60 80 100                                   
+
+> query position (% of 128k sequence)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> query position  (%)
+> L3 (Shallow)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> shared top-k  |S i ∩ S j|/k
+> 020 40 60 80 100
+> query position (% of 128k sequence)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> query position  (%)
+> L30 (Mid)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> shared top-k  |S i ∩ S j|/k
+> 020 40 60 80 100
+> query position (% of 128k sequence)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> query position  (%)
+> L58 (Deep)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> shared top-k  |S i ∩ S j|/k
+> 110 100 1k 10k 100k
+> window width (span of consecutive queries, tokens)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> pairwise shared top-k  (∩/k)  g = 4
+> (b) Window shared top-k vs. width
+> ∩/k width 1 → 128k
+> L3: 0.89 → 0.23
+> L30: 0.84 → 0.07
+> L58: 0.90 → 0.07
+> 24816 32 64
+> group size g(consecutive queries)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> group shared top-k  (∩/k)  g = 4
+> (c) Shared top-k fraction vs. group size
+> ∩/k g=2 → g=64
+> L3: 0.89 → 0.47
+> L30: 0.83 → 0.12
+> L58: 0.90 → 0.30
+> (a) Pairwise shared top-k heatmap
+
+Figure 5: Per-layer view of query locality in indexer top-k selection (appendix to Fig. 2 DeepSeek-V3.2, RULER-QA 128K; deep queries ( ke > 20 K), budget k = 2048 ; layers L3 (shallow), L30 (mid), L58 (deep). (a) Shared-key heatmaps. Pairwise shared-key fraction |Si∩Sj |/k between query positions. Every layer shows a bright diagonal band—neighbouring queries select almost the same top-k keys—widest at the shallow layer and progressively sharper with depth. (b) vs. window width. The mean pairwise |Si ∩Sj |/k over a window of consecutive queries decays with the window span: adjacent queries share ≈ 0.84 –0.90 
+
+(width 1) and only 0.07 –0.23 at the full 128K span. (c) vs. group size. The joint shared fraction | T 
+
+> i
+
+top -ki|/k over a group of g consecutive queries decreases with g but stays substantial for small groups ( 0.83 –0.90 at g = 2 ; 0.12 –0.47 at g = 64 ); the dashed line marks the g = 4 operating point. Together these confirm the query locality exploited by Grouped-Proxy holds from shallow to deep layers. 
+
+D Indexer kernel latency breakdown 
+
+We profile the indexer kernels on an NVIDIA H20 GPU. As shown in Fig. 6, index computation remains the dominant cost for both DSA and PIVOT-Reuse. For PIVOT-Refine, the dominant component shifts from refinement to proxy construction as the context length increases: re-score and re-top-k account for 76% (prefill) and 85% (decode) of its latency at 16K, whereas proxy index and proxy top-k account for 81% and 92%, respectively, at 256K. This shift indicates that refinement overhead grows slowly and is progressively amortized at longer contexts. Consequently, PIVOT-Refine improves from 0.93 ×/1.40 × speedup at 16K to 3.87 ×/3.42 × at 256K for prefill/decode, while PIVOT-Reuse consistently achieves approximately 4× speedup. DSA 
+
+> DSA
+> DSA
+> DSA
+> DSA
+> Reuse
+> Reuse
+> Reuse
+> Reuse
+> Reuse
+> Re fi ne
+> Re fi ne
+> Re fi ne
+> Re fi ne
+> Re fi ne
+
+Context Length 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+1.4 
+
+> Latency vs. DSA (=1)
+
+16K 32K 64K 128K 256K 
+
+(a) Pre fi ll: indexer kernel latency breakdown 
+
+> DSA index
+> DSA topk
+> Reuse index
+> Reuse topk
+> proxy index
+> proxy topk
+> re-score
+> re-topk
+> Speedup
+> Reuse
+> Re fi ne
+> 75ms
+> 335ms
+> 143ms
+> 571ms
+> 2.6s
+> DSA
+> DSA
+> DSA
+> DSA
+> DSA
+> Reuse
+> Reuse
+> Reuse
+> Reuse
+> Reuse
+> Re fi ne
+> Re fi ne
+> Re fi ne
+> Re fi ne
+> Re fi ne
+
+Context Length 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+1.4 
+
+> Latency vs. DSA (=1)
+
+16K 32K 64K 128K 256K 
+
+(b) Decode: indexer kernel latency breakdown 
+
+> DSA index
+> DSA topk
+> Reuse index
+> Reuse topk
+> proxy index
+> proxy topk
+> re-score
+> re-topk
+> Speedup
+> Reuse
+> Re fi ne
+> 1.2ms
+> 2.3ms
+> 4.8ms
+> 9.5ms
+> 19ms
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6 
+
+> Speedup over DSA
+> 3.46×
+> 4.28×
+> 4.03× 4.12×
+> 4.77×
+> 0.93×
+> 1.70×
+> 2.19×
+> 2.86×
+> 3.87×
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6  
+
+> Speedup over DSA
+> 3.47×
+> 3.72×
+> 4.08× 4.09× 3.98×
+> 1.40×
+> 2.05×
+> 2.85×
+> 3.16×
+> 3.42×
+
+Figure 6: Indexer kernel latency breakdown and speedup over the DSA baseline on DeepSeek-V3.2 , from 16K to 256K. 
+
+(a) Prefill and (b) decode. Stacked bars show the latency of individual kernel stages normalized to DSA ( = 1 ), with absolute latency annotated above each bar. Lines report the corresponding speedup over DSA on the right axis. PIVOT-Reuse consistently achieves around 4× speedup, while PIVOT-Refine delivers increasing speedup as the context length grows. 
+
+E Algorithm 
+
+Algorithm 1: PIVOT Inference Require: indexing queries {qIt,j }, gating weights {wIt,j }, indexing keys {kIs }Ls=1 ; group size g; candidate budget c; window 
+
+W ; token budget k; variant v
+
+Ensure: selected token set Tt of size k for every query t
+
+Stage 0: form query groups 
+
+1: if prefill then 
+
+2: Partition positions into fixed-size groups G = {t0, . . . , t 0+g−1}
+
+3: else if decode then 
+
+4: Group the current token with its d MTP draft tokens, g = d+1 
+
+5: end if 
+
+6: for all groups G with first position t0 = min G do 
+
+7: if t0 < c then 
+
+8: Densely score each t ∈ G over [1 , t ] and take its top-k
+
+9: continue ▷ short-group guardrail 
+
+10: end if Stage 1: shared proxy scan (coarse) 
+
+11: ¯qIj ← 1
+
+g
+
+P
+
+t∈G qIt,j , ¯wIj ← 1
+
+g
+
+P
+
+t∈G wIt,j ▷ per-head mean proxy 
+
+12: ¯Is ← P
+
+j ¯wIj ReLU  ¯qIj · kIs
+
+ for s = 1 , . . . , t 0 ▷ one full-prefix scan 
+
+Stage 2: per-query selection (fine) 
+
+13: if v = Reuse then 
+
+14: Tt ← TopK( { ¯Is}, k ) for all t ∈ G ▷ whole group shares the proxy top-k
+
+15: else if v = Refine then 
+
+16: C ← TopK( { ¯Is}, c ) ▷ shared candidate set 
+
+17: for all t ∈ G do 
+
+18: It,s ← P
+
+j wIt,j ReLU  qIt,j · kIs
+
+ for s ∈ C ▷ exact per-query re-score 
+
+19: Tt ← TopK( {It,s | s ∈ C} , k ) ▷ query-specific top-k
+
+20: end for 
+
+21: end if 
+
+22: end for 
+
+23: return {T t} to Sparse MLA through the unchanged DSA interface F Full Ablations 
+
+We report the complete two-model ablations that Section Ablation. summarizes on DeepSeek-V3.2. All runs are on RULER from 4K to 128K, and we report overall accuracy (%). Except for the deployment-stage study of Table 9, which by design varies the phase in which PIVOT is enabled, all ablations are conducted in the prefill phase. Table 6 ablates the query aggregation, Table 8 the group size g, Table 7 the candidate budget c, and Table 9 the deployment stage. Best per column in bold. Unless varied, we use PIVOT -Refine with mean pooling, g = 4 , and c = 4096 ; the trends hold on both DeepSeek-V3.2 and GLM-5.1. 
+
+Context Length Overall Variant Pool 4K 8K 16K 32K 64K 128K AVG DeepSeek-V3.2 PIVOT -Reuse 
+
+Mean 96.03 95.99 95.48 95.30 88.71 87.96 93.25 
+
+First 96.41 94.37 89.13 89.56 85.22 79.56 89.04 Last 96.41 92.81 92.98 90.11 85.71 82.33 90.06 
+
+PIVOT -Refine 
+
+Mean 96.03 95.86 96.22 95.81 90.47 90.40 94.13 
+
+First 96.41 95.54 93.24 90.06 86.17 77.62 89.84 Last 96.41 95.77 93.62 90.15 86.90 80.01 90.48 
+
+GLM-5.1 PIVOT -Reuse 
+
+Mean 94.74 95.51 96.15 95.52 92.56 89.83 94.05 
+
+First 93.08 94.49 93.81 89.73 89.26 83.62 90.67 Last 93.85 91.54 91.06 89.93 84.78 85.63 89.47 
+
+PIVOT -Refine 
+
+Mean 95.90 95.77 96.08 96.37 94.73 91.83 95.11 
+
+First 94.49 95.77 93.00 90.64 88.13 85.67 91.28 Last 95.13 96.03 94.54 92.87 89.85 86.76 92.53 
+
+Table 6: Ablation on query aggregation (RULER, %). mean vs. first vs. last, under both modes at g = 4 , c = 4096 . Best per column in bold. 
+
+Context Length Overall budget c 4K 8K 16K 32K 64K 128K AVG DeepSeek-V3.2 3072 96.03 95.99 96.06 95.37 90.03 87.31 93.46 
+
+4096 96.03 95.86 96.22 95.81 90.47 90.40 94.13 
+
+6144 96.41 95.90 95.96 95.92 90.63 89.85 94.11 
+
+8192 96.03 95.51 95.58 95.54 92.24 90.55 94.24 GLM-5.1 3072 94.62 95.77 96.15 96.08 93.46 91.53 94.60 
+
+4096 95.90 95.77 96.08 96.37 94.73 91.83 95.11 
+
+6144 95.38 96.41 95.69 96.50 94.92 92.60 95.25 8192 95.51 96.15 95.77 96.38 95.28 91.83 95.16 
+
+Table 7: Ablation on candidate budget c (RULER, %). PIVOT-Refine with mean pooling at g = 4 during prefill. Best per column in bold. 
+
+Context Length Overall Variant g 4K 8K 16K 32K 64K 128K AVG DeepSeek-V3.2 PIVOT -Refine 
+
+4 96.03 95.86 96.22 95.81 90.47 90.40 94.13 
+
+6 96.41 95.51 95.38 93.62 89.67 85.63 92.71 8 96.79 95.96 95.10 94.34 87.44 82.90 92.09 16 95.64 96.70 94.39 90.80 82.74 72.70 88.83 
+
+PIVOT -Reuse 
+
+4 96.03 95.99 95.48 95.30 88.71 87.96 93.25 
+
+6 95.64 95.45 95.19 93.10 87.22 83.69 91.72 8 96.03 95.67 93.62 91.38 83.49 78.38 89.76 16 96.03 95.38 91.41 83.88 76.84 65.16 84.78 
+
+GLM-5.1 PIVOT -Refine 
+
+4 95.90 95.77 96.08 96.37 94.73 91.83 95.11 
+
+6 95.51 96.03 96.08 96.42 92.00 88.33 94.06 8 95.38 96.41 95.69 94.79 89.99 85.85 93.02 16 95.51 95.38 95.18 91.00 87.16 82.40 91.11 
+
+PIVOT -Reuse 
+
+4 94.74 95.51 96.15 95.52 92.56 89.83 94.05 
+
+6 94.62 95.64 95.69 95.18 89.67 84.04 92.47 8 95.00 96.41 94.92 92.26 88.01 82.35 91.49 16 94.36 94.49 90.31 86.74 80.63 79.22 87.63 
+
+Table 8: Ablation on group size g (RULER, %). We compare PIVOT-Refine and PIVOT-Reuse with mean pooling and 
+
+c = 4096 during prefill. Best per column within each model and variant in bold. Context Length Overall Variant Applied to 4K 8K 16K 32K 64K 128K AVG DeepSeek-V3.2 PIVOT -Refine 
+
+DSA 96.41 95.71 96.12 95.77 91.32 90.45 94.30 Prefill only 96.03 95.86 96.22 95.81 90.47 90.40 94.13 
+
+Decode only 96.41 95.56 96.15 95.60 91.87 90.01 94.27 
+
+Both 96.41 95.86 96.06 96.02 90.46 90.63 94.24 
+
+PIVOT -Reuse 
+
+DSA 96.41 95.71 96.12 95.77 91.32 90.45 94.30 Prefill only 96.03 95.99 95.48 95.30 88.71 87.96 93.25 
+
+Decode only 95.64 95.67 96.06 95.74 92.31 88.58 94.00 
+
+Both 96.03 95.86 94.81 95.16 90.97 86.46 93.22 
+
+GLM-5.1 PIVOT -Refine 
+
+DSA 95.51 96.15 96.03 96.03 95.27 92.14 95.19 
+
+Prefill only 95.90 95.77 96.08 96.37 94.73 91.83 95.11 
+
+Decode only 95.00 96.15 96.15 96.08 95.74 92.79 95.32 Both 95.42 96.15 96.15 96.46 95.03 91.79 95.17 
+
+PIVOT -Reuse 
+
+DSA 95.51 96.15 96.03 96.03 95.27 92.14 95.19 Prefill only 94.74 95.51 96.15 95.52 92.56 89.83 94.05 
+
+Decode only 95.00 95.26 96.54 96.15 95.23 91.51 94.95 
+
+Both 94.62 96.15 96.06 95.62 93.59 88.86 94.15 
+
+Table 9: Ablation on PIVOT deployment stage (RULER, %). PIVOT-Refine and PIVOT-Reuse with mean pooling at g = 4 
+
+and c = 4096 ; “Both” enables PIVOT during prefill and decode. Best per column within each model and variant in bold.
