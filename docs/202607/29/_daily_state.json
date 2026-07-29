@@ -1,0 +1,89 @@
+{
+  "date": "20260729",
+  "date_label": "",
+  "generated_at": "2026-07-29 20:53:43 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.25380v1",
+      "route": "202607/29/2607.25380v1-memory-for-large-language-models",
+      "title": "Memory for Large Language Models",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "LLM记忆综述，涵盖KV缓存作为短期记忆",
+      "first_seen_at": "2026-07-29 20:53:43 UTC",
+      "updated_at": "2026-07-29 20:53:43 UTC"
+    },
+    {
+      "paper_id": "2607.21848v2",
+      "route": "202607/29/2607.21848v2-closing-the-loop-training-free-revisit-consistency-for-autoregressive-generative-rendering",
+      "title": "Closing the Loop: Training-Free Revisit Consistency for Autoregressive Generative Rendering",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "有限KV缓存导致重访不一致；提出无需训练的方法保持缓存一致性",
+      "first_seen_at": "2026-07-29 20:53:43 UTC",
+      "updated_at": "2026-07-29 20:53:43 UTC"
+    },
+    {
+      "paper_id": "2607.21985v1",
+      "route": "202607/29/2607.21985v1-unified-static-dynamic-pruning-for-efficient-llm-inference",
+      "title": "Unified Static-Dynamic Pruning for Efficient LLM Inference",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "权重剪枝减少LLM自回归解码的内存和计算成本",
+      "first_seen_at": "2026-07-29 20:53:43 UTC",
+      "updated_at": "2026-07-29 20:53:43 UTC"
+    },
+    {
+      "paper_id": "2607.25504v1",
+      "route": "202607/29/2607.25504v1-at-the-roofline-sparse-tensor-contractions-on-vector-processors-for-transformer-inference",
+      "title": "At-the-Roofline Sparse Tensor Contractions on Vector Processors for Transformer Inference",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "稀疏张量收缩减少Transformer推理的内存和计算",
+      "first_seen_at": "2026-07-29 20:53:43 UTC",
+      "updated_at": "2026-07-29 20:53:43 UTC"
+    },
+    {
+      "paper_id": "2607.25669v1",
+      "route": "202607/29/2607.25669v1-omnidelta-skill-driven-budget-allocation-for-token-compression-in-omnillms",
+      "title": "OmniDelta: Skill-Driven Budget Allocation for Token Compression in OmniLLMs",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "token压缩可间接减小KV缓存大小",
+      "first_seen_at": "2026-07-29 20:53:43 UTC",
+      "updated_at": "2026-07-29 20:53:43 UTC"
+    }
+  ]
+}

@@ -1,0 +1,225 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-29T20:50:58.234658+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 1,
+    "deep_cap": 6,
+    "deep_selected": 1,
+    "quick_candidates": 4,
+    "quick_skim_target": 11,
+    "quick_selected": 4
+  },
+  "deep_dive": [
+    {
+      "id": "2607.25380v1",
+      "source": "arxiv",
+      "title": "Memory for Large Language Models",
+      "abstract": "Memory has evolved into a foundational architectural dimension in large language models (LLMs), shifting from an implicit byproduct of computation to a spectrum of explicit, controllable mechanisms. While recent advances introduce diverse strategies---spanning transient attention, recurrent state dynamics, parameter-efficient adaptations, and scalable lookup storage---this rapid evolution has led to a highly fragmented research landscape. In this survey, we present a systematic, architecture-centric taxonomy of memory in LLMs. Our framework characterizes memory along three orthogonal axes: representation (implicit versus explicit), update dynamics (offline versus online), and persistence (short-term versus long-term). We further formalize the granular mechanisms dictating memory writing, routing, state transitions, and consolidation. This unified perspective elucidates the conceptual boundaries between computation-coupled and independently addressable memory, effectively bridging disparate architectural paradigms. Additionally, we critically analyze hybrid memory architectures, system-level efficiency trade-offs, and multi-dimensional evaluation methodologies. By consolidating these scattered advancements into a cohesive framework, this survey charts the trajectory of memory-centric LLM design and provides a principled foundation for future innovations in scalable and adaptive language modeling.",
+      "authors": [
+        "Sining Zhoubian",
+        "Dan Zhang",
+        "Evgeny Kharlamov",
+        "Jie Tang"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-28T07:34:53+00:00",
+      "link": "https://arxiv.org/pdf/2607.25380v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "survey on memory in LLMs, covering KV cache as short-term memory",
+      "llm_evidence_cn": "LLM记忆综述，涵盖KV缓存作为短期记忆",
+      "llm_evidence": "LLM记忆综述，涵盖KV缓存作为短期记忆",
+      "canonical_evidence": "LLM记忆综述，涵盖KV缓存作为短期记忆",
+      "llm_tldr_en": "A comprehensive survey on memory in Large Language Models, presenting a taxonomy along representation, update dynamics, and persistence axes, covering KV cache as short-term explicit memory.",
+      "llm_tldr_cn": "大型语言模型中记忆从隐式副产品发展为显式可控机制，但研究碎片化。本文提出架构中心分类法，从表示（隐式/显式）、更新动态（离线/在线）和持久性（短期/长期）三个正交轴刻画记忆机制，其中KV缓存被归类为显式短期记忆。该综述系统梳理了包括KV缓存在内的多种记忆技术，为该领域提供了统一框架。",
+      "llm_tldr": "大型语言模型中记忆从隐式副产品发展为显式可控机制，但研究碎片化。本文提出架构中心分类法，从表示（隐式/显式）、更新动态（离线/在线）和持久性（短期/长期）三个正交轴刻画记忆机制，其中KV缓存被归类为显式短期记忆。该综述系统梳理了包括KV缓存在内的多种记忆技术，为该领域提供了统一框架。",
+      "llm_tags": [
+        "query:llm-kv-cache:composite"
+      ],
+      "matched_query_tag": "query:llm-kv-cache:composite",
+      "matched_query_text": "Papers central to 我需要查找大模型领域KV Cache相关论文研究, especially work that connects or combines: key-value cache for large language models; transformer inference optimization using key-value cache; attention mechanism key-value caching; paged attention for efficient KV cache management; compression techniques for key-value cache in transformers; prefix caching for transformer inference; Find research papers on KV cache optimization techniques for large language models; Retrieve papers about memory efficient key value cache management in transformer decoders; Search for methods to reduce KV cache memory footprint during autoregressive generation.",
+      "matched_requirement_id": "req-composite-llm-kv-cache",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.21848v2",
+      "source": "arxiv",
+      "title": "Closing the Loop: Training-Free Revisit Consistency for Autoregressive Generative Rendering",
+      "abstract": "Recent conditional video generation models have shown promising potentials to transform 3D engine renderings, such as depth maps and untextured geometry, into photorealistic videos for gaming and immersive content creation. These applications require long-horizon auto-regressive generation that continuously synthesizes new frames while preserving a persistent 3D world. Auto-regressive generators synthesize video chunk by chunk with a bounded KV cache, so when the camera revisits a location after its context has been evicted, the model often regenerates inconsistent appearance, even though the conditioning renderings (e.g., depth) remain perfectly aligned with the underlying geometry. We address this revisit inconsistency without any post-training by exploiting correspondences the 3D engine already provides: temporal correspondence retrieves pose-matched historical latent chunks into the KV cache as loop-closure memory, while spatial correspondence from camera pose and depth reprojection biases token-level attention toward geometrically corresponding regions of the retrieved chunks. We demonstrate our method on loop-closure trajectories mined from TartanAir and TartanGround dataset to mirror complicate real-world application scenarios, where it outperforms existing training-free baselines on revisit consistency without losing overall video quality. Project Page: https://wenchao-m.github.io/ClosetheLoop.github.io/",
+      "authors": [
+        "Wenchao Ma",
+        "Changran Liu",
+        "Sharon X. Huang",
+        "Haomiao Jiang"
+      ],
+      "primary_category": "cs.CV",
+      "categories": [
+        "cs.CV"
+      ],
+      "published": "2026-07-23T22:33:52+00:00",
+      "link": "https://arxiv.org/pdf/2607.21848v2",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Bounded KV cache leads to revisit inconsistency; proposed training-free method to maintain cache consistency",
+      "llm_evidence_cn": "有限KV缓存导致重访不一致；提出无需训练的方法保持缓存一致性",
+      "llm_evidence": "有限KV缓存导致重访不一致；提出无需训练的方法保持缓存一致性",
+      "canonical_evidence": "有限KV缓存导致重访不一致；提出无需训练的方法保持缓存一致性",
+      "llm_tldr_en": "Addresses revisit inconsistency in autoregressive rendering caused by bounded KV cache, proposing a training-free method to improve consistency without extra memory.",
+      "llm_tldr_cn": "该工作针对自回归视频生成中由于有限KV缓存导致的重访不一致问题，提出了一种无需训练的一致性保持方法。方法通过缓存管理策略避免上下文被驱逐时外观突变。实验表明该方法有效提升了长序列生成中的视觉一致性，且不增加额外内存开销。对KV缓存管理有借鉴意义。",
+      "llm_tldr": "该工作针对自回归视频生成中由于有限KV缓存导致的重访不一致问题，提出了一种无需训练的一致性保持方法。方法通过缓存管理策略避免上下文被驱逐时外观突变。实验表明该方法有效提升了长序列生成中的视觉一致性，且不增加额外内存开销。对KV缓存管理有借鉴意义。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2607.21985v1",
+      "source": "arxiv",
+      "title": "Unified Static-Dynamic Pruning for Efficient LLM Inference",
+      "abstract": "The increasing deployment of large language models (LLMs) has magnified the computational and memory bottlenecks of autoregressive decoding, where low compute intensity and bandwidth-bound kernels dominate inference cost. Weight pruning offers a promising remedy,   but existing methods remain confined to either static pruning (SP), which permanently removes redundant weights but lacks adaptivity, or dynamic pruning (DP), which adapts to input sparsity but introduces runtime irregularity. This paper presents SPDP, a unified   sparse-inference framework that integrates unstructured SP with input-adaptive DP for efficient LLM inference on GPUs. SPDP co-designs a new Tiled-Column-wise Bitmap Compressed (Tiled-CBC) format and two complementary GPU kernels: (1) a CUDA-core spMspV kernel   featuring Hybrid Activation-aware Dynamic Shared-Memory Bitmap Decoding (HAD-SMBD) for fine-grained, runtime activation skipping, and (2) a Tensor-Core SpMM kernel optimized for prefill computation. This joint format-kernel design harmonizes static and dynamic   sparsity, maintaining bandwidth-efficient memory access and high compute intensity under both phases of LLM inference. Comprehensive evaluations on inference-optimized GPUs demonstrate that SPDP achieves 1.24x-1.37x average speedup (up to 2.51x) over state-of-the-   art sparse frameworks such as SpInfer, while matching. perplexity with up to 25% higher sparsity. SPDP advances the inference efficiency-quality Pareto frontier, showing that unified static-dynamic pruning can deliver substantial throughput and performance-per-watt   improvements in large-scale LLM serving",
+      "authors": [
+        "Jinhyeok Kim",
+        "Yejoon Lee",
+        "Jaeyoung Do"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC",
+        "cs.AI",
+        "cs.AR",
+        "cs.LG"
+      ],
+      "published": "2026-07-24T05:19:41+00:00",
+      "link": "https://arxiv.org/pdf/2607.21985v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "weight pruning reduces memory and compute costs in LLM autoregressive decoding",
+      "llm_evidence_cn": "权重剪枝减少LLM自回归解码的内存和计算成本",
+      "llm_evidence": "权重剪枝减少LLM自回归解码的内存和计算成本",
+      "canonical_evidence": "权重剪枝减少LLM自回归解码的内存和计算成本",
+      "llm_tldr_en": "Proposes SPDP, a unified sparse-inference framework integrating static and dynamic pruning to reduce memory and compute bottlenecks in LLM autoregressive decoding.",
+      "llm_tldr_cn": "LLM自回归解码中计算和内存瓶颈严重，权重剪枝虽有潜力但静态和动态方法各有局限。本文提出SPDP统一框架，结合非结构化静态剪枝和输入自适应动态剪枝，并设计新的Tiled-CBC压缩格式和GPU核函数。实验表明SPDP在保持模型质量的同时显著加速推理，减少了内存占用，这对KV缓存优化有参考价值。",
+      "llm_tldr": "LLM自回归解码中计算和内存瓶颈严重，权重剪枝虽有潜力但静态和动态方法各有局限。本文提出SPDP统一框架，结合非结构化静态剪枝和输入自适应动态剪枝，并设计新的Tiled-CBC压缩格式和GPU核函数。实验表明SPDP在保持模型质量的同时显著加速推理，减少了内存占用，这对KV缓存优化有参考价值。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2607.25504v1",
+      "source": "arxiv",
+      "title": "At-the-Roofline Sparse Tensor Contractions on Vector Processors for Transformer Inference",
+      "abstract": "Fine-grained weight pruning and activation sparsification have emerged as effective approaches for reducing the compute and memory cost of inference for Transformer models. In the moderate-sparsity regime, Gustavson's dataflow provides a natural execution model for exploiting both activation and weight sparsity on vector processors through metadata-driven indexed accumulation. However, existing RVV architectures lack native support for this pattern, forcing kernels to rely on software index decoding and L1-backed indexed memory operations that keep sparse tensor contractions far below their roofline performance bound. We present Ventaglio, a runtime-configurable sparse execution unit coupled with RVV ISA extensions that drives sparse tensor contractions toward their roofline through indexed gather-accumulate-scatter support. Integrated into an open-source vector processing cluster and implemented in 12nm FinFET, Ventaglio accelerates sparse tensor contraction kernels by $6.9\\text{--}7.4\\times$ over optimized RVV baselines, with only $3.1\\%$ area overhead for a cluster of tightly-L1 coupled vector processing elements. We build a performance-accurate instruction-level model of the Ventaglio extension, calibrate it against RTL implementation, and leverage it for scale-out performance analysis on a large $4\\times4$ multi-cluster system. Using a DuoGPT-pruned LLaMA-3-8B model with practical $40\\text{--}60\\%$ dual sparsity, Ventaglio achieves $2.40\\text{--}5.25\\times$ and $2.06\\text{--}3.16\\times$ speedup over dense baselines during prefill and autoregressive decoding, respectively.",
+      "authors": [
+        "Bowen Wang",
+        "Chi Zhang",
+        "Diyou Shen",
+        "Renzo Andri",
+        "Navaneeth Kunhi Purayil",
+        "Luca Benini"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR",
+        "cs.AI"
+      ],
+      "published": "2026-07-28T09:38:42+00:00",
+      "link": "https://arxiv.org/pdf/2607.25504v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "sparse tensor contractions reduce memory and compute for Transformer inference",
+      "llm_evidence_cn": "稀疏张量收缩减少Transformer推理的内存和计算",
+      "llm_evidence": "稀疏张量收缩减少Transformer推理的内存和计算",
+      "canonical_evidence": "稀疏张量收缩减少Transformer推理的内存和计算",
+      "llm_tldr_en": "Proposes Ventaglio, a runtime-configurable sparse execution unit with RVV ISA extensions to accelerate sparse tensor contractions for Transformer inference, achieving near-roofline performance.",
+      "llm_tldr_cn": "针对Transformer推理中权重剪枝和激活稀疏化带来的计算和内存开销，现有向量处理器缺乏原生支持。本文提出Ventaglio，一种运行时可配置的稀疏执行单元和RVV ISA扩展，通过元数据驱动的索引累积实现稀疏张量收缩，使性能接近理论峰值。该方法可间接优化KV缓存相关的内存访问。",
+      "llm_tldr": "针对Transformer推理中权重剪枝和激活稀疏化带来的计算和内存开销，现有向量处理器缺乏原生支持。本文提出Ventaglio，一种运行时可配置的稀疏执行单元和RVV ISA扩展，通过元数据驱动的索引累积实现稀疏张量收缩，使性能接近理论峰值。该方法可间接优化KV缓存相关的内存访问。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2607.25669v1",
+      "source": "arxiv",
+      "title": "OmniDelta: Skill-Driven Budget Allocation for Token Compression in OmniLLMs",
+      "abstract": "Emerging Omni-modal Large Language Models (OmniLLMs) enable unified understanding of text, audio, and video, but their long audio-video token sequences introduce substantial memory and inference costs. Existing compression methods mainly focus on selecting important tokens under fixed budgets, leaving the preceding budget-allocation problem underexplored. We show that direct query-to-audio/video similarity is unreliable for inter-modal budget allocation, and that uniform intra-modal budgets can miss key evidence while retaining redundant content. To address these limitations, we propose OmniDelta, a training-free, skill-driven framework that couples intent-aware inter-modal allocation with content-aware intra-modal allocation. OmniDelta first constructs audio and video skill pools to shift the fixed retained-token budget according to query demand, then reallocates modality budgets over audio segments and video frames using local complexity and temporal redundancy. The resulting local budgets can be combined with existing pruning strategies, preserving the total retained-token ratio while changing where the budget is spent. Experiments on four audio-video benchmarks with two Qwen2.5-Omni models show that OmniDelta establishes a new accuracy-efficiency Pareto frontier across pruning ratios. At 25% token retention on Qwen2.5-Omni-7B, OmniDelta reduces GPU memory by 22.0% and achieves a 1.64x end-to-end speedup over full-token inference.",
+      "authors": [
+        "Haoyang Huang",
+        "Wenjie Huang",
+        "Tianqi Xu",
+        "Hongyaoxing Gu",
+        "Kang Tan",
+        "Yikai Fu",
+        "Yuhao Shen",
+        "Tianyu Liu",
+        "Baolin Zhang",
+        "Jun Zhang",
+        "Xinyi Hu",
+        "Jun Dai",
+        "Shuang Ge",
+        "Lei Chen",
+        "Yue Li",
+        "Mingchen Wang",
+        "Meng Zhang"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-28T12:50:31+00:00",
+      "link": "https://arxiv.org/pdf/2607.25669v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "token compression can indirectly reduce KV cache size",
+      "llm_evidence_cn": "token压缩可间接减小KV缓存大小",
+      "llm_evidence": "token压缩可间接减小KV缓存大小",
+      "canonical_evidence": "token压缩可间接减小KV缓存大小",
+      "llm_tldr_en": "Proposes OmniDelta, a training-free framework for skill-driven budget allocation in token compression for OmniLLMs, addressing inter- and intra-modal allocation to reduce memory and inference costs.",
+      "llm_tldr_cn": "针对多模态大语言模型中长音视频token序列导致的高内存和推理成本问题，现有压缩方法未能解决预算分配问题。本文提出OmniDelta，一种无需训练的、技能驱动的框架，结合意图感知的模态间分配和内容感知的模态内分配，优化token压缩预算。实验表明该框架能有效减少冗余内容并保留关键证据，降低了内存和计算开销。该方法对KV缓存压缩具有启发意义。",
+      "llm_tldr": "针对多模态大语言模型中长音视频token序列导致的高内存和推理成本问题，现有压缩方法未能解决预算分配问题。本文提出OmniDelta，一种无需训练的、技能驱动的框架，结合意图感知的模态间分配和内容感知的模态内分配，优化token压缩预算。实验表明该框架能有效减少冗余内容并保留关键证据，降低了内存和计算开销。该方法对KV缓存压缩具有启发意义。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-28</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-28 20:56:11 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-29 20:53:43 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读8篇，重点关注多头潜在注意力分离内容与位置、知识选择与运行时消耗两大突破。</p>
-<p>最值得深读的是10分《Through the Bottleneck》揭示注意力机制解耦原理，以及9分《KAP》搭建知识选择与推理效率的桥梁。</p>
-<p>建议从《Through the Bottleneck》入手理解模型内部机制，再结合《KAP》学习系统级优化思路。</p>
+<p>今日共收录5篇论文，精读1篇聚焦大语言模型记忆机制。</p>
+<p>最值得关注精读论文《Memory for Large Language Models》（8.0分），以及高效推理相关的速读论文《Unified Static-Dynamic Pruning》。</p>
+<p>建议优先精读记忆方向论文，再速读剪枝与稀疏计算内容以了解LLM效率优化趋势。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Through the Bottleneck: How Multi-head Latent Attention Separates Content from Position in Language Models">Through the Bottleneck: How Multi-head Latent Attention Separates Content from Position in Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="KAP: Bridging the Knowledge Selection-Runtime Consumption Gap in LLM Systems">KAP: Bridging the Knowledge Selection-Runtime Consumption Gap in LLM Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="DynaCalKV: Key-Value Cache Compression via Head Grouping and Adaptive Rank Allocation">DynaCalKV: Key-Value Cache Compression via Head Grouping and Adaptive Rank Allocation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Memory for Large Language Models">Memory for Large Language Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Kalypso: Relational LLM Serving">Kalypso: Relational LLM Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention">PIVOT: Efficient Query-Group Indexing for Token-Level Sparse Attention</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Closing the Loop: Training-Free Revisit Consistency for Autoregressive Generative Rendering">Closing the Loop: Training-Free Revisit Consistency for Autoregressive Generative Rendering</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unified Static-Dynamic Pruning for Efficient LLM Inference">Unified Static-Dynamic Pruning for Efficient LLM Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="At-the-Roofline Sparse Tensor Contractions on Vector Processors for Transformer Inference">At-the-Roofline Sparse Tensor Contractions on Vector Processors for Transformer Inference</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>4</strong></span></div>
 </section>
 </div>
 
