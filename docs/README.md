@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-29 20:53:43 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-30 20:47:30 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共收录5篇论文，精读1篇聚焦大语言模型记忆机制。</p>
-<p>最值得关注精读论文《Memory for Large Language Models》（8.0分），以及高效推理相关的速读论文《Unified Static-Dynamic Pruning》。</p>
-<p>建议优先精读记忆方向论文，再速读剪枝与稀疏计算内容以了解LLM效率优化趋势。</p>
+<p>今日精读2篇9分论文及速读1篇，聚焦长上下文加速与个性化LLM服务。重点推荐《DualDecoder》的预测预取机制和《InferScale》的GPU原生KV注入方法。建议关注长上下文推理优化与模型个性化服务的最新进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Memory for Large Language Models">Memory for Large Language Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch">DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch</span></li><li><span class="dpr-home-dashboard-paper-title" title="InferScale: GPU-Native KV Injection for Personalized LLM Serving">InferScale: GPU-Native KV Injection for Personalized LLM Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Photonic-CXL Memory Appliance for Scalable KV Cache Management in LLM Inference">A Photonic-CXL Memory Appliance for Scalable KV Cache Management in LLM Inference</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Closing the Loop: Training-Free Revisit Consistency for Autoregressive Generative Rendering">Closing the Loop: Training-Free Revisit Consistency for Autoregressive Generative Rendering</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unified Static-Dynamic Pruning for Efficient LLM Inference">Unified Static-Dynamic Pruning for Efficient LLM Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="At-the-Roofline Sparse Tensor Contractions on Vector Processors for Transformer Inference">At-the-Roofline Sparse Tensor Contractions on Vector Processors for Transformer Inference</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Memory for Large Language Models">Memory for Large Language Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
 </section>
 </div>
 

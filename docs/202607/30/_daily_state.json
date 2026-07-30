@@ -1,0 +1,89 @@
+{
+  "date": "20260730",
+  "date_label": "",
+  "generated_at": "2026-07-30 20:47:30 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.26475v1",
+      "route": "202607/30/2607.26475v1-dualdecoder-accelerate-long-context-llm-inference-by-predictive-prefetch",
+      "title": "DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "基于预测预取的长上下文大模型KV缓存优化",
+      "first_seen_at": "2026-07-30 20:47:30 UTC",
+      "updated_at": "2026-07-30 20:47:30 UTC"
+    },
+    {
+      "paper_id": "2607.27090v1",
+      "route": "202607/30/2607.27090v1-inferscale-gpu-native-kv-injection-for-personalized-llm-serving",
+      "title": "InferScale: GPU-Native KV Injection for Personalized LLM Serving",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "面向个性化LLM服务的GPU原生KV注入",
+      "first_seen_at": "2026-07-30 20:47:30 UTC",
+      "updated_at": "2026-07-30 20:47:30 UTC"
+    },
+    {
+      "paper_id": "2607.27187v1",
+      "route": "202607/30/2607.27187v1-a-photonic-cxl-memory-appliance-for-scalable-kv-cache-management-in-llm-inference",
+      "title": "A Photonic-CXL Memory Appliance for Scalable KV Cache Management in LLM Inference",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "光子-CXL架构用于大模型推理中可扩展的KV缓存管理",
+      "first_seen_at": "2026-07-30 20:47:30 UTC",
+      "updated_at": "2026-07-30 20:47:30 UTC"
+    },
+    {
+      "paper_id": "2607.21731v1",
+      "route": "202607/30/2607.21731v1-red-pim-reducing-data-movement-for-transformers-using-processing-in-memory",
+      "title": "RED-PIM: Reducing Data Movement for Transformers using Processing-in-Memory",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "处理中内存减少注意力操作的数据移动，直接关联KV缓存内存访问",
+      "first_seen_at": "2026-07-30 20:47:30 UTC",
+      "updated_at": "2026-07-30 20:47:30 UTC"
+    },
+    {
+      "paper_id": "2607.25380v1",
+      "route": "202607/30/2607.25380v1-memory-for-large-language-models",
+      "title": "Memory for Large Language Models",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "系统性综述，覆盖KV缓存作为LLM内存机制的一部分",
+      "first_seen_at": "2026-07-30 20:47:30 UTC",
+      "updated_at": "2026-07-30 20:47:30 UTC"
+    }
+  ]
+}

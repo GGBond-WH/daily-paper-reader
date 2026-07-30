@@ -1,0 +1,445 @@
+Title: RED-PIM: Reducing Data Movement for Transformers using Processing-in-Memory
+
+URL Source: https://arxiv.org/pdf/2607.21731v1
+
+Published Time: Mon, 27 Jul 2026 00:06:00 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# RED-PIM: Reducing Data Movement for Transformers using Processing-in-Memory 
+
+Zahra Yousefijamarani, Alaa Alameldeen 
+
+Simon Fraser University 
+
+Abstract —Transformers are widely used across many domains, including natural language processing, computer vision, web search, and DNA sequence analysis. Given their broad applicabil-ity, improving the performance of transformer models is critical. However, the high volume of data movement between processing units and memory during attention operations significantly limits their efficiency. Processing-In-Memory (PIM) mitigates this issue by performing computations directly inside memory. While prior work has proposed PIM-based transformer implementations, they suffer from costly inter-bank communication, and struggle to scale due to the limited capacity of memory banks. As a result, attention-related data must be split across banks, diminishing the potential benefits of PIM. In this work, we propose RED-PIM, an algorithm-architecture co-design that reduces attention latency by minimizing inter-bank data movement from O(N 2) to O(N ) and shrinking intermediate attention matrices from N × N to d × d. By reorganizing matrix operations, performing computations locally, and employing an optimized data transfer strategy, RED-PIM significantly reduces computation cost and interconnect traffic. Compared to base-line PIM implementation, RED-PIM achieves inference time reductions ranging from 16.05% to 99.99% (geometric mean of 66.42%), with the largest gains on longer sequences. On real-world datasets, RED-PIM improves performance by 99.60% for long documents and 13.44% for shorter ones, while maintaining or improving accuracy. These results demonstrate RED-PIM’s effectiveness for scalable and efficient transformer inference. 
+
+I. I NTRODUCTION 
+
+Traditional CPU and GPU-based architectures face signif-icant challenges in meeting the computational demands of large-scale neural networks due to inefficiencies caused by data movement between memory and processing units. This back-and-forth transfer of massive amounts of data creates bottlenecks that degrade performance and increase energy consumption. Among various deep learning models, this issue becomes more significant in Transformer-based architectures [42], mainly due to their self-attention module. The reason is that self-attention involves computing attention scores between all pairs of input tokens. To this end, after the initial calculation of the query, key, and value vectors from input tokens, the model has to calculate the similarity between all queries and keys to generate an attention map. This requires O(N 2) data movements for (query, key) comparisons, where N is the sequence length. Subsequently, multiplying this attention map with the value vectors to obtain the final result also involves 
+
+O(N 2) movements. Due to the large volume of data needed in large-scale transformers, typical CPU or GPU caches are ineffective. Self-attention computations generate extremely large intermediate data structures that far exceed typical cache capacities, leading to frequent cache evictions and increased latency. To illustrate, consider a sequence with 8,000 tokens. The resulting attention map consists of 64 million values, requiring approximately 32MB of memory even when using the lowest-precision format (i.e., FP16), a much larger size than typical CPU or GPU cache capacities. Processing In/Near Memory (PIM) [18], [23], [25]–[27], [40], [48], [49] offers an alternative solution to reduce the data movement between the memory and processing units. PIM addresses this challenge by integrating computation directly within memory arrays, thereby eliminating the need for fre-quent data transfers between the processor(s) and memory. However, even with PIM, the limited capacity of memory banks remains a major barrier for scaling transformer models. For instance, a typical HBM bank has only 32MB of storage, which supports up to 8,000 tokens in FP16 precision. In contrast, modern large language models (LLMs) such as GPT-4.1 [31], Gemini 2 [7], and Grok-3 [47] support much longer sequences, up to 1 million tokens. Attempting to store full attention maps across multiple banks introduces significant inter-bank communication overhead, which undermines the performance and energy-efficiency advantages that PIM is meant to provide. In this paper, we propose RED-PIM that reduces the latency of the attention operation by leveraging PIM and reducing the inter-bank data movement. RED-PIM achieves this by adopting an alternative algorithm for attention computation which eliminates the need to construct the full N ×N attention map. Instead, it operates on and stores only a compact d × d
+
+matrix, where d is the latent dimension in the self-attention module and d ≪ N . Specifically, RED-PIM employs efficient attention [36] to significantly reduce memory usage while maintaining model performance. We reorganize the attention operations to keep computations more local, reduce data movement, and create smaller intermediate results that can fit in a single memory bank. Along with reorganizing the attention operations, we in-troduce architectural optimizations, including near-bank Pro-cessing Control Units (PCUs) that perform local computations with optimized implementations. We propose architectural en-hancements to optimize inter-bank data flow via a hierarchical arXiv:2607.21731v1 [cs.LG] 23 Jul 2026 aggregation strategy among memory banks, which results in lower data transfer and latency. In this paper, we make the following contributions:  
+
+> •
+
+Bottleneck Analysis of Standard Self-Attention : We show that the standard Query-Key multiplication in self-attention introduces two key inefficiencies: (1) it causes significant data movement due to the all-to-all token com-parisons across the input sequence, and (2) it produces a large intermediate matrix (attention map) that often exceeds the storage capacity of a single HBM bank. As a result, the subsequent Attention-Value multiplication requires additional inter-bank communication to access the full score matrix.  
+
+> •
+
+Algorithmic Optimizations for Reduced Data Move-ment : By restructuring Scaled Dot-Product Attention (SDPA), we optimize data locality, minimizing redundant memory accesses and reducing data movement between HBM banks from O(N 2) to O(N ). 
+
+> •
+
+Architectural Design for In-HBM Processing : We in-tegrate our architecture with FIMDRAM [21], leveraging PIM capabilities to execute self-attention computations directly within memory banks with optimized implemen-tation. A specialized network topology facilitates efficient inter-bank communication. We introduce a hierarchical aggregation strategy that progressively refines attention computations and reduces redundant data transfers be-tween memory banks. We design a softmax function optimized for hardware using bitwise operations and lookup tables to accelerate exponentiation. This approach maintains accuracy while reducing computational com-plexity and memory usage in transformer models.  
+
+> •
+
+Customized Simulation Framework for Data Move-ment Analysis : Building on the DAMOV simulator [30], we develop a tailored simulation environment to evaluate and model inter-bank data movement in HBM archi-tectures, enabling detailed analysis of communication patterns for attention mechanisms.  
+
+> •
+
+Extensive Evaluation Demonstrating Significant Per-formance Gains : Our evaluation shows inference time reductions ranging from 16.05% to 99.99% (geometric mean of 66.42%) compared to a baseline PIM implemen-tation, with the greatest improvements observed on longer sequences. On real-world datasets, we achieve a geomet-ric mean improvement of 99.56% for long documents (IMDB, PubMed, Arxiv, WikiHop, and GovReport [6], [15], [28], [41]) and 13.44% for shorter documents (GLUE benchmark [43]), while maintaining or improving accuracy. In the remainder of this paper, we discuss some back-ground on transformer models, processing-in-memory, and High-Bandwidth Memory in Section II. We present our pro-posed algorithmic changes and architecture in Section III. We discuss our methodology and results in Section IV. Section V discusses related work, and we conclude in Section VI. II. B ACKGROUND 
+
+A. Transformers 
+
+Transformers, introduced by Vaswani et al. in 2017 [42], are a class of deep learning models that have become widely used in various applications. Their popularity was a result of their ability to process sequential data in parallel, and ef-fectively capture long-range dependencies. Transformer-based architectures are typically built using a stack of encoder blocks, decoder blocks, or both. Each block consists of several key components: Multi-Head Attention (MHA), Feed-Forward Neural Networks (FFN), and Layer Normalization, as illus-trated in Figure 1 [42]. The MHA block is designed to capture complex relation-ships between tokens in a sequence. Each attention head computes attention scores that quantify the influence of one token on another. The outputs from multiple attention heads are then combined and processed to generate a comprehensive contextual representation of the input sequence. To generate such representation, the MHA block first derives the Query (Q), Key (K), and Value (V) matrices by applying linear trans-formations to the input sequence X = [ x1, x 2, ..., x N ]. These transformations use trainable weight matrices: the Query ma-trix ( WQ), Key matrix ( WK ), and Value matrix ( WV ): 
+
+Q = X.W Q, V = X.W V , K = X.W K (1) The Scaled Dot-Product Attention mechanism then com-putes attention scores as follows: 
+
+Attention (K, Q, V ) = sof tmax ( Q.K T
+
+√d ).V (2) where d is the dimensionality of the key vectors. The scaling factor √d prevents the dot product from becoming too large, which could push the softmax function into regions with very small gradients that would hinder effective learning. The outputs of multiple attention heads are concatenated and passed through another linear layer to combine their results and generate the final representation. The FFN layer receives the output of the MHA block and transforms it into a more expressive representation. This trans-formation typically involves applying two linear layers with an intermediate activation function (e.g., ReLU) as follows: 
+
+F F N (x) = max (0 , x.W 1 + b1).W 2 + b2 (3) 
+
+Layer normalization and residual connections are crucial for enhancing stability and improving training efficiency of transformers. Residual connections bypass the attention and feed-forward layers, while layer normalization ensures consis-tent input scaling, which improves gradient flow. In recent years, transformers have grown significantly. Cur-rent transformer models contain billions of parameters [44]. In addition to the size of the model, the sequence length has also increased to accommodate more complex tasks, further amplifying the computational and memory demands of these models [8], [11]. Although these increases in size and Encoder  Decoder Fig. 1. The Transformer model architecture [42]. 
+
+sequence length have improved performance across various domains, they have also led to significantly longer execution times and higher computational costs. 
+
+B. Processing In/Near Memory Architectures 
+
+The concept of PIM has emerged as a response to the increasing computational bottlenecks caused by data move-ment between memory and processing unit in traditional von Neumann architectures [12]. In these architectures, the separa-tion of memory and compute units leads to significant energy and time costs, especially in data-intensive applications such as machine learning, graph processing, and high-performance computing [1], [3], [12]. PIM addresses this challenge by integrating computational capabilities directly within the memory arrays, enabling data to be processed close to where it is stored. This approach eliminates the need for frequent data transfers between the processor(s) and memory, significantly reducing both execu-tion time and energy consumption [29]. 
+
+C. Prior PIM-Based Accelerators for Transformers 
+
+Prior research on PIM-based accelerators for Transformers can be broadly classified into two categories. The first category comprises hybrid architectures that in-tegrate host-based accelerators with near-memory processors to enhance transformer performance [9], [14], [37]. While these approaches aim to combine the advantages of traditional and PIM systems, they often suffer from high communication overhead between the host and memory. Additionally, they introduce substantial architectural complexity, which limits scalability and energy efficiency. The second category consists of fully PIM-based trans-former accelerators, which execute computations entirely within memory. These include both analog PIM designs [23], [27], [40], [48] and DRAM-based solutions [37], [49]. Despite their promise, these designs still face key challenges: They struggle with the large intermediate data sizes generated by self-attention, and inter-bank communication remains a major bottleneck, particularly for long sequences. Furthermore, many analog PIM approaches face limitations related to precision, reliability, and non-ideal analog behavior, which hinder their practicality and accuracy in real-world deployments. We further discuss these proposals and their limitations in Section V. 
+
+D. High Bandwidth Memory 
+
+HBM, illustrated in Figure 2.a, is a type of 3D-stacked DRAM designed to deliver significantly higher memory band-width compared to traditional memory technologies like DDR or GDDR. HBM achieves this by vertically stacking multiple memory dies, interconnecting them using through-silicon vias, and placing the stack close to the processor on the same substrate [39]. This architecture provides higher capacity, reduced latency, and increased effective data bandwidth [16]. HBM is widely employed in high-performance computing (HPC), networking, and graphics applications [16], [17], [50], where memory bandwidth and latency are critical factors. An example of PIM-based HBM is Function-In-Memory DRAM (FIMDRAM) [21] that was introduced by Samsung in 2021. FIMDRAM is a real PIM prototype implemen-tation based on the HBM2 memory standard (Figure 2.b). FIMDRAM (also known as HBM-PIM) incorporates 16-wide single-instruction multiple-data (SIMD) engines into memory banks, leveraging bank-level parallelism while maintaining the optimized memory subarray. Each pair of memory banks includes a programmable computing unit (PCU) as shown in Figure 2.c, enhancing parallelism and processing band-width. By performing computations directly within memory, FIMDRAM significantly reduces data movement, improving efficiency for memory-intensive tasks. Figure 2.d illustrates the internal architecture of a PCU. Each PCU includes two sets of SIMD floating-point units (FPUs): one dedicated to addition and the other to multiplica-tion. Each set contains 16 FPUs, where each FPU is 16 bits wide. The PCU is equipped with three kind of registers for managing computations:  
+
+> •
+
+Command Register File (CRF) which serves as an instruction buffer capable of holding up to 32 instructions, where each instruction is 32 bits.  
+
+> •
+
+General Register Files (GRFs) which consist of 16 registers, each 256-bits wide. These registers are used for intermediate data storage.  
+
+> •
+
+Scalar Register Files (SRFs) designed to store up to 16 scalar values, each 16-bits wide. The PCU’s instruction set includes nine 32-bit RISC instruc-tions, categorized into three groups: Control flow instructions: NOP , JUMP , and EXIT ; Arithmetic instructions: ADD , MUL ,
+
+MAC , and MAD ; and Data movement instructions: MOV and 
+
+FILL .III. RED-PIM: P ROPOSED DESIGN 
+
+A. Baseline Implementation of Attention in PIM Architecture 
+
+One baseline implementation of the attention mechanism in PIM architectures is to directly apply the standard Scaled Dot-Product Attention mechanism (SDPA), as shown in Figure 4. For load balancing, tokens are distributed across memory banks, where each bank stores m tokens, with each token represented as a 1×d vector. We assume that the weight matri-ces ( WQ, WK , WV ) are locally stored in each bank, following previous works such as [49], as illustrated in Figure 3. Later in Section III-D, we further analyze the scalability implications of this setup. Each bank computes the Query, Key, and Value vectors ( Q,
+
+K, V ) for its m local tokens using the stored weight matrices. Thus, after this step, each bank holds m computed Q/K/V vectors, as shown in Figure 3. The attention score computation will be discussed in detail in Section III-C2. As depicted in Figure 4, the first step in attention calculation is multiplying Q by KT . For illustration, consider m rows of the Q and K matrices that are stored in the same bank (highlighted in red). Each row of Q must be multiplied by every column of KT , which involves both local and non-local computations. For instance, multiplying the first row of Q
+
+with the m columns of KT that reside in the same bank can be performed locally. However, for the remaining columns, the Q vector must be transferred from its source bank to the destination bank that holds the corresponding K vectors. Each 
+
+Q vector needs to be transferred to Nm banks, where N is the total sequence length. This implies that computing QK T
+
+requires Nm movements per Q vector, resulting in a total of   
+
+> N2
+> m
+
+vector movements (each of size 1 × d). Additionally, note that the resulting attention map S is of size N × N , and cannot fit entirely in a single bank. When each bank stores a m × m submatrix of S, the storage overflow requires further movement of these partial S matrices to new banks, which introduces additional movement not captured in this estimate but accounted for in our evaluation. Each bank now holds a m × m portion of the attention map 
+
+S. As shown in Equation 2, the scaling operation is applied locally. However, the softmax operation requires computing the sum of exponentials for each row of S. Since only m
+
+elements of each row are stored in a single bank, and each full row spans across Nm banks, the computation must involve inter-bank communication. After computing exp( x) locally for each value in S, these partial results need to be aggregated across Nm banks and then broadcast back for normalization. This results in Nm
+
+movements per row and a total of N 2 
+
+> m
+
+movements. Even with optimization—such as sending aggregated sums of m values at once—the total movement would still be N 2 
+
+> m2
+
+.The final step involves multiplying the attention map S
+
+by the Value matrix V . This operation, like the QK T step, includes both local and non-local computation. For instance, multiplying the first row of S with the corresponding m
+
+columns of V can be performed locally, assuming they are co-located in the same bank. However, if parts of matrix S were already moved to other banks due to storage limitations, addi-tional data movement will be required even for these nominally local computations. However, for the remaining parts of the row, data must again move across Nm banks to align with the relevant columns of V . Thus, the total movement is again N 2
+
+> m
+
+or optimally N 2 
+
+> m2
+
+. Also, since not all intermediate results can be stored in the same bank due to limited storage, additional data movement is required (included in our evaluation but not in the above rough estimate). Finally, all these intermediate products must be aggregated to generate the final output of the attention layer. Because the results are distributed across multiple banks, additional data movement (up to N 2 
+
+> m2
+
+) is incurred during accumulation. Note that all these movement estimates are rough approximations and do not account for factors such as physical bank distance, contention, or memory interconnect architecture. However, our evaluation (Section IV) incorporates these details for a precise and realistic analysis. In summary, this baseline approach using standard SDPA in a PIM system incurs O
+
+ N 2
+
+> m
+
+
+
+data movement, making it inefficient and non-scalable for long sequences or high-throughput workloads. 
+
+B. RED-PIM Implementation of Attention in PIM Architecture 
+
+RED-PIM adopts an alternative attention algorithm that significantly reduces data movement. Instead of explicitly computing the full QK T attention matrix, the algorithm first applies the softmax function separately to Q and KT . It then multiplies σ(KT ) with the Value matrix V , followed by a multiplication with σ(Q) to produce the final result, where σ
+
+denotes the softmax operation. This algorithm, introduced by Zhuoran et al. [36], was origi-nally designed to improve computational efficiency. However, it does not explicitly address the critical bottleneck of data movement in memory—one of the main contributors to latency in LLMs. In this work, we adapt and extend their method for in-memory execution. Our version restructures the attention computation to reduce inter-bank communication and improve data locality, making it highly suitable for PIM architectures. The first step in RED-PIM is to compute σ(Q) and σ(KT ).For the softmax operation, we only need to calculate the P exp( x) for each row, where x represents the values in that row. Computing σ(Q) is entirely local because each row of 
+
+Q corresponds to a single query vector, which is fully stored within one bank (as illustrated in Figure 5). However, computing σ(KT ) involves some data movement. For each row of KT , only m values are stored locally in a bank, and the remaining values are distributed across the other  
+
+> Nm
+
+banks. As a result, partial sums from these banks need to be transferred and accumulated, leading to Nm data movements. Next, we compute the multiplication σ(KT ) · V . Notably, the i-th block of m columns in σ(KT ) is stored in the same a c dbFig. 2. a) HBM architecture; b) Conventional HBM2; c) FIMDRAM architecture; d) Computing unit block.  
+
+> Fig. 3. Token and weight matrix mapping across banks.
+
+bank as the corresponding m rows of V as shown in Figure 5, allowing this portion of the multiplication to be done locally. For example, when multiplying the first row of σ(KT ) to V ,its values are distributed across Nm banks. Each of these banks holds m elements from the row and the corresponding m rows from V . The result of each local multiplication is a 1×d vector, and doing this across all rows produces a local d × d matrix in each bank. These local matrices are then aggregated across banks to form the final result of σ(KT ) · V . Since intermediate results are distributed across Nm banks, the accumulation step also incurs Nm data movements. We refer to the resulting matrix as L, which is a compact 
+
+d × d matrix, significantly smaller than the N × N attention matrix S used in the standard attention approach (as shown in Figure 4). Finally, L must be multiplied by σ(Q). In the worst-case scenario, if L is stored in a single bank without replication, each row of σ(Q) must be transferred to that bank. Since σ(Q)
+
+is distributed across Nm banks, this step requires up to Nm data movements. As mentioned earlier, these estimations do not take into account the physical distance between memory banks or the specific characteristics of the bank architecture. Additionally, they do not reflect any architectural optimizations we introduce later in this paper, which are designed to further reduce data movement. Overall, this approach reduces data movement to O   Nm
+
+,which is significantly lower than that of the conventional implementation. It also requires substantially less memory capacity, as the matrix L is much smaller than the matrix 
+
+S.
+
+C. Architecture Design in RED-PIM 
+
+In this section, we present the architectural details of our proposed RED-PIM design. 
+
+1) Memory Architecture: We adopt FIMDRAM [21] as our baseline PIM architecture to leverage in-bank processing capabilities for computation. Each DRAM bank is equipped with local compute logic, enabling vector multiplications to be performed directly within the memory banks. 
+
+2) In-bank Multiplication: As discussed in the previous sections, a large number of vector multiplications are executed locally within each bank. As an example, we provide the pseudocode for multiplying vectors x and y in Algorithm 1. 
+
+3) Softmax: For softmax computation on a vector x, we need to calculate: 
+
+σ(xi) = exp( xi)
+
+P 
+
+> j
+
+exp( xj ) (4) Thus, computing exp( x) efficiently is critical. There are two common approaches for this calculation: a simple lookup table (LUT) [13], [48], and a Taylor series expansion [49]. The LUT approach requires a large table to store precom-puted values and is restricted to a limited range of x. The Taylor series method is accurate near zero but suffers from a significant decline in accuracy as x deviates from zero. Moreover, it incurs higher computational complexity. To overcome these limitations, we designed a hardware-friendly implementation that maintains both high accuracy and low complexity across a wider input range. N        
+
+> d
+> d
+> N
+> QKT
+> m
+> m
+> N
+> N
+> After scaling
+> and softmax
+> V
+> m
+> m
+> N
+> d
+> m
+> S
+> N
+> d
+> mFig. 4. Regular Scaled Dot-Product Attention mechanism. Here, N denotes the sequence length, d is the embedding dimension, and m represents the maximum number of tokens that can be stored as an m×dmatrix within a single memory bank. Parts highlighted in red indicate portions stored locally within the same bank. σ(K T)
+> N
+> d
+> V
+> m
+> d
+> d
+> N
+> m
+> dN
+> d
+> σ(Q)
+> m
+> L
+> N
+> d
+> m
+> Fig. 5. RED-PIM Scaled Dot-Product Attention. Parts highlighted in red indicate portions stored locally within the same bank. σdenotes the softmax operation.
+
+Algorithm 1 FP16 Dot Product of Vectors x and y (length d) 
+
+> 1:
+
+MOVE SRF M, 0 ▷ Clear accumulator  
+
+> 2:
+
+for chunk = 0 to (d/ 128) − 1 do ▷ Process 128 FP16 values per chunk (64 from x, 64 from y) 
+
+> 3:
+
+for i = 0 to 3 do  
+
+> 4:
+
+FILL DRAM[ x + chunk × 128 + i × 16 ] →
+
+GRF[ 2i] 
+
+> 5:
+
+FILL DRAM[ y + chunk × 128 + i × 16 ] →
+
+GRF[ 2i + 1 ] 
+
+> 6:
+
+end for  
+
+> 7:
+
+for i = 0 to 3 do  
+
+> 8:
+
+for j = 0 to 15 do  
+
+> 9:
+
+FP16 MAC GRF[ 2i][ j], GRF[ 2i + 1][ j], SRF M  
+
+> 10:
+
+end for  
+
+> 11:
+
+end for  
+
+> 12:
+
+end for  
+
+> 13:
+
+MOVE SRF M → GRF ▷ Move final result to GRF  
+
+> 14:
+
+MOVE GRF → DRAM ▷ Store final result to memory Our method is based on the identity: 
+
+ex = 2 α = 2 ⌊α⌋+{α}, where α = x · log 2 e (5) Here, log 2 e is a constant, so computing α is fast. The integer part, 2⌊α⌋, can be computed efficiently via bit shifting. The fractional part, 2{α}, lies in the range [0 , 1] and is ap-proximated using a small LUT with linear interpolation. This approach significantly reduces memory usage and improves performance while retaining good accuracy. To evaluate the effectiveness of our method, we conducted experiments using 10 million random values in the range 
+
+[−200 , 0] . Negative range is used, since frameworks like PyTorch [19] first subtract the maximum value in the vector before applying the exponential function. We compared the average relative error of our method against both a simple LUT and the Taylor series expansion. Our method, using only 0.5 KB of LUT storage, achieves an average relative error of approximately 2.5 × 10 −3, which is comparable to the simple LUT method that uses 312.5 KB (625× larger table). In contrast, the Taylor series method yields a significantly higher average relative error of 2.6 × 10 77 .We also evaluated all three methods on 10 million random numbers in the range [−1, 0] , where values are close to zero. In this case, the Taylor series achieves better accuracy, with an error of about 5.9 × 10 −4, while the performance of our method and the LUT method remains consistent with previous results. These experiments demonstrate that our proposed imple-mentation offers competitive accuracy compared to existing methods, while significantly reducing both memory usage and computational complexity. After computing each exp( xi), the next step is to accu-mulate the results. If the values are stored locally, this accu-mulation can also be performed locally without requiring any data movement. However, for non-local values, a hierarchical accumulation approach is used, as described in Section III-C5. 
+
+4) Network: For inter-bank communication, we adopt a network topology as shown in Figure 3, inspired by the design in [33]. In this architecture, each channel is composed of multiple banks, and inter-bank data communication is supported through horizontal and diagonal links. There is also links between channels. To facilitate communication, a small buffer is included in each bank to temporarily store data being sent or received over the interconnect. These buffers help in decoupling the communication latency from computation. Furthermore, a local controller (Ctrl) in each bank is re-sponsible for routing the data. It uses a multiplexer to select which data should be forwarded to the arrays. 
+
+5) Hierarchical Transfer: A naive approach to data transfer involves sending all data directly to a centralized unit for processing. Although conceptually simple, this method suffers from significant drawbacks, most notably high latency and congestion. Centralizing all communication creates a bottle-neck, as data from multiple sources must traverse shared links, leading to increased traffic and longer delays. To address this, RED-PIM adopts a more scalable strategy called hierarchical transfer, where computation and commu-nication are distributed across multiple levels and executed in parallel. In our design, this method is used for operations such as accumulation during matrix multiplication and softmax computation. In the first step, within each bank group, accumulation is performed locally. For example, in each bankgroup, Bank 0 and Bank 1, sharing the same PCU, accumulate their results in parallel with Bank 2 and Bank 3. After this step, the results from each pair are further accumulated, e.g., the partial sum from Bank 1 is sent to Bank 3 for the next level of accumulation. This calculation under bankgroup is parallel among all bankgroups, so at the end each of them has a fully accumulated value stored in a designated bank (denoted as bij ,where i is the channel index and j is the bank group index). In the second step, this process continues in parallel across all channels. Specifically, the designated accumulation banks (e.g., bi from each bank group within a channel) exchange data with their neighboring bank groups, and further accumulation is performed. Since each channel consists of four bank groups, an additional level of transfer and accumulation is required to combine the intermediate results. After this final stage, the complete accumulated result for each channel is stored in a single designated bank, denoted as bi.If accumulation across multiple channels or dies is required, the same hierarchical mechanism is extended across dies. Figure 6 illustrates the hierarchical transfer process using different colors: red arrows represent transfers at the bank group level, green arrows indicate transfers at the channel level, and purple arrows correspond to transfers at the die level. Compared to the naive approach, this method offers several key advantages:  
+
+> •
+
+Reduced communication overhead: By performing early  
+
+> Fig. 6. Hierarchical data transfer architecture. Each colored arrow represents a different level of transfer: red for bank group level, green for channel level, and purple for die level.
+
+local and group-wise aggregation, the amount of inter-connect traffic is significantly reduced.  
+
+> •
+
+Lower latency: Parallel accumulation at each stage allows different parts of the memory hierarchy to work concur-rently, avoiding the bottlenecks associated with serialized summation.  
+
+> •
+
+Scalability: The structured, multi-level design naturally scales with the number of banks and channels, maintain-ing efficiency even in large memory configurations. Overall, this hierarchical mechanism accelerates the compu-tation, significantly reducing communication overhead, overall latency, and traffic. 
+
+D. Scalability 
+
+In the previous sections, we assumed (for simplicity of explanation) that the weight matrices WK , WQ, and WV ,each of size d × d, could fit entirely within a single bank. This assumption holds only for models with relatively small parameter sizes. However, RED-PIM is designed to also handle cases where these weight matrices are too large to fit in a single bank, unlike prior approaches. In this scenario, as before, we distribute the tokens across banks, such that each bank holds at most m tokens. The weight matrices are then tiled column-wise , where each bank holds a tile of k columns. As a result, each weight matrix is distributed across dk banks, and the tokens are distributed across Nm banks. To compute the k, Q, and V matrices, we move the weight tiles to the banks where the tokens reside. Specifically, each bank storing tokens must receive all column vectors from the  
+
+> dk
+
+weight banks. This requires data movement of d column vectors to each of the Nm token banks for each of the three matrices. Therefore, the total data movement will be 3N d 2 
+
+> m
+
+.IV. E VALUATION METHODOLOGY AND RESULTS 
+
+In this section, we present a comprehensive evaluation of RED-PIM using simulation of several workloads. A. Workloads and Datasets 
+
+We evaluated RED-PIM on a diverse set of benchmarks, including the GLUE benchmark suite [43], which contains datasets designed to assess a model’s performance across various natural language understanding tasks. The datasets used in our evaluation are described below:  
+
+> •
+
+MRPC (Microsoft Research Paraphrase Corpus): The MRPC dataset [10] consists of sentence pairs extracted from online news sources, annotated to indicate whether the sentences in each pair are semantically equivalent. This dataset evaluates a model’s ability to determine semantic similarity between sentence pairs.  
+
+> •
+
+QQP (Quora Question Pairs): The QQP dataset [43] comprises pairs of questions sourced from the Quora platform. The objective of this task is to identify whether two questions are semantically equivalent.  
+
+> •
+
+STS-B (Semantic Textual Similarity Benchmark): 
+
+STS-B [5] is a dataset that evaluates a model’s ability to predict the semantic similarity between sentence pairs. Each pair is annotated with a similarity score ranging from 1 to 5, representing the degree of semantic equiva-lence.  
+
+> •
+
+MNLI (Multi-Genre Natural Language Inference): 
+
+The MNLI dataset [43], [46] is a large-scale corpus for textual entailment tasks. It includes sentence pairs from various genres annotated with entailment labels (entailment, contradiction, or neutral). We used both the matched (in-domain) and mismatched (cross-domain) validation splits, containing 19,647 pairs each.  
+
+> •
+
+QNLI (Question Natural Language Inference): QNLI [32], [43] is a binary classification task derived from the Stanford Question Answering Dataset (SQuAD). The goal is to determine if a given context sentence answers a corresponding question.  
+
+> •
+
+RTE (Recognizing Textual Entailment): The RTE dataset [2], [43] evaluates textual entailment, requiring models to predict whether a hypothesis logically follows from a given premise.  
+
+> •
+
+WNLI (Winograd NLI): The WNLI dataset [24], [43] is adapted from the Winograd Schema Challenge. It presents challenging reasoning tasks where the model must determine whether a hypothesis follows logically from a given premise.  
+
+> •
+
+CoLA (Corpus of Linguistic Acceptability): The CoLA dataset [45] assesses a model’s ability to distinguish between grammatically acceptable and unacceptable sen-tences.  
+
+> •
+
+SST-2 (Stanford Sentiment Treebank): The SST-2 dataset [38] contains sentences from movie reviews an-notated with sentiment labels. The task is to classify each sentence as expressing positive or negative sentiment. We also utilized additional datasets featuring longer con-texts, including the PubMed and ArXiv datasets [6], which contain scientific papers from the biomedical and general scientific domains, respectively. These datasets are valuable for                     
+
+> TABLE I ARCHITECTURAL PARAMETERS OF RED-PIM.
+> Parameter Value
+> Num of channels 8Num of banks per channel 16 Num of PCUs per channel 8Num of Multipliers per PCU 16 of FP16 Mult Num of Adders per PCU 16 of FP16 Add Processing operation speed 300MHz Total size 4GB Memory Timing
+> tRC = 24 ,tRAS = 17 ,tRRD = 5 ,tRCD = 7 ,tCL = 7 ,tW R = 8 ,tCCD = 2
+
+a wide range of tasks, such as information retrieval, document classification, and other advanced natural language processing applications. Additionally, we incorporated GovReport [15], which comprises reports authored by government research agencies, and WikiHop [41], a dataset consisting of para-graphs from Wikipedia. Lastly, we utilized the IMDB dataset [28], providing movie reviews that serve as a benchmark for sentiment analysis and text classification tasks. 
+
+B. Experimental Setup 
+
+We modify the DAMOV simulation framework [30] to implement and evaluate our proposed architecture. DAMOV seamlessly integrates the ZSim [34] CPU simulator and the Ramulator [20] memory simulator. This framework allows us to simulate a configurable number of traditional CPU cores or PIM cores with various memory technologies, including HBM. In our experiments, we simulate our RED-PIM architecture on top of FIMDRAM (i.e., HBM-PIM) memory with 8 channels. Additional system configurations for RED-PIM are detailed in Table I. To evaluate our method in Section IV-D, except for the accuracy evaluation, we conducted experiments on a standard transformer block consisting of MHA, FFN, and Add &Normalization layers, as shown in Figure 1. This block serves as a fundamental component in transformer architectures. For the accuracy evaluation (presented in Section IV-D), we used the bert-base-uncased model and replaced all self-attention layers with our proposed implementation. 
+
+C. Baseline 
+
+As the baseline, we consider the standard transformer implementation described in Section III-A and illustrated in Figure 4, using FIM-DRAM for in-memory computation. For the softmax operation, we use a Taylor-series approximation, and for inter-bank communication, the naive broadcast mech-anism is employed, as discussed in Section III-C5. The HBM structure is kept consistent with our optimized implementation to ensure a fair comparison. This design represents a straightforward in-memory imple-mentation without any specific optimizations for data move-ment or bank-level parallelism. Sequence Length Performance Improvement (%) 0% 25% 50% 75% 100% 128 256 512 1024 2048 4096 8192 16384 32768 65536 131072 262144 524288 1048576 GeoMean Fig. 7. Execution time improvement vs. baseline for sequence lengths ranging from 128 to 1M. 
+
+D. Performance Analysis 
+
+Evaluation on different sequence lengths: To evaluate the efficiency of our proposed method, we conducted experiments across a range of sequence lengths, from 128 tokens up to 1 million. Figure 7 presents a performance comparison between RED-PIM and the baseline. The results show that the performance gains of RED-PIM increase with sequence length. Specifically, RED-PIM achieves improvements ranging from 16.05% to 99.99%, with a geometric mean speedup of 66.42% over the baseline. These results demonstrate that although RED-PIM provides noticeable improvements even for shorter sequences, it is particularly effective for longer sequences, where the benefits of reduced data movement and improved parallelism become more significant. 
+
+Evaluation on long-context datasets: We further evaluated our approach on five datasets that consist of long sequences, such as full documents and articles. Specifically, we used IMDB, PubMed, ArXiv, GovReport, and WikiHop. Figure 8 illustrates the distribution of sequence lengths in these datasets, where darker blue shades represent longer sequences. As shown in the figure, the sequence length distributions vary significantly across datasets, for example, IMDB contains rela-tively shorter sequences. The figure also presents performance improvements, indicated by red dots. Our approach achieves a geometric mean performance improvement of 99.60%, demon-strating a substantial reduction in execution time. 
+
+Evaluation on short-context datasets: We also tested our approach on datasets with shorter sequence lengths to deter-mine whether our method still provides benefits in such sce-narios. We evaluated RED-PIM’s performance on the GLUE benchmark, which consists of several natural language under-standing tasks with varying sequence lengths. Figure 9 shows the distribution of sequence lengths for each dataset under GLUE separately. As this figure shows, datasets contain short sequences. This figure also demonstrate performance improvement by red dots.RED-PIM achieved a performance improvement rang-ing from 8.47% to 22.61%, with a geometric mean improve-ment of 13.44%. While the improvements are smaller com-Benchmark Performance Improvement (%) Sample length distribution (%) 0% 20% 40% 60% 80% 100% 0% 20% 40% 60% 80% 100% Imdb PubMed Arxiv GovReport WikiHop Time Improvement 5120-100000 4608-5120 4096-4608 3584-4096 3072-3584 2560-3072 2048-2560 1536-2048 1024-1536 512-1024 0-512 
+
+Fig. 8. Execution time improvement vs. baseline across different datasets with longer documents (indicated by red points, left y-axis), along with the sequence length distribution for each dataset (depicted by the bars, right y-axis). GLUE Benchmark        
+
+> Performance Improvement (%) Sample length distribution (%) 0% 5% 10% 15% 20% 25% 0% 25% 50% 75% 100%
+> CoLA STS-B SST-2 QQP MNLI m MNLI mm RTE QNLI WNLI MRPC
+> Time Improvement 182-400 160-182 128-160 96-128 64-96 32-64 0-32
+
+Fig. 9. Execution time improvement on the GLUE benchmark for our method compared to baseline (represented by dots, left y-axis), and sequence length distribution in each dataset (represented by bars, right y-axis). 
+
+pared to those achieved from longer sequences, the consistent performance gain highlights the generality of our approach across different sequence lengths. Additionally, the distribution of sequence lengths across the GLUE datasets has a clear correlation with improvement: datasets with a higher proportion of longer sequences exhibit greater performance improvements. This is expected intu-itively since data movement overhead of the baseline grows quadratically with sequence length, whereas our proposal mitigates this effect more effectively. 
+
+Accuracy evaluation: Since our algorithm approximates the standard Scaled Dot-Product Attention, it is important to evaluate its impact on model accuracy. On the GLUE benchmark, we observed an average performance drop of 0.58%, while on IMDB, the drop was only 0.32%. Interest-ingly, for GovReport, PubMed, and ArXiv, the model achieved performance improvements of 0.72%, 4.29%, and 1.37%, respectively. These results indicate that our approximation introduces negligible changes in accuracy, making it well-suited for efficient inference in transformer models. 
+
+E. Comparison to Prior Transformer Accelerators 
+
+We compared the performance improvement of RED-PIM against previous transformer accelerators. Performance Improvement (%) 0% 25% 50% 75% 100% Imdb PubMed Arxiv GovReport WikiHop Geomean        
+
+> RED-PIM PACT-3D HAIMA TransPIM Fig. 10. Performance improvement analysis of RED-PIM, TransPIM [49], HAIMA [9], and PACT-3D [37] on datasets with larger documents (all improvements are relative to the baseline). GLUE Benhmark Performance Improvement (%) 0% 5% 10% 15% 20% 25% CoLA STS-B SST-2 QQP MNLI m MNLI mm RTE QNLI WNLI MRPC Geomean RED-PIM PACT-3D HAIMA TransPIM
+> Fig. 11. Performance improvement comparison of RED-PIM, TransPIM [49], HAIMA [9], and PACT-3D [37] on the GLUE benchmark (all performance improvements are relative to the baseline) .
+
+Comparison on long-context datasets: Figure 10 presents the performance improvements on datasets with larger document sizes. RED-PIM achieves the highest speedup, with a geomet-ric mean improvement of 99.60%, significantly outperforming all other methods. PACT-3D (60.53%) and HAIMA (53.30%) also deliver notable improvements, though their performance is lower on average than that of RED-PIM. TransPIM, while ef-fective in certain scenarios, shows only modest improvements on datasets such as IMDB. 
+
+Comparison on short-context datasets: Figure 11 illustrates performance gains on the GLUE benchmark, where RED-PIM consistently outperforms all other methods across all tasks. TransPIM [49] achieves moderate improvements, particularly in MRPC and WNLI, while PACT-3D and HAIMA exhibit more modest gains across most benchmarks. The geomet-ric mean results highlight RED-PIM as the most effective approach, delivering an overall performance improvement of 13.44%, compared to 5.98% for PACT-3D, 3.47% for HAIMA, and 0.15% for TransPIM (all relative to the baseline). 
+
+F. Sensitivity Analysis 1) Sensitivity to embedding size ( d): In the previous exper-iments, we evaluated RED-PIM using different input sequence lengths. Here, we analyze the effect of embedding size ( d) on Sequence Length Performance Improvement (%) 0% 25% 50% 75% 100% 128 256 512 1024 2048 4096 8192 16384 32768 65536 131072 262144 524288 1048576 GeoMean 64 128 256 
+
+> Fig. 12. Sensitivity of model performance to embedding size (d) across vary-ing sequence lengths, including the geometric mean performance aggregated over all sequence lengths.
+
+performance. The embedding size impacts both the amount of data transferred and the number of computations. For instance, as discussed in Section III-B, each query vector that must be moved to the bank storing matrix L has a size of 1 × d, so increasing d results in greater data movement. Additionally, the matrix L has dimensions d × d, meaning that a larger d leads to increased computational cost during attention calculation. Figure 12 shows the performance improvement of RED-PIM across varying sequence lengths for different embedding sizes (64, 128, and 256). The results indicate that performance generally improves with longer sequences, as they benefit more from our optimization strategy. Additionally, configu-rations with smaller d values show greater improvements due to reduced data transfer and lower computational cost. The geometric mean results further suggest that our method remains effective across different embedding sizes, with the differences diminishing as sequence length increases. This is because, in longer sequences, the effect of the number of tokens ( N ) on number of data movement becomes dominant, thereby reducing the relative impact of d.
+
+2) Sensitivity to the number of banks: The number of memory banks per pseudo channel(sub channel) can also affect performance. Increasing the number of banks within a single die reduces inter-die communication overhead, which is gen-erally more costly than intra-die communication. Therefore, having more banks per pseudo channel may lead to better performance compared to configurations with fewer banks and more dies. Figure 13 illustrates the impact of varying the number of memory banks (8, 16, and 32) on performance improvement across different sequence lengths. The results show a similar trend as in previous experiments: performance increases with longer sequences. The geometric mean results reveal a slight improvement when using 32 banks. Interestingly, the config-uration with 16 banks shows slightly lower performance than the 8-bank setup. This behavior is attributed to interconnect bottlenecks: as the number of banks increases, simultaneous communication between them can saturate internal data paths or memory controller bandwidth. In such cases, the added Sequence Length Performance Improvement (%) 0% 25% 50% 75% 100% 128 256 512 1024 2048 4096 8192 16384 32768 65536 131072 262144 524288 1048576 GeoMean 8 banks 16 banks 32 banks Fig. 13. Sensitivity of model performance to varying numbers of memory banks. 
+
+parallelism is not fully utilized and instead leads to increased latency, offsetting the benefits of additional banks. Overall, these findings demonstrate that RED-PIM performs effectively across varying embedding sizes and memory bank configurations, ensuring robust performance under diverse workload characteristics. V. R ELATED WORK 
+
+PIM implementations for transformers have attracted atten-tion for reducing data movement and improving efficiency [9], [18], [23], [37], [40], [48], [49]. Early work like ReTrans-former [48] used ReRAM-based vector-matrix and matrix-matrix multiplication and lookup-based softmax to accelerate QKV and attention computations. However, such designs suf-fer from low precision and reliability, as well as limitations of ReRAM technology, which faces practical obstacles to large-scale manufacturing and has not yet been commercialized. TransPIM [49] uses an HBM-based architecture that dis-tributes tokens across banks and shifts keys in a Ring Broad-cast and Compute pattern for attention. It employs Ambit [35] for bit-serial point-wise multiplications and includes an Auxil-iary Compute Unit with an adder tree and buffer in each bank. Exponentiation is approximated using a fifth-order Taylor expansion via PIM operations. While the ring pattern reduces data movement, serial processing introduces high latency, each 8-bit multiplication requires hundreds of cycles due to repeated Activate-Activate-Precharge (AAP) operations. AAP also disrupts DRAM timing and requires decoder changes for parallel row activation. As a result, performance gains are limited, particularly for long sequences. HAIMA [9] optimizes computation by coordinating SRAM, DRAM, and the host. The host handles softmax and add-normalization, while other operations are distributed across memory hierarchies. However, frequent data transfers be-tween SRAM, DRAM, and the host introduce high energy consumption and latency, with bus transactions becoming a performance bottleneck. PACT-3D [37] employs NMP-Units with Neuron Process-ing Elements (NPEs) in each DRAM layer for in-memory computation, while RISC-V processors in the HBM logic layer handle normalization and softmax. However, integrating NPEs and RISC-V cores increases hardware overhead and chip complexity, and high-precision computations with NPEs result in longer latencies. Additionally, frequent data movement between DRAM banks and the RISC-V processors introduces further latency and data movement overhead. Moreover, there have been efforts to improve the computa-tional efficiency of self-attention mechanisms using locality-sensitive hashing and bucketing methods. Notable examples include IMCAT [22] and Cai et al [4]. These approaches reduce computation cost but increase complexity due to the bucketing and hashing operations, potentially increasing la-tency and memory overhead. Furthermore, IMCAT hashes keys into binary signatures and computes self-attention using only the m closest keys by Hamming distance. This risks losing important information by ignoring many relevant token relationships. In summary, while prior works have explored various Processing-in-Memory solutions for transformer models, they often target small-scale models or rely on impractical or overly complex hardware mechanisms. These designs struggle to scale to larger models with high-dimensional weights and long input sequences. Most importantly, they do not address the significant challenge of data movement. VI. C ONCLUSION 
+
+In this work, we addressed a key bottleneck in transformer models, the excessive data movement incurred during self-attention operations, by proposing RED-PIM, a PIM-based solution tailored for High-Bandwidth Memory (HBM) ar-chitectures. RED-PIM restructures attention computation to operate on a compact intermediate representation, significantly reducing memory usage and inter-bank communication. Our algorithmic and architectural co-design leverages local compu-tations within memory banks, efficient inter-bank communica-tion strategies, and hardware-friendly softmax approximation to achieve scalable and low-latency transformer inference. To evaluate our approach, we developed a simulation frame-work based on DAMOV, which enables detailed analysis of data movement in HBM architectures, showing up to a 99.99% improvement for long sequences and an average improvement of 66.42% over a simple PIM baseline with little impact on model accuracy. Along with these improvements, some limitations remain to be explored in future work:  
+
+> •
+
+Reduced Usable Bank Capacity: The use of FIMDRAM involves allocating portions of each memory bank for PCUs, which reduces the available storage.  
+
+> •
+
+Simulation-Based Evaluation: Due to the lack of avail-able commercial or open-source hardware support, our PIM architecture is evaluated through simulation, which models data movement and in-memory computation.  
+
+> •
+
+Focus on Inference: Our work focuses on inference. Adapting RED-PIM for training introduces challenges like gradient computation and intermediate data storage, which require further analysis and optimization. REFERENCES [1] J. Ahn, S. Hong, S. Yoo, O. Mutlu, and K. Choi, “A scalable processing-in-memory accelerator for parallel graph processing,” in Proceedings of the 42nd Annual International Symposium on Computer Architecture ,2015, pp. 105–117. [2] L. Bentivogli, P. Clark, I. Dagan, and D. Giampiccolo, “The fifth pascal recognizing textual entailment challenge.” TAC , vol. 7, no. 8, p. 1, 2009. [3] A. Boroumand, S. Ghose, Y. Kim, R. Ausavarungnirun, E. Shiu, R. Thakur, D. Kim, A. Kuusela, A. Knies, P. Ranganathan et al. , “Google workloads for consumer devices: Mitigating data movement bottle-necks,” in Proceedings of the Twenty-Third International Conference on Architectural Support for Programming Languages and Operating Systems , 2018, pp. 316–331. [4] J. Cai, M. A. Kaleem, R. Genov, M. R. Azghadi, and A. Amirsoleimani, “In-memory transformer self-attention mechanism using passive mem-ristor crossbar,” in 2024 IEEE International Symposium on Circuits and Systems (ISCAS) . IEEE, 2024, pp. 1–5. [5] D. Cer, M. Diab, E. Agirre, I. Lopez-Gazpio, and L. Specia, “Semeval-2017 task 1: Semantic textual similarity-multilingual and cross-lingual focused evaluation,” arXiv preprint arXiv:1708.00055 , 2017. [6] A. Cohan, F. Dernoncourt, D. S. Kim, T. Bui, S. Kim, W. Chang, and N. Goharian, “A discourse-aware attention model for abstractive summarization of long documents,” arXiv preprint arXiv:1804.05685 ,2018. [7] G. DeepMind, “Gemini 2 models,” 2024, available at https://deepmind. google/technologies/gemini. [8] J. Ding, S. Ma, L. Dong, X. Zhang, S. Huang, W. Wang, N. Zheng, and F. Wei, “Longnet: Scaling transformers to 1,000,000,000 tokens,” arXiv preprint arXiv:2307.02486 , 2023. [9] Y. Ding, C. Liu, M. Duan, W. Chang, K. Li, and K. Li, “Haima: A hybrid sram and dram accelerator-in-memory architecture for transformer,” in 
+
+2023 60th ACM/IEEE Design Automation Conference (DAC) . IEEE, 2023, pp. 1–6. [10] B. Dolan and C. Brockett, “Automatically constructing a corpus of sen-tential paraphrases,” in Third international workshop on paraphrasing (IWP2005) , 2005. [11] A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [12] S. Ghose, A. Boroumand, J. S. Kim, J. G´ omez-Luna, and O. Mutlu, “Processing-in-memory: A workload-driven perspective,” IBM Journal of Research and Development , vol. 63, no. 6, pp. 3–1, 2019. [13] W. Han, H. Cho, D. Kim, and J.-Y. Kim, “Sal-pim: A subarray-level processing-in-memory architecture with lut-based linear interpolation for transformer-based text generation,” arXiv preprint arXiv:2401.17005 ,2024. [14] G. Heo, S. Lee, J. Cho, H. Choi, S. Lee, H. Ham, G. Kim, D. Ma-hajan, and J. Park, “Neupims: Npu-pim heterogeneous acceleration for batched llm inferencing,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 , 2024, pp. 722–737. [15] L. Huang, S. Cao, N. Parulian, H. Ji, and L. Wang, “Efficient attentions for long document summarization,” arXiv preprint arXiv:2104.02112 ,2021. [16] H. Jun, J. Cho, K. Lee, H.-Y. Son, K. Kim, H. Jin, and K. Kim, “Hbm (high bandwidth memory) dram technology and architecture,” in 2017 IEEE International Memory Workshop (IMW) . IEEE, 2017, pp. 1–4. [17] A. K. Kabat, S. Pandey, and V. T. Gopalakrishnan, “Performance evaluation of high bandwidth memory for hpc workloads,” in 2022 IEEE 35th International System-on-Chip Conference (SOCC) , 2022, pp. 1–6. [18] M. Kang, H. Shin, and L.-S. Kim, “A framework for accelerating transformer-based language model on reram-based architecture,” IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems , vol. 41, no. 9, pp. 3026–3039, 2021. [19] N. Ketkar, J. Moolayil, N. Ketkar, and J. Moolayil, “Introduction to pytorch,” Deep learning with python: learn best practices of deep learning models with PyTorch , pp. 27–91, 2021. [20] Y. Kim, W. Yang, and O. Mutlu, “Ramulator: A fast and extensible dram simulator,” IEEE Computer Architecture Letters , vol. 15, no. 1, pp. 45–49, 2016. [21] Y.-C. Kwon, S. H. Lee, J. Lee, S.-H. Kwon, J. M. Ryu, J.-P. Son, O. Seongil, H.-S. Yu, H. Lee, S. Y. Kim et al. , “25.4 a 20nm 6gb function-in-memory dram, based on hbm2 with a 1.2 tflops pro-grammable computing unit using bank-level parallelism, for machine learning applications,” in 2021 IEEE International Solid-State Circuits Conference (ISSCC) , vol. 64. IEEE, 2021, pp. 350–352. [22] A. F. Laguna, A. Kazemi, M. Niemier, and X. S. Hu, “In-memory com-puting based accelerator for transformer networks for long sequences,” in 2021 Design, Automation & Test in Europe Conference & Exhibition (DATE) . IEEE, 2021, pp. 1839–1844. [23] A. F. Laguna, M. M. Sharifi, A. Kazemi, X. Yin, M. Niemier, and X. S. Hu, “Hardware-software co-design of an in-memory transformer network accelerator,” Frontiers in Electronics , vol. 3, p. 847069, 2022. [24] H. Levesque, E. Davis, and L. Morgenstern, “The winograd schema challenge,” in Thirteenth international conference on the principles of knowledge representation and reasoning , 2012. [25] C. Li, Z. Zhou, S. Zheng, J. Zhang, Y. Liang, and G. Sun, “Specpim: Ac-celerating speculative inference on pim-enabled system via architecture-dataflow co-exploration,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 , 2024, pp. 950–965. [26] W. Li, M. Manley, J. Read, A. Kaul, M. S. Bakir, and S. Yu, “H3datten: Heterogeneous 3-d integrated hybrid analog and digital compute-in-memory accelerator for vision transformer self-attention,” IEEE Trans-actions on Very Large Scale Integration (VLSI) Systems , 2023. [27] Z. Lu, X. Wang, M. T. Arafin, H. Yang, Z. Liu, J. Zhang, and G. Qu, “An rram-based computing-in-memory architecture and its application in accelerating transformer inference,” IEEE Transactions on Very Large Scale Integration (VLSI) Systems , 2023. [28] A. Maas, R. E. Daly, P. T. Pham, D. Huang, A. Y. Ng, and C. Potts, “Learning word vectors for sentiment analysis,” in Proceedings of the 49th annual meeting of the association for computational linguistics: Human language technologies , 2011, pp. 142–150. [29] O. Mutlu, S. Ghose, J. G´ omez-Luna, and R. Ausavarungnirun, “A modern primer on processing in memory,” in Emerging computing: from devices to systems: looking beyond Moore and Von Neumann . Springer, 2022, pp. 171–243. [30] G. F. Oliveira, J. G´ omez-Luna, L. Orosa, S. Ghose, N. Vijaykumar, I. Fernandez, M. Sadrosadati, and O. Mutlu, “DAMOV: A new method-ology and benchmark suite for evaluating data movement bottlenecks,” 
+
+IEEE Access , vol. 9, pp. 134 457–134 502, 2021. [31] OpenAI, “Introducing gpt-4.1 in the api,” 2025, openAI blog. [Online]. Available: https://openai.com [32] P. Rajpurkar, “Squad: 100,000+ questions for machine comprehension of text,” arXiv preprint arXiv:1606.05250 , 2016. [33] S. H. S. Rezaei, M. Modarressi, R. Ausavarungnirun, M. Sadrosadati, O. Mutlu, and M. Daneshtalab, “Nom: Network-on-memory for inter-bank data transfer in highly-banked memories,” IEEE Computer Archi-tecture Letters , vol. 19, no. 1, pp. 80–83, 2020. [34] D. Sanchez and C. Kozyrakis, “Zsim: Fast and accurate microarchitec-tural simulation of thousand-core systems,” in Proceedings of the 40th Annual International Symposium on Computer Architecture . New York, NY, USA: Association for Computing Machinery, 2013, pp. 475–486. [35] V. Seshadri, D. Lee, T. Mullins, H. Hassan, A. Boroumand, J. Kim, M. A. Kozuch, O. Mutlu, P. B. Gibbons, and T. C. Mowry, “Ambit: In-memory accelerator for bulk bitwise operations using commodity dram technology,” in Proceedings of the 50th Annual IEEE/ACM International Symposium on Microarchitecture , 2017, pp. 273–287. [36] Z. Shen, M. Zhang, H. Zhao, S. Yi, and H. Li, “Efficient attention: Attention with linear complexities,” in Proceedings of the IEEE/CVF winter conference on applications of computer vision , 2021, pp. 3531– 3539. [37] G. Singh and S. Vrudhula, “A dram-based near-memory architecture for accelerated and energy-efficient execution of transformers,” in Proceed-ings of the Great Lakes Symposium on VLSI 2024 , 2024, pp. 57–62. [38] R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Y. Ng, and C. Potts, “Recursive deep models for semantic compositionality over a sentiment treebank,” in Proceedings of the 2013 conference on empirical methods in natural language processing , 2013, pp. 1631–1642. [39] K. Sohn, W.-J. Yun, R. Oh, C.-S. Oh, S.-Y. Seo, M.-S. Park, D.-H. Shin, W.-C. Jung, S.-H. Shin, J.-M. Ryu et al. , “A 1.2 v 20 nm 307 gb/s hbm dram with at-speed wafer-level io test scheme and adaptive refresh considering temperature distribution,” IEEE Journal of Solid-State Circuits , vol. 52, no. 1, pp. 250–260, 2016. [40] S. Sridharan, J. R. Stevens, K. Roy, and A. Raghunathan, “X-former: In-memory acceleration of transformers,” IEEE Transactions on Very Large Scale Integration (VLSI) Systems , vol. 31, no. 8, pp. 1223–1233, 2023. [41] M. Tu, G. Wang, J. Huang, Y. Tang, X. He, and B. Zhou, “Multi-hop reading comprehension across multiple documents by reasoning over heterogeneous graphs,” arXiv preprint arXiv:1905.07374 , 2019. [42] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin, “Attention is all you need,” in Proceedings of the 31st International Conference on Neural Information Processing Systems , ser. NIPS’17. Red Hook, NY, USA: Curran Associates Inc., 2017, p. 6000–6010. [43] A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. R. Bowman, “Glue: A multi-task benchmark and analysis platform for natural lan-guage understanding,” arXiv preprint arXiv:1804.07461 , 2018. [44] H. Wang, S. Ma, L. Dong, S. Huang, D. Zhang, and F. Wei, “Deepnet: Scaling transformers to 1,000 layers,” IEEE Transactions on Pattern Analysis and Machine Intelligence , 2024. [45] A. Warstadt, A. Singh, and S. R. Bowman, “Neural network accept-ability judgments,” Transactions of the Association for Computational Linguistics , vol. 7, pp. 625–641, 2019. [46] A. Williams, N. Nangia, and S. R. Bowman, “A broad-coverage challenge corpus for sentence understanding through inference,” arXiv preprint arXiv:1704.05426 , 2017. [47] xAI, “Grok by xai,” 2024, available at https://x.ai. [48] X. Yang, B. Yan, H. Li, and Y. Chen, “Retransformer: Reram-based processing-in-memory architecture for transformer acceleration,” in 
+
+Proceedings of the 39th International Conference on Computer-Aided Design , 2020, pp. 1–9. [49] M. Zhou, W. Xu, J. Kang, and T. Rosing, “Transpim: A memory-based acceleration via software-hardware co-design for transformer,” in 
+
+2022 IEEE International Symposium on High-Performance Computer Architecture (HPCA) . IEEE, 2022, pp. 1071–1085. [50] M. Zhu, Y. Zhuo, C. Wang, W. Chen, and Y. Xie, “Performance evaluation and optimization of hbm-enabled gpu for data-intensive applications,” IEEE Transactions on Very Large Scale Integration (VLSI) Systems , vol. 26, no. 5, pp. 831–840, 2018.

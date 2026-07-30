@@ -1,0 +1,649 @@
+Title: DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch
+
+URL Source: https://arxiv.org/pdf/2607.26475v1
+
+Published Time: Thu, 30 Jul 2026 00:27:15 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch 
+
+## Zuning Liang 
+
+Fudan University Shanghai Innovation Institute China 
+
+25113090054@m.fudan.edu.cn 
+
+## Zhiyi Yao 
+
+Fudan University China 
+
+23110720054@m.fudan.edu.cn 
+
+## Qi Chen 
+
+Fudan University China 
+
+22307130007@m.fudan.edu.cn 
+
+## Yuedong Xu 
+
+Fudan University China 
+
+ydxu@fudan.edu.cn 
+
+## Hao Dai 
+
+Ant Group China 
+
+dh183333@antgroup.com 
+
+## Zhiqiang Ding 
+
+Ant Group China 
+
+chucai.dzq@antgroup.com 
+
+## Tongkai Yang 
+
+Ant Group China 
+
+tongkai.ytk@antgroup.com 
+
+## Jinlong Hou 
+
+Fudan University Shanghai Innovation Institute China 
+
+houjinlong@sii.edu.cn 
+
+## Yuan Cheng 
+
+Fudan University Shanghai Innovation Institute China 
+
+cheng_yuan@fudan.edu.cn 
+
+## Abstract 
+
+Long-context inference is becoming a fundamental capabil-ity for modern LLM serving, especially driven by emerging agentic applications. Yet it faces a severe memory wall that the KV cache scales proportionally with increasing context length and request concurrency. Existing sparse KV cache methods offload most KV entries to host memory and retrieve only the critical KV entries needed by each decoding step. However, they commonly introduce substantial auxiliary states in GPU memory for KV retrieval management. Our measurements show that these often-overlooked auxiliary states introduce significant memory overhead and become a new bottleneck under high-concurrency workloads. In this paper, we present DualDecoder, a lightweight serv-ing system for long-context LLM inference that enables ef-ficient sparse KV cache retrieval from host memory. Our key insight is that the critical KV entries required for de-coding the next token can be accurately predicted from the preceding speculated token. This predictability enables KV retrieval to be proactively prefetched and overlapped with decoding computation, effectively eliminating the GPU mem-ory overhead of auxiliary states. To achieve this prefetch-ing efficiently, DualDecoder leverages a novel dual-token decoding pipeline that accurately identifies critical KV en-tries with negligible computational overhead, and designs a layer-aware transfer schedule to overlap KV prefetching with model computation and a layer-scoped memory man-ager to reduce the GPU runtime buffer. Experimental results show that DualDecoder improves decoding throughput by up to 2.62 × over state-of-the-art systems while preserving decoding latency and model quality. 
+
+## 1 Introduction 
+
+In large language model (LLM) and agentic AI services, long contexts significantly improve inference accuracy and re-sponse coherence, enabling the execution of complex real-world tasks such as full-document understanding [ 2 , 4 , 11 ]and large-scale codebase analysis without context fragmen-tation [ 18 , 41 ]. Modern LLMs increasingly support context lengths ranging from hundreds of thousands to even mil-lions of tokens [ 3 , 26 ]. A major challenge in long-context inference is the limited capacity of GPU memory. To avoid re-peatedly performing expensive extra matrix multiplications, LLMs cache intermediate key and value (KV) tensors gener-ated during autoregressive decoding steps [ 20 , 27 ]. However, the KV cache grows proportionally with context length and request batch size, and can quickly occupy a substantial por-tion of the limited GPU memory [ 14 , 15 , 21 ]. Consequently, reducing the memory footprint of the KV cache has become a critical problem in enabling efficient long-context inference. Dynamic sparse KV cache techniques [ 29 , 40 ] provide an effective direction for mitigating this memory pressure. Since each decoding step usually attends to only a small subset of historical tokens [ 17 ], instead of keeping the entire KV cache in GPU memory, these systems offload most KV entries to host memory and retrieve only the selected sparse KV entries needed by the current attention computation. This design substantially reduces the memory footprint of GPU-resident KV entries and becomes a promising approach for high-throughput, long-context LLM serving (§ 2). However, the selected KV entries must be gathered from host memory and transferred to GPU memory before atten-tion consumes them, while CPU-to-GPU bandwidth is much lower than GPU memory bandwidth. To reduce this retrieval 
+
+> 1arXiv:2607.26475v1 [cs.DC] 29 Jul 2026
+
+overhead, existing systems keep additional auxiliary states in GPU memory. For example, such states may reconstruct selected key entries [ 28 , 40 ] or guide future KV prefetch-ing [ 13 ]. These designs are effective because they reduce the amount of exposed CPU-to-GPU transfer on the decoding critical path. Yet they also introduce a new memory cost that is easy to overlook. We refer to the GPU memory occupied by such auxiliary state as KV-cache-auxiliary residency . Our measurements show that this residency can dominate the memory usage and even consume 64% of GPU memory in heavy workloads. Under high-concurrency workloads, KV-cache-auxiliary residency becomes a new bottleneck that limits the maximum request batch size and prevents dynamic sparse KV cache systems from reaching the serving through-put that the hardware could otherwise support (§ 3). In this paper, our key observation is that sparse KV re-trieval can be predicted across adjacent decoding steps. In dynamic sparse KV cache mechanisms, the retrieval index of a decoding step is computed from the token being pro-cessed and a static GPU-resident KV landmarks. Therefore, once a useful prediction of the next token is available, we can estimate the retrieval index of the next step before that step reaches attention. More importantly, our measurements show that even when token prediction is imperfect, it can still provide sufficient information to predict most of the KV entries needed by the following decoding step. This pre-dictability creates a new opportunity for long-context serv-ing. Instead of waiting for the true retrieval index and then fetching selected KV entries on the critical path, the system can issue KV retrieval earlier and overlap host-to-device transfer with decoding computation. In this way, sparse KV retrieval can be conducted fast without relying on large GPU-resident auxiliary states, leaving more GPU memory available for larger request batches (§ 4). Based on this observation, we present DualDecoder, a lightweight long-context LLM serving system that makes sparse KV retrieval predictive rather than residency heavy. The core of DualDecoder is to predict the retrieval index of future decoding work and prefetch the corresponding sparse KV entries from host memory before they are consumed by attention. This approach allows DualDecoder to overlap KV retrieval with model computation, thereby preserving the latency benefit of dynamic sparse KV cache without main-taining large GPU-resident auxiliary state. Realizing this approach in a practical decoding pipeline requires address-ing three challenges. First, the system must obtain retrieval guidance without turning each decoding step into a much heavier model execution. To address this issue, DualDecoder introduces a dual-token decoding pipeline that generates the normal output token and the retrieval-guiding token within the same decoding flow (§ 5.2). Second, predicted KV entries must be fetched early enough to hide CPU-to-GPU transfer latency, but not too early that they occupy much GPU memory. DualDecoder addresses this tension with a layer-aware transfer schedule that efficiently overlaps KV movement with model layer execution and corrects pre-diction misses on the critical path (§ 5.3). Third, predictive prefetching must not recreate the memory pressure that it is designed to remove. DualDecoder therefore uses a layer-scoped KV memory manager that significantly reduces the runtime sparse KV buffer size and coordinates asynchronous KV transfer with attention computation (§ 5.4). 
+
+Contributions. Our main contributions are summarized as follows: 
+
+• We identify KV retrieval predictability as a new opportu-nity for long-context LLM serving. In dynamic sparse KV cache systems, the retrieval index of a future decoding step can be predicted before that step reaches attention. To the best of our knowledge, this is the first work to characterize and exploit KV retrieval predictability (§ 4). 
+
+• We design DualDecoder, a lightweight predictive retrieval system that replaces residency-heavy sparse KV retrieval with prefetch-based KV movement. DualDecoder effec-tively predicts future sparse KV demand and efficiently overlaps KV transfer with decoding computation (§ 5). 
+
+• We implement DualDecoder atop of a state-of-the-art dy-namic sparse KV cache system [ 28 ] and evaluate its perfor-mance on representative long-context serving workloads. The results show that DualDecoder improves decoding throughput by up to 2.62 × over state-of-the-art inference systems while preserving decoding latency and genera-tion quality (§ 6). 
+
+## 2 Background 
+
+2.1 LLM Inference with KV Cache LLM inference and batching techniques. Modern LLM serving systems commonly run inference on AI-specific ac-celerators, like GPUs, to meet the throughput and latency requirements of online applications [ 14 , 38 , 42 ]. A typical request is processed in two phases: prefilling, which con-sumes the input prompt, and autoregressive decoding, which generates output tokens one step at a time. Since decoding is sequential within each request, the end-to-end serving throughput largely depends on how many requests can be decoded concurrently [ 1]. Given the growing computing capability of GPUs, applications widely adopt batched de-coding techniques to improve the overall token throughput and avoid wasting GPU resources. For example, a Llama-3-8B service running on a single GPU may group 4 or 8 active requests into one decoding batch and process them with the same model kernels. As long as the service-level objec-tives (SLOs) are not violated, increasing the decoding batch size usually improves token throughput and amortizes GPU execution cost across more requests [10, 38]. 
+
+KV cache and its memory footprint. Autoregressive de-coding relies on the key-value (KV) cache to avoid repeatedly recomputing the attention states of previous tokens [ 27 , 40 ]. 
+
+> 2
+
+At each decoding step, the model computes the key and 
+
+value tensors of the newly generated token and appends them to the cache as KV entries. In later steps, the attention computation reuses these cached KV entries together with the current query to generate the next token. This reuse is essential because recomputing all historical key and value tensors would introduce substantial redundant computation, especially for long-context requests. However, the KV cache also becomes one of the dominant consumers of GPU high-bandwidth memory (HBM) [ 20 ]. Its footprint grows with the request batch size, context length, number of layers, and model hidden dimensions. As these factors increase, espe-cially in long-context serving, the KV cache can occupy a large fraction of the limited GPU memory capacity. Serv-ing systems must then reduce the decoding batch size to avoid out-of-memory errors, which directly lowers token throughput and leaves expensive GPU compute resources underutilized [9, 15, 28]. 
+
+2.2 Dynamic Sparse KV Cache 
+
+Dynamic sparse KV cache mechanisms reduce GPU memory usage by moving most KV entries to host memory and bring-ing back only the entries that are needed for each decoding step [ 19 , 24 , 29 ]. The key observation behind these mecha-nisms is that next-token generation does not attend to all historical tokens uniformly. Instead, for many decoding steps, the attention computation depends primarily on a small sub-set of important historical tokens, while many cached KV entries have little impact on the generated token [ 17 , 33 , 37 ]. Based on this observation, dynamic sparse KV cache systems keep the full KV cache, or most of it, in host memory and retrieve selected KV entries into GPU HBM before attention computation, as shown in Figure 1. The selection is typically guided by lightweight GPU-resident metadata. For example, ShadowKV [ 28 ] segments adjacent KV entries into chunks and maintains compressed landmarks for these chunks, so that the GPU can select important chunks according to the current query and then retrieve the corresponding sparse KV entries from host memory. Since the landmark represen-tation is much smaller than the full KV cache, this approach saves GPU memory and enables a larger request batch size while still preserving access to the original KV entries when they are needed. However, applying dynamic sparse KV cache mechanisms in practical LLM serving systems introduces nontrivial data movement overhead [ 7, 15 ]. First, host-to-device bandwidth is much lower than GPU HBM bandwidth. For example, PCIe 5.0 provides only 64 GBps unidirectional bandwidth, which is far below the 4.8 TBps bandwidth level of modern GPU HBM. As a result, even fetching a sparse subset of critical KV entries can block decoding if the transfer is exposed on the critical path. Second, the selected KV entries are often scat-tered across the long context rather than stored as one con-tiguous memory region. The system therefore has to gather ... ... ... ... ...   
+
+> Host Full KV Cache
+> Select
+> Token GPU Selection K Landmark
+> ... Top-k Sparse KV
+> NewToken
+> Residency(Low Rank K / 2-bit KV···)
+> Attention Reconstruct Req 3
+> ...
+> Req 3
+> ...
+> 65536 65535 65536 65535 65536 65535 65536 65535 Req 2
+> ... Keys Req 1
+> ...
+> Req 2
+> ... Values Req 1
+> ...
+> 65536 65535 65536 65535
+> ... ... Gather
+
+Figure 1. LLM decoding step with dynamic sparse KV cache. many noncontiguous KV entries from host memory before or during the host-to-device transfer, which further increases retrieval latency. To reduce this overhead, recent systems introduce GPU-resident auxiliary state for KV selection, re-construction, or communication scheduling. ShadowKV [ 28 ]keeps a low-rank representation of the key cache on the GPU and reconstructs selected key entries on the fly, while SpeCache [ 13 ] maintains a compact quantized KV represen-tation to guide future KV prefetching. These auxiliary states help reduce exposed retrieval latency without directly evict-ing useful KV information. However, because they must be accessed during decoding, they also consume valuable GPU memory. In this paper, we refer to the GPU memory occupied by such auxiliary state as KV-cache-auxiliary residency .
+
+## 3 Motivation 
+
+In this section, we first introduce the severe throughput issues when we try to apply the dynamic sparse KV cache mechanisms (§ 3.1). And we then present that the throughput bottleneck stems from the memory occupancy of KV-cache-auxiliary residency (§ 3.2). 
+
+3.1 Poor Serving Throughtput 
+
+We deploy model inference systems with novel dynamic sparse KV cache mechanisms, including ShadowKV and SpeCache, on a testbed that consists of 8 GPUs. The mem-ory capacity of each GPU is 80 GB and the interconnections between GPU and CPU offer a bandwidth of up to 64 GBps. With this testbed, we serve popular LLMs, including the Llama series [ 22 ] and Qwen series [ 23 ] models, with model sizes spanning from 8B to 32B and use mainstream long-context benchmarks such as RULER [ 11 ] to validate serving quality. 
+
+Limited batch size. We first measure the maximum request batch size that each system can support without triggering out-of-memory (OOM) errors. To understand how far exist-ing systems are from the memory capacity limit, we also compute an ideal batch size by excluding the KV cache from GPU memory while keeping model weights and necessary runtime activations. This ideal setting is not a deployable 
+
+> 3
+
+Figure 2. Maximum request batch size of decoding using full KV cache, ShadowKV and ideal scaling. 
+
+Figure 3. End-to-end decoding throughput. system, but it provides a useful upper bound on the serving concurrency that the GPU could support if KV cache mem-ory were not the bottleneck. As shown in Figure 2, existing systems support much smaller batch sizes than this ideal bound. For example, when serving 8B models, full KV cache serving and ShadowKV support only 4 and 24 requests per batch, respectively, while the ideal setting can accommodate 120 requests. The gap becomes even larger as the model size increases. When serving 32B models, ShadowKV can support only 4 requests per batch, which is merely 6.7% of the ideal batch size. These results show that dynamic sparse KV cache mechanisms reduce the memory footprint of KV entries, but they still leave serving concurrency far below what the hardware could otherwise support. 
+
+Throughput degradation. The limited batch size directly translates into lower application-level token throughput. Fig-ure 3 shows the decoding throughput of an 8B model as the request batch size increases. The throughput increases with batch size because batched decoding better amortizes GPU kernel execution and improves hardware utilization. How-ever, existing systems stop scaling once they reach their mem-ory capacity limit. Full KV cache serving and ShadowKV can only run up to 8 and 48 requests per batch, reaching 52 and 157 tokens per second, respectively. To show the throughput gaps caused by the limited batch size, we depict the ideal throughput (with the ideal batch size above) by scaling the throughput proportionally with the increase in the batch size. Compared with this ideal throughput, full KV cache serving and ShadowKV lose 72% and 35% of potential token throughput, respectively. This throughput gap indicates that the batch size limitation is not merely a memory capacity is-sue. It directly wastes GPU compute resources and prevents long-context serving from reaching the concurrency level required by practical deployments. Low-rank K (36%) K Landmark (28%) 
+
+> (7.5%) (20%) (s) (GB)
+
+Figure 4. Memory footprint over time for a typical inference process. 8B 14B 32B  
+
+> Model Size
+> 0
+> 25
+> 50
+> 75
+> Percent of GPU HBM (%)
+> 74.7%
+> 59.6%
+> 15.8%
+> 67.4%
+> 53.8%
+> 10.1%
+> 37.5% 30.0%
+> 5.6%
+> ShadowKV
+> SpeCache
+> IDEAL
+> Others
+
+Figure 5. Memory occupation of residency over model sizes. 
+
+3.2 Memory Capacity Analysis 
+
+We hereby investigate the GPU memory footprint of the evaluated inference systems to identify the root cause of the serving throughput bottleneck. Figure 4 breaks down the runtime GPU memory usage of a representative 8B model serving workload into model weights, sparse KV entries, K landmarks, and KV-cache-auxiliary residency. The key observation is that K landmarks and KV-cache-auxiliary res-idency occupy up to 64% of GPU memory and can be 8.5×
+
+larger than the sparse KV entries that are actually kept in GPU HBM. This large footprint is not transient. It remains resident throughout decoding because the auxiliary state must be accessed at every decoding step for KV selection, reconstruction, or prefetching. Moreover, its size grows with request batch size and context length, which makes it in-creasingly difficult for dynamic sparse KV cache systems to scale to large serving workloads. To further validate this trend, we measure the fraction of GPU memory consumed by KV-cache-auxiliary residency across different models and systems. As shown in Figure 5, KV-cache-auxiliary residency consistently accounts for at least 30% of GPU memory in all evaluated settings. These results show that although dy-namic sparse KV cache systems reduce the memory foot-print of GPU-resident KV entries, they introduce a new form of memory pressure through GPU-resident auxiliary state, which becomes the limiting factor for request batch size and serving throughput. As we presented in § 2.2, this large KV-cache-auxiliary residency is a direct consequence of reducing CPU to GPU KV retrieval overhead. Since fetching sparse KV entries from host memory over PCIe is expensive, recent systems avoid 
+
+> 4
+
+relying solely on raw data transfer. Instead, they keep aux-iliary state in GPU HBM to accelerate KV selection, reduce transferred data volume, or reconstruct part of the sparse KV cache on the fly. For example, ShadowKV keeps a low-rank key cache on the GPU to reconstruct selected key en-tries during decoding and fetches only the corresponding value entries from host memory. SpeCache similarly keeps a compact quantized KV representation to guide future KV prefetching. These designs effectively reduce exposed re-trieval latency, but they shift part of the KV cache cost back to GPU memory. The resulting KV-cache-auxiliary residency is nontrivial becau se it scales with model depth, batch size, context length, hidden dimension, sparse budget, chunk size, and quantization or low-rank configuration. As models and contexts grow, this auxiliary state can consume a substantial portion of the HBM capacity that dynamic sparse KV cache mechanisms are intended to save. Therefore, the throughput bottleneck in existing systems is no longer only the sparse KV entries themselves, but the GPU-resident auxiliary state required to make sparse retrieval fast enough for decoding. 
+
+## 4 Predictive KV Retrieval 
+
+In this section, our goal is to eliminate KV-cache-auxiliary residency while preserving the efficiency of dynamic sparse KV cache. To this end, we first show that sparse KV retrieval exhibits strong predictability across consecutive decoding steps (§ 4.1). We then explain how this predictability cre-ates an opportunity to prefetch selected KV entries from host memory before they are consumed (§ 4.2), and discuss the practical challenges of turning this opportunity into an efficient decoding pipeline (§ 4.3). 
+
+4.1 KV Retrieval Predictability 
+
+In dynamic sparse KV cache systems, each decoding step computes a retrieval index that specifies which KV entries should be fetched from host memory for attention compu-tation. This retrieval index is determined by the current query and the GPU-resident landmarks that summarize the offloaded KV entries. More concretely, in the decoding step 
+
+𝑆 𝑖 , which is responsible for decoding token 𝑇 𝑖 +1, the KV index of token 𝑇 𝑖 +1 can be computed by token 𝑇 𝑖 and the landmarks. This dependency creates a natural opportunity for prefetch-ing. If token 𝑇 𝑖 were known during step 𝑆 𝑖 −1, the system could compute the retrieval index for 𝑇 𝑖 +1 ahead of time and fetch the corresponding KV entries before step 𝑆 𝑖 starts. The landmarks do not prevent this precomputation because they are generated before decoding and remain fixed throughout the decoding process. The real obstacle is the token depen-dency of autoregressive decoding. Token 𝑇 𝑖 is not available until step 𝑆 𝑖 −1 completes, which makes exact retrieval index precomputation infeasible. Token2 K Landmark       
+
+> Token3’
+> Token3 Token4’ Step1 Step2 KV for token 2 Predictive Index 3 Update
+> Token1 K Landmark
+> Token2
+> Token2 Token3’ Predictive Index2 KV for token 1 Retrieve from Host
+> Token3 KV Landmark
+> Token4’
+> Token4 Token5’ Step3 KV for token 3 Retrieve from Host Update Index1 Update Index2 Index3
+
+Figure 6. KV retrieval prediction via speculative token. 
+
+Retrieval index prediction. To overcome this dependency, we use a lightweight token prediction mechanism to es-timate the retrieval index of the next decoding step. Re-cent studies [ 34 ] provide approaches like speculative de-coding to precisely predict the decoding tokens. However, they either introduce heavy computation and memory over-head by running a draft model, which precomputes the to-kens [ 16 , 25 , 36 ], or only cover partial model layers [ 5 , 8 , 35 ], which makes them not fit in our case. Our insight is that we do not need to predict the exact next token. A rough token prediction is enough for predicting the correct KV cache index .To show this, we introduce speculative token into decoding, as shown in Figure 6. In each decoding step, the model gen-erates both the output token and a speculative token that is placed immediately after the output token in the sequence. Because the speculative token is computed with the output token included in its causal context, it carries similar po-sitional and contextual information as the next true token. Thus, in each decoding step, we can predict the KV cache index of the next token, by computing it with the landmarks and the speculative token. Figure 7(a) presents the predic-tion accuracy of both speculative token and next KV cache. We can observe that for token prediction, the accuracy can be low during decoding steps. However, compared to that, the KV prediction accuracy can always be higher, with an average accuracy of 88% across the serving configurations. 
+
+Sensitivity to the first speculative token. We further study how the initial speculative token affects retrieval in-dex prediction. After the first speculative token is chosen, subsequent speculative tokens are generated by the model it-self, so the initial token can strongly influence the prediction trajectory. We evaluate two initialization strategies for the first speculative token 𝑇 ′ 
+
+> 2
+
+, including using the ground truth output token 𝑇 2 and using a randomly selected token. As shown in Figure 7(b), using 𝑇 2 as the first speculative token consistently yields much higher retrieval index prediction ac-curacy. In contrast, when adopting random initialization, the accuracy can degrade significantly to even 56% on average. This result shows that retrieval index prediction is sensitive to the first speculative token, and using ground-truth tokens can obtain the best performance. 
+
+4.2 Opportunities from Predictability 
+
+The predictability of KV retrieval indices creates a direct op-portunity to move sparse KV retrieval out of the critical path  
+
+> 5(a) KV and token prediction. (b) Initial speculative token selection.
+
+Figure 7. Accuracy of KV prediction. of decoding. Thus, we can directly apply it during decoding and prefetch the predicted KV cache of the next step, which we call the speculative KV cache . This prefetching offers a direct opportunity to move sparse KV retrieval out of the critical path of decoding. Since they are not consumed by the current decoding step, their host-to-device transfer can be issued early and overlapped with useful GPU computation. This allows us to hide much of the CPU-to-GPU KV transfer latency behind the computation of the current step, instead of waiting until the true retrieval index is available and then fetching the selected KV entries on the critical path. In this way, predictive retrieval can reduce exposed communication latency without changing the attention result, as any missing entries can still be corrected before attention computation. This opportunity also addresses the memory bottleneck identified in § 3.2. Existing dynamic sparse KV cache sys-tems rely on KV-cache-auxiliary residency because they need GPU-resident auxiliary state to accelerate KV selection, re-construction, or future prefetching. Predictive retrieval pro-vides a different way to reduce retrieval latency. Rather than keeping a low-rank key cache, a quantized KV cache, or other large auxiliary state in GPU HBM, we can use the pre-dicted retrieval index to start transferring the likely needed KV entries earlier. This shifts the optimization target from storing more auxiliary state on the GPU to scheduling KV movement earlier in the decoding pipeline. As a result, we can potentially preserve the latency benefit of sparse KV retrieval while releasing a large fraction of GPU memory previously occupied by KV-cache-auxiliary residency. 
+
+4.3 Challenges 
+
+Although predictive KV retrieval provides a promising way to reduce exposed CPU-to-GPU transfer latency and remove large KV-cache-auxiliary residency, applying this idea in a real decoding pipeline faces critical challenges. C1: Balanc-ing prefetch latency and buffer footprint. Speculative prefetching is only beneficial when KV transfer is scheduled at the right time. If prefetching starts too late, the selected KV entries may not arrive before attention consumes them, and decoding still stalls on host-to-device transfer. If prefetching starts too early, these entries must remain in GPU HBM for longer, increasing the sparse KV buffer footprint and reduc-ing the batch size benefit of removing KV-cache-auxiliary residency. 
+
+C2: Controlling the computational overhead of spec-ulative token generation. The speculative token should help predict future KV entries, but it should not make each decoding step much more expensive. A naive implemen-tation may run another decoding pass or launch separate kernels for the output token and the speculative token, which increases computation, kernel launch overhead, and HBM traffic. Such overhead can easily cancel the latency benefit of KV prefetching. 
+
+C3: Bounding the prefetched KV buffer. Predictive re-trieval reduces the need for KV-cache-auxiliary residency, but it can still consume large GPU memory if prefetched KV entries are buffered naively. A straightforward imple-mentation would reserve GPU HBM for the speculative KV cache of future decoding work. This buffer grows with batch size, context length, and sparse KV budget, and can quickly consume the memory saved by removing auxiliary state. 
+
+## 5 DualDecoder Design 
+
+In this section, we first introduce the overall design of Du-alDecoder (§ 5.1). We then describe the three key components in detail: dual-token decoding pipeline (§ 5.2), speculative KV cache transfer scheduler (§ 5.3), and layer-scoped KV memory management (§ 5.4). 
+
+5.1 System Overview 
+
+Our goal is to improve long-context serving throughput without increasing decoding latency or reintroducing large GPU-resident auxiliary state. To this end, we design DualDe-coder, a predictive KV retrieval system that uses retrieval index prediction to prefetch sparse KV entries from host memory before they are needed by attention. As shown in Figure 8, DualDecoder consists of three components that jointly address the challenges in § 4.3. 
+
+Dual-token decoding pipeline. DualDecoder first intro-duces a dual-token decoding pipeline to generate the output token and the speculative token within the same decoding step. Instead of running an additional decoding pass for to-ken prediction, DualDecoder co-executes the two tokens in the single model kernels and uses a causal mask to pre-serve the normal autoregressive dependency. This allows the speculative token to provide retrieval guidance with little additional execution overhead. To stabilize retrieval index prediction from the beginning of decoding, DualDecoder ini-tializes the first speculative token with the real output token produced by a lightweight pre-decoding step and reuses the KV entries generated in this step. 
+
+Speculative KV cache transfer schedule. Given the re-trieval index predicted from the speculative token and land-marks, DualDecoder prefetches the corresponding sparse    
+
+> 6... ... ... ... ...
+> Temp Mask Sparse KV Flash
+> Attention Dual Token
+
+Host Memory Speculative KV Transfer(5.3) GPU   
+
+> Adaptive Low Rank K
+> Gather Copy
+> Prefetch Index Current Index Pre-Decode Dual-Decode
+> Landmark
+> Attention Index Queue
+> ... layer x-1 layer x ...
+> 2 Layer
+> Buffer Sparse KVBuffer
+> Reconstruction
+> Full KV Cache
+> Sparse KV Buffer
+
+KV Scheduler 
+
+> Urgent Stream
+> Prefetch Stream ...
+> Event Pipeline Writeback Index Queue
+> Dual-Token Pipe(5.2) Ping-Pong Buffer(5.4)
+
+Figure 8. Overview of DualDecoder KV entries from host memory to GPU HBM before the next attention computation consumes them. The transfer sched-ule is designed to hide CPU-to-GPU latency while avoiding excessive early buffering. Meanwhile, DualDecoder handles prediction misses by giving missing KV entries higher trans-fer priority than background prefetches and by selectively reconstructing key entries when fetching them would other-wise block decoding. 
+
+Layer-scoped KV memory management. DualDecoder manages the GPU-resident sparse KV working set with a layer-scoped memory manager. It uses a two-layer ping-pong buffer so that one buffer can serve the current attention com-putation while the other receives prefetched KV entries. To reduce host-side gather overhead, DualDecoder further uses a GPU-side sparse KV assembly kernel that places transferred KV entries into the attention layout in GPU HBM. This de-sign keeps the prefetched KV buffer small while maintaining correct and efficient sparse attention execution. 
+
+5.2 Dual-Token Decoding Pipeline 
+
+As discussed in § 4.1, retrieval index prediction requires a speculative token that approximates the next token’s atten-tion behavior. A straightforward implementation is to run an extra decoding pass to generate this token in addition to the normal output token. However, this approach is too ex-pensive for serving. It nearly doubles the per-step model exe-cution, introduces additional kernel launches, and increases GPU HBM traffic. Moreover, speculative tokens are not in-dependent predictions. Each speculative token is generated from the previous output token and the previous specula-tive token, so a poor initialization can propagate through later decoding steps and reduce retrieval index prediction accuracy. To address these issues, DualDecoder designs a dual-token decoding pipeline that co-executes the output token and the speculative token within the normal decoding flow and initializes the first speculative token with the real output token. 
+
+Dual-token decoding. Modern GPUs are most efficient when model kernels operate on sufficiently large tensor shapes. DualDecoder leverages this property by computing the output token and the speculative token together instead of launching two separate decoding passes. At decoding step 
+
+𝑆 𝑖 , DualDecoder takes the current input token 𝑇 𝑖 and the speculated token 𝑇 ′ 
+
+> 𝑖 +1
+
+as the two token inputs. A naive batch-ing implementation can concatenate them along the batch dimension, allowing kernels such as GeMM to process them concurrently. However, as 𝑇 𝑖 and 𝑇 ′ 
+
+> 𝑖 +1
+
+show causality, batch-ing them can make the attention computation, which models the sequential relationship, ignore their correlations and affect the token prediction. Therefore, DualDecoder proac-tively transforms the input tensor shape to reconcatenate both types of tokens that belong to the same requests, along the sequence dimension. Meanwhile, following the basic de-coding logic, the previous tokens can never be affected by the following tokens, e.g., 𝑇 𝑖 will not be affected by 𝑇 ′
+
+> 𝑖 +1
+
+. To achieve this, we add a mask that prevents the output token from using the data of the speculative token in the attention computation. 
+
+First speculative token initialization. The first specu-lative token is important because it determines the initial trajectory of subsequent speculative tokens. As shown in § 4.1, using the real second token 𝑇 2 as the initial specu-lative token produces much more accurate retrieval index prediction than using a random token. Therefore, before en-tering the dual-token pipeline, DualDecoder performs one lightweight pre-decoding step with the first decoding input token 𝑇 1 to generate 𝑇 21. DualDecoder then uses 𝑇 2 as 𝑇 ′
+
+> 2
+
+and starts dual-token decoding from the following execution. This initialization adds only one extra decoding step over an entire generation process that usually contains many de-coding steps. In addition, the pre-decoding step has already fetched or prepared the KV entries needed for its execution, and DualDecoder reuses these entries when entering the dual-token pipeline, further reducing the effective startup overhead. 
+
+5.3 Speculative KV Cache Transfer Schedule 
+
+With the dual-token decoding pipeline, each decoding step can use the speculative token and landmarks to predict the               
+
+> 1𝑇 1is the first decoding input token produced after prefilling.
+> 7Time Compute Communicate Layer i Layer i+2
+> Pre-Attn Attn
+> Layer i+2
+> Layer i+1
+> Pre-Attn Attn Post-Attn Missing KV Trans Prefetch
+> Pre-Attn (a) Prioritized KV transfer schedule. Time Post-Attn Missing KV Trans Prefetch
+> Layer i Layer i+1 Layer i+2
+> Pre-Attn Attn Layer i+2 Layer i+3 Pre-Attn Attn K Reconstruct
+> Compute Pre-Attn
+> Communicate
+> (b) KV transfer overlapping with adaptive K reconstruction
+
+Figure 9. DualDecoder layer-aware KV transfer overlapping. retrieval index of the next step. However, prediction alone does not remove KV retrieval latency. The selected KV en-tries still have to be gathered from host memory and trans-ferred to GPU HBM before attention consumes them. More-over, prediction is not always exact, so the entries missed by the predicted retrieval index must also be fetched or re-constructed to preserve the same sparse attention result. To address these issues, DualDecoder designs a speculative KV transfer schedule that overlaps predicted KV retrieval with decoding computation, prioritizes missing KV entries on the critical path, and selectively reconstructs key entries for layers with low prediction accuracy. 
+
+Layer-aware KV transfer overlapping. The speculative KV cache contains the KV entries selected by the predicted retrieval index. A naive implementation would fetch all spec-ulative KV entries for the next decoding step as early as possible. This can hide communication latency, but it also keeps prefetched entries in GPU HBM for a long time and in-creases the sparse KV buffer footprint. DualDecoder instead schedules KV transfer according to the layer execution order of the model. Although the retrieval index is predicted in the previous decoding step, DualDecoder does not immediately fetch all selected entries. For a target layer 𝑖 + 2, DualDe-coder starts prefetching its speculative KV entries after the attention computation of layer 𝑖 completes, as shown in Fig-ure 9(a). This timing provides a useful overlap window for CPU-to-GPU transfer while avoiding long-lived prefetched buffers. If the transfer is delayed until layer 𝑖 + 1 finishes attention, layers with larger sparse KV budgets may not receive their entries in time and the following attention com-putation has to wait. In this way, layer-aware scheduling balances transfer latency hiding and GPU memory usage. We describe the corresponding buffer management in § 5.4. 
+
+Prioritized missing KV transfer. Although the predicted retrieval index covers most required KV entries, prediction misses are inevitable. These missing KV entries must be available before attention starts, otherwise the sparse atten-tion result would differ from the result computed with the true retrieval index. The difficulty is that the true retrieval index is only known close to the attention computation, leav-ing little time for correction. If missing entries are placed in the same transfer queue as background prefetches, they may wait behind future speculative transfers and directly Event Driven Pipeline  
+
+> Get Omitted Index
+
+Compute Stream Prefetch Stream Urgent Stream Prefetch Cur Layer Missing KV Transfer Prefetch 
+
+> Next Layer Get Predict Index Attention
+> etc.
+
+...   
+
+> Next Step Wait Index Wait Lane Wait Data Wait Buffer Available
+
+Layer i Layer i+1 
+
+> Projection
+
+Events 
+
+Figure 10. Streams that ensure prioritized transmission. stall decoding. DualDecoder therefore separates urgent cor-rection from background prefetching. As shown in Figure 10, missing KV entry transfers are issued to a high-priority urgent stream, while speculative prefetches are issued to a lower-priority prefetch stream. This priority separation allows corrections for the current attention computation to finish first, while still keeping background prefetches pro-gressing when bandwidth is available. 
+
+Adaptive key reconstruction. For some layers, the pre-dicted retrieval index has lower accuracy and produces more missing KV entries. Fetching all missing keys and values from host memory in these layers can still expose noticeable transfer latency. DualDecoder therefore adaptively enables key reconstruction for such layers, as shown in Figure 9(b). The key idea follows the observation that selected key en-tries can be reconstructed from a low-rank key cache kept on the GPU [ 28 ], while value entries are still fetched from host memory. DualDecoder applies this reconstruction only to layers where profiling shows consistently low retrieval prediction accuracy. This selective use avoids fetching many missing key entries on the critical path, while keeping the additional KV-cache-auxiliary residency small because only a small number of layers require the low-rank key cache. The layer set can be determined offline through lightweight profiling on representative long-context workloads. 
+
+5.4 Layer-Scoped KV Memory Management 
+
+Efficient memory management is critical to making specula-tive KV prefetching practical under long context serving. Al-though the previous section hides most CPU-to-GPU transfer latency by overlapping speculative KV movement with layer execution, a naive implementation would still allocate sparse KV buffers for many transformer layers at the same time. This design quickly becomes memory-inefficient because the sparse KV working set grows with the batch size, con-text length, number of selected KV entries, and model depth. The challenge is that DualDecoder must provide enough GPU-resident KV space for asynchronous communication while ensuring that the attention kernel always observes a complete and correct sparse KV set for the current layer. Allocating too few buffers can introduce data hazards be-tween computation and communication, while allocating per-layer buffers across the whole model would largely offset 
+
+> 8Sparse KV
+
+## GPU Temp Cache 1 Temp Cache 2 Host Full KV  
+
+> Attention
+> Comp
+> Comm Switch
+> Urgent
+> Gather Prefetch
+> After Switch
+> ...
+> Event Queue Enqueue Dequeue
+
+Figure 11. DualDecoder two-layer ping-pong buffer. the memory benefit of KV offloading. To address this prob-lem, DualDecoder introduces a layer-scoped KV memory manager that maintains only two active sparse KV buffers on the GPU and coordinates their reuse across transformer layers with CUDA stream events. 
+
+Two-layer ping-pong buffering. DualDecoder uses a two-layer ping pong buffer to decouple the sparse KV working set of the current layer from the speculative KV transfer of a future layer. At any time, one buffer serves as the com-pute buffer that is consumed by the attention kernel of layer 
+
+𝑖 , while the other buffer serves as the transfer buffer that receives prefetched KV entries for layer 𝑖 + 2. As we demon-strate in Figure11, After the attention computation of layer 𝑖 
+
+finishes, DualDecoder switches the roles of the two buffers so that the released compute buffer can be reused as the transfer destination for a later layer. This reduces the GPU resident KV buffer from a full model depth allocation to a constant two-layer allocation. To ensure correctness, DualDecoder explicitly inserts CUDA events between the compute stream and the communication streams. As shown in Figure10Before launching attention for a layer, the compute stream waits for the event that marks the completion of all required KV trans-fers for that layer, including both speculative prefetches and urgent missing KV updates. Similarly, before the communi-cation stream writes into a buffer, it waits for the event that confirms the previous attention computation has released that buffer. These event dependencies prevent read-after-write and write-after-read hazards without forcing global synchronization across all streams. As a result, the ping pong buffer preserves the same sparse attention semantics as a larger per-layer buffer design, but with substantially lower GPU memory residency. 
+
+GPU-side sparse KV assembly. Sparse KV retrieval nat-urally requires gathering many noncontiguous KV entries according to the selected indices, but performing this gather on the CPU is inefficient because it creates a large num-ber of small and irregular memory copies before the data can be sent over PCIe. This CPU-side gather becomes espe-cially expensive at large batch sizes, where the sparse KV working set contains many scattered entries from different requests, heads, and chunks. DualDecoder therefore adopts a GPU-controlled GPU memory update mechanism. Instead of asking the CPU to assemble the final sparse KV layout, the host-side transfer path only moves selected KV blocks into a GPU staging region, and DualDecoder launches lightweight GPU kernels to compact, reorder, and merge them into the active sparse KV buffer. The GPU update kernel uses the cur-rent layer index, the predicted prefetch index, and the urgent missing index to place each KV entry at its final attention lay-out inside HBM. This design shifts the irregular gather and layout update from CPU memory to GPU memory, where massive parallelism and higher memory bandwidth make the operation much cheaper. It also enables deferred reorder-ing. Speculative entries can be written into temporary slots first, and only after the ground truth index is resolved does DualDecoder update the final sparse KV layout for attention. 
+
+## 6 Evaluation 
+
+In this section, we first describe the overall evaluation setup (§ 6.1). We then demonstrate that DualDecoder outperforms state-of-the-art systems by up to 2.62 × in decoding through-put (§ 6.2). Finally, we show more results on prediction accu-racy (§ 6.3) and the modular studies (§ 6.4). 
+
+6.1 Experiment Setup Testbed. We conduct our experiments on a server which equipped with 8 Nvidia Hopper GPUs, where a single GPU provides 80GB of memory capacity (HBM). The host side has two INTEL(R) XEON(R) PLATINUM 8558 processors (96 cores in total), with an aggregated host memory of 1.6TB. The GPUs and CPUs are interconnected via a PCIe 5.0 bus that provides a bidirectional bandwidth of up to 128GB/s. Pytorch-2.3.1 and CUDA-12.8 are adopted in our platform. We implement DualDecoder atop ShadowKV, which is one of the state-of-the-art systems for sparse KV cache inference. 
+
+Baseline and workloads. We compare DualDecoder against three state-of-the-art LLM serving systems, includ-ing vLLM, SpeCache and ShadowKV. vLLM adopts a con-ventional full KV-cache method in which the entire KV ma-trices reside in GPU memory. In contrast, SpeCache and ShadowKV employ dynamic sparse KV cache techniques to reduce GPU memory usage. Our evaluation covers mod-els from the Llama-3 and Qwen-2.5 families, with parame-ter sizes ranging from 8B to 32B. To evaluate long-context serving performance, we use RULER [], a widely adopted benchmark for long-context LLMs. The input context length varies from 64K to 512K tokens. Because RULER does not provide request timestamps, we follow the common practice in previous works [ 11 ] and synthesize request arrivals using a Poisson process. We vary the request arrival rate from 0.1 to 100 requests per second, allowing us to evaluate system behavior under different workload intensities. 
+
+Metrics. The objective of DualDecoder is to maximize the effective decoding batch size for long-context LLM serving. Accordingly, our evaluation focuses on two key performance metrics: serving throughput and request completion time 
+
+> 9
+
+Figure 12. End-to-end serving throughput. (RCT), while maintaining latency comparable to existing sys-tems. We further evaluate the KV cache prediction accuracy to validate our key insight on KV predictability. Meanwhile, we measure GPU memory usage and decoding latency to quantify the effectiveness of DualDecoder in reducing mem-ory footprint and to assess the contribution of its individual design components. 
+
+6.2 End-to-End Performance Decoding throughput improvement. We evaluate the end-to-end decoding throughput of DualDecoder across con-text lengths from 64K to 512K using Qwen-2.5-32B. Figure 12 shows that, at 64K context length, DualDecoder achieves 42 tokens/s, surpassing ShadowKV, SpeCache, and vLLM by 1.14 ×, 9.02 ×, and 3.65 ×, respectively. As the context length increases to 128K and 256K, vLLM consistently encounters out-of-memory (OOM) errors, while DualDecoder main-tains high throughput and exceeds ShadowKV by 2.62 × and 1.32 ×, respectively. SpeCache performs substantially worse, achieving 8.63 × lower throughput than DualDecoder at 128K and failing with OOM at 256K. These results demonstrate the effectiveness of DualDecoder in sustaining high decod-ing throughput under increasingly memory-intensive long-context workloads. Meanwhile, we shows that the serving latencies (TPOT and TTFT) are not affected in § A. 
+
+Serving request concurrency. We then evaluate the P99 request completion time (RCT) and its corresponding serving request rate at online serving cases. Following the settings in previous works [ 1 , 42 ], the request arrivals are modeled as a Poisson process. Figure 13 shows that when we set the P99 RCT goal at 60s, DualDecoder can tolerate up to 2.51 ×
+
+request arrival rate than shadowkv. For example,when serv-ing a 32B model at a 128K context length when the request arrival rate is 4.8 request per second, all requests can be com-pleted in 50 seconds for DualDecoder, where shadowkv’s P99 request completion time increases exposively. And Shad-owKV fails to satisfy the P99 RCT requirement once the request arrival rate exceeds 1.92. The reason is that DualDe-coder benefits from a higher batch size running at a step, thereby reaching higher concurrency to serve requests. 
+
+Memory footprint reduction. To demonstrate DualDe-coder efficiently reduces the serving memory usage, we hereby trace the memory footprint when serving different models. Figure 14 shows that DualDecoder can reduce up to 36 .4% and 62 .0% of memory consumption compared to ShadowKV and SpeCache. For example, when serving batch size at 12, which is the biggest batch that SpeCache, the 8B model serving memory consumption of ShadowKV is 47.5GB and memory consumption of SpeCache is 79GB . In contrast, DualDecoder takes only 30GB memory. When serv-ing 32B model with a batch size of 4, at which ShadowKV and SpeCache reach the limit of GPU HBM, our system can still save over13.8% memory consumption, which indicates DualDecoder can potentially serve larger batch or larger model on demand. 
+
+Scalability to context length We further evaluate the GPU memory footprint scalability over context length, scaling from 128K up to 512K tokens. Figure 15 shows that as the context length exponentially grows, the memory consump-tion of DualDecoder exhibits relatively slow growth com-pared to the linear explosion seen in baseline systems. For example, when extending the context length from 64K to 512K, the memory footprint of DualDecoder only increases by 3.7 GB, while ShadowKV and vLLM face OOM errors or require 17.8 GB of additional memory. The reason is that DualDecoder removes KV-cache-auxiliary residency, meanwhile, using layer-scoped KV mem-ory management decouples the sparse KV working set from the total context length, significantly reducing the memory pressure. 
+
+6.3 Accuracy Analysis KV cache prediction accuracy. Then we evaluated the KV cache prediction accuracy by tracking the overlap ratio between the predicted sparse indices and the ground-truth indices during continuous decoding across two represen-tative datasets, including NIAH-1 and NIAH-2. Figure 16 shows that DualDecoder consistently achieves a highly sta-ble and accurate prediction hit rate regardless of the dataset variations. For example, on the Ruler dataset with a 128K context length, the accuracy stays above 82.6%, meaning that the missed KV entries only account for a marginal 17.4% of the total required tokens. These results demonstrate that DualDecoder can accurately capture the essential KV pairs ahead of time, proving that the significant KV dependencies between two consecutive tokens are highly coincident. 
+
+End-to-end serving accuracy. To show that DualDecoder can increase the serving throughput without impairing serv-ing accuracy, we evaluate the end-to-end downstream task model accuracy on datasets including NIAH-1, NIAH-2, NIAH-3 and QA-2 of RULER. Table 1 shows that DualDecoder maintains strictly lossless quality compared to ShadowKV, in most of the datasets. This is reasonable since DualDecoder handles the missed KV entries via our prioritized schedul-ing, thereby showing the identical behaviors compared to common sparse KV cache serving systems. In contrast, Shad-owKV can suffer from the accuracy degradation due to the low-rank key reconstruction, while DualDecoder can relieve                 
+
+> 10 0
+> 50
+> 100
+> 150
+> Llama3-8B
+> P99 RCT (s)
+> 0
+> 50
+> 100
+> 150
+> 0
+> 50
+> 100
+> 150
+> 0
+> 20
+> 40
+> 60
+> 80
+> 0
+> 50
+> 100
+> 150
+> Qwen-14B
+> P99 RCT (s)
+> 0
+> 50
+> 100
+> 150
+> 2.1×
+> 0
+> 50
+> 100
+> 150
+> 0
+> 50
+> 100
+> 150
+> 10 110 010 110 2
+> Arrival Rate (req/s)
+> Context Length=64K
+> 0
+> 50
+> 100
+> Qwen-32B
+> P99 RCT (s)
+> 10 110 010 1
+> Arrival Rate (req/s)
+> Context Length=128K
+> 0
+> 50
+> 100
+> 150
+> 2.5×
+> 10 110 010 1
+> Arrival Rate (req/s)
+> Context Length=256K
+> 0
+> 50
+> 100
+> 10 110 010 1
+> Arrival Rate (req/s)
+> Context Length=512K
+> ALL
+> OOM
+> vLLM ShadowKV SpeCache StreamDecoder
+
+Figure 13. P99 request completion time across different arrival rates for the 32B model serving. 
+
+Figure 14. Memory footprint over the same batch sizes (12, 6 and 4 for 8B, 14B and 32B models respectively). 
+
+Figure 15. Memory footprint across different context lengths. 
+
+Figure 16. KV retrieval prediction accuracy across models. 
+
+Table 1. End-to-end NIAH accuracy comparison between 
+
+ShadowKV and DualDecoder (ours). We use Llama-3-8B-Instruct-Gradient-1048k with a sparse context length of 1024. Exact-match accuracy of the first generated token against the needle value. Dataset 64K Context 128K Context ShadowKV Ours ShadowKV Ours NIAH-1 1.00 1.00 1.00 1.00 
+
+NIAH-2 1.00 1.00 1.00 1.00 
+
+NIAH-3 0.82 1.00 0.24 1.00 
+
+QA-2 0.53 0.58 0.38 0.43 
+
+Avg 0.94 1.00 0.74 1.00 
+
+this disadvantage as shown in the accuracy of the NIAH-3 dataset. 
+
+6.4 Modular Study Dual-token decoding efficiency. We first evaluate the ef-fectiveness of our dual-token execution optimization. The baseline approach is a traditional and naive execution design that runs an extra decoding pass to generate the speculative token. As shown in Figure 17, by stacking the output and  
+
+> 11 (a) Attention layers. (b) Linear layers.
+
+Figure 17. Layer computation efficiency with DualDecoder dual-token decoding. 5% 10% 20% 33%           
+
+> Prediction Miss Rate
+> 0
+> 25
+> 50
+> 75
+> P99 Step Latency (ms)
+> +8% +12% +18% +24%
+> Priority Scheduling
+> Traditional
+> (a) 8B model serving. 5% 10% 20% 33%
+> Prediction Miss Rate
+> 0
+> 200
+> 400
+> P99 Step Latency (ms)
+> +3% +5% +7% +10%
+> Priority Scheduling
+> Traditional (b) 14B model serving.
+
+Figure 18. Per-step latency with DualDecoder priority sched-uling for missed KV entries. speculative tokens into a single batch dimension, DualDe-coder drastically reduces both the computational latencies of attention and linear layers. For example, computing two tokens via our Co-batched attention takes only 0.035 ms, saving 49% of the time compared to the 0.069 ms required by consecutively launching two separate passes. 
+
+Priority scheduling. Then we evaluate the impact of our two-stream priority scheduling by comparing it against a naive scheduling baseline where all CPU-to-GPU transfer tasks queue sequentially without priorities. Figure 18,18(b) shows that DualDecoder’s priority scheduling successfully eliminates the severe pipeline stalls caused by prediction errors in the critical path. For example, under a prediction miss rate of 33% on a 8B model, our scheduling restricts the pipeline blocking time to merely 34.8 ms, whereas the naive approach suffers up to 43.3 ms of delay. The prioritized sched-ule ensures that occasional mispredictions do not disrupt the continuous computation flow, maintaining a highly stable token generation speed over the naive baseline. 
+
+GPU gather copy latencies. DualDecoder utilizes a GPU-side KV entry gather copy kernel to rapidly transfer the dis-crete CPU KV entries. We hereby evaluate this design against traditional CPU-side gather transfers. Figure 19 shows that offloading the KV gather copy operations to the GPU dra-matically reduces both the I/O bandwidth consumption and the host-device transmission latency. For example, our GPU gather kernel lowers the total KV transmission overhead to 3.25 ms, achieving a 93.4% reduction compared to the 49.5 ms bottleneck caused by frequent random reads in the CPU Gather approach, when serving a sparse context length of 1024 2048 4096 8192 
+
+> Sparse Context Length
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Latency (ms)  GPU Gather (bs=1)
+> GPU Gather (bs=12)
+> CPU Gather (bs=1)
+> CPU Gather (bs=12)
+
+Figure 19. KV retrieval latency using DualDecoder GPU gathering. 2048. The significant improvement stems from that DualDe-coder performs asynchronous, contiguous block prefetching over PCIe and leverages the massive parallelism of GPU ker-nels to execute a monolithic memory reorder only after the ground-truth tokens are confirmed. 
+
+## 7 Related Work 
+
+Dynamic sparse KV cache techniques. A substantial body of work has explored dynamic sparse attention for long-context inference. DiffKV [ 39 ], HeadKV [ 6 ], and PyramidKV [ 37 ] leverage sparsity in numerical precision, attention heads, and transformer layers, respectively. StreamingLLM [ 33 ]keeps initial tokens in a sequence referred to as “attention sinks”, capturing an disproportionately large share of at-tention scores. DuoAttention [ 32 ] uses optimization-based profiling to select critical retrieval heads and preserves full context only for retrieval heads. KV offloading mitigates GPU memory pressure by trans-ferring the KV cache to host memory and fetching only the required entries on demand. ShadowKV [ 28 ] maintains a low-rank pre-RoPE Key cache on the GPU using SVD while offloading the value cache to host memory. Upon model in-ference, it identifies the most relevant Key cache chunks, and overlaps sparse value retrieval with key reconstruction to hide transfer latency. SpeCache [ 13 ] employs a draft model and exploits the similarity between the sparse KV indices selected by speculative tokens and those required by the actual output tokens, enabling proactive KV prefetching. SpeContext [ 34 ] uses a distilled language model-based re-trieval head to choose useful KV pairs, and overlaps KV-cache prefetching with LLM computation. In contrast, our approach reduces the GPU-resident sparse-KV auxiliary state to a token-independent and layer-independent footprint. 
+
+Long context serving systems. Systems for long-context LLM serving have evolved rapidly in recent years. One of the earliest efforts, LoongServe [ 30 ], employs sequence par-allelism to reduce the memory footprint of KV caches for extremely long contexts. To accommodate highly dynamic inference workloads, LoongServe further introduces elas-tic sequence parallelism, which adaptively determines the degree of parallelism for each batch. MemServe [ 12 ] and DualPath [ 31 ] utilize remote KV-cache pools to extend the storage capacity available for long-context serving. Mem-Serve introduces a distributed memory pool that manages 
+
+> 12
+
+KV caches across serving instances, significantly increasing the effective KV-cache capacity. DualPath focuses on efficient retrieval of KV caches from remote persistent storage and addresses the communication bottlenecks associated with large-scale KV-cache transfers. Our work focused on long context serving via sparse KV retrieval, which can be benifit from the KV Pool and sequence parallel techniques and fur-thermore improve the performance with these orthogonal works. 
+
+## 8 Conclusion 
+
+This paper presents DualDecoder, a lightweight long-context LLM system that accelerates sparse KV-cache retrieval with KV prefetching. It exploits the strong predictability of sparse KV indices across consecutive decoding tokens to optimize future retrievals. DualDecoder designs a dual-token decod-ing pipeline, layer-aware KV transfer scheduling, prioritized recovery for missing KV entries, and adaptive key reconstruc-tion to overlap communication with execution and reduce critical-path transfers. Experiments show that DualDecoder improves decoding throughput, lowers GPU memory use, and maintains accuracy on long-context workloads. 
+
+## References 
+
+[1] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav S. Gulavani, Alexey Tumanov, and Ramachandran Ramjee. 2024. Taming Throughput-Latency Tradeoff in LLM In-ference with Sarathi-Serve. In 18th USENIX Symposium on Operat-ing Systems Design and Implementation, OSDI 2024, Santa Clara, CA, USA, July 10-12, 2024 , Ada Gavrilovska and Douglas B. Terry (Eds.). USENIX Association, 117–134. https://www.usenix.org/conference/ osdi24/presentation/agrawal 
+
+[2] Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2025. LongBench v2: Towards Deeper Understanding and Reasoning on Realistic Long-context Multitasks. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria, July 27 - August 1, 2025 , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Moham-mad Taher Pilehvar (Eds.). Association for Computational Linguistics, 3639–3664. https://doi.org/10.18653/V1/2025.ACL-LONG.183 
+
+[3] DeepSeek-AI. 2025. DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models. CoRR abs/2512.02556 (2025). https://doi.org/ 10.48550/ARXIV.2512.02556 arXiv:2512.02556 [4] Yiran Ding, Li Lyna Zhang, Chengruidong Zhang, Yuanyuan Xu, Ning Shang, Jiahang Xu, Fan Yang, and Mao Yang. 2024. LongRoPE: Ex-tending LLM Context Window Beyond 2 Million Tokens. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Aus-tria, July 21-27, 2024 (Proceedings of Machine Learning Research) , Ruslan Salakhutdinov, Zico Kolter, Katherine A. Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (Eds.). PMLR / Open-Review.net, 11091–11104. https://proceedings.mlr.press/v235/ding24i. html 
+
+[5] Mostafa Elhoushi, Akshat Shrivastava, Diana Liskovich, Basil Hosmer, Bram Wasti, Liangzhen Lai, Anas Mahmoud, Bilge Acun, Saurabh Agar-wal, Ahmed Roman, Ahmed A. Aly, Beidi Chen, and Carole-Jean Wu. 2024. LayerSkip: Enabling Early Exit Inference and Self-Speculative Decoding. In Proceedings of the 62nd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand, August 11-16, 2024 , Lun-Wei Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational Linguistics, 12622–12642. https://doi.org/10.18653/V1/2024.ACL-LONG.681 
+
+[6] Yu Fu, Zefan Cai, Abedelkadir Asi, Wayne Xiong, Yue Dong, and Wen Xiao. 2025. Not All Heads Matter: A Head-Level KV Cache Compression Method with Integrated Retrieval and Reasoning. In The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net. https://openreview. net/forum?id=FJFVmeXusW 
+
+[7] Shiwei Gao, Youmin Chen, and Jiwu Shu. 2025. Fast State Restora-tion in LLM Serving with HCache. In Proceedings of the Twenti-eth European Conference on Computer Systems, EuroSys 2025, Rotter-dam, The Netherlands, 30 March 2025 - 3 April 2025 . ACM, 128–143. 
+
+https://doi.org/10.1145/3689031.3696072 
+
+[8] Fabian Gloeckle, Badr Youbi Idrissi, Baptiste Rozière, David Lopez-Paz, and Gabriel Synnaeve. 2024. Better & Faster Large Language Models via Multi-token Prediction. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 (Proceed-ings of Machine Learning Research) , Ruslan Salakhutdinov, Zico Kolter, Katherine A. Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (Eds.). PMLR / OpenReview.net, 15706–15734. 
+
+https://proceedings.mlr.press/v235/gloeckle24a.html 
+
+[9] Jiaao He and Jidong Zhai. 2024. FastDecode: High-Throughput GPU-Efficient LLM Serving using Heterogeneous Pipelines. CoRR 
+
+abs/2403.11421 (2024). https://doi.org/10.48550/ARXIV.2403.11421 
+
+arXiv:2403.11421 [10] Yongjun He, Yao Lu, and Gustavo Alonso. 2024. Deferred Continuous Batching in Resource-Efficient Large Language Model Serving. In 
+
+Proceedings of the 4th Workshop on Machine Learning and Systems, EuroMLSys 2024, Athens, Greece, 22 April 2024 . ACM, 98–106. https: //doi.org/10.1145/3642970.3655835 
+
+[11] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. 2024. RULER: What’s the Real Context Size of Your Long-Context Language Models? (2024). arXiv:cs.CL/2404.06654 https://arxiv.org/abs/2404.06654 
+
+[12] Cunchen Hu, Heyang Huang, Junhao Hu, Jiang Xu, Xusheng Chen, Tao Xie, Chenxi Wang, Sa Wang, Yungang Bao, Ninghui Sun, and Yizhou Shan. 2024. MemServe: Context Caching for Disaggregated LLM Serving with Elastic Memory Pool. CoRR abs/2406.17565 (2024). 
+
+https://doi.org/10.48550/ARXIV.2406.17565 arXiv:2406.17565 [13] Shibo Jie, Yehui Tang, Kai Han, Zhi-Hong Deng, and Jing Han. 2025. SpeCache: Speculative Key-Value Caching for Efficient Generation of LLMs. In International Conference on Machine Learning (ICML) .
+
+https://icml.cc/virtual/2025/poster/45386 
+
+[14] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient Memory Management for Large Language Model Serv-ing with PagedAttention. In Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP) . 611–626. https://doi.org/10. 1145/3600006.3613165 
+
+[15] Wonbeom Lee, Jungi Lee, Junghwan Seo, and Jaewoong Sim. 2024. InfiniGen: Efficient Generative Inference of Large Language Models with Dynamic KV Cache Management. In 18th USENIX Symposium on Operating Systems Design and Implementation, OSDI 2024, Santa Clara, CA, USA, July 10-12, 2024 , Ada Gavrilovska and Douglas B. Terry (Eds.). USENIX Association, 155–172. https://www.usenix.org/conference/ osdi24/presentation/lee 
+
+[16] Yaniv Leviathan, Matan Kalman, and Yossi Matias. 2023. Fast Inference from Transformers via Speculative Decoding. International Conference on Machine Learning (ICML) (2023). [17] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. SnapKV: LLM Knows What You are Looking for 
+
+> 13
+
+Before Generation. In Advances in Neural Information Process-ing Systems 37: Annual Conference on Neural Information Process-ing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, Decem-ber 10 - 15, 2024 , Amir Globersons, Lester Mackey, Danielle Bel-grave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). http://papers.nips.cc/paper_files/paper/2024/hash/ 28ab418242603e0f7323e54185d19bde-Abstract-Conference.html 
+
+[18] Zhiyu Li, Shichao Song, Hanyu Wang, Simin Niu, Ding Chen, Jiawei Yang, Chenyang Xi, Huayi Lai, Jihao Zhao, Yezhaohui Wang, Jun-peng Ren, Zehao Lin, Jiahao Huo, Tianyi Chen, Kai Chen, Kehang Li, Zhiqiang Yin, Qingchen Yu, Bo Tang, Hongkang Yang, Zhi-Qin John Xu, and Feiyu Xiong. 2025. MemOS: An Operating System for Memory-Augmented Generation (MAG) in Large Language Models. CoRR 
+
+abs/2505.22101 (2025). https://doi.org/10.48550/ARXIV.2505.22101 
+
+arXiv:2505.22101 [19] Di Liu, Meng Chen, Baotong Lu, Huiqiang Jiang, Zhenhua Han, Qianxi Zhang, Qi Chen, Chengruidong Zhang, Bailu Ding, Kai Zhang, Chen Chen, Fan Yang, Yuqing Yang, and Lili Qiu. 2024. RetrievalAttention: Accelerating Long-Context LLM Inference via Vector Retrieval. CoRR 
+
+abs/2409.10516 (2024). https://doi.org/10.48550/ARXIV.2409.10516 
+
+arXiv:2409.10516 [20] Yuhan Liu, Hanchen Li, Yihua Cheng, Siddhant Ray, Yuyang Huang, Qizheng Zhang, Kuntai Du, Jiayi Yao, Shan Lu, Ganesh Anantha-narayanan, Michael Maire, Henry Hoffmann, Ari Holtzman, and Junchen Jiang. 2024. CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving. In Proceedings of the ACM SIG-COMM 2024 Conference, ACM SIGCOMM 2024, Sydney, NSW, Australia, August 4-8, 2024 . ACM, 38–56. https://doi.org/10.1145/3651890.3672274 
+
+[21] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen (Henry) Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. 2024. KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 (Proceedings of Machine Learning Research) ,Ruslan Salakhutdinov, Zico Kolter, Katherine A. Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (Eds.). PMLR / OpenReview.net, 32332–32344. https://proceedings.mlr.press/v235/ liu24bz.html 
+
+[22] Meta AI Llama Team. 2024. The Llama 3 Herd of Models. arXiv e-prints , Article arXiv:2407.21783 (July 2024), arXiv:2407.21783 pages. 
+
+https://doi.org/10.48550/arXiv.2407.21783 arXiv:cs.AI/2407.21783 [23] Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. 2025. Qwen2.5 Technical Report. (2025). arXiv:cs.CL/2412.15115 https://arxiv.org/abs/ 2412.15115 
+
+[24] Luka Ribar, Ivan Chelombiev, Luke Hudlass-Galley, Charlie Blake, Carlo Luschi, and Douglas Orr. 2024. SparQ Attention: Bandwidth-Efficient LLM Inference. In Forty-first International Conference on Ma-chine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 (Proceed-ings of Machine Learning Research) , Ruslan Salakhutdinov, Zico Kolter, Katherine A. Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (Eds.). PMLR / OpenReview.net, 42558–42583. 
+
+https://proceedings.mlr.press/v235/ribar24a.html 
+
+[25] Tal Schuster et al . 2023. Accelerating Large Language Model Decoding with Speculative Sampling. arXiv preprint arXiv:2302.01318 (2023). [26] Ning Shang, Li Lyna Zhang, Siyuan Wang, Gaokai Zhang, Gilsinia Lopez, Fan Yang, Weizhu Chen, and Mao Yang. 2025. LongRoPE2: Near-Lossless LLM Context Window Scaling. In Forty-second International Conference on Machine Learning, ICML 2025, Vancouver, BC, Canada, July 13-19, 2025 (Proceedings of Machine Learning Research) , Aarti Singh, Maryam Fazel, Daniel Hsu, Simon Lacoste-Julien, Felix Berkenkamp, Tegan Maharaj, Kiri Wagstaff, and Jerry Zhu (Eds.). PMLR / OpenRe-view.net. https://proceedings.mlr.press/v267/shang25a.html 
+
+[27] Noam Shazeer. 2019. Fast Transformer Decoding: One Write-Head is All You Need. CoRR abs/1911.02150 (2019). arXiv:1911.02150 http: //arxiv.org/abs/1911.02150 
+
+[28] Hanshi Sun, Li-Wen Chang, Wenlei Bao, Size Zheng, Ningxin Zheng, Xin Liu, Harry Dong, Yuejie Chi, and Beidi Chen. 2025. ShadowKV: KV Cache in Shadows for High-Throughput Long-Context LLM Inference. In International Conference on Machine Learning (ICML) . https://icml. cc/virtual/2025/poster/44053 
+
+[29] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. 2024. QUEST: Query-Aware Sparsity for Efficient Long-Context LLM Inference. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 .OpenReview.net. https://openreview.net/forum?id=KzACYw0MTV 
+
+[30] Bingyang Wu, Shengyu Liu, Yinmin Zhong, Peng Sun, Xuanzhe Liu, and Xin Jin. 2024. LoongServe: Efficiently Serving Long-Context Large Language Models with Elastic Sequence Parallelism. In Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles, SOSP 2024, Austin, TX, USA, November 4-6, 2024 , Emmett Witchel, Christopher J. Rossbach, Andrea C. Arpaci-Dusseau, and Kimberly Keeton (Eds.). ACM, 640–654. https://doi.org/10.1145/3694715.3695948 
+
+[31] Yongtong Wu, Shaoyuan Chen, Yinmin Zhong, Rilin Huang, Yixuan Tan, Wentao Zhang, Liyue Zhang, Shangyan Zhou, Yuxuan Liu, Shun-feng Zhou, Mingxing Zhang, Xin Jin, and Panpan Huang. 2026. Du-alPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference. CoRR abs/2602.21548 (2026). https://doi.org/10.48550/ARXIV. 2602.21548 arXiv:2602.21548 [32] Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. 2025. DuoAttention: Ef-ficient Long-Context LLM Inference with Retrieval and Streaming Heads. In The Thirteenth International Conference on Learning Repre-sentations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net. 
+
+https://openreview.net/forum?id=cFu7ze7xUm 
+
+[33] Guangxuan Xiao, Yaohui Tian, Beidi Chen, et al . 2024. StreamingLLM: Efficient Streaming Inference of Large Language Models with Atten-tion Sinks. In International Conference on Learning Representations (ICLR) . https://iclr.cc/media/iclr-2024/Slides/18794.pdf Slides. [34] Jiaming Xu, Jiayi Pan, Hanzhen Wang, Yongkang Zhou, Jiancai Ye, Yu Wang, and Guohao Dai. 2026. SpeContext: Enabling Efficient Long-context Reasoning with Speculative Context Sparsity in LLMs. In Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2, ASPLOS 2026, Pittsburgh, PA, USA, March 22-26, 2026 , Benjamin C. Lee, Harry Xu, Mark Silberstein, and Bingyao Li (Eds.). ACM, 1832–1847. 
+
+https://doi.org/10.1145/3779212.3790224 
+
+[35] Jiaming Xu, Jiayi Pan, Yongkang Zhou, Siming Chen, Jinhao Li, Yaoxiu Lian, Junyi Wu, and Guohao Dai. 2025. SpecEE: Accelerating Large Language Model Inference with Speculative Early Exiting. In Pro-ceedings of the 52nd Annual International Symposium on Computer Architecture, ISCA 2025, Tokyo, Japan, June 21-25, 2025 . ACM, 467–481. 
+
+https://doi.org/10.1145/3695053.3730996 
+
+[36] Minghao Yan, Saurabh Agarwal, and Shivaram Venkataraman. 2025. Decoding Speculative Decoding. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computa-tional Linguistics: Human Language Technologies, NAACL 2025 - Volume 1: Long Papers, Albuquerque, New Mexico, USA, April 29 - May 4, 2025 ,Luis Chiruzzo, Alan Ritter, and Lu Wang (Eds.). Association for Com-putational Linguistics, 6460–6473. https://doi.org/10.18653/V1/2025. NAACL-LONG.328 
+
+[37] Dongjie Yang, Xiaodong Han, Yan Gao, Yao Hu, Shilin Zhang, and Hai Zhao. 2024. PyramidInfer: Pyramid KV Cache Compression for 
+
+> 14
+
+High-throughput LLM Inference. In Findings of the Association for Computational Linguistics, ACL 2024, Bangkok, Thailand and virtual meeting, August 11-16, 2024 (Findings of ACL) , Lun-Wei Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational Linguistics, 3258–3270. https://doi.org/10.18653/V1/2024.FINDINGS-ACL.195 
+
+[38] Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soojeong Kim, and Byung-Gon Chun. 2022. Orca: A Distributed Serving System for Transformer-Based Generative Models. In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI) . 521–538. 
+
+https://dblp.org/rec/conf/osdi/YuJKKC22 
+
+[39] Yanqi Zhang, Yuwei Hu, Runyuan Zhao, John C. S. Lui, and Haibo Chen. 2025. DiffKV: Differentiated Memory Management for Large Language Models with Parallel KV Compaction. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles, SOSP 2025, Lotte Hotel World, Seoul, Republic of Korea, October 13-16, 2025 ,Youjip Won, Youngjin Kwon, Ding Yuan, and Rebecca Isaacs (Eds.). ACM, 431–445. https://doi.org/10.1145/3731569.3764810 
+
+[40] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark W. Barrett, Zhangyang Wang, and Beidi Chen. 2023. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. In Advances in Neural Information Processing Systems (NeurIPS) . https: //dl.acm.org/doi/10.5555/3666122.3667628 
+
+[41] Jun Zhao, Can Zu, Xu Hao, Yi Lu, Wei He, Yiwen Ding, Tao Gui, Qi Zhang, and Xuanjing Huang. 2024. LONGAGENT: Achieving Question Answering for 128k-Token-Long Documents through Multi-Agent Collaboration. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, EMNLP 2024, Miami, FL, USA, November 12-16, 2024 , Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen (Eds.). Association for Computational Linguistics, 16310–16324. 
+
+https://doi.org/10.18653/V1/2024.EMNLP-MAIN.912 
+
+[42] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xu-anzhe Liu, Xin Jin, and Hao Zhang. 2024. DistServe: Disaggregating prefill and decoding for goodput-optimized large language model serving. In 18th USENIX symposium on operating systems design and implementation, OSDI 2024, santa clara, CA, USA, july 10-12, 2024 ,Ada Gavrilovska and Douglas B. Terry (Eds.). USENIX Association, 193–210. https://www.usenix.org/conference/osdi24/presentation/ zhong-yinmin tex.bibsource: dblp computer science bibliography, https://dblp.org tex.timestamp: Tue, 11 Feb 2025 11:42:30 +0100. 
+
+## Appendix A DualDecoder shows comparable serving latencies. 
+
+Unlike traditional dense inference baselines (such as vLLM) that scale poorly under long-context constraints, or sparse KV cache baselines (such as ShadowKV and SpeCache) that suffer from significant runtime memory stalls or reconstruc-tion overheads on the critical path, StreamDecoder utilizes a dual-token decoding pipeline alongside a layer-aware predic-tive prefetching schedule to balance both phases efficiently. As shown in Figure20(a),20(b) Our system reduces over 3× of TTFT reduction and have the almost same TPOT compared with the state-of-the-art systems. 
+
+(a) TTFT comparison. (b) TPOT comparison. 
+
+Figure 20. TTFT and TPOT comparison across different systems.

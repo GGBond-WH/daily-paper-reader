@@ -1,0 +1,208 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-30T20:44:31.142721+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 4,
+    "deep_cap": 6,
+    "deep_selected": 4,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [
+    {
+      "id": "2607.26475v1",
+      "source": "arxiv",
+      "title": "DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch",
+      "abstract": "Long-context inference is becoming a fundamental capability for modern LLM serving, especially driven by emerging agentic applications. Yet it faces a severe memory wall that the KV cache scales proportionally with increasing context length and request concurrency. Existing sparse KV cache methods offload most KV entries to host memory and retrieve only the critical KV entries needed by each decoding step. However, they commonly introduce substantial auxiliary states in GPU memory for KV retrieval management. Our measurements show that these often-overlooked auxiliary states introduce significant memory overhead and become a new bottleneck under high-concurrency workloads.   In this paper, we present DualDecoder, a lightweight serving system for long-context LLM inference that enables efficient sparse KV cache retrieval from host memory. Our key insight is that the critical KV entries required for decoding the next token can be accurately predicted from the preceding speculated token. This predictability enables KV retrieval to be proactively prefetched and overlapped with decoding computation, effectively eliminating the GPU memory overhead of auxiliary states. To achieve this prefetching efficiently, DualDecoder leverages a novel dual-token decoding pipeline that accurately identifies critical KV entries with negligible computational overhead, and designs a layer-aware transfer schedule to overlap KV prefetching with model computation and a layer-scoped memory manager to reduce the GPU runtime buffer. Experimental results show that DualDecoder improves decoding throughput by up to 2.62$\\times$ over state-of-the-art systems while preserving decoding latency and model quality.",
+      "authors": [
+        "Zuning Liang",
+        "Zhiyi Yao",
+        "Qi Chen",
+        "Yuedong Xu",
+        "Hao Dai",
+        "Zhiqiang Ding",
+        "Tongkai Yang",
+        "Jinlong Hou",
+        "Yuan Cheng"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC"
+      ],
+      "published": "2026-07-29T05:01:42+00:00",
+      "link": "https://arxiv.org/pdf/2607.26475v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Predictive prefetch for KV cache in long-context LLM inference",
+      "llm_evidence_cn": "基于预测预取的长上下文大模型KV缓存优化",
+      "llm_evidence": "基于预测预取的长上下文大模型KV缓存优化",
+      "canonical_evidence": "基于预测预取的长上下文大模型KV缓存优化",
+      "llm_tldr_en": "DualDecoder accelerates long-context LLM inference by predicting and prefetching critical KV cache entries, reducing memory overhead from auxiliary states under high concurrency.",
+      "llm_tldr_cn": "针对长上下文大模型推理中KV缓存占用内存随长度和并发线性增长的问题，DualDecoder提出轻量级服务系统，通过预测性预取关键KV条目，避免加载完整辅助状态，实验表明在高并发下显著降低内存开销，提升吞吐量。",
+      "llm_tldr": "针对长上下文大模型推理中KV缓存占用内存随长度和并发线性增长的问题，DualDecoder提出轻量级服务系统，通过预测性预取关键KV条目，避免加载完整辅助状态，实验表明在高并发下显著降低内存开销，提升吞吐量。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.27090v1",
+      "source": "arxiv",
+      "title": "InferScale: GPU-Native KV Injection for Personalized LLM Serving",
+      "abstract": "Large language models are increasingly deployed with persistent personalized context, such as accumulated memory profiles or long conversation histories, that is shared across a user's many requests. Production memory systems (e.g., Mem0, MemGPT, and Zep) retrieve a relevant subset of this memory and inject it into the prompt, forcing the serving engine to repeatedly prefill the same content. As the retrieval budget grows, time-to-first-token (TTFT) increases even though the underlying memory is reused across requests.   We present InferScale, a GPU-native LLM memory system that replaces repeated prompt prefilling with reusable KV state. InferScale precomputes each memory fact's KV representation, stores it alongside a semantic embedding on the GPU, retrieves relevant facts at serving time, and injects their KV directly into vLLM's paged cache. To support dynamically assembled memories under rotary position embeddings, we introduce Chunked RoPE, which stores keys before rotation and applies their serving-time positions during injection. However, encoding memory facts independently omits the cross-fact context available during joint prefilling. We mitigate this with Context-Window Encoding, which encodes each memory fact together with a small window of preceding conversation context while caching only the target fact's KV.   InferScale is implemented through vLLM's KV-connector interface, requiring neither engine modifications nor model fine-tuning. Across three open-weight models on LoCoMo, InferScale keeps TTFT nearly constant as the retrieval budget increases: at k=50 it reduces TTFT by 72-79% (3.6-4.8x), achieves 60.3% accuracy versus 63.3% for Mem0 without serving-time recomputation, and delivers 3.7-4.5x the throughput under concurrent load. Reusable KV state thus decouples memory-conditioned serving latency from retrieved-context size while preserving application quality.",
+      "authors": [
+        "Peter Li",
+        "Prashant Pandey"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC",
+        "cs.LG"
+      ],
+      "published": "2026-07-29T16:18:22+00:00",
+      "link": "https://arxiv.org/pdf/2607.27090v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "GPU-native KV injection for personalized LLM serving",
+      "llm_evidence_cn": "面向个性化LLM服务的GPU原生KV注入",
+      "llm_evidence": "面向个性化LLM服务的GPU原生KV注入",
+      "canonical_evidence": "面向个性化LLM服务的GPU原生KV注入",
+      "llm_tldr_en": "InferScale replaces repeated prompt prefilling with reusable KV state for personalized contexts, reducing TTFT by precomputing and storing KV representations on GPU along with semantic embeddings.",
+      "llm_tldr_cn": "针对大语言模型个性化服务中重复预填充导致延迟增加的问题，提出InferScale系统，将每个记忆事实的KV表示预计算并存储在GPU上，通过语义嵌入检索实现KV状态重用。该方法避免了重复的prompt预填充，显著降低了首令牌延迟。实验表明，InferScale在保持模型质量的同时大幅提升推理速度。",
+      "llm_tldr": "针对大语言模型个性化服务中重复预填充导致延迟增加的问题，提出InferScale系统，将每个记忆事实的KV表示预计算并存储在GPU上，通过语义嵌入检索实现KV状态重用。该方法避免了重复的prompt预填充，显著降低了首令牌延迟。实验表明，InferScale在保持模型质量的同时大幅提升推理速度。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.27187v1",
+      "source": "arxiv",
+      "title": "A Photonic-CXL Memory Appliance for Scalable KV Cache Management in LLM Inference",
+      "abstract": "LLM inference at scale faces a memory wall. The KV cache demands tens of terabytes at hundreds of gigabytes per second, yet no current memory tier delivers both at once. Characterization across multi-generation GPU systems with various LLaMA models shows host memory retrieval achieves up to 100x speedup over re-computation but supports only tens of concurrent long-context users. Electrical CXL pooling theoretically bridges this gap, but switch latency, cable reach limits, and power-scaling issues prevent practical TB-scale deployments. We present the Marvell Photonic Fabric Memory Appliance, a photonic-CXL hybrid architecture replacing electrical switches with a passive fiber shuffle to deliver 32 TB shared memory across 16 hosts via a switch-free full- crossbar topology. Emulation results demonstrate over 50 percent latency reduction versus electrical CXL pools. Simulation results show that the PF Memory Appliance eliminates cache eviction cliffs by improving time-to-first-token by 6.6x for multi-turn conversations workloads.",
+      "authors": [
+        "Jing Ding",
+        "Yash Nishant",
+        "Chandrish Ambati",
+        "Jyothsna Kamati",
+        "Trung Diep"
+      ],
+      "primary_category": "cs.PF",
+      "categories": [
+        "cs.PF"
+      ],
+      "published": "2026-07-29T17:55:38+00:00",
+      "link": "https://arxiv.org/pdf/2607.27187v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "photonic-CXL architecture for scalable KV cache management in LLM inference",
+      "llm_evidence_cn": "光子-CXL架构用于大模型推理中可扩展的KV缓存管理",
+      "llm_evidence": "光子-CXL架构用于大模型推理中可扩展的KV缓存管理",
+      "canonical_evidence": "光子-CXL架构用于大模型推理中可扩展的KV缓存管理",
+      "llm_tldr_en": "A photonic-CXL memory appliance delivers 32 TB shared memory across 16 hosts for scalable KV cache management, overcoming electrical CXL limitations.",
+      "llm_tldr_cn": "大模型推理面临存储墙，KV缓存需求巨大。现有电气CXL方案存在延迟、距离和功耗问题。本文提出Marvell光子织物存储设备，采用光子-CXL混合架构，通过无源光纤洗牌实现16主机间32TB共享内存，以可扩展方式管理KV缓存。评估显示支持数千长上下文用户。",
+      "llm_tldr": "大模型推理面临存储墙，KV缓存需求巨大。现有电气CXL方案存在延迟、距离和功耗问题。本文提出Marvell光子织物存储设备，采用光子-CXL混合架构，通过无源光纤洗牌实现16主机间32TB共享内存，以可扩展方式管理KV缓存。评估显示支持数千长上下文用户。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.21731v1",
+      "source": "arxiv",
+      "title": "RED-PIM: Reducing Data Movement for Transformers using Processing-in-Memory",
+      "abstract": "Transformers are widely used across many domains, including natural language processing, computer vision, web search, and DNA sequence analysis. Given their broad applicability, improving the performance of transformer models is critical. However, the high volume of data movement between processing units and memory during attention operations significantly limits their efficiency. Processing-In-Memory (PIM) mitigates this issue by performing computations directly inside memory. While prior work has proposed PIM-based transformer implementations, they suffer from costly inter-bank communication, and struggle to scale due to the limited capacity of memory banks. As a result, attention-related data must be split across banks, diminishing the potential benefits of PIM.   In this work, we propose RED-PIM, an algorithm-architecture co-design that reduces attention latency by minimizing inter-bank data movement from O(N^2) to O(N) and shrinking intermediate attention matrices from N x N to d x d. By reorganizing matrix operations, performing computations locally, and employing an optimized data transfer strategy, RED-PIM significantly reduces computation cost and interconnect traffic. Compared to baseline PIM implementation, RED-PIM achieves inference time reductions ranging from 16.05% to 99.99% (geometric mean of 66.42%), with the largest gains on longer sequences. On real-world datasets, RED-PIM improves performance by 99.60% for long documents and 13.44% for shorter ones, while maintaining or improving accuracy. These results demonstrate RED-PIM's effectiveness for scalable and efficient transformer inference.",
+      "authors": [
+        "Zahra Yousefijamarani",
+        "Alaa Alameldeen"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AR"
+      ],
+      "published": "2026-07-23T18:28:13+00:00",
+      "link": "https://arxiv.org/pdf/2607.21731v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "PIM reduces data movement for attention operations, directly relevant to KV cache memory access",
+      "llm_evidence_cn": "处理中内存减少注意力操作的数据移动，直接关联KV缓存内存访问",
+      "llm_evidence": "处理中内存减少注意力操作的数据移动，直接关联KV缓存内存访问",
+      "canonical_evidence": "处理中内存减少注意力操作的数据移动，直接关联KV缓存内存访问",
+      "llm_tldr_en": "Proposes RED-PIM, a processing-in-memory architecture that reduces data movement during attention computation by performing operations inside memory, overcoming inter-bank communication and scaling issues, applicable to KV cache optimization.",
+      "llm_tldr_cn": "变换器注意力操作中大量数据在处理器和内存间移动，严重限制效率。RED-PIM提出一种处理中内存架构，直接在内存中执行计算，减少数据移动，并解决跨银行通信和扩展问题。该方法可直接用于加速KV缓存的访问和更新，提高推理效率。",
+      "llm_tldr": "变换器注意力操作中大量数据在处理器和内存间移动，严重限制效率。RED-PIM提出一种处理中内存架构，直接在内存中执行计算，减少数据移动，并解决跨银行通信和扩展问题。该方法可直接用于加速KV缓存的访问和更新，提高推理效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.25380v1",
+      "source": "arxiv",
+      "title": "Memory for Large Language Models",
+      "abstract": "Memory has evolved into a foundational architectural dimension in large language models (LLMs), shifting from an implicit byproduct of computation to a spectrum of explicit, controllable mechanisms. While recent advances introduce diverse strategies---spanning transient attention, recurrent state dynamics, parameter-efficient adaptations, and scalable lookup storage---this rapid evolution has led to a highly fragmented research landscape. In this survey, we present a systematic, architecture-centric taxonomy of memory in LLMs. Our framework characterizes memory along three orthogonal axes: representation (implicit versus explicit), update dynamics (offline versus online), and persistence (short-term versus long-term). We further formalize the granular mechanisms dictating memory writing, routing, state transitions, and consolidation. This unified perspective elucidates the conceptual boundaries between computation-coupled and independently addressable memory, effectively bridging disparate architectural paradigms. Additionally, we critically analyze hybrid memory architectures, system-level efficiency trade-offs, and multi-dimensional evaluation methodologies. By consolidating these scattered advancements into a cohesive framework, this survey charts the trajectory of memory-centric LLM design and provides a principled foundation for future innovations in scalable and adaptive language modeling.",
+      "authors": [
+        "Sining Zhoubian",
+        "Dan Zhang",
+        "Evgeny Kharlamov",
+        "Jie Tang"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-28T07:34:53+00:00",
+      "link": "https://arxiv.org/pdf/2607.25380v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "systematic survey covering KV cache as part of memory mechanisms in LLMs",
+      "llm_evidence_cn": "系统性综述，覆盖KV缓存作为LLM内存机制的一部分",
+      "llm_evidence": "系统性综述，覆盖KV缓存作为LLM内存机制的一部分",
+      "canonical_evidence": "系统性综述，覆盖KV缓存作为LLM内存机制的一部分",
+      "llm_tldr_en": "A comprehensive survey that categorizes memory mechanisms in LLMs, including KV cache, along representation, update dynamics, and persistence axes.",
+      "llm_tldr_cn": "本文对大型语言模型中的记忆机制进行了系统性综述，提出了一个基于架构的分类法，沿表示（隐式与显式）、更新动态（离线与在线）和持久性（短期与长期）三个维度进行刻画。其中明确将KV缓存作为重要的显式短期记忆形式进行讨论，涵盖其写入、读取和淘汰机制。该综述为理解大模型内存管理的全景提供了宝贵框架。",
+      "llm_tldr": "本文对大型语言模型中的记忆机制进行了系统性综述，提出了一个基于架构的分类法，沿表示（隐式与显式）、更新动态（离线与在线）和持久性（短期与长期）三个维度进行刻画。其中明确将KV缓存作为重要的显式短期记忆形式进行讨论，涵盖其写入、读取和淘汰机制。该综述为理解大模型内存管理的全景提供了宝贵框架。",
+      "llm_tags": [
+        "query:llm-kv-cache:composite"
+      ],
+      "matched_query_tag": "query:llm-kv-cache:composite",
+      "matched_query_text": "Papers central to 我需要查找大模型领域KV Cache相关论文研究, especially work that connects or combines: key-value cache for large language models; transformer inference optimization using key-value cache; attention mechanism key-value caching; paged attention for efficient KV cache management; compression techniques for key-value cache in transformers; prefix caching for transformer inference; Find research papers on KV cache optimization techniques for large language models; Retrieve papers about memory efficient key value cache management in transformer decoders; Search for methods to reduce KV cache memory footprint during autoregressive generation.",
+      "matched_requirement_id": "req-composite-llm-kv-cache",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}
