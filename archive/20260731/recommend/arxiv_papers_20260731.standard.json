@@ -1,0 +1,319 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-07-31T21:39:10.402324+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 7,
+    "deep_cap": 6,
+    "deep_selected": 6,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2607.27600v1",
+      "source": "arxiv",
+      "title": "Back from the Future: Key-Value Cache Management by Counter-Causal Surprise",
+      "abstract": "Key-value (KV) cache management through compression and eviction strategies has emerged as an important research direction in recent years. Computational demands of large language models (LLMs) and their multi-modal variants during output generation can be partially alleviated by caching previous key and value calculations needed by subsequent scaled dot-product attention operations. However, this leads to another problem: the size of the resulting KV cache grows linearly with context length and quickly consumes all available GPU memory when either the prompt or the generated output are long. KV cache management periodically prunes entries from the cache thereby reducing its memory footprint while attempting to retain sufficient information for accurate generation. A by-product is faster inference speed. We propose a simple yet effective KV eviction scheme motivated by the insight that past tokens which can be well-predicted from more recent tokens are redundant and their associated keys and values can be removed from the cache. To score entries for eviction we run the model on the tokens in their original order, reusing the key and value representations already stored in the KV cache, and applying a counter-causal attention mask so that each position attends only to its future context. This is in-distribution, tied directly to the actual cache contents, and requires no additional training. To further reduce cost, we additionally propose a fast single-layer approximation that restricts the counter-causal pass to the last transformer layer, achieving a significant speedup per refresh cycle at marginal accuracy cost. We evaluate our strategy on various open-source LLMs and benchmark datasets showing competitive or improved performance over other state-of-the-art methods. Reference code is available at https://github.com/metacognitionai/counter_causal.",
+      "authors": [
+        "Stephen Gould",
+        "Anton van den Hengel"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-30T02:42:51+00:00",
+      "link": "https://arxiv.org/pdf/2607.27600v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 10.0,
+      "llm_evidence_en": "Proposes KV cache management by counter-causal surprise for compression and eviction",
+      "llm_evidence_cn": "提出基于反事实惊喜的KV缓存压缩与逐出管理方法",
+      "llm_evidence": "提出基于反事实惊喜的KV缓存压缩与逐出管理方法",
+      "canonical_evidence": "提出基于反事实惊喜的KV缓存压缩与逐出管理方法",
+      "llm_tldr_en": "This paper introduces a KV cache management method based on counter-causal surprise, which identifies entries whose future influence is surprising and prunes them to reduce memory footprint without sacrificing generation accuracy.",
+      "llm_tldr_cn": "随着上下文或生成长度增加，KV缓存占用的GPU内存迅速膨胀，成为LLM推理的瓶颈。现有压缩与逐出策略通常难以在保留重要信息与降低内存占用之间取得平衡。本文提出基于反事实惊喜的KV缓存管理方法，通过评估每个缓存项对未来的预期影响来决定保留或丢弃。在多项语言建模与多模态任务上，该方法在显著减小缓存占用率的同时保持了生成质量，为长上下文LLM推理提供了有效的缓存管理新思路。",
+      "llm_tldr": "随着上下文或生成长度增加，KV缓存占用的GPU内存迅速膨胀，成为LLM推理的瓶颈。现有压缩与逐出策略通常难以在保留重要信息与降低内存占用之间取得平衡。本文提出基于反事实惊喜的KV缓存管理方法，通过评估每个缓存项对未来的预期影响来决定保留或丢弃。在多项语言建模与多模态任务上，该方法在显著减小缓存占用率的同时保持了生成质量，为长上下文LLM推理提供了有效的缓存管理新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.27692v1",
+      "source": "arxiv",
+      "title": "Recall Before You Rank: Similarity-Guided Top-$K$ Reuse for Efficient Long-Context Attention",
+      "abstract": "Top-$K$ sparse attention reduces the cost of Softmax and value aggregation by attending to only a small subset of key--value (KV) entries. However, identifying this subset still requires scoring the current query against the full KV cache and performing global Top-$K$ selection, leaving selector cost linear in context length and limiting the practical efficiency of sparse attention for long-context decoding. In this paper, we introduce ReTopK, a training-free method that accelerates dynamic Top-$K$ attention by reusing historical retrieval decisions. ReTopK builds on the observation that similar queries often attend to overlapping supports and that partially overlapping supports can still preserve most of the Exact Top-$K$ attention mass. For each attention head, it maintains a bounded cache of historical query--support pairs, retrieves the most similar cached queries for each new query, unions their stored supports with a recent window, and reranks only the resulting compact candidate set using exact current-query scores. A similarity-based fallback invokes full-history Exact Top-$K$ when reuse is unreliable, while periodic exact refreshes limit cache drift. ReTopK retains the complete KV cache and reuses only selected indices, rather than historical scores, attention weights, or outputs. Across 16K--128K contexts, ReTopK achieves the lowest PG19 perplexity and the highest NIAH and LongBench scores among the evaluated approximate methods. At 128K with $K=512$, ReTopK incurs only a 0.50\\% perplexity increase over Exact Top-$K$ while accelerating attention computation by $3.07\\times$.",
+      "authors": [
+        "Wenshuai Yao",
+        "Wenyong Zhou",
+        "Hanyong Shao",
+        "Yizhe Chen",
+        "Zhiyuan Ning",
+        "Yuannuo Feng",
+        "Ru Huang",
+        "Kechao Tang"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.LG"
+      ],
+      "published": "2026-07-30T05:25:23+00:00",
+      "link": "https://arxiv.org/pdf/2607.27692v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Exploits historical retrieval decisions to accelerate dynamic Top-K attention over the full KV cache",
+      "llm_evidence_cn": "利用历史检索决策加速对完整KV缓存进行动态Top-K注意力选择",
+      "llm_evidence": "利用历史检索决策加速对完整KV缓存进行动态Top-K注意力选择",
+      "canonical_evidence": "利用历史检索决策加速对完整KV缓存进行动态Top-K注意力选择",
+      "llm_tldr_en": "ReTopK is a training-free method that accelerates dynamic Top-K attention for long-context decoding by reusing historical retrieval decisions, reducing the selector cost that scales with context length.",
+      "llm_tldr_cn": "长上下文解码中动态Top-K稀疏注意力虽然只关注少数键值项，但每步仍需对完整KV缓存打分并全局选择Top-K，导致选择成本随上下文线性增长。ReTopK利用类似查询往往具有重叠注意力支撑的观察，通过复用历史检索决策避免重复全量计算。实验表明该方法在保持精确Top-K注意力质量的同时显著降低选择开销，为稀疏注意力在实际长上下文场景中的高效部署提供了训练无关的加速方案。",
+      "llm_tldr": "长上下文解码中动态Top-K稀疏注意力虽然只关注少数键值项，但每步仍需对完整KV缓存打分并全局选择Top-K，导致选择成本随上下文线性增长。ReTopK利用类似查询往往具有重叠注意力支撑的观察，通过复用历史检索决策避免重复全量计算。实验表明该方法在保持精确Top-K注意力质量的同时显著降低选择开销，为稀疏注意力在实际长上下文场景中的高效部署提供了训练无关的加速方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.28069v1",
+      "source": "arxiv",
+      "title": "SemPIC: Learning Semantic Position-Independent KV Caches",
+      "abstract": "Long-context retrieval and agentic workloads repeatedly reuse the same documents under changing instructions, histories, and document orders. Prefix caching cannot exploit this reuse, while position-independent caching (PIC) remains unreliable because independently compiled KV states lack the future context in which they will be consumed. Our diagnostics show that a learned boundary-conditioned baseline sharply reduces attention deviation near reusable-block boundaries but leaves interior and task-level residuals, motivating adaptation of the document representation itself. We present \\emph{SemPIC}, which trains a LoRA-enabled Writer to compile native per-layer document KVs through behavioral distillation while retaining the pretrained decoder as an unchanged Reader. Adaptation is confined to offline cache construction, preserving the standard KV interface and cache-hit decoding path. We further introduce KV Gradient Checkpointing, which reduces peak training memory without severing gradients through cached KVs. Across three models and four tasks, SemPIC raises mean micro-F1 over KV Packet from 0.53 to 0.60, approaching Full Recompute at 0.62.",
+      "authors": [
+        "Hui Xie",
+        "Peng Xiao",
+        "Yutong Deng\\textsuperscript",
+        "Shuoran Dou",
+        "Jian Yang",
+        "Jinyang Guo"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-07-30T11:45:24+00:00",
+      "link": "https://arxiv.org/pdf/2607.28069v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "focuses on position-independent and prefix KV caching for document reuse",
+      "llm_evidence_cn": "聚焦于可复用文档的位置无关KV缓存与前缀缓存优化",
+      "llm_evidence": "聚焦于可复用文档的位置无关KV缓存与前缀缓存优化",
+      "canonical_evidence": "聚焦于可复用文档的位置无关KV缓存与前缀缓存优化",
+      "llm_tldr_en": "Introduces SemPIC, which trains a LoRA-enabled Writer via behavioral distillation to compile native per-layer document key-value states, improving position-independent caching beyond prefix caching for reused documents.",
+      "llm_tldr_cn": "长上下文检索与智能体任务常重复使用同一文档，前缀缓存无法利用这种复用，位置无关缓存又因缺少未来上下文而不稳定。本文提出SemPIC，通过行为蒸馏训练带LoRA的Writer为每层生成文档原生的KV状态，同时保持预训练解码器不变。实验显示该方法能显著降低可复用块边界的注意力偏移，提升缓存复用效果。",
+      "llm_tldr": "长上下文检索与智能体任务常重复使用同一文档，前缀缓存无法利用这种复用，位置无关缓存又因缺少未来上下文而不稳定。本文提出SemPIC，通过行为蒸馏训练带LoRA的Writer为每层生成文档原生的KV状态，同时保持预训练解码器不变。实验显示该方法能显著降低可复用块边界的注意力偏移，提升缓存复用效果。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.27269v1",
+      "source": "arxiv",
+      "title": "Beyond KV Reconstruction: Functional Reconstruction for MLA Draft Models in Speculative Decoding",
+      "abstract": "Multi-head latent attention (MLA) is increasingly important for long-context LLM inference because compact latent states replace the growing key-value (KV) cache and reduce decoding memory traffic. Yet most capable open checkpoints use multi-head or grouped-query attention (MHA/GQA), so conversion is needed to obtain MLA's cache efficiency without retraining from scratch. Speculative decoding offers complementary acceleration, but its speedup depends on agreement between draft proposals and target verification. We find that direct MHA/GQA-to-MLA conversion can sharply reduce this agreement: low-rank factorization and RoPE handling introduce attention-function errors that may be tolerable for standalone generation but substantially lower draft-token acceptance. We therefore formulate MLA draft construction as functional reconstruction rather than cache compression. Our end-to-end (E2E) method optimizes each converted MLA attention module to reproduce the post-output-projection response of its original MHA/GQA counterpart on calibration hidden states. This converter-agnostic post-conversion procedure preserves the converted cache and inference graph and requires neither verifier logits nor verifier supervision. We evaluate 192 model-converter-backend-method-task configurations spanning four Llama/Qwen draft-target pairs, TransMLA and MHA2MLA, HF and vLLM, and four 200-prompt tasks. With a 0.5-percentage-point reporting tolerance, Functional Reconstruction materially improves acceptance in 37 of 64 matched task cells, leaves 26 practically unchanged, and materially decreases one. Code and evaluation artifacts are available at https://github.com/swyhahaha/FunctionalMLA.",
+      "authors": [
+        "Weiye Shi",
+        "Fanxu Meng",
+        "Muhan Zhang"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-07-29T10:54:46+00:00",
+      "link": "https://arxiv.org/pdf/2607.27269v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "uses multi-head latent attention to replace growing KV cache and proposes functional reconstruction for MLA draft models",
+      "llm_evidence_cn": "用多头潜在注意力取代增长的KV缓存，并提出针对MLA草稿模型的功能重建方法",
+      "llm_evidence": "用多头潜在注意力取代增长的KV缓存，并提出针对MLA草稿模型的功能重建方法",
+      "canonical_evidence": "用多头潜在注意力取代增长的KV缓存，并提出针对MLA草稿模型的功能重建方法",
+      "llm_tldr_en": "Addresses KV cache efficiency via MHA/GQA-to-MLA conversion for compact latent states, and proposes functional reconstruction for MLA draft models to preserve draft-target agreement in speculative decoding.",
+      "llm_tldr_cn": "多头潜在注意力（MLA）用紧凑的潜在状态替代不断增长的KV缓存，从而降低长上下文推理的内存开销，但多数现有开源模型采用MHA/GQA，直接转换会破坏推测解码中草稿与目标的一致性。本文提出超越KV重建的功能重建方法，为MLA草稿模型专门设计，以减少注意力函数误差。实验表明该方法能有效保持草稿-目标匹配，从而实现稳定的解码加速，是KV缓存压缩与推测解码结合的重要进展。",
+      "llm_tldr": "多头潜在注意力（MLA）用紧凑的潜在状态替代不断增长的KV缓存，从而降低长上下文推理的内存开销，但多数现有开源模型采用MHA/GQA，直接转换会破坏推测解码中草稿与目标的一致性。本文提出超越KV重建的功能重建方法，为MLA草稿模型专门设计，以减少注意力函数误差。实验表明该方法能有效保持草稿-目标匹配，从而实现稳定的解码加速，是KV缓存压缩与推测解码结合的重要进展。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.27735v1",
+      "source": "arxiv",
+      "title": "A Sparse Glimpse of the Whole: Train-Free Self-Speculative Decoding",
+      "abstract": "Speculative decoding alleviates the memory-bandwidth bottleneck in large language model inference, but its acceleration is jointly constrained by drafting overhead, token acceptance, and speculation length. We present a unified efficiency analysis showing that extending the speculation horizon can reduce rather than improve speedup when the marginal acceptance probability falls below the relative drafting cost. Guided by this analysis, we introduce SparseSpec-L, a training-free self-speculative decoding framework for long-context inference. SparseSpec-L generates lightweight drafts directly from the target model using a dynamically sparsified and recallable KV cache. It recycles per-head attention statistics produced during full-context verification as a no-extra-forward importance signal, allowing critical historical tokens to be recalled without permanently discarding the dense KV cache. An online entropy-based controller further selects the speculation length according to expected step-wise efficiency. Experiments across multiple long-context tasks and model scales show consistent end-to-end acceleration, with up to speedup over autoregressive decoding while preserving the target model's output distribution.",
+      "authors": [
+        "Yuesong Liu",
+        "Yuan Zeng",
+        "Min Lyu",
+        "Ruilin Liu",
+        "Yu Guo",
+        "Yinlong Xu"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-30T06:16:56+00:00",
+      "link": "https://arxiv.org/pdf/2607.27735v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Optimizes LLM inference via sparse recallable KV cache in self-speculative decoding",
+      "llm_evidence_cn": "通过稀疏可回溯KV缓存优化LLM推理的自投机解码",
+      "llm_evidence": "通过稀疏可回溯KV缓存优化LLM推理的自投机解码",
+      "canonical_evidence": "通过稀疏可回溯KV缓存优化LLM推理的自投机解码",
+      "llm_tldr_en": "Speculative decoding eases LLM memory-bandwidth bottlenecks. SparseSpec-L, training-free, uses a dynamically sparsified recallable KV cache for drafts and recycles attention statistics. Unified analysis reveals when longer speculation hurts speedup, improving long-context inference.",
+      "llm_tldr_cn": "投机解码能缓解大模型推理的访存瓶颈，但加速效果受草稿开销、接受率和投机长度共同制约。本文提出训练无关的自投机解码框架SparseSpec-L，利用动态稀疏且可回溯的KV缓存生成轻量草稿，并在全上下文验证中复用每头注意力统计量。统一的效率分析表明，当边际接受概率低于草稿相对成本时，延长投机视野反而降低加速，为长上下文推理提供了高效且免训练的优化方案。",
+      "llm_tldr": "投机解码能缓解大模型推理的访存瓶颈，但加速效果受草稿开销、接受率和投机长度共同制约。本文提出训练无关的自投机解码框架SparseSpec-L，利用动态稀疏且可回溯的KV缓存生成轻量草稿，并在全上下文验证中复用每头注意力统计量。统一的效率分析表明，当边际接受概率低于草稿相对成本时，延长投机视野反而降低加速，为长上下文推理提供了高效且免训练的优化方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.28150v1",
+      "source": "arxiv",
+      "title": "SmartGen: Seamless Disaggregated LLM Inference with Selective KV Cache Transfer",
+      "abstract": "Disaggregating the prefill and decoding stages of large language model (LLM) inference into two separate sets of nodes is widely adopted in today's LLM serving systems. However, such an architecture poses significant challenges for self-hosted LLM deployments on rented cloud instances, since transferring enormous key-value (KV) caches between disaggregated nodes can easily saturate the limited inter-node network bandwidth. In this paper, we propose to mitigate the network bottleneck by selectively transferring essential KV cache entries across the two stages. There are two challenges to achieve selective KV cache transfer, i.e., accurate KV selection during the prefill stage, and efficient KV fetching during the decoding stage. To address these challenges, we design SmartGen, a KV cache transfer engine that allows seamless disaggregated LLM inference with three data transfer paths. Specifically, we leverage 1) a profile-based proactive transfer path to identify and push essential KV cache entries to the decoding node during the prefill stage, 2) a parallel on-demand transfer path to simultaneously fetch remote and local KV cache entries during the decoding stage, and 3) a speculative transfer path to finally deliver all KV caches to the decoding node. Experimental results show that SmartGen reduces time-to-second-token by up to 4.3x compared with the typical full KV cache transfer approach while offering comparable subsequent decoding performance and accuracy.",
+      "authors": [
+        "Xuchuan Luo",
+        "Jiacheng Shen",
+        "Xin Wang",
+        "Yangfan Zhou"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC"
+      ],
+      "published": "2026-07-30T12:56:05+00:00",
+      "link": "https://arxiv.org/pdf/2607.28150v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Selective KV cache transfer reduces inter-node network bottleneck in disaggregated LLM inference",
+      "llm_evidence_cn": "选择性地传输KV缓存条目，减轻分离式LLM推理中的节点间网络压力",
+      "llm_evidence": "选择性地传输KV缓存条目，减轻分离式LLM推理中的节点间网络压力",
+      "canonical_evidence": "选择性地传输KV缓存条目，减轻分离式LLM推理中的节点间网络压力",
+      "llm_tldr_en": "Disaggregated LLM inference hits network bottlenecks from huge KV transfers. SmartGen selectively transfers essential KV entries, selecting during prefill and fetching during decode, reducing transfer volume and boosting throughput.",
+      "llm_tldr_cn": "分离式LLM推理在预填充和解码节点间传输海量KV缓存，极易占满有限网络带宽。SmartGen提出选择性KV缓存传输，在预填充阶段准确选择必要条目，在解码阶段高效获取，从而大幅减少跨节点传输的数据量。系统在保持生成质量的同时提升自托管云环境中的传输效率和整体推理性能，缓解网络瓶颈。",
+      "llm_tldr": "分离式LLM推理在预填充和解码节点间传输海量KV缓存，极易占满有限网络带宽。SmartGen提出选择性KV缓存传输，在预填充阶段准确选择必要条目，在解码阶段高效获取，从而大幅减少跨节点传输的数据量。系统在保持生成质量的同时提升自托管云环境中的传输效率和整体推理性能，缓解网络瓶颈。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.28495v1",
+      "source": "arxiv",
+      "title": "Stage-Replay Divergence Follows the KV Cache: Fixed-Prefix Precision Controls and Bidirectional Cache Transplantation",
+      "abstract": "Stage-replay diagnostics reconstruct intermediate token prefixes and treat fresh-prefill continuation as continuation from the decoder state that originally reached the prefix. We audit that assumption at a whole reasoning-stage boundary in a Qwen2.5-derived system. A matched 200-item experiment compares retained live cache with one-shot prefill of identical integer tokens and places an exact replica on both sides. In BF16, replicas remain exact while the constructions differ on 166 suffixes and 20 correctness labels; the accuracy difference is only one point (paired 95% CI [-3.5, +5.5]). A fixed-prefix 2x2 holds all 200 token states constant while crossing construction and precision. The BF16 disagreements recur, whereas FP32 produces no decoded disagreement (95% Wilson upper bound 1.88%). A prospective bridge makes token-by-token incremental and retained live caches bit-exact on 12/12 rows; an all-200 saved-ledger audit reproduces every retained trajectory and comparison fingerprint. Bidirectional transplantation of all 48 key/value layers makes every tested divergent continuation follow its cache donor, both on a selected set at the primary checkpoint (24/24) and an outcome-blind replication at a later checkpoint (43/43). Exact-token replay can therefore be repeatable without preserving live-state fidelity. On the tested states, boundary K/V cache is a causally sufficient carrier of the divergent trajectory, while numerical precision moderates its behavioral expression.",
+      "authors": [
+        "Alexander Boesgaard Lorup"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.CL"
+      ],
+      "published": "2026-07-30T16:41:40+00:00",
+      "link": "https://arxiv.org/pdf/2607.28495v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "directly studies KV cache construction, precision, and stage-replay divergence in Qwen2.5",
+      "llm_evidence_cn": "直接研究Qwen2.5中KV缓存的构造、精度与阶段重放差异",
+      "llm_evidence": "直接研究Qwen2.5中KV缓存的构造、精度与阶段重放差异",
+      "canonical_evidence": "直接研究Qwen2.5中KV缓存的构造、精度与阶段重放差异",
+      "llm_tldr_en": "Audits stage-replay assumption by comparing retained KV cache with one-shot prefill in Qwen2.5; BF16 replicas are exact yet 166 suffixes differ with a one-point accuracy gap. Proposes fixed-prefix precision controls and bidirectional cache transplantation.",
+      "llm_tldr_cn": "本文针对阶段重放诊断中的基本假设进行审计：在Qwen2.5系统中，保留的实时缓存与一次性预填充构造是否等价。配对200项实验显示，BF16下复制完全一致但构造在166个后缀和20个正确性标签上不同，准确率仅相差1个点。作者引入固定前缀2x2控制并交叉构造与精度，提出双向缓存移植方法。结果表明阶段重放差异受KV缓存状态和精度共同影响，为推理可复现性和缓存管理提供依据。",
+      "llm_tldr": "本文针对阶段重放诊断中的基本假设进行审计：在Qwen2.5系统中，保留的实时缓存与一次性预填充构造是否等价。配对200项实验显示，BF16下复制完全一致但构造在166个后缀和20个正确性标签上不同，准确率仅相差1个点。作者引入固定前缀2x2控制并交叉构造与精度，提出双向缓存移植方法。结果表明阶段重放差异受KV缓存状态和精度共同影响，为推理可复现性和缓存管理提供依据。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "8plus"
+    },
+    {
+      "id": "2607.23046v1",
+      "source": "arxiv",
+      "title": "Structured Redundancy Modeling for Efficient Visual Token Pruning in High-Resolution MLLMs",
+      "abstract": "Recent high-resolution Multimodal Large Language Models (MLLMs) generate thousands of visual tokens per input, leading to a visual token explosion that introduces severe latency bottlenecks. While token pruning mitigates this issue, state-of-the-art subset-optimization methods typically rely on iterative subset construction to jointly capture visual diversity and instruction relevance. As visual token counts scale, this sequential dependency introduces significant selection overhead, severely limiting the translation of theoretical FLOPs reductions into actual wall-clock speedups. To address this limitation, we propose Single-Forward Pruner (SFPruner), a structural reformulation of visual token pruning that embeds redundancy control directly into the scoring space, bypassing the need for iterative combinatorial optimization. Our non-iterative framework achieves redundancy-aware importance selection in a single forward pass through two complementary mechanisms. First, to attenuate redundancy at the covariance level, we introduce a semantics-guided ridge leverage scheme. By integrating instruction relevance and visual saliency, this mechanism suppresses dominant covariance directions and mitigates representation bias. Second, ranking-based directional masking resolves residual overlap through asymmetric similarity competition, where higher-scoring tokens explicitly suppress redundant lower-scoring alternatives via parallel tensor operations. Extensive evaluations demonstrate that our approach maintains stable selection costs, reducing the token selection process by up to 110 ms, from 112.4 ms to just 2.5 ms at 512 tokens in Qwen2.5-VL. This structural efficiency successfully translates theoretical token reductions into tangible inference speedups while preserving highly competitive performance against state-of-the-art techniques under aggressive compression.",
+      "authors": [
+        "Jouwon Song",
+        "Woohyeong Kim",
+        "Kyeongbo Kong"
+      ],
+      "primary_category": "cs.CV",
+      "categories": [
+        "cs.CV"
+      ],
+      "published": "2026-07-25T05:08:22+00:00",
+      "link": "https://arxiv.org/pdf/2607.23046v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Visual token pruning reduces input token count and thus KV cache footprint for multimodal LLMs",
+      "llm_evidence_cn": "视觉令牌剪枝减少输入令牌数量，从而降低多模态LLM的KV缓存占用",
+      "llm_evidence": "视觉令牌剪枝减少输入令牌数量，从而降低多模态LLM的KV缓存占用",
+      "canonical_evidence": "视觉令牌剪枝减少输入令牌数量，从而降低多模态LLM的KV缓存占用",
+      "llm_tldr_en": "High-res MLLMs face visual token explosion and latency. SFPruner reformulates token pruning with structured redundancy control for single-forward selection, cutting overhead and indirectly reducing KV cache footprint.",
+      "llm_tldr_cn": "针对高分辨率多模态大模型视觉令牌爆炸导致的延迟瓶颈，现有子集优化剪枝方法因迭代式选择开销大而难以获得实际加速。本文提出SFPruner，将视觉令牌剪枝重构为结构化单次前馈剪枝，内嵌冗余控制，避免顺序依赖。实验表明该方法在显著降低选择开销的同时保持模型质量，并通过减少令牌数量间接压缩KV缓存内存占用，为多模态推理提供高效方案。",
+      "llm_tldr": "针对高分辨率多模态大模型视觉令牌爆炸导致的延迟瓶颈，现有子集优化剪枝方法因迭代式选择开销大而难以获得实际加速。本文提出SFPruner，将视觉令牌剪枝重构为结构化单次前馈剪枝，内嵌冗余控制，避免顺序依赖。实验表明该方法在显著降低选择开销的同时保持模型质量，并通过减少令牌数量间接压缩KV缓存内存占用，为多模态推理提供高效方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

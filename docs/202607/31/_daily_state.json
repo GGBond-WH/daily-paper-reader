@@ -1,0 +1,137 @@
+{
+  "date": "20260731",
+  "date_label": "",
+  "generated_at": "2026-07-31 21:44:47 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.27600v1",
+      "route": "202607/31/2607.27600v1-back-from-the-future-key-value-cache-management-by-counter-causal-surprise",
+      "title": "Back from the Future: Key-Value Cache Management by Counter-Causal Surprise",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 10.0,
+      "evidence": "提出基于反事实惊喜的KV缓存压缩与逐出管理方法",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.27692v1",
+      "route": "202607/31/2607.27692v1-recall-before-you-rank-similarity-guided-top-k-reuse-for-efficient-long-context-attention",
+      "title": "Recall Before You Rank: Similarity-Guided Top-$K$ Reuse for Efficient Long-Context Attention",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "利用历史检索决策加速对完整KV缓存进行动态Top-K注意力选择",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.28069v1",
+      "route": "202607/31/2607.28069v1-sempic-learning-semantic-position-independent-kv-caches",
+      "title": "SemPIC: Learning Semantic Position-Independent KV Caches",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "聚焦于可复用文档的位置无关KV缓存与前缀缓存优化",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.27269v1",
+      "route": "202607/31/2607.27269v1-beyond-kv-reconstruction-functional-reconstruction-for-mla-draft-models-in-speculative-decoding",
+      "title": "Beyond KV Reconstruction: Functional Reconstruction for MLA Draft Models in Speculative Decoding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "用多头潜在注意力取代增长的KV缓存，并提出针对MLA草稿模型的功能重建方法",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.27735v1",
+      "route": "202607/31/2607.27735v1-a-sparse-glimpse-of-the-whole-train-free-self-speculative-decoding",
+      "title": "A Sparse Glimpse of the Whole: Train-Free Self-Speculative Decoding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "通过稀疏可回溯KV缓存优化LLM推理的自投机解码",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.28150v1",
+      "route": "202607/31/2607.28150v1-smartgen-seamless-disaggregated-llm-inference-with-selective-kv-cache-transfer",
+      "title": "SmartGen: Seamless Disaggregated LLM Inference with Selective KV Cache Transfer",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "选择性地传输KV缓存条目，减轻分离式LLM推理中的节点间网络压力",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.28495v1",
+      "route": "202607/31/2607.28495v1-stage-replay-divergence-follows-the-kv-cache-fixed-prefix-precision-controls-and-bidirectional-cache-transplantation",
+      "title": "Stage-Replay Divergence Follows the KV Cache: Fixed-Prefix Precision Controls and Bidirectional Cache Transplantation",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "直接研究Qwen2.5中KV缓存的构造、精度与阶段重放差异",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    },
+    {
+      "paper_id": "2607.23046v1",
+      "route": "202607/31/2607.23046v1-structured-redundancy-modeling-for-efficient-visual-token-pruning-in-high-resolution-mllms",
+      "title": "Structured Redundancy Modeling for Efficient Visual Token Pruning in High-Resolution MLLMs",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "视觉令牌剪枝减少输入令牌数量，从而降低多模态LLM的KV缓存占用",
+      "first_seen_at": "2026-07-31 21:44:47 UTC",
+      "updated_at": "2026-07-31 21:44:47 UTC"
+    }
+  ]
+}

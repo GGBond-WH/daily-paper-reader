@@ -1,0 +1,376 @@
+Title: SemPIC: Learning Semantic Position-Independent KV Caches
+
+URL Source: https://arxiv.org/pdf/2607.28069v1
+
+Published Time: Fri, 31 Jul 2026 00:56:16 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# SemPIC: Learning Semantic Position-Independent KV Caches 
+
+# Hui Xie 2,4 , Peng Xiao 3, Yutong Deng 1, Shuoran Dou 1, Jian Yang 1,4 , Jinyang Guo 2,4 ∗
+
+> 1
+
+School of Computer Science and Engineering, Beihang University 
+
+> 2
+
+Institute of Artificial Intelligence, Beihang University 
+
+> 3
+
+Shen Yuan Honors College, Beihang University 
+
+> 4
+
+State Key Laboratory of Complex & Critical Software Environment {xiehui, xiaop, 511170, 18294491955, jiayang, jinyangguo}@buaa.edu.cn 
+
+Abstract 
+
+Long-context retrieval and agentic workloads repeatedly reuse the same documents under changing instructions, histories, and document orders. Prefix caching cannot exploit this reuse, while position-independent caching (PIC) remains unreliable because independently compiled KV states lack the future context in which they will be consumed. Our diagnostics show that a learned boundary-conditioned baseline sharply reduces attention deviation near reusable-block boundaries but leaves interior and task-level residuals, motivating adaptation of the document representation itself. We present SemPIC , which trains a LoRA-enabled Writer to compile native per-layer doc-ument KVs through behavioral distillation while retaining the pretrained decoder as an unchanged Reader. Adaptation is confined to offline cache construction, preserving the stan-dard KV interface and cache-hit decoding path. We further introduce KV Gradient Checkpointing, which reduces peak training memory without severing gradients through cached KVs. Across three models and four tasks, SemPIC raises mean micro-F1 over KV Packet from 0.53 to 0.60, approaching Full Recompute at 0.62. 
+
+# 1 Introduction 
+
+Retrieval-augmented generation supplies external docu-ments as model context (Lewis et al. 2020), while tool-using and memory-augmented agents create analogous reusable units. These contexts are long, yet highly repetitive: the query changes from request to request, while many of the underly-ing semantic units recur. A conventional decoder processes every selected token during prefill before producing the first output token (Vaswani et al. 2017; Kwon et al. 2023). Prefix caching removes this work only when the reused content ap-pears behind an identical prefix; tree-structured and modular prompt caches broaden sharing, but still rely on constrained layouts (Zheng et al. 2024; Gim et al. 2024). They cannot fully exploit a document that may be retrieved after different instructions, histories, or neighboring documents. Position-independent caching (PIC) offers a more general abstraction: prepare the KV cache of each reusable document once, relocate it to its request-time position, and compose it with other cached documents. RoPE re-rotation corrects the positional phase of cached keys (Su et al. 2024), but posi-tion is only half of the problem. A token’s KV state also 
+
+> ∗
+
+Corresponding author. 
+
+summarizes the prefix visible when that state was created. A document compiled in isolation never observed the docu-ments that precede it in a later request. Consequently, under a standard causal decoder, naively stitched caches are position aligned but contextually incomplete, and their quality can collapse. Existing PIC methods address contextual incompleteness at different loci (Figure 1): CacheBlend and EPIC repair se-lected document states online (Yao et al. 2025; Hu et al. 2025), KV Packet learns reusable-block boundary states (Chen et al. 2026), and COMB adds an auxiliary cache en-coder and Reader interface (Zhao et al. 2026). Yet it remains unclear whether the native document KVs themselves can be learned offline for reuse by an unchanged decoder under unseen document compositions. To determine where offline adaptation should act, we analyze KV Packet as a boundary-conditioned baseline. It strongly reduces near-boundary attention deviation, but sub-stantial interior deviation and task-level error remain (Sec-tion 4). This boundary–interior asymmetry suggests that boundary states are useful but insufficient, and yields a con-crete requirement: adapt the document representation with-out changing the online cache interface. SemPIC meets this requirement by broadening adaptation from block boundaries to the document Writer. LoRA (Hu et al. 2022) is active only while the Writer compiles each doc-ument, whereas the pretrained Reader consumes the resulting native per-layer KVs with the adapters disabled. Behavioral distillation (Chen et al. 2026) matches the Reader’s output distributions to those of Full Recompute, allowing gradients to reshape the Writer through the cache interface while leav-ing online decoding unchanged. Making every layer’s KVs a differentiable Writer–Reader interface creates a training-memory bottleneck. KV Gradi-ent Checkpointing reconstructs Writer intermediates during backward while preserving the cached KVs and their gradi-ent path, reducing peak training memory without changing cache-hit serving. Our contributions are: 
+
+• We identify a consistent boundary–interior asymmetry :boundary conditioning sharply reduces near-boundary at-tention deviation yet leaves interior and task-level resid-uals. This observation motivates document-wide cache adaptation. arXiv:2607.28069v1 [cs.AI] 30 Jul 2026 Figure 1: Design space of position-independent cache reuse. Representative designs shown here address PIC’s contextual mismatch through online recomputation, offline boundary adaptation, or an auxiliary cache interface. SemPIC broadens the offline trainable locus from boundary embeddings to the native document Writer while retaining standard KVs and an unchanged Reader. 
+
+• We propose SemPIC: a trainable native document-to-KV 
+
+Writer feeds an unchanged pretrained Reader through standard per-layer KVs. Adaptation is offline, and cache-hit decoding remains unmodified. 
+
+• We introduce KV Gradient Checkpointing , which re-constructs Writer activations while preserving differen-tiable cache outputs, reducing peak memory enough to train long-context settings that otherwise run out of mem-ory. 
+
+• Across three models and four tasks, SemPIC improves over KV Packet in 10 of 12 settings, approaching Full Re-compute; descriptive diagnostics show lower Full-relative interior attention error in every setting. 
+
+# 2 Background: Position-Independent Caching 
+
+Let a request contain an inline prefix P , independently reusable document blocks D1, . . . , D m, post-document in-line spans S1, . . . , S m, request-specific inline query tokens 
+
+Q, and an output prefix Y<t . As in Figure 2, the canonical order is P, D 1, S 1, . . . , D m, S m, Q . The Si denote dynamic request-time inline spans; unlike Di, they are computed on-line and are not part of the reusable caches. Full recompu-tation applies the base model Mθ to this prompt and defines the teacher distribution 
+
+ptT = pθ (yt | P, D 1, S 1, . . . , D m, S m,Q, Y <t ). (1) A cache compiler C processes each document separately and produces per-layer states C(Di) = {Kℓi , V ℓi }Lℓ=1 . At request time, a link operator R assigns these states their final logical positions, interleaves them with S1, . . . , S m, and applies the causal mask. The resulting student distribution is 
+
+ptS = pθ (yt | P, R (C(D1), S 1, . . . , C(Dm), S m), Q, Y <t ). (2) The PIC objective is not to reconstruct one privileged ten-sor, but to preserve pT across future prefixes and document compositions. We call a cache semantic when it preserves this downstream predictive behavior, rather than merely ap-proaching a context-specific cache in coordinate space. For RoPE models, a key created at position a can be moved to b by 
+
+ekℓb = Rℓ(b)Rℓ(a)−1kℓa, (3) where Rℓ(·) is the layer-specific rotary transform. Values are reused without rotation. Equation 3 corrects positional phase; it cannot recreate attention to context that was absent during independent compilation. 
+
+# 3 Related Work 
+
+Selective-recomputation methods repair context-dependent states online. CacheBlend selects tokens by cache deviation, EPIC refreshes leading tokens, and Cache-Craft applies tar-geted chunk-cache repair (Yao et al. 2025; Hu et al. 2025; Agarwal et al. 2025). Query-aware selectors refine this choice under different budgets (Yang et al. 2025b; Wang et al. 2026; Yan et al. 2026), but every refreshed token adds work before generation. Other designs change linking or offline representations. Block-Attention and TurboRAG reuse passage KVs through independent block attention, while KVLink jointly fine-tunes the model and trainable link tokens (Ma, Wang, and Lan 2025; Lu et al. 2025; Yang et al. 2025c). KV Packet learns boundary embeddings through self-distillation, COMB adds a document encoder and cross-attention, and recent C 2KV Figure 2: SemPIC trains a document Writer through the model’s native KV interface while preserving the pretrained decoder as an unchanged Reader. LoRA is enabled only when the Writer compiles each document; the Reader consumes the differentiable caches with LoRA disabled and matches full-context teacher predictions. Once compiled, the caches enter the standard cache-hit path without document recomputation or auxiliary model execution. learns a compressed cache manifold through a sidecar ex-tractor (Chen et al. 2026; Zhao et al. 2026; Du et al. 2026). SemPIC instead places adaptation in the native document generator: every document token can change its representa-tion, yet the stored object and online Reader remain standard. This problem is distinct from reducing KV-cache footprint through token eviction or selection, cross-layer merging, quantization, or head-specific caching (Zhang et al. 2023; Li et al. 2024; Liu et al. 2024; Hooper et al. 2024; He et al. 2024; Xiao et al. 2025). SemPIC instead addresses the be-havioral mismatch introduced by independent compilation and later composition. 
+
+# 4 Motivating Analysis: Boundary Conditioning Leaves an Interior Gap 
+
+Question. KV Packet’s boundary-only adaptation suggests an implicit hypothesis: correcting reusable-block interfaces may suffice to restore independently compiled caches. We ask where its gains appear and what mismatch remains. 
+
+Diagnostic. We compare KV Packet with Full Recompute and No Recompute on Qwen3-4B-Instruct-2507, Qwen3-8B, and Llama-3.1-8B-Instruct across four tasks. Let Dr (A, B )
+
+denote the mean absolute deviation between the post-softmax attention probabilities of configurations A and B within nor-malized block region r. We use r = pre for positions [0 , 0.1) 
+
+and r = int for [0 .1, 0.9) . For m ∈ { Packet , SemPIC },define its Full-relative error as 
+
+Rr (m) = Dr (m, Full) 
+
+Dr (NR , Full) . (4) Values below one indicate that method m is closer to Full Recompute than No Recompute under this deviation metric. To measure end-task recovery separately, let Vanilla denote direct reuse with No Recompute and define 
+
+Recovery( m) = F1 m − F1 Vanilla 
+
+F1 Full − F1 Vanilla 
+
+. (5) 
+
+Figure 3: KV Packet sharply reduces pre-region error but leaves interior and behavioral residuals. Hatched bars report KV Packet’s F1 recovery toward Full Recompute; ar-rows connect Rpre (Packet) and Rint (Packet) . Marker styles distinguish three models across four tasks. The dashed line at one denotes No Recompute for attention error and Full Recompute for recovery. Attention statistics use 100 samples per model–task configuration. Recovery is zero for Vanilla and one for Full Recompute; values above one indicate higher micro-F1 than Full Recom-pute. 
+
+Observation and design implication. Figure 3 reveals a consistent asymmetry. Across all 12 settings, Rpre (Packet) 
+
+ranges from 0.016 to 0.081 and remains below one, whereas 
+
+Rint (Packet) ranges from 0.664 to 1.257 and falls below one in only 8 of 12 settings. KV Packet’s mean F1 recov-ery is 0.763, and its gap to Full Recompute remains positive in 11 settings. Boundary conditioning therefore corrects the near-boundary region without reliably eliminating the inte-rior discrepancy or closing the task-level gap. A reusable-cache compiler should consequently be able to reshape rep-resentations throughout the document while preserving an unchanged Reader and the native KV interface. This de-scriptive analysis motivates the adaptation locus; it does not establish that attention deviation causes the F1 gap. 
+
+# 5 SemPIC 
+
+The motivating analysis yields a direct design requirement: the offline compiler must support document-wide represen-tation adaptation without changing how caches are consumed online. SemPIC meets this requirement with a trainable Writer and an unchanged Reader connected through native per-layer KVs. We first define this interface and its behavioral supervision, then introduce KV Gradient Checkpointing to make the all-layer gradient path memory efficient. 
+
+Writer–Reader Learning through the Native KV Interface 
+
+SemPIC separates document representation construction from its subsequent use. A Writer processes each reusable document independently, while a Reader consumes the com-piled documents together with request-specific tokens. Both stages use the same pretrained decoder parameters θ, but only the Writer activates trainable LoRA parameters ϕ. For document Di, the Writer produces 
+
+Kϕ(Di) = Wθ,ϕ (Di) = {Kℓi,ϕ , V ℓi,ϕ }Lℓ=1 . (6) The pretrained parameters remain frozen, and ϕ denotes the switchable LoRA adaptation activated during Writer compi-lation. Although only keys and values are exported, the adap-tation reshapes the layerwise hidden-state trajectory from which deeper-layer KVs are formed. Equation 6 produces the model’s native per-layer cache representation, which can be relocated, linked, and consumed by the pretrained decoder without an auxiliary cache format or cross-attention inter-face. The Reader is the frozen base model Gθ . After the linker assigns final positions to the compiled caches, it predicts 
+
+ptS = Gθ
+
+ yt | P, R (Kϕ(D1), S 1, . . . , 
+
+Kϕ(Dm), S m), Q, Y <t 
+
+. (7) Crucially, ϕ is disabled throughout query prefill, target-token computation, and generation. This asymmetry isolates learn-ing to the document Writer: SemPIC changes the representa-tion placed in the cache without adapting the model that later reads it. The Reader therefore retains the pretrained model’s cache layout, positional relocation, and autoregressive de-coding semantics. 
+
+Behavioral supervision. Following KV Packet’s self-supervised formulation for cache reuse (Chen et al. 2026), training applies knowledge distillation (Hinton, Vinyals, and Dean 2015) using the base model’s full-context behavior as the target. The teacher path supplies detached logits zi,r,t T for sample i, teacher target r, and target position t. In the student path, the Writer first enables ϕ to construct the document caches; the Reader then disables ϕ and computes zi,r,t S from those caches. Disabling the adapter does not detach the KV tensors, so the Reader remains unchanged while its loss still reaches the Writer. With temperature τ , let qT = softmax( zT /τ ) and qS =softmax( zS /τ ). The implemented objective is 
+
+LKD = τ 2 X
+
+> i
+
+X
+
+> r
+
+X
+
+> t
+
+DKL 
+
+
+
+qi,r,t T ∥ qi,r,t S
+
+
+
+. (8) The reported runs use τ = 1 and sum the token-level losses. The objective supervises output distributions rather than at-tention maps, hidden states, or a designated block-interior region. SemPIC’s distinction is not the distillation loss itself, but its gradient path and adaptation locus. In particular, 
+
+∇ϕLKD = X
+
+> i,b,ℓ
+
+∂L
+
+∂K ℓi,b 
+
+∂K ℓi,b 
+
+∂ϕ + ∂L
+
+∂V ℓi,b 
+
+∂V ℓi,b 
+
+∂ϕ 
+
+!
+
+, (9) where b indexes reusable document blocks within sample 
+
+i. Every layer’s KVs therefore act simultaneously as the reusable representation consumed by the Reader and the dif-ferentiable interface through which the Writer is optimized. 
+
+KV Gradient Checkpointing for Writer–Reader Training 
+
+KV-mediated Writer–Reader training must retain two classes of state. The Reader requires {Kℓ, V ℓ}Lℓ=1 from the Writer, and these tensors must remain attached to the computation graph so that Equation 9 is valid. A naive autograd-enabled Writer also retains the attention and feed-forward intermedi-ates needed to differentiate each KV tensor with respect to ϕ.Freezing θ removes backbone optimizer state, but not these activations. Long documents therefore incur the combined memory cost of the all-layer KV interface and the Writer computation that produced it. Ordinary activation checkpointing trades retained inter-mediates for backward recomputation (Chen et al. 2016). SemPIC must make that trade without treating the KVs as dis-posable layer internals: they cross the Writer–Reader bound-ary and are the object being learned. We therefore place a checkpoint around each Writer layer with the augmented interface 
+
+(hℓ+1 , K ℓ, V ℓ) = Cℓθ,ϕ (hℓ). (10) The boundary hidden state hℓ+1 advances the Writer, while 
+
+Kℓ and V ℓ remain available to the Reader. Intermediates inside Cℓθ,ϕ are discarded after the forward call and recon-structed only when gradients traverse that layer. The method thus preserves the complete differentiable KV interface but avoids retaining its internal producers across the later Reader computation. Backward reconstruction may occur after the original Writer forward has completed. Each non-reentrant check-point therefore restores the same LoRA-enabled context used to construct the document KVs; otherwise, backward would recompute the Writer layer with LoRA disabled instead of reproducing Cℓθ,ϕ . Query-side computation remains LoRA-disabled. KV Gradient Checkpointing thus preserves the Writer function, Reader function, native cache values, and gradient path, changing only the Writer activations retained for backward. Cache-hit serving. Once compiled, SemPIC KVs are or-dinary model caches. A cache hit assigns their final logical positions, re-rotates their keys using Equation 3, and pro-cesses only request-specific inline tokens through the pre-trained decoder. Prepared and inline KVs are interleaved un-der the causal mask before standard autoregressive genera-tion. Query- and layout-independent compilation allows the same cache to be reused across histories, document orders, and retrieved sets, including layouts that place the query at different absolute positions. Semantic adaptation is therefore amortized over cache construction and introduces neither a document-side forward pass nor an auxiliary model on the request critical path. 
+
+Composition with boundary adaptation. To test whether document-wide and boundary adaptation are complemen-tary, Joint co-trains shared Header and Trailer embeddings with the LoRA-enabled Writer under the same behavioral-distillation loss while the pretrained model remains frozen. The Writer adapts the document representation, while the boundary states provide a learned block interface. Once com-piled, Joint follows SemPIC’s recomputation-free cache-hit path. 
+
+# 6 Experiments 
+
+We organize the evaluation around six questions: Does semantic compilation recover task quality? What quality– efficiency tradeoff does it offer? Does it reduce the interior attention discrepancy that motivated the method? Does the learned Writer transfer across domains? Which block-local artifacts remain after adaptation? What memory–time trade-off does KV Gradient Checkpointing introduce? 
+
+Setup 
+
+We evaluate Llama-3.1-8B-Instruct (Llama Team, AI @ Meta 2024), Qwen3-4B-Instruct-2507, and Qwen3-8B (Yang et al. 2025a) on Synthetic Biographies (Karev 2025), Hot-potQA (Yang et al. 2018), MuSiQue (Trivedi et al. 2022), and a Needle-in-a-haystack (NIAH) task. We choose these tasks to span complementary cache-composition regimes: Biography tests factual retrieval from short reusable records, HotpotQA and MuSiQue require multi-hop QA over ev-idence distributed across multiple documents, and NIAH isolates long-context retrieval of sparse answer-bearing ev-idence. The latter is a controlled retrieval diagnostic of the type included in long-context suites such as RULER (Hsieh et al. 2024). We train SemPIC on training partitions and eval-uate it on held-out test partitions. Each model–task–method cell contains 100 examples selected with a fixed dataset seed, greedy decoding, and bfloat16 execution; task-specific gen-eration limits are reported in the supplementary material. SemPIC adapters are trained per model and domain for five epochs with LoRA rank 8, scale 16, and a learning rate of 
+
+5 × 10 −4 with linear decay; complete settings are in the supplementary material. Full Recompute processes the complete prompt and serves as the quality reference. No Recompute directly links inde-pendently prepared KVs after positional realignment, while No Cache omits the retrieved documents as a model-only                                                                                      
+
+> Task Full NR Packet SemPIC Joint Llama-3.1-8B
+> Biography 0.96 0.06 0.96 0.99 0.99
+> HotpotQA 0.48 0.24 0.44 0.45 0.41 MuSiQue 0.39 0.01 0.37 0.28 0.38
+> NIAH 0.83 0.39 0.80 0.82 0.82 Average 0.67 0.18 0.64 0.64 0.65 Qwen3-4B
+> Biography 0.97 0.19 0.81 0.98 0.96 HotpotQA 0.31 0.14 0.29 0.29 0.30
+> MuSiQue 0.41 0.07 0.24 0.31 0.35
+> NIAH 0.67 0.17 0.63 0.76 0.74
+> Average 0.59 0.14 0.49 0.59 0.59 Qwen3-8B
+> Biography 0.96 0.24 0.89 0.98 0.97 HotpotQA 0.28 0.13 0.27 0.28 0.29
+> MuSiQue 0.45 0.08 0.26 0.34 0.38
+> NIAH 0.72 0.37 0.38 0.70 0.70 Average 0.60 0.21 0.45 0.58 0.59 Overall Average 0.62 0.17 0.53 0.60 0.61
+
+Table 1: Task-level corpus micro-F1. NR and Packet denote No Recompute and KV Packet. Gray columns mark SemPIC and Joint; bold marks the strongest learned-cache result in each row. Average and Overall Average are arithmetic means over four tasks and all 12 task rows, respectively. control. KV Packet learns Header and Trailer tokens around document tokens(Chen et al. 2026); Joint is the co-trained composition of these boundary embeddings with the Sem-PIC LoRA described above. We report corpus-level token micro-F1. 
+
+Semantic Compilation Recovers PIC Quality 
+
+Table 1 shows higher micro-F1 for SemPIC than KV Packet in 10 of 12 settings, lifting the overall mean from 0.53 to 0.60, close to Full Recompute at 0.62. SemPIC matches or exceeds KV Packet across all eight Qwen3 settings, im-proving the 4B and 8B model averages by 0.10 and 0.13. The exception is Llama MuSiQue (0.28 versus 0.37), where Joint reaches 0.38; Joint’s overall mean of 0.61 indicates that document-wide and boundary adaptation can be com-plementary. Because relocation, linking, and online decoding are shared, the central experimental contrast is the adapta-tion locus: document-wide for SemPIC and boundary-only for KV Packet. 
+
+Quality–Efficiency Tradeoff 
+
+Offline learned-cache methods and online selective-recomputation methods occupy complementary operating regimes (Figure 4). Learned-cache adaptation is paid offline, whereas selective methods return document computation to the request path. No method dominates across all tasks; the preferred regime depends on whether a deployment permits online recomputation. Following KV Packet’s comparison grid (Chen et al. 2026), CacheBlend (Yao et al. 2025), A 3 (Zhou et al. 2025), Figure 4: Quality–efficiency tradeoffs on Llama-3.1-8B and Qwen3-8B across four tasks. The upper two rows plot corpus micro-F1 against mean online prefill FLOPs; the lower two rows plot F1 against cache-hit time to first token (TTFT). Curves sweep selective-recomputation budgets, while isolated markers denote learned recomputation-free methods or references. Qwen3-4B and an enlarged three-model view are reported in the supplementary material. and Random Recompute sweep 10%, 30%, 50%, 70%, and 90% of document tokens. EPIC (Hu et al. 2025) recomputes 10, 30, 50, 70, and 90 tokens, with budgets from 100 to 500 tokens for NIAH. Figure 4 orders each sweep by increasing recomputation budget. 
+
+Interior Attention Analysis 
+
+Across all 12 settings, SemPIC reduces Rint (SemPIC) be-low both the No Recompute reference and Rint (Packet) ,ranging from 0.564 to 0.985 versus 0.664 to 1.257 for KV Packet (Figure 5). Its unclipped recovery toward Full Re-compute ranges from 0.703 to 1.180, with a mean of 0.921. The lower interior error and stronger task-level results rela-tive to KV Packet move in the same favorable direction, but the evidence remains descriptive and does not show that the attention change causes the F1 gain. 
+
+Cross-Domain Transfer 
+
+We next test whether a Writer transfers across document domains. On Qwen3-8B, SemPIC improves KV Packet’s four-target average for every training source. Joint attains the highest av-erage for four of the five sources, counting ties on MuSiQue and Mixture. Mixture training yields the highest average for each method: 0.51 for KV Packet and 0.57 for both SemPIC and Joint (Table 2). Across all three models, SemPIC im-
+
+Figure 5: SemPIC lowers Full-relative interior attention error in all 12 settings. Hatched bars show F1 recovery from No Recompute toward Full Recompute, capped at one for vi-sualization; text reports unclipped values. Arrows connect 
+
+Rint (Packet) and Rint (SemPIC) , where lower is better. Re-sults cover three models and four tasks, with 100 samples per configuration. proves the corresponding KV Packet average under 14 of 15 training sources; the complete Llama-3.1-8B and Qwen3-4B matrices are reported in the supplementary material. Method Bio-graphy Hotpot QA Mu SiQue NIAH Aver-age Train: Biography                                                                            
+
+> Packet 0.89 0.17 0.07 0.44 0.39
+> SemPIC 0.98 0.16 0.12 0.32 0.40
+> Joint 0.97 0.22 0.16 0.39 0.44 Train: HotpotQA
+> Packet 0.73 0.27 0.29 0.41 0.43
+> SemPIC 0.86 0.28 0.38 0.46 0.50 Joint 0.85 0.29 0.37 0.37 0.47
+> Train: MuSiQue
+> Packet 0.75 0.24 0.26 0.47 0.43
+> SemPIC 0.76 0.31 0.34 0.45 0.47 Joint 0.83 0.27 0.38 0.40 0.47 Train: NIAH
+> Packet 0.53 0.18 0.19 0.38 0.32
+> SemPIC 0.25 0.21 0.22 0.70 0.35
+> Joint 0.36 0.21 0.18 0.70 0.36 Train: Mixture
+> Packet 0.94 0.23 0.31 0.56 0.51
+> SemPIC 0.96 0.26 0.36 0.70 0.57 Joint 0.97 0.25 0.36 0.71 0.57
+
+Table 2: Cross-domain corpus micro-F1 on Qwen3-8B. Packet denotes KV Packet. Each group identifies the training source and columns identify the evaluation target; Average is their arithmetic mean. Gray rows mark SemPIC and Joint; bold numeric entries mark the highest average within each training-source group. 
+
+Residual Block-Local Behavior and Scope 
+
+Attention sinks often concentrate on sequence-initial tokens (Xiao et al. 2024; Gu et al. 2025). Independent compilation places every document’s first token at block-local offset one, so we test for a corresponding concentration after linking. For block token offset j, let density SemPIC (j) denote its attention density; we normalize it by the width-weighted mean density over the block interior [0 .1, 0.9) :
+
+Tj = density SemPIC (j)density SemPIC ([0 .1, 0.9)) . (11) Across all 12 settings, T1 is the largest of the first eight ratios, ranging from 132.5 to 3248.3 versus 0.61 to 23.49 for offsets 2–8 (Figure 6). The peak is localized at block offset one rather than extending across neighboring offsets. This descriptive diagnostic does not separate block position from repeated block-start content, but it shows that better task behavior can coexist with a strong block-local concentration. 
+
+Training Memory and Time 
+
+Table 3 compares KV Gradient Checkpointing with the naive training path in peak device memory and wall-clock time. 
+
+Figure 6: SemPIC’s behavioral improvements coexist with a block-local first-token peak. (a) Normalized block-position attention density with ∆F1 = F1 SemPIC − F1 NR 
+
+labels. (b) Tj at offsets 1–8; lines and bands give geo-metric means and task ranges. Q4/Q8/L8 denote Qwen3-4B/Qwen3-8B/Llama-3.1-8B; n = 100 per configuration.                       
+
+> Naive Ours Dataset Mem. Time Mem. Time Biography 23.8 0:34 18.0 1:55 Biography (FBS 8) 75.8 0:23 33.2 0:25 HotpotQA OOM 26.4 5:40 MuSiQue OOM 33.1 6:46 NIAH OOM 43.4 13:26
+
+Table 3: Qwen3-8B SemPIC peak training memory (GiB) and wall-clock time (h:mm) on one A100 80GB GPU. The document-forward batch size (FBS) is 1 unless marked FBS 8; Ours denotes KV Gradient Checkpointing. KV Gradient Checkpointing lowers Qwen3-8B peak mem-ory from 23.8 to 18.0 GiB at FBS 1 and from 75.8 to 33.2 GiB at FBS 8. The corresponding Biography times increase from 34 to 115 minutes at FBS 1 and from 23 to 25 minutes at FBS 8, showing substantial checkpointing overhead at the smaller microbatch but little at FBS 8. On HotpotQA, MuSiQue, and NIAH, the checkpointed path completes where the naive implementation runs out of memory. These measurements characterize a memory–time tradeoff, not a general through-put claim; cache-hit serving is unchanged. 
+
+# 7 Conclusion 
+
+Position-independent reuse asks a document cache to func-tion in contexts absent during construction. SemPIC ad-dresses this mismatch by training a Writer to produce native KVs for an unchanged Reader. Across the evaluated settings, SemPIC raises overall mean micro-F1 over KV Packet from 0.53 to 0.60 and reduces Full-relative interior attention er-ror under our metric. Joint suggests that document-wide and boundary adaptation are complementary, while KV Gradient Checkpointing makes long-document Writer training feasi-ble. References 
+
+Agarwal, S.; Sundaresan, S.; Mitra, S.; Mahapatra, D.; Gupta, A.; Sharma, R.; Kapu, N. J.; Yu, T.; and Saini, S. 2025. Cache-Craft: Managing Chunk-Caches for Efficient Retrieval-Augmented Generation. Proceedings of the ACM on Management of Data , 3(3): 1–28. Chen, C.; Zhang, G. L.; Yin, X.; Zhuo, C.; Li, B.; and Schlichtmann, U. 2026. KV Packet: Recomputation-Free Context-Independent KV Caching for LLMs. arXiv preprint arXiv:2604.13226 .Chen, T.; Xu, B.; Zhang, C.; and Guestrin, C. 2016. Training Deep Nets with Sublinear Memory Cost. arXiv preprint arXiv:1604.06174 .Du, C.; Chen, J.; Tang, H.; Liu, K.; Lan, T.; Qu, L.; Niu, C.; Liu, S.; Chen, G.; and Wu, F. 2026. C 2KV: Compressed and Composable KV Cache Reuse for Efficient LLM Inference. 
+
+arXiv preprint arXiv:2607.17715 .Gim, I.; Chen, G.; Lee, S.-s.; Sarda, N.; Khandelwal, A.; and Zhong, L. 2024. Prompt Cache: Modular Attention Reuse for Low-Latency Inference. In Proceedings of Machine Learn-ing and Systems , volume 6. Gu, X.; Pang, T.; Du, C.; Liu, Q.; Zhang, F.; Du, C.; Wang, Y.; and Lin, M. 2025. When Attention Sink Emerges in Lan-guage Models: An Empirical View. In International Confer-ence on Learning Representations .He, Y.; Zhang, L.; Wu, W.; Liu, J.; Zhou, H.; and Zhuang, B. 2024. ZipCache: Accurate and Efficient KV Cache Quan-tization with Salient Token Identification. In Advances in Neural Information Processing Systems , volume 37. Hinton, G.; Vinyals, O.; and Dean, J. 2015. Distill-ing the Knowledge in a Neural Network. arXiv preprint arXiv:1503.02531 .Hooper, C.; Kim, S.; Mohammadzadeh, H.; Mahoney, M. W.; Shao, Y. S.; Keutzer, K.; and Gholami, A. 2024. KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization. In Advances in Neural Information Processing Systems , volume 37. Hsieh, C.-P.; Sun, S.; Kriman, S.; Acharya, S.; Rekesh, D.; Jia, F.; Zhang, Y.; and Ginsburg, B. 2024. RULER: What’s the Real Context Size of Your Long-Context Language Mod-els? In Conference on Language Modeling .Hu, E. J.; Shen, Y.; Wallis, P.; Allen-Zhu, Z.; Li, Y.; Wang, S.; Wang, L.; and Chen, W. 2022. LoRA: Low-Rank Adaptation of Large Language Models. In International Conference on Learning Representations .Hu, J.; Huang, W.; Wang, W.; Wang, H.; Hu, T.; Qin, Z.; Feng, H.; Chen, X.; Shan, Y.; and Xie, T. 2025. EPIC: Efficient Position-Independent Caching for Serving Large Language Models. In Proceedings of the 42nd International Confer-ence on Machine Learning , volume 267 of Proceedings of Machine Learning Research , 24391–24402. Karev, A. 2025. Synthetic Biographies. Hugging Face dataset: https://huggingface.co/datasets/alex-karev/ biographies. Accessed: 2026-07-29. Kwon, W.; Li, Z.; Zhuang, S.; Sheng, Y.; Zheng, L.; Yu, C. H.; Gonzalez, J. E.; Zhang, H.; and Stoica, I. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles , 611–626. Lewis, P.; Perez, E.; Piktus, A.; Petroni, F.; Karpukhin, V.; Goyal, N.; Küttler, H.; Lewis, M.; Yih, W.-t.; Rocktäschel, T.; Riedel, S.; and Kiela, D. 2020. Retrieval-Augmented Gen-eration for Knowledge-Intensive NLP Tasks. In Advances in Neural Information Processing Systems , volume 33, 9459– 9474. Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024. SnapKV: LLM Knows What You Are Looking for Before Generation. In Advances in Neural Information Processing Systems , vol-ume 37. Liu, A.; Liu, J.; Pan, Z.; He, Y.; Haffari, G.; and Zhuang, B. 2024. MiniCache: KV Cache Compression in Depth Di-mension for Large Language Models. In Advances in Neural Information Processing Systems , volume 37. Llama Team, AI @ Meta. 2024. The Llama 3 Herd of Models. 
+
+arXiv preprint arXiv:2407.21783 .Lu, S.; Wang, H.; Rong, Y.; Chen, Z.; and Tang, Y. 2025. TurboRAG: Accelerating Retrieval-Augmented Generation with Precomputed KV Caches for Chunked Text. In Pro-ceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 6588–6601. Association for Computational Linguistics. Ma, D.; Wang, Y.; and Lan, T. 2025. Block-Attention for Efficient Prefilling. In International Conference on Learning Representations .Su, J.; Ahmed, M.; Lu, Y.; Pan, S.; Bo, W.; and Liu, Y. 2024. RoFormer: Enhanced Transformer with Rotary Position Em-bedding. Neurocomputing , 568: 127063. Trivedi, H.; Balasubramanian, N.; Khot, T.; and Sabharwal, A. 2022. MuSiQue: Multihop Questions via Single-hop Question Composition. Transactions of the Association for Computational Linguistics , 10: 539–554. Vaswani, A.; Shazeer, N.; Parmar, N.; Uszkoreit, J.; Jones, L.; Gomez, A. N.; Kaiser, L.; and Polosukhin, I. 2017. At-tention Is All You Need. In Advances in Neural Information Processing Systems , volume 30. Wang, S.; Chen, J.; Pan, Y.; Huang, H.; Hao, Y.; Zou, X.; Xia, W.; Zhang, W.; Qiu, C.; and Wang, P. 2026. ProphetKV: User-Query-Driven Selective Recomputation for Efficient KV Cache Reuse in Retrieval-Augmented Generation. arXiv preprint arXiv:2602.02579 .Xiao, G.; Tang, J.; Zuo, J.; Guo, J.; Yang, S.; Tang, H.; Fu, Y.; and Han, S. 2025. DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads. In 
+
+International Conference on Learning Representations .Xiao, G.; Tian, Y.; Chen, B.; Han, S.; and Lewis, M. 2024. Efficient Streaming Language Models with Attention Sinks. In International Conference on Learning Representations .Yan, J.; Ni, W.; Li, Z.; Jin, J.; Shen, Z.; Li, H.; Zhu, J.; Cheng, P.; Lin, X.; Chen, L.; and Ren, K. 2026. QCFuse: Query-Aware Cache Fusion via Compressed View for Efficient RAG Serving. arXiv preprint arXiv:2606.05875 .Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.; Huang, C.; Lv, C.; et al. 2025a. Qwen3 Technical Report. arXiv preprint arXiv:2505.09388 .Yang, B.; Leng, Q.; Zeng, J.; and Wu, Z. 2025b. CacheClip: Accelerating RAG with Effective KV Cache Reuse. arXiv preprint arXiv:2510.10129 .Yang, J.; Hou, B.; Wei, W.; Bao, Y.; and Chang, S. 2025c. KVLink: Accelerating Large Language Models via Efficient KV Cache Reuse. arXiv preprint arXiv:2502.16002 .Yang, Z.; Qi, P.; Zhang, S.; Bengio, Y.; Cohen, W. W.; Salakhutdinov, R.; and Manning, C. D. 2018. HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question An-swering. In Proceedings of the 2018 Conference on Empiri-cal Methods in Natural Language Processing , 2369–2380. Yao, J.; Li, H.; Liu, Y.; Ray, S.; Cheng, Y.; Zhang, Q.; Du, K.; Lu, S.; and Jiang, J. 2025. CacheBlend: Fast Large Language Model Serving for RAG with Cached Knowledge Fusion. In Proceedings of the Twentieth European Conference on Computer Systems , 94–109. Zhang, Z.; Sheng, Y.; Zhou, T.; Chen, T.; Zheng, L.; Cai, R.; Song, Z.; Tian, Y.; Ré, C.; Barrett, C.; Wang, Z.; and Chen, B. 2023. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. In Advances in Neural Information Processing Systems , volume 36. Zhao, S.; Hu, J.; Zheng, J.; and Chen, G. 2026. You Need an Encoder for Native Position-Independent Caching. arXiv preprint arXiv:2602.01519 .Zheng, L.; Yin, L.; Xie, Z.; Sun, C.; Huang, J.; Yu, C. H.; Cao, S.; Kozyrakis, C.; Stoica, I.; Gonzalez, J. E.; Barrett, C.; and Sheng, Y. 2024. SGLang: Efficient Execution of Struc-tured Language Model Programs. In Advances in Neural Information Processing Systems , volume 37. Zhou, Y.; Su, Y.; Zhang, J.; Li, J.; Xia, Q.; Wang, Z.; Duan, X.; and Huai, B. 2025. A 3: Attention-Aware Accurate KV Cache Fusion for Fast Large Language Model Serving. arXiv preprint arXiv:2511.17560 .Supplementary Material 
+
+This supplement provides implementation, measurement, and reproducibility details for the main paper. It does not add claims beyond the reported experimental scope. 
+
+# A SemPIC Training Details 
+
+Document and Student Paths 
+
+For each training sample, SemPIC identifies prompt spans designated as reusable context blocks. The frozen token em-bedding maps every block to input embeddings, and the doc-ument adapter encodes the blocks independently. Indepen-dence is maintained under batching: padding is masked, and a block cannot attend to another block in the same batch. Prepared KVs are assigned to each associated teacher tar-get and linked with the inline query tokens and teacher-forced output prefix. Student logits are collected only at target-token positions. The base-model parameters remain frozen, the adapter is disabled during student computation, and cached teacher logits are detached. No teacher forward is executed inside the measured student-training process. 
+
+Dataset Splits and Sample Construction 
+
+Examples are split before prompt construction. Biography and NIAH use disjoint project-level training and test par-titions; HotpotQA and MuSiQue use the official training and validation splits. Distillation contains 1,024 Biography records—256 each with 2, 3, 5, and 7 documents—and 2,048 records per remaining task; evaluation uses 100 held-out zero-shot examples per task. 
+
+Loss and Optimization 
+
+The teacher cache contains one or more generated sequences per sample and a floating-point logit tensor over the com-plete vocabulary for every generated token. The temperature-scaled forward KL objective defined in the main paper is im-plemented by summing over the complete vocabulary, target-token, teacher-target, and sample dimensions. The evaluated runs use τ = 1 .Table 4 records the common adapter settings. Adapters are trained separately by model and domain. 
+
+# B KV Gradient Checkpointing 
+
+Layer-Wise Contract 
+
+The checkpointed Writer uses the layer-wise hidden-state and KV interface defined in the main paper. Each non-reentrant checkpoint receives the same causal mask, position identifiers, cache positions, rotary embeddings, and model-specific sliding-window mask as the direct path. Variable-length blocks are padded during batched construction and trimmed to their valid lengths afterward. A context factory re-enters the LoRA-enabled Writer state during both original execution and backward recomputation. The implementation supports the Llama and Qwen3 de-coder families used in the paper. It requires document in-put embeddings and an autograd-enabled document-KV for-ward. The current training path does not combine check-pointed document construction with KV compression or index-based KV selection. Setting Value Adapter LoRA on q/k/v/o projections Rank / scale / dropout 8 / 16 / 0 Epochs 5Learning rate 5 × 10 −4
+
+Schedule Linear decay to zero Weight decay 0Precision bfloat16 Loss temperature 1Evaluation-data seed 42 Table 4: Common SemPIC training and evaluation settings for the evaluated campaign. 
+
+Numerical Validation 
+
+Direct and checkpointed paths are tested for per-layer key/value equality, position handling, and input gradients on variable-length Llama and Qwen3 examples. Student-prefill tests verify that LoRA gradients survive checkpoint-ing. Joint-method tests additionally compare losses and gra-dients when packet parameters and LoRA are trained to-gether. These checks validate the forward and gradient con-tract; they do not substitute for the memory measurements below. 
+
+Memory Measurement Protocol 
+
+The main comparison uses Qwen3-8B LoRA-only KL train-ing on one NVIDIA A100 80GB PCIe GPU per process. Each dataset is measured once with checkpointing enabled and once with it disabled. The forward microbatch contains one sample, while the optimizer batch contains 64 samples accumulated across microbatches. The model executes in bfloat16 with rank-8 LoRA on q/k/v/o projections. Device memory is sampled with nvidia-smi every two seconds. Each GPU is empty before launch and hosts only the measured process. A successful probe enters the real forward/backward training path; selected probes complete at least one optimizer update. A condition is recorded as OOM when the normal configuration cannot complete its forward/backward path. The values include model weights, LoRA state, runtime buffers, and resident teacher-generation data, so they are system-level device observations rather than isolated activation allocations. The resulting microbatch-1 measurements are summa-rized in the main paper. A separate Biography probe uses document-forward microbatch size 8. Its direct path oper-ates near device capacity and emits allocation-pressure warn-ings, so this condition is kept separate from the microbatch-1 cross-dataset comparison. These are short operational probes rather than repeated full training runs. The two-second sampling period may miss short-lived allocator peaks, and no variance estimate is available. They support the fit-versus-OOM and approxi-mate memory-effect claims, not a statistical characterization of GPU memory. C Position-Independent Linking 
+
+Logical Layout and Re-Rotation 
+
+Prepared blocks can be stored and batched independently of their later prompt order. At link time, the runtime builds a token-level map from physical cache slots to logical prompt positions, applies the key re-rotation defined in the main pa-per, and reuses values directly. Inline positions are processed layer by layer and their new KVs are interleaved with the pre-pared document states. The same caches therefore support different queries, histories, document orders, and retrieved sets, with logical positions assigned for each layout. A frontier causal mask prevents each inline token from observing logical successors, even when physical slots for later blocks have already been assembled. The terminal inline hidden state is projected through the language-model head to obtain the first-token distribution. The completed cache is then used by ordinary autoregressive decoding. 
+
+TTFT Boundary 
+
+The paper reports cache-hit online TTFT. The timer starts after prepared document KVs and method-specific wrappers are available, immediately before prompt-layout construc-tion. It ends after the first output token is produced, with device synchronization at both endpoints. It includes: 
+
+• logical layout and causal-frontier construction; 
+
+• document-key re-rotation; 
+
+• inline-token prefill and cache assembly; 
+
+• generation setup and first-token generation. It excludes model loading, data preprocessing, cache lookup and transfer I/O, offline document-KV construction, and cache-miss ingestion. This boundary models repeated cache-hit service rather than first use of a new document. 
+
+# D Evaluation Details 
+
+Quality Metric 
+
+After task-specific answer normalization, each prediction and reference is split on whitespace and treated as a to-ken multiset. True positives, false positives, and false nega-tives are pooled over the complete 100-example set, with 
+
+P = T P/ (T P + F P ), R = T P/ (T P + F N ), and 
+
+F1 = 2 P R/ (P + R). We choose corpus micro-F1 because these retrieval and open-form QA tasks can return multi-token answers: token overlap credits partially recovered an-swer content, while precision penalizes extra non-reference tokens, rather than assigning every non-exact generation zero credit. The metric remains lexical, whitespace-sensitive, and order-insensitive. All methods use greedy decoding. Generation caps are 32/512/128 tokens for Biography/HotpotQA/NIAH; MuSiQue uses 256 for Llama-3.1-8B and 512 for Qwen3. 
+
+Cross-Domain Transfer 
+
+Tables 5 and 6 complete the main-paper transfer analysis under the same training-source and evaluation-target organi-zation. SemPIC improves the corresponding KV Packet four-target average under all five Llama-3.1-8B training sources                                                                              
+
+> Method Bio-graphy Hotpot QA Mu SiQue NIAH Aver-age Train: Biography
+> Packet 0.96 0.18 0.16 0.44 0.44
+> SemPIC 0.99 0.32 0.10 0.40 0.45 Joint 0.99 0.26 0.08 0.40 0.43
+> Train: HotpotQA
+> Packet 0.88 0.44 0.39 0.36 0.52
+> SemPIC 0.95 0.45 0.33 0.56 0.57
+> Joint 0.96 0.41 0.38 0.56 0.58 Train: MuSiQue
+> Packet 0.87 0.36 0.37 0.34 0.49
+> SemPIC 0.95 0.44 0.28 0.54 0.55
+> Joint 0.92 0.37 0.38 0.64 0.58 Train: NIAH
+> Packet 0.54 0.28 0.07 0.80 0.42
+> SemPIC 0.53 0.36 0.22 0.82 0.48
+> Joint 0.85 0.34 0.06 0.82 0.52 Train: Mixture
+> Packet 0.95 0.42 0.43 0.71 0.63
+> SemPIC 0.99 0.42 0.38 0.77 0.64
+> Joint 0.99 0.49 0.39 0.82 0.67
+
+Table 5: Cross-domain corpus micro-F1 on Llama-3.1-8B. Packet denotes KV Packet. Each group identifies the training source and columns identify the evaluation target; Average is their arithmetic mean. Bold numeric entries mark the best displayed average for each source. and four of five Qwen3-4B sources; the exception is Qwen3-4B trained on MuSiQue. 
+
+Efficiency Metrics 
+
+Mean online prefill FLOPs are architecture-aware analyti-cal estimates averaged over the 100 evaluation requests. For cache-reuse methods, accounting begins after reusable KVs and learned wrappers are prepared; Full Recompute instead counts complete-prompt prefill. The estimate includes key re-rotation, transformer arithmetic for inline and recomputed tokens, implemented method-specific scoring or fusion, and the final normalization and output projection that produce first-token logits. It excludes offline cache construction and training, model loading, data preprocessing, cache lookup and transfer, and autoregressive computation after the first-token logits. It also omits system effects not represented by the analytical counters, including data movement, allocation, layout construction, kernel launch, and synchronization over-head. TTFT is the mean synchronized wall-clock time under the boundary defined above; for cache-reuse methods, this is cache-hit latency. We report both metrics because FLOPs iso-lates algorithmic online arithmetic independently of a partic-ular GPU implementation, whereas TTFT captures realized serving effects such as parallelism, memory traffic, and ker-nel efficiency. Conversely, the FLOP axis helps distinguish reduced online computation from implementation-specific latency differences. Method Bio-graphy Hotpot QA Mu SiQue NIAH Aver-age Train: Biography                                                                            
+
+> Packet 0.81 0.18 0.07 0.31 0.34
+> SemPIC 0.98 0.20 0.13 0.44 0.44 Joint 0.96 0.17 0.13 0.21 0.37
+> Train: HotpotQA
+> Packet 0.81 0.29 0.28 0.50 0.47
+> SemPIC 0.89 0.29 0.30 0.55 0.51 Joint 0.78 0.30 0.37 0.49 0.49
+> Train: MuSiQue
+> Packet 0.67 0.26 0.24 0.48 0.41
+> SemPIC 0.49 0.18 0.31 0.49 0.37
+> Joint 0.67 0.26 0.35 0.49 0.44 Train: NIAH
+> Packet 0.56 0.14 0.12 0.63 0.36
+> SemPIC 0.27 0.26 0.18 0.76 0.37
+> Joint 0.47 0.25 0.19 0.74 0.41 Train: Mixture
+> Packet 0.93 0.26 0.24 0.48 0.48
+> SemPIC 0.94 0.28 0.42 0.67 0.58 Joint 0.96 0.27 0.34 0.75 0.58
+
+Table 6: Cross-domain corpus micro-F1 on Qwen3-4B-Instruct-2507. Packet denotes KV Packet. Each group iden-tifies the training source and columns identify the evaluation target; Average is their arithmetic mean. Bold numeric en-tries mark the best displayed average for each source. 
+
+Computing Environment 
+
+All quality and TTFT comparisons use the same server and software environment. The server contains eight NVIDIA A100 80GB PCIe GPUs, two Intel Xeon Gold 6530 CPUs (64 physical cores and 128 hardware threads), 1 TiB of host memory, and Ubuntu 24.04.3 LTS; each process uses one GPU. The environment uses Python 3.12.3, CUDA 13.0, PyTorch 2.13.0+cu130, Transformers 5.2.0, PEFT 0.19.1, Accelerate 1.14.0, and Datasets 5.0.0, with NVIDIA driver 610.43.02. All methods within a TTFT panel are therefore compared under matched hardware and software conditions. 
+
+Complete High-Resolution Quality–Efficiency Overview 
+
+Figure 7 provides a single high-resolution overview of all three models under the same four-task protocol. Within each model block, the upper row uses mean online prefill FLOPs and the lower row uses cache-hit TTFT, with selective-recomputation sweeps and recomputation-free learned-cache points shown together. TTFT excludes offline cache con-struction. This view is descriptive: it exposes the available operating points under a common metric boundary without treating connected budget sweeps as continuous curves or repeated trials. 
+
+Interpretation Boundaries 
+
+The reported tradeoff curves do not establish performance at unevaluated recomputation budgets or end-to-end cache-miss latency. Figure 7: High-resolution overview of quality–efficiency tradeoffs on three models and four tasks, reporting corpus micro-F1 against online prefill FLOPs (upper rows) and cache-hit TTFT (lower rows).
