@@ -1,0 +1,59 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-01T21:01:21.321435+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 1,
+    "deep_cap": 6,
+    "deep_selected": 1,
+    "quick_candidates": 0,
+    "quick_skim_target": 11,
+    "quick_selected": 0
+  },
+  "deep_dive": [
+    {
+      "id": "2607.28263v1",
+      "source": "arxiv",
+      "title": "Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory",
+      "abstract": "Transformer depth is not used uniformly: lower and middle layers build semantic representations, while upper layers increasingly specialize them for prediction. We turn this division of labor into CoMem (Comprehension Memory), which writes each context chunk only through an intermediate layer, retrieves a fixed number of cached residual states, and recomputes the query-conditioned upper layers over the resulting pack. For a fixed retrieval budget, model-side read compute and memory are independent of stored-context length. We evaluate a continued-trained Qwen3-8B base LM under a unified chat-template-free protocol. The backbone is frozen; the flagship trains only a rank-32 self-distillation LoRA on plain PG19, and we report an adapter-free arm separately. CoMem reaches 97.05 on RULER and 38.27 on LoCoMo versus 34.59 for full-context KV-Direct; the dialogue-memory advantage survives conversation-cluster resampling and an independent judge. Results on additional long-context and long-document tasks expose both the benefits of bounded retrieval and its in-window compression tax. Controlled depth sweeps show that deeper caching lowers per-query recomputation but incurs a fidelity loss that self-distillation substantially repairs. In a separate adapter-free efficiency control on an NVIDIA H20 at 128k, CoMem uses 18.26 GB rather than 89.36 GB and achieves a 7.83x prefill speedup. These results show that long-context memory can be organized along the layer axis, not only the token axis.",
+      "authors": [
+        "Hanzuo Liu",
+        "Xuan Qi",
+        "Chunyu Liu",
+        "Haotian Zhong",
+        "Yulong Wang",
+        "Rayying",
+        "Key",
+        "Alex Lamb",
+        "Mingyu Gao"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-30T14:19:11+00:00",
+      "link": "https://arxiv.org/pdf/2607.28263v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "caches intermediate residual states instead of full KV pairs to enable unbounded-context memory, reducing read compute and memory",
+      "llm_evidence_cn": "缓存中间残差状态而非完整键值对，用于无界上下文记忆，降低读取计算和内存",
+      "llm_evidence": "缓存中间残差状态而非完整键值对，用于无界上下文记忆，降低读取计算和内存",
+      "canonical_evidence": "缓存中间残差状态而非完整键值对，用于无界上下文记忆，降低读取计算和内存",
+      "llm_tldr_en": "Shows transformer depth divides labor; proposes CoMem that caches per-chunk residual states from an intermediate layer and recomputes upper layers, making model-side read compute and memory independent of stored context length.",
+      "llm_tldr_cn": "大语言模型的不同深度层分工不同，底层和中层构建语义表示，上层用于预测。本论文据此提出CoMem，通过只将每个上下文块写入中间层，检索固定数量的缓存残差状态，并重算查询相关的上层来支持无界上下文记忆。在固定检索预算下，模型端的读取计算与存储上下文长度无关。实验基于Qwen3-8B微调LoRA，验证了该方法能够在不增加读取成本的情况下扩展记忆长度。",
+      "llm_tldr": "大语言模型的不同深度层分工不同，底层和中层构建语义表示，上层用于预测。本论文据此提出CoMem，通过只将每个上下文块写入中间层，检索固定数量的缓存残差状态，并重算查询相关的上层来支持无界上下文记忆。在固定检索预算下，模型端的读取计算与存储上下文长度无关。实验基于Qwen3-8B微调LoRA，验证了该方法能够在不增加读取成本的情况下扩展记忆长度。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": []
+}

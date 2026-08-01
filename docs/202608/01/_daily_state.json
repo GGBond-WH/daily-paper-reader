@@ -1,0 +1,25 @@
+{
+  "date": "20260801",
+  "date_label": "",
+  "generated_at": "2026-08-01 21:03:17 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.28263v1",
+      "route": "202608/01/2607.28263v1-understanding-is-done-early-a-depth-division-of-labor-in-large-language-models-and-its-use-for-unbounded-context-memory",
+      "title": "Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "缓存中间残差状态而非完整键值对，用于无界上下文记忆，降低读取计算和内存",
+      "first_seen_at": "2026-08-01 21:03:17 UTC",
+      "updated_at": "2026-08-01 21:03:17 UTC"
+    }
+  ]
+}

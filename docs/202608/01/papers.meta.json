@@ -1,0 +1,24 @@
+{
+  "label": "2026-08-01",
+  "date": "2026-08-01",
+  "generated_at": "2026-08-01T21:03:20",
+  "count": 1,
+  "papers": [
+    {
+      "paper_id": "202608/01/2607.28263v1-understanding-is-done-early-a-depth-division-of-labor-in-large-language-models-and-its-use-for-unbounded-context-memory",
+      "section": "deep",
+      "title_en": "Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory",
+      "authors": "Hanzuo Liu, Xuan Qi, Chunyu Liu, Haotian Zhong, Yulong Wang, Rayying, Key, Alex Lamb, Mingyu Gao",
+      "date": "2026-07-30",
+      "pdf": "https://arxiv.org/pdf/2607.28263v1",
+      "score": "8.0",
+      "evidence": "缓存中间残差状态而非完整键值对，用于无界上下文记忆，降低读取计算和内存",
+      "tldr": "Transformer各层并非同质：浅中层负责建立语义，深层逐步将表征特化到预测任务。针对长上下文，现有全量KV缓存随长度线性膨胀，CoMem则按层分工设计：每个上下文块只前向到中间层便写入缓存，保留固定数量的残差状态；查询时检索这些状态，仅重计算上方的查询条件层。这样无论存储多长，每次读取的计算量与显存都保持恒定。在Qwen3-8B上，CoMem取得RULER 97.05、LoCoMo 38.27，优于全上下文KV-Direct的34.59；H20上显存占用从89.36GB降至18.26GB，prefill加速7.83倍。工作说明长上下文记忆可以沿层轴组织，而不必沿token轴无限扩张。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Transformer depth is not used uniformly: lower and middle layers build semantic representations, while upper layers increasingly specialize them for prediction. We turn this division of labor into CoMem (Comprehension Memory), which writes each context chunk only through an intermediate layer, retrieves a fixed number of cached residual states, and recomputes the query-conditioned upper layers over the resulting pack. For a fixed retrieval budget, model-side read compute and memory are independent of stored-context length. We evaluate a continued-trained Qwen3-8B base LM under a unified chat-template-free protocol. The backbone is frozen; the flagship trains only a rank-32 self-distillation LoRA on plain PG19, and we report an adapter-free arm separately. CoMem reaches 97.05 on RULER and 38.27 on LoCoMo versus 34.59 for full-context KV-Direct; the dialogue-memory advantage survives conversation-cluster resampling and an independent judge. Results on additional long-context and long-document tasks expose both the benefits of bounded retrieval and its in-window compression tax. Controlled depth sweeps show that deeper caching lowers per-query recomputation but incurs a fidelity loss that self-distillation substantially repairs. In a separate adapter-free efficiency control on an NVIDIA H20 at 128k, CoMem uses 18.26 GB rather than 89.36 GB and achieves a 7.83x prefill speedup. These results show that long-context memory can be organized along the layer axis, not only the token axis.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

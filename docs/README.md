@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-31</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-31 21:44:47 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-01 21:03:17 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读6篇，聚焦KV缓存管理与高效注意力机制；最值得关注的是“反向因果意外”KV缓存管理（10分）与相似性引导的Top-K复用（9分）；建议优先阅读这两篇，把握长上下文推理优化最新思路。</p>
+<p>今日精读1篇论文，聚焦大语言模型的理解机制。值得关注：模型早期层已完成深度分工，这一发现可用于构建无限上下文记忆。建议下一步结合该机制探索长文本处理的实际应用。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Back from the Future: Key-Value Cache Management by Counter-Causal Surprise">Back from the Future: Key-Value Cache Management by Counter-Causal Surprise</span></li><li><span class="dpr-home-dashboard-paper-title" title="Recall Before You Rank: Similarity-Guided Top-$K$ Reuse for Efficient Long-Context Attention">Recall Before You Rank: Similarity-Guided Top-$K$ Reuse for Efficient Long-Context Attention</span></li><li><span class="dpr-home-dashboard-paper-title" title="SemPIC: Learning Semantic Position-Independent KV Caches">SemPIC: Learning Semantic Position-Independent KV Caches</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory">Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Stage-Replay Divergence Follows the KV Cache: Fixed-Prefix Precision Controls and Bidirectional Cache Transplantation">Stage-Replay Divergence Follows the KV Cache: Fixed-Prefix Precision Controls and Bidirectional Cache Transplantation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Structured Redundancy Modeling for Efficient Visual Token Pruning in High-Resolution MLLMs">Structured Redundancy Modeling for Efficient Visual Token Pruning in High-Resolution MLLMs</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
+
 </section>
 </div>
 
