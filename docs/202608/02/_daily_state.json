@@ -1,0 +1,25 @@
+{
+  "date": "20260802",
+  "date_label": "",
+  "generated_at": "2026-08-02 21:15:33 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.26228v1",
+      "route": "202608/02/2607.26228v1-steering-instruction-hierarchies-at-inference-time",
+      "title": "Steering Instruction Hierarchies at Inference Time",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "在注意力中编辑缓存的值向量以实现推理时引导",
+      "first_seen_at": "2026-08-02 21:15:33 UTC",
+      "updated_at": "2026-08-02 21:15:33 UTC"
+    }
+  ]
+}

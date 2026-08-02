@@ -1,0 +1,24 @@
+{
+  "label": "2026-08-02",
+  "date": "2026-08-02",
+  "generated_at": "2026-08-02T21:15:35",
+  "count": 1,
+  "papers": [
+    {
+      "paper_id": "202608/02/2607.26228v1-steering-instruction-hierarchies-at-inference-time",
+      "section": "quick",
+      "title_en": "Steering Instruction Hierarchies at Inference Time",
+      "authors": "Siqi Zeng, Sewoong Lee, Han Zhao, Julia Hockenmaier",
+      "date": "2026-07-28",
+      "pdf": "https://arxiv.org/pdf/2607.26228v1",
+      "score": "7.0",
+      "evidence": "在注意力中编辑缓存的值向量以实现推理时引导",
+      "tldr": "语言模型部署依赖指令层次，但前沿模型常违反系统提示优先性。V-Steer在推理时通过编辑缓存值向量，利用logit归因增强特权跨度、抑制冲突低优先级跨度。在7B-70B模型上，主要约束准确率从低于18%提升至92%，超越仅提示基线，匹敌或超过SoTA训练方法。该方法无需训练、兼容融合注意力，仅增加一次预填充开销，提供高效推理时方案。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Instruction hierarchies are a core safety assumption of language model deployment: higher priority inputs, such as system prompts, should override conflicting lower priority inputs from users or tools. Yet frontier LLMs often violate this hierarchy. We introduce V-Steer, a training-free inference time method that restores privileged influence by editing cached value vectors at prompt positions. Using direct logit attribution on the first next token prediction, V-Steer identifies heads where lower priority spans dominate privileged ones, then boosts privileged spans and suppresses conflicting lower priority spans through in-place multiplicative edits to cached V tensors. Since the method acts only on cached values, it remains compatible with fused attention backends and adds only a one time prefill overhead. Across models from 7B to 70B, this attribution guided intervention raises primary constraint accuracy from under 18% up to 92% on controlled role conflict benchmarks, and on broader instruction hierarchy evaluations substantially outperforms prompt only baselines while matching or exceeding SoTA training based methods on 3 of 4 scales of LLMs, with negligible decoding-speed overhead. The code is available at https://github.com/cindy2000sh/v-steer.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}
