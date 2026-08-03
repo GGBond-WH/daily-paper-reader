@@ -1,0 +1,89 @@
+{
+  "date": "20260803",
+  "date_label": "",
+  "generated_at": "2026-08-03 21:36:31 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2607.28699v1",
+      "route": "202608/03/2607.28699v1-witcert-sound-runtime-risk-observability-and-gating-for-kv-cache-quantization",
+      "title": "WitCert: Sound Runtime Risk Observability and Gating for KV-Cache Quantization",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "为KV量化提供可证明的运行时上界",
+      "first_seen_at": "2026-08-03 21:36:31 UTC",
+      "updated_at": "2026-08-03 21:36:31 UTC"
+    },
+    {
+      "paper_id": "2607.29591v1",
+      "route": "202608/03/2607.29591v1-reskv-reconstructing-omitted-attention-contributions-for-fixed-budget-kv-cache-compression",
+      "title": "ResKV: Reconstructing Omitted Attention Contributions for Fixed-Budget KV Cache Compression",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "提出ResKV，一种在固定预算下通过重建被省略注意力贡献进行KV缓存压缩的方法。",
+      "first_seen_at": "2026-08-03 21:36:31 UTC",
+      "updated_at": "2026-08-03 21:36:31 UTC"
+    },
+    {
+      "paper_id": "2607.28979v1",
+      "route": "202608/03/2607.28979v1-mixture-of-translators-translating-kv-caches-across-heterogeneous-large-language-models",
+      "title": "Mixture-of-Translators: Translating KV Caches Across Heterogeneous Large Language Models",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "提出异构LLM间的KV缓存翻译框架，实现缓存复用并减少重复预填充。",
+      "first_seen_at": "2026-08-03 21:36:31 UTC",
+      "updated_at": "2026-08-03 21:36:31 UTC"
+    },
+    {
+      "paper_id": "2607.29076v1",
+      "route": "202608/03/2607.29076v1-selective-kv-cache-protection-for-noise-resilient-llm-inference-on-analog-compute-in-memory-systems",
+      "title": "Selective KV Cache Protection for Noise-Resilient LLM Inference on Analog Compute-In-Memory Systems",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "直接研究模拟CIM上注意力机制的KV缓存操作并提出选择性KV缓存保护。",
+      "first_seen_at": "2026-08-03 21:36:31 UTC",
+      "updated_at": "2026-08-03 21:36:31 UTC"
+    },
+    {
+      "paper_id": "2607.29678v1",
+      "route": "202608/03/2607.29678v1-toktier-exact-stateful-tokenization-for-agentic-llm-serving",
+      "title": "TokTier: Exact Stateful Tokenization for Agentic LLM Serving",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "有状态分词保证token一致，从而在智能体服务中实现提示词KV缓存复用。",
+      "first_seen_at": "2026-08-03 21:36:31 UTC",
+      "updated_at": "2026-08-03 21:36:31 UTC"
+    }
+  ]
+}

@@ -1,0 +1,1158 @@
+Title: ResKV: Reconstructing Omitted Attention Contributions for Fixed-Budget KV Cache Compression
+
+URL Source: https://arxiv.org/pdf/2607.29591v1
+
+Published Time: Mon, 03 Aug 2026 01:07:37 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# ResKV: Reconstructing Omitted Attention Contributions for Fixed-Budget KV Cache Compression 
+
+## Yuhang Zhan, Lisi Chen, Shuo Shang 
+
+University of Electronic Science and Technology of China agooostoo@gmail.com, lchen012@e.ntu.edu.sg, jedi.shang@gmail.com 
+
+Abstract 
+
+KV cache compression is essential for efficient long-context inference. Existing eviction methods permanently discard un-selected tokens and consequently remove their aggregate con-tribution to attention. Merging-based alternatives preserve more information but can perturb retained keys and values that should remain exact. We observe that the information omit-ted by cache eviction can be formulated as residual statistics in both the numerator and denominator of softmax attention. Based on this observation, we propose ResKV , which divides a fixed KV budget into an exact main cache and a compact residual cache that reconstructs the contribution of omitted to-kens. ResKV lets main-cache tokens and residual entries par-ticipate in the same softmax normalization, so residual entries restore both attention numerator and denominator mass rather than acting as a post-hoc correction. A construction-time vali-dation proxy determines residual allocation for each layer and KV head, while a decode-time dynamic gate adjusts residual contributions for individual queries. Comprehensive evalua-tions on LongBench and RULER, covering query-aware and query-agnostic settings, multiple backbones, cache budgets, and representative compression baselines, demonstrate broad improvements under the same retained KV budget while pre-serving the practical efficiency of compressed decoding, in-cluding peak memory usage and long-context decode through-put. 
+
+## Introduction 
+
+Long-context large language models rely on a KV cache to avoid recomputing past keys and values during autoregres-sive generation. While this cache makes decode efficient, it also grows linearly with the context length and quickly becomes a dominant source of memory use and memory traffic [Kwon et al. 2023, Sheng et al. 2023, Liu et al. 2024b, Hooper et al. 2024]. This creates a central tension in long-context inference: the model should retain enough historical information to answer future queries, but the system can only afford to keep a limited number of KV slots. KV cache compression methods commonly address this tension by deciding which tokens to keep. Eviction-based methods score cached tokens, retain a subset as exact keys and values, and permanently discard the rest [Liu et al. 2023, Zhang et al. 2023, Adnan et al. 2024, Li et al. 2024, Oren et al. 2024, Tang et al. 2025, Feng et al. 2025, Zhou et al. 2025, Gu et al. 2026]. This design is efficient, but it makes cache compression a binary decision: each token is either kept unchanged or removed together with its value contribution and softmax normalization mass. Merging-based methods preserve information from evicted tokens by combining related cache states. CaM folds evicted states into retained entries, KVMerger merges similar keys with Gaussian-kernel weights, KeepKV compensates attention scores using merging history, and SemantiCache constructs semantic cores with proportional attention [Zhang et al. 2024, Wang et al. 2024, Tian et al. 2026, Wu et al. 2026]. These methods show that omitted information can remain useful after aggregation. However, they fold omitted content into retained or merged cache states, which can per-turb retained memories and erase the individual identities of folded tokens. Another line of recent work estimates the contribution of compressed or omitted tokens. KVSculpt optimizes uncon-strained virtual KV pairs to preserve layer attention behav-ior [Jiang and Jin 2026], while RESA uses a low-rank logit prior and an online aggregator to compensate the output of sparse attention [Yang et al. 2026]. However, these methods do not jointly address how to preserve selected tokens as ex-act memories and represent omitted tokens as cache-resident entries under the same fixed budget. We instead view the removed tokens through the attention computation itself. In the attention numerator–denominator form, the evicted side is a residual contribution: a pair of omitted softmax statistics over the tokens outside the main cache. If these omitted statistics could be reconstructed, the model would not need to choose between deleting them out-right, folding them into retained tokens, or replacing them with merged cache states. The key question is therefore how to represent this residual contribution within the same fixed KV budget. We propose ResKV , a residual KV cache that splits a fixed cache budget into two parts: a main cache that stores selected tokens exactly, and a residual cache that represents the omit-ted side with compact residual entries. The main cache keeps high-priority tokens unchanged as exact memories, while the residual cache reintroduces structured information from evicted tokens without increasing the total number of cache slots. In this way, ResKV changes the cache representation from a pure keep-or-drop decision into a main-plus-residual layout under the same retained KV budget. This avoids the arXiv:2607.29591v1 [cs.CL] 31 Jul 2026 binary deletion of eviction, does not fold omitted information into exact retained memories, and keeps the omitted side as entries that can participate in attention. At decode time, ResKV combines the exact main cache and the residual cache through a shared-softmax residual formulation. Residual entries are not used as a post-hoc out-put correction; instead, they participate in the same softmax normalization as the exact main-cache tokens. This lets each residual entry restore both numerator mass and denominator mass, making it an approximate attention participant rather than an external value update. ResKV further uses adaptive residual control at two points. During cache construction, a validation proxy selects the residual budget for each layer and KV head only when residual entries improve held-out attention-output reconstruction. During decode, a dynamic gate scales the residual logits according to the sharpness of the main-cache attention, allowing residual mass under dif-fuse attention while protecting sharp retrieval peaks. We evaluate ResKV across multiple long-context bench-marks, backbones, and representative compression baselines. We consider both query-aware and query-agnostic construc-tion; the latter compresses the cache without access to the future query and therefore better matches realistic deploy-ment. Across the main tables, ResKV improves all 32 dis-played LongBench configurations and 63 of the 64 displayed RULER configurations under the same retained KV budget, with especially clear benefits under tight cache budgets and on tasks that require distributed contextual evidence, with negligible additional memory overhead and stable through-put at long context lengths. Ablations further confirm the roles of the validation proxy, dynamic gate, and shared soft-max. Our contributions are threefold: 
+
+• We introduce ResKV, a main-plus-residual KV cache rep-resentation that accounts for omitted attention mass under a fixed KV budget while keeping selected main-cache en-tries exact. 
+
+• We develop adaptive residual control for ResKV, includ-ing a construction-time validation proxy and a decode-time dynamic gate. 
+
+• We show through comprehensive experiments that ResKV improves representative compression baselines across long-context benchmarks, cache budgets, and con-struction settings, while preserving practical efficiency. 
+
+## Related Work 
+
+KV cache eviction and budget allocation. KV cache evic-tion exploits attention sparsity by retaining a subset of past tokens. Existing methods preserve attention sinks and recent tokens, select entries from accumulated or observed atten-tion, adapt budgets across layers or heads, or use removal-induced perturbation as saliency [Xiao et al. 2024, Liu et al. 2023, Zhang et al. 2023, Adnan et al. 2024, Li et al. 2024, Oren et al. 2024, Cai et al. 2025, Tang et al. 2025, Wang et al. 2025, Feng et al. 2025, Zhou et al. 2025, Gu et al. 2026]. 
+
+Representing omitted cache information. Several meth-ods go beyond permanent deletion by encoding omitted content into compact representations. CaM, KVMerger, KeepKV, and SemantiCache merge or aggregate evicted states using attention importance, key similarity, merging history, or semantic cores [Zhang et al. 2024, Wang et al. 2024, Tian et al. 2026, Wu et al. 2026]. KVSculpt distills compressed regions into unconstrained virtual KV pairs to preserve attention behavior [Jiang and Jin 2026]. RESA es-timates omitted contributions with a low-rank logit prior and compensates sparse-attention outputs online [Yang et al. 2026]. LESS augments sparse attention with a learned re-current residual state, and ClusterKV organizes cache access around semantic clusters [Dong et al. 2024, Liu et al. 2025]. 
+
+Orthogonal KV cache optimizations. KV cache quan-tization reduces per-entry precision, while sparse-attention and retrieval systems reduce the entries accessed at each step without necessarily discarding the full cache [Hooper et al. 2024, Liu et al. 2024b, Kang et al. 2024, Sharma et al. 2025, Tang et al. 2024, Liu et al. 2024a]. 
+
+## Preliminaries 
+
+KV Cache 
+
+An autoregressive Transformer [Vaswani et al. 2017] pro-cesses a prompt in a prefill phase and then generates tokens one by one in a decode phase. Prefill computes and stores the prompt keys and values in a KV cache ; each decode step appends the new token’s key and value and attends with a single query q over the cached matrices, 
+
+o = softmax  qK ⊤/√d V, (1) where K, V ∈ Rs×d are the cached keys and values. The cache grows with the sequence length and, at long context, dominates the memory and bandwidth of inference [Kwon et al. 2023, Sheng et al. 2023, Liu et al. 2024b, Hooper et al. 2024]. 
+
+KV Cache Compression 
+
+Under compression ratio ρ ∈ (0 , 1) , only b = ⌊s(1 − ρ)⌋ KV slots are retained. Eviction methods score cached tokens, keep a set M0 of size b, and drop E0 = S \ M0, so decoding attends only over the pruned cache, 
+
+oevict = softmax  qK ⊤ 
+
+> M0
+
+/√d VM0 , (2) with KM0 , V M0 the retained rows [Liu et al. 2023, Zhang et al. 2023, Adnan et al. 2024, Li et al. 2024, Oren et al. 2024, Tang et al. 2025, Gu et al. 2026]. Merging methods instead fold evicted states back into retained slots, so part of the omitted information remains within the same budget [Zhang et al. 2024, Wang et al. 2024, Tian et al. 2026]. 
+
+## Motivation 
+
+Observation 
+
+Observation 1: hard eviction discards residual informa-tion. Hard eviction drops all terms from the evicted set, which is risky under diffuse attention because many low-scoring tokens can still carry substantial aggregate mass and may become useful again for future decoding queries. To make this explicit, let the rows of K and V be kp and vp, and define ap = ⟨q, k p⟩/√d. Then 
+
+o = softmax  qK ⊤/√dV = softmax  [a1, . . . , a s]V
+
+=
+
+> s
+
+X
+
+> p=1
+
+eap
+
+Psp′=1 eap′ vp =
+
+Psp=1 eap vp
+
+Psp′=1 eap′
+
+=
+
+P 
+
+> p∈M0
+
+eap vp + P 
+
+> p∈E0
+
+eap vp
+
+P 
+
+> p′∈M0
+
+eap′ + P 
+
+> p′∈E0
+
+eap′ .
+
+(3) In this form, eviction deletes the two E0 sums from the nu-merator and denominator, then renormalizes using only the retained denominator over M0. Thus, even if each evicted token has small individual attention, their aggregate numer-ator and normalization mass can still be missing from the decoding output. 
+
+Observation 2: folding the residual into exact tokens can corrupt them. Equation 3 also shows that the missing in-formation is a separate pair of sums over E0. Merging avoids outright deletion, but it writes these evicted terms into re-tained slots, changing the retained keys and values them-selves. This is undesirable for sharp retrieval: a token in M0
+
+that should remain an exact memory can be perturbed by un-related evicted tokens. These two failure modes suggest that the missing information should be accounted for separately, without modifying the retained cache. 
+
+The Residual 
+
+Equation 3 shows that the information lost by eviction is exactly a pair of unnormalized softmax statistics. For a token subset T and query q, with ap(q) = ⟨q, k p⟩/√d, define 
+
+ZT (q) = X
+
+> p∈T
+
+eap(q), NT (q) = X
+
+> p∈T
+
+eap(q) vp, (4) so that the full-cache output is oS (q) = NS (q)/Z S (q)
+
+and hard eviction gives the main-only output oM0 (q) = 
+
+NM0 (q)/Z M0 (q) (Eqs. 1 and 2). Now consider a main cache that keeps a set M exactly, with evicted complement E = S \ M . We call the part omitted by the main cache the residual of M :
+
+R(M ; q) =  NS (q) − NM (q), Z S (q) − ZM (q)
+
+=  NE (q), Z E (q)
+
+=
+
+X
+
+> p∈E
+
+eap(q)vp, X
+
+> p∈E
+
+eap(q)
+
+ .
+
+(5) Adding R(M ; q) back would recover full attention exactly, but it is not cacheable: the weights eap(q) depend on the future query q, so evaluating it needs the evicted keys and values. The core idea of ResKV is to trade exactness for reconstruction—keep the few most important tokens exactly and use a compact residual cache to approximate R(M ; q)
+
+through attention-output reconstruction. Concretely, the bud-get is split as b = m+r: a main cache M of m exact KV slots and a residual cache R of r slots, leaving the retained tokens untouched. Conceptually, for fixed caches M and R, the best residual reconstruction bR would make residual-augmented attention close to full attention: 
+
+bR⋆ = arg min 
+
+> bR
+
+Eq∼Q ∥oS (q) − ˆo(q)∥22 , (6) where 
+
+oS (q) = NS (q)
+
+ZS (q) , ˆo(q) = NM (q) + bN bR(q)
+
+ZM (q) + bZ bR(q) . (7) This form requires the residual contribution to share the same normalization as the main cache, rather than being added as a separate output correction. The next section describes how ResKV instantiates this attention-output reconstruction within a fixed KV budget. 
+
+## Residual KV Cache (ResKV) 
+
+Overview 
+
+ResKV turns the residual view from the previous section into a main-plus-residual cache layout. For each layer and KV head, the fixed budget is b = ⌊s(1 − ρ)⌋ = m + r:
+
+m exact main-cache slots and r residual slots, keeping the same persistent KV cache footprint. Figure 1 summarizes this layout and its decode-time combination. Main entries remain exact, while residual entries summa-rize omitted tokens and re-enter the shared softmax through their representative keys, values, and counts. A validation proxy selects the residual allocation after prefill, and a dy-namic gate modulates residual logits during decode. 
+
+Cache Split and Selection 
+
+ResKV first splits the fixed cache budget b into two parts, 
+
+b = m + r. The main cache M uses m slots to store selected tokens with their original keys and values, so these entries remain exact during decoding. The residual cache R uses the remaining r slots for attention-output reconstruction of the omitted contribution. Given a per-token importance score sp
+
+and a protected recent window P, the main cache is selected as 
+
+M = P ∪ Top m−|P| (s), E = S \ M. (8) where the recent window protects local continuity in autore-gressive decoding. The remaining prompt tokens form the evicted side E, whose contribution will be represented by the residual cache and reintroduced during decoding. 
+
+Residual Cache Construction 
+
+Given the split (M, E ) and a residual budget r, ResKV ap-proximates R(M ; q) by reconstructing the omitted statistics of E for a future query q, with ap(q) = ⟨q, k p⟩/√d:
+
+ZE (q) = X
+
+> p∈E
+
+eap(q), NE (q) = X
+
+> p∈E
+
+eap(q)vp. (9) Because the weights depend on the future query, ResKV caches compact query-agnostic summaries instead of the ex-act statistics. Validation proxy 
+
+> ResKV Compressor
+
+... 
+
+> query
+> Dynamic gate
+> Concat & Linear
+> Decoding
+> hidden state
+
+... 
+
+> ...
+> Full KV Cache (Size s)
+> Main Cache:
+> Omitted Side:
+> Residual entries:
+> Score
+> Top-M S-M
+> Main Cache Residual Cache
+> ResKV Cache (Size b = m + r)
+> Exact Carry
+
+Pre fi ll Reconstruct Decode 
+
+> Hard eviction: discards
+> Traditional (Discard)
+> High Score Low Score
+> Maintain Eviction Candidates
+> Traditional (Merge)
+
+Figure 1: Overview of ResKV. Given a fixed budget b = m + r, ResKV keeps selected tokens exactly in the main cache M
+
+and reconstructs the omitted side E as a residual cache R. During decoding, the main and residual branches are combined by a dynamic gate. Let Πr = {C1, . . . , C r } be a partition of E. Each residual entry represents one group Cj and stores three quantities: 
+
+¯kj = 1
+
+cj
+
+X
+
+> p∈Cj
+
+kp, ¯vj = 1
+
+cj
+
+X
+
+> p∈Cj
+
+vp, cj = |Cj |, (10) namely a representative key, a representative value, and a population count. If the tokens in Cj have similar logits for a query, ap(q) ≈ ¯aj (q) with ¯aj (q) = ⟨q, ¯kj ⟩/√d, then the group’s omitted statistics can be reconstructed as 
+
+X
+
+> p∈Cj
+
+eap(q) ≈ cj e¯aj (q), X
+
+> p∈Cj
+
+eap(q)vp ≈ cj e¯aj (q) ¯vj .
+
+(11) Thus the representative key and value reconstruct the group’s address and numerator, while cj restores its softmax mass. When cj = 1 , a residual entry reduces to an exact retained token. Since future queries are unavailable at cache-construction time, ResKV uses key-space consistency as a query-agnostic surrogate: nearby keys tend to induce similar logits and can share one residual entry. We choose the partition by mini-mizing 
+
+Π⋆r = arg min 
+
+> Πr
+> r
+
+X
+
+> j=1
+
+X
+
+> p∈Cj
+
+kp − ¯kj 
+
+> 22
+
+, Cj ⊂ E. (12) We solve this objective with a few Lloyd iterations [Lloyd 1982], initialized from high-scored tokens in E, indepen-dently for each layer and KV head after prefill. The resulting 
+
+r residual entries occupy r cache slots, so the total budget remains b = m + r.
+
+Shared-Softmax Residual Decode 
+
+At decode, exact main-cache tokens and residual entries par-ticipate in one shared softmax rather than using the residual branch as a post-hoc correction. For a query q, define the main logits 
+
+ap = ⟨q, k p⟩/√d, p ∈ M, (13) and the residual-entry logits 
+
+˜aj = ⟨q, ¯kj ⟩/√d + log cj + log g(q), j ∈ R. (14) The term log cj injects the population mass from Eq. 11, and 
+
+g(q) ∈ [0 , 1] is the dynamic gate defined below. We write the shared softmax in the same numerator– denominator form as the motivation: 
+
+bZ(q) = X
+
+> p∈M
+
+eap + X
+
+> j∈R
+
+e˜aj , (15) 
+
+bN (q) = X
+
+> p∈M
+
+eap vp + X
+
+> j∈R
+
+e˜aj ¯vj . (16) The output is then 
+
+ˆo(q) = bN (q)
+
+bZ(q) , (17) where residual terms contribute to both the numerator and de-nominator under the same normalization as the main cache. Hard eviction is recovered when R = ∅, where the second sums vanish and attention normalizes over M alone. 
+
+Adaptive Residual Control 
+
+ResKV makes residual reconstruction adaptive rather than fixed. During cache construction, a validation proxy selects the residual budget with an attention-output objective: resid-ual entries are allocated only when they improve held-out reconstruction of the attention output. During decoding, the residual cache is used query-adaptively. Broad attention pat-terns receive more residual mass to recover aggregate omit-ted contributions, while sharp main-cache peaks are explic-itly protected by down-weighting the residual branch. These two controls align residual storage and residual usage with the attention-output objective in Eq. 6. Figure 2 illustrates the construction-time validation proxy and the decode-time dynamic gate. 
+
+Construction-Time Validation Proxy. The validation proxy selects the residual budget r after prefill. We split the observation window into a Tfit part, used to compute token scores and select the main cache, and a disjoint validation part Tval , used only to judge the resulting cache. For each candidate r in a small budget grid, ResKV sets m = b − r,uses the fit scores to form M under this budget as in Eq. 8, constructs residual entries from E = S \ M , and evaluates the residual-augmented output ˆo(r)(qt) on validation queries. The validation loss is the reconstruction error against the full-cache output: 
+
+Lval  
+
+> r
+
+= 1
+
+|T val |
+
+X
+
+> t∈T val
+
+ˆo(r)(qt) − oS (qt) 22. (18) The validation output uses the same residual-attention rule as decoding, including the dynamic gate defined below. We take r⋆ = arg min r> 0 Lval  
+
+> r
+
+and enable the residual only if it beats the pure-main cache by a margin, 
+
+Lval  
+
+> r⋆
+
+< (1 − δ) Lval 0 , (19) where Lval 0 is the validation loss of the r = 0 cache that spends the whole budget on main tokens. Otherwise, the layer/head falls back to r = 0 . This makes residual allocation layer- and KV-head-adaptive: residual entries occupy budget only where they reduce held-out attention-output error. 
+
+Decode-Time Dynamic Gate. When a query has diffuse attention over the main cache, the residual entries can re-store omitted aggregate mass. When the main cache already forms a sharp peak, the averaged residual entries can add dif-fuse mass and dilute that peak. ResKV therefore dynamically adjusts the residual contribution for each query. We measure main-cache sharpness by 
+
+pM
+
+> max
+
+(q) = max 
+
+> p∈M
+
+eap
+
+P 
+
+> p′∈M
+
+eap′ (20) the largest main-only attention weight. The dynamic gate is 
+
+˜g(q) = sigmoid 
+
+ τ − pM
+
+> max
+
+(q)
+
+Tg
+
+
+
+, (21) 
+
+g(q) = max( gmin , ˜g(q)) , (22) This dynamic gate enters attention as the log g(q) shift in (14). The temperature Tg controls the smoothness of the transition around the threshold τ . A large pM
+
+> max
+
+(q) indicates that the main cache already provides a concentrated atten-tion pattern, so the residual logits are down-weighted. A smaller pM
+
+> max
+
+(q) indicates broader main-cache attention, so the residual entries retain more mass and can recover omitted aggregate contribution. ...      
+
+> ...
+> ...
+> query
+> Shared softmax
+> main logits residual logits
+> output
+> sharpness gate
+> Omitted side
+> Cluster
+> Lloyd iteration
+> Summaries Validation proxy
+> Compute Validate using
+> Residual entries
+> Main Cache Residual Cache
+> Reconstruct Decode
+
+Figure 2: Adaptive residual control. Left: the validation proxy selects the residual allocation. Right: the dynamic gate scales the residual logits according to the main-cache sharpness before the shared softmax. 
+
+## Experiments 
+
+Experimental Setup 
+
+Benchmarks. We evaluate ResKV on two long-context benchmarks: LongBench [Bai et al. 2024] and RULER [Hsieh et al. 2024]. LongBench covers 16 real-world long-context understanding tasks, including single-document QA, multi-document QA, summarization, few-shot learning, synthetic retrieval, and code completion. RULER provides controlled long-context tests for retrieval and aggregation; we report results at both 4K and 32K con-text lengths over its 13 tasks. 
+
+Implementation Details. We evaluate ResKV on two instruction-tuned backbones, LLaMA-3.1-8B-Instruct [Grattafiori et al. 2024] and Qwen-2.5-7B-Instruct [Yang et al. 2024], under both query-aware and query-agnostic cache construction at compression ratios 
+
+ρ ∈ { 0.6, 0.7, 0.8, 0.9}. ResKV uses the same total KV-slot budget as the corresponding baseline, split between the main and residual caches. For all methods, compression is per-formed once after prefill. Unless otherwise specified, we use candidate residual budget ratios {0, 0.05 , 0.10 , 0.15 , 0.20 },96 fitting queries, 32 validation queries, four Lloyd iter-ations, δ = 0 .01 , and enable the dynamic gate at decode time. Both backbones use grouped-query attention (GQA) [Ainslie et al. 2023]; ResKV therefore con-structs residual entries per KV head and shares them within the corresponding query-head group. For FlashAttention-2 [Dao 2024], we keep the main branch in the fused attention path and combine it with the residual branch through log-sum-exp statistics, yielding the same shared softmax over main and residual entries. All experiments are run on a single NVIDIA A100 GPU with 40GB memory. 
+
+Baselines. We compare ResKV against the standard full KV cache and representative KV cache compression base-lines. H2O [Zhang et al. 2023] retains tokens with high accumulated attention mass; SnapKV [Li et al. 2024] es-timates token importance from an observation window; Setting Method LLaMA-3.1-8B Qwen-2.5-7B 4K 32K 4K 32K 10% 20% 30% 40% 10% 20% 30% 40% 10% 20% 30% 40% 10% 20% 30% 40% Full Cache 95.25 88.57 93.57 84.91 
+
+> q-Aware
+
+AdaKV 58.94 75.44 82.42 86.04 72.20 81.90 86.06 87.46 27.03 44.07 54.74 63.23 38.57 45.11 49.33 54.88 +ResKV 70.51 83.34 86.37 88.34 77.84 86.14 87.83 88.51 28.31 44.84 57.37 63.92 39.85 46.04 49.69 55.01 
+
+SnapKV 56.37 71.50 78.76 82.66 69.14 78.67 83.18 86.00 27.09 43.08 51.88 58.75 37.78 42.75 45.64 48.30 +ResKV 60.74 75.59 80.10 83.31 70.31 78.92 83.14 86.50 28.50 45.70 55.64 60.39 38.79 43.74 46.25 48.62 q-Agnostic  AdaKV 21.52 39.11 50.55 60.74 26.92 38.23 52.57 64.27 18.38 26.38 33.41 39.43 25.91 29.45 33.89 36.81 +ResKV 29.66 52.47 65.32 73.01 32.74 47.47 63.55 74.30 19.31 28.03 36.92 45.49 27.19 30.90 35.19 39.88 
+
+SnapKV 19.38 34.23 44.47 53.45 24.45 31.07 38.59 47.66 16.81 25.42 30.56 34.99 25.09 28.77 31.27 32.99 +ResKV 24.89 40.58 49.46 57.53 27.52 32.79 39.51 47.91 19.03 27.49 33.21 39.85 25.84 29.65 31.62 33.89 
+
+Table 1: RULER average scores under different context lengths and retained KV budgets. Bold marks the better average within each baseline–ResKV pair. Complete task-level results are provided in Appendix. −5 0 5       
+
+> PCA dim. 1
+> −6
+> −4
+> −2
+> 0
+> 2
+> 4
+> 6
+> PCA dim. 2
+> −10 −5 0510
+> PCA dim. 1
+> −10
+> −5
+> 0
+> 5
+> PCA dim. 2
+> (a) (b) (c) (d)
+
+Figure 3: Analysis of ResKV efficiency and residual clusterability. (a)–(b) compare peak allocated memory and decode throughput across context lengths. (c)–(d) show PCA projections of evicted candidate keys from representative layers and KV heads after main-cache selection. TOVA [Oren et al. 2024] scores tokens using recent attention; AdaKV [Feng et al. 2025] allocates cache budgets across at-tention heads; and CaM [Zhang et al. 2024] compresses the cache by merging evicted states into retained entries. We report average tables for SnapKV and AdaKV below, with complete task-level tables for other baselines and settings provided in Appendix. 
+
+Results on LongBench 
+
+Table 2 reports the main LongBench average scores across the evaluated settings. Complete task-level results and addi-tional baselines are provided in Appendix. 
+
+Overall Performance. ResKV improves all 32 displayed LongBench configurations, with an average gain of 1.02 points on LLaMA and Qwen. The gains are strongest un-der tight budgets: at 10% and 20% retained KV, ResKV im-proves the corresponding baseline by 1.43 and 1.17 points. Improvements are also larger in the query-agnostic setting, which better matches practical serving because the cache is compressed before the next user query is known. 
+
+Task-Level Behavior. Task-level gains are most visible on code and retrieval-oriented tasks, including RepoBench-P, LCC, Passage Retrieval, and TREC. These tasks often de-pend on distributed definitions, repeated identifiers, or scat-tered evidence, which can be missed by a small exact cache but recovered through residual entries. 
+
+Results on RULER 
+
+Table 1 reports the main RULER average scores across the evaluated settings. Complete task-level results and additional baselines are provided in Appendix. 
+
+Overall Performance. ResKV improves 63 of the 64 dis-played RULER configurations, with an average gain of 3.38 points across 4K and 32K contexts and both backbones. The improvement is particularly clear in the query-agnostic set-ting, where the cache is compressed before the future query is available: ResKV improves this setting by 4.54 points on average, compared with 2.22 points under query-aware con-struction. Setting Method LLaMA-3.1-8B Qwen-2.5-7B 10% 20% 30% 40% 10% 20% 30% 40% Full Cache 48.93 48.14                                                                 
+
+> q-Aware  AdaKV 45.64 47.25 48.06 48.18 42.26 44.88 46.10 46.70 +ResKV 47.39 48.45 48.71 48.81 42.52 45.09 46.49 47.01
+> SnapKV 44.59 47.07 47.61 47.99 42.16 44.70 46.05 46.50 +ResKV 45.66 47.52 48.06 48.44 42.82 45.57 46.48 47.08 q-Agnostic  AdaKV 36.26 42.10 44.78 45.95 33.28 38.86 41.97 43.84 +ResKV 38.62 43.99 46.23 47.16 35.63 41.45 43.18 44.95
+> SnapKV 34.79 40.63 43.67 45.17 33.22 39.02 42.08 43.98 +ResKV 35.79 41.33 44.58 45.92 35.24 40.51 42.64 44.60
+
+Table 2: LongBench average scores under different retained KV budgets. Bold marks the better average within each baseline–ResKV pair. Complete task-level results are pro-vided in Appendix. 
+
+Method NrtvQA HotpotQA RB-P FWE S-1 QA-1 
+
+SnapKV 19.43 36.48 56.82 57.07 19.20 20.80 +CaM 20.27 34.98 56.98 55.47 17.60 18.40 +ResKV 22.59 40.59 59.66 68.80 43.20 24.00 
+
+Table 3: Task-level comparison under Qwen-2.5-7B-Instruct, 10% retained KV, and query-agnostic cache construction. 
+
+Effect Under Tight Cache Budgets. Under constrained cache budgets, ResKV improves the corresponding base-line by 3.47 and 3.66 points at 10% and 20% retained KV. Task-level gains concentrate on controlled retrieval and ag-gregation behaviors, especially Variable Tracking, FWE, and multi-key or single-key retrieval tasks, where useful evidence is distributed across the context. 
+
+Comparison with Merging Methods 
+
+Table 3 compares SnapKV, CaM, and ResKV under 10% retained KV in the query-agnostic setting. CaM can recover useful omitted information on some tasks, but its gains are less stable. ResKV gives stronger gains by storing omitted information in a separate residual cache while leaving the main cache unchanged. 
+
+Analysis 
+
+Peak Allocated Memory. Figure 3(a) shows that ResKV preserves the peak-memory footprint of the compressed base-line. Its peak allocated memory essentially overlaps with SnapKV across context lengths, indicating negligible addi-tional memory overhead, while the full cache grows rapidly and runs out of memory (OOM) at the longest setting. 
+
+Decode Throughput. Figure 3(b) shows that ResKV in-curs a moderate throughput cost relative to SnapKV because each decode step evaluates the residual branch and applies the dynamic gate. The throughput remains substantially higher and more stable than the full cache at long context lengths;                     
+
+> Method S1 VT Gov. Repo ResKV 67.20 45.92 25.33 50.86
+> w/o validation 63.20 (-4.00) 38.88 (-7.04) 25.09 (-0.24) 50.66 (-0.20) w/o dynamic gate 62.40 (-4.80) 41.44 (-4.48) 25.13 (-0.20) 50.41 (-0.45) w/o shared softmax 64.00 (-3.20) 43.84 (-2.08) 25.21 (-0.12) 47.86 (-3.00)
+
+Table 4: Ablation results on representative tasks. Parentheses show drops from ResKV. full-cache decode slows down sharply and eventually OOMs, while ResKV maintains a stable decode rate through 128K context. 
+
+Clusterability of Evicted Keys. Figures 3(c)–(d) examine the keys evicted from the main cache under SnapKV+ResKV. The projected keys show clear and repeated geometric pat-terns rather than unstructured noise, showing that the omitted side still contains organized key-space structure that residual entries can summarize. 
+
+Ablation Study 
+
+We conduct ablations with LLaMA-3.1-8B-Instruct using SnapKV as the base method under 10% retained KV and the query-agnostic construction setting. We evaluate represen-tative tasks from RULER-4K and LongBench, and remove one component at a time from complete ResKV. Complete ResKV performs best on all evaluated tasks. Removing the validation proxy reduces S1 and VT by 4.00 and 7.04 points, while removing the dynamic gate reduces them by 4.80 and 4.48 points. Replacing the shared soft-max with separate main and residual normalizations reduces RepoBench-P by 3.00 points. These drops show that all three components contribute to the final performance. 
+
+## Conclusion 
+
+We presented ResKV, a fixed-budget KV cache representa-tion that preserves selected tokens exactly in a main cache while reconstructing the aggregate attention contribution of omitted tokens with compact residual entries. Its shared-softmax residual decode places main-cache tokens and resid-ual entries under the same normalization, restoring residual numerator and denominator mass while keeping omitted in-formation separate from exact main-cache entries. ResKV further controls residual usage with a construction-time val-idation proxy and a decode-time dynamic gate. Compre-hensive evaluations on LongBench and RULER, spanning multiple backbones, cache budgets, compression baselines, and both query-aware and query-agnostic settings, show that ResKV improves all 32 displayed LongBench configurations and 63 of the 64 displayed RULER configurations under the same retained KV budget. The efficiency analysis fur-ther shows that these gains incur negligible additional peak-memory overhead while maintaining stable decode through-put at long context lengths. 
+
+## References 
+
+Muhammad Adnan, Akhil Arunkumar, Gaurav Jain, Prashant J. Nair, Ilya Soloveychik, and Purushotham Ka-math. Keyformer: KV cache reduction through key tokens selection for efficient generative inference. In Proceedings of Machine Learning and Systems , volume 6, 2024. Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebron, and Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-head checkpoints. In Proceedings of the 2023 Confer-ence on Empirical Methods in Natural Language Processing ,pages 4895–4901. Association for Computational Linguis-tics, 2023. doi: 10.18653/v1/2023.emnlp-main.298. Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench: A bilingual, multitask benchmark for long context under-standing. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 3119–3137. Association for Computational Linguistics, 2024. doi: 10.18653/v1/2024.acl-long.172. Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Jun-jie Hu, and Wen Xiao. PyramidKV: Dynamic KV cache compression based on pyramidal information funneling. In 
+
+Proceedings of the Second Conference on Language Model-ing , 2025. Tri Dao. FlashAttention-2: Faster attention with better par-allelism and work partitioning. In International Conference on Learning Representations , 2024. Harry Dong, Xinyu Yang, Zhenyu Zhang, Zhangyang Wang, Yuejie Chi, and Beidi Chen. Get more with LESS: Synthe-sizing recurrence with KV cache compression for efficient LLM inference. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceed-ings of Machine Learning Research , pages 11437–11452. PMLR, 2024. Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S. Kevin Zhou. Ada-KV: Optimizing KV cache eviction by adaptive budget allocation for efficient LLM inference. In Advances in Neural Information Processing Systems , volume 38, 2025. Aaron Grattafiori et al. The Llama 3 herd of models, 2024. URL https://arxiv.org/abs/2407.21783. Yuzhe Gu, Xiyu Liang, Jiaojiao Zhao, and Enmao Diao. OBCache: Optimal brain KV cache pruning for efficient long-context LLM inference. In Proceedings of the 43rd International Conference on Machine Learning , 2026. Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. KVQuant: Towards 10 million context length LLM inference with KV cache quantization. In Advances in Neural Information Processing Systems , volume 37, 2024. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Gins-burg. RULER: What’s the real context size of your long-context language models? In Proceedings of the First Con-ference on Language Modeling , 2024. Bo Jiang and Sian Jin. KVSculpt: KV cache compression as distillation, 2026. URL https://arxiv.org/abs/2603.27819. Hao Kang, Qingru Zhang, Souvik Kundu, Geonhwa Jeong, Zaoxing Liu, Tushar Krishna, and Tuo Zhao. GEAR: An ef-ficient error reduction framework for KV cache compression in LLM inference. In Proceedings of The 4th NeurIPS Ef-ficient Natural Language and Speech Processing Workshop ,volume 262 of Proceedings of Machine Learning Research ,pages 305–321. PMLR, 2024. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with PagedAttention. In Pro-ceedings of the 29th Symposium on Operating Systems Prin-ciples , pages 611–626. Association for Computing Machin-ery, 2023. doi: 10.1145/3600006.3613165. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. SnapKV: LLM knows what you are looking for before generation. In Advances in Neural Information Processing Systems , volume 37, 2024. Di Liu, Meng Chen, Baotong Lu, Huiqiang Jiang, Zhenhua Han, Qianxi Zhang, Qi Chen, Chengruidong Zhang, Bailu Ding, Kai Zhang, Chen Chen, Fan Yang, Yuqing Yang, and Lili Qiu. RetrievalAttention: Accelerating long-context LLM inference via vector retrieval, 2024a. URL https://arxiv.org/ abs/2409.10516. Guangda Liu, Chengwei Li, Jieru Zhao, Chenqi Zhang, and Minyi Guo. ClusterKV: Manipulating LLM KV cache in semantic space for recallable compression. In Proceedings of the 62nd ACM/IEEE Design Automation Conference , pages 1–7, 2025. Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyrillidis, and Anshu-mali Shrivastava. Scissorhands: Exploiting the persistence of importance hypothesis for LLM KV cache compression at test time, 2023. URL https://arxiv.org/abs/2305.17118. Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. KIVI: A tuning-free asymmetric 2bit quantization for KV cache. In Proceedings of the 41st International Confer-ence on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 32332–32344. PMLR, 2024b. Stuart P. Lloyd. Least squares quantization in PCM. IEEE Transactions on Information Theory , 28(2):129–137, 1982. doi: 10.1109/TIT.1982.1056489. Matanel Oren, Michael Hassid, Nir Yarden, Yossi Adi, and Roy Schwartz. Transformers are multi-state RNNs. In 
+
+Proceedings of the 2024 Conference on Empirical Meth-ods in Natural Language Processing , pages 18724–18741. Association for Computational Linguistics, 2024. doi: 10.18653/v1/2024.emnlp-main.1043. Akshat Sharma, Hangliang Ding, Jianping Li, Neel Dani, and Minjia Zhang. MiniKV: Pushing the limits of 2-bit KV cache via compression and system co-design for efficient long context inference. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 18506–18523. Association for Computational Linguistics, 2025. doi: 10. 18653/v1/2025.findings-acl.952. Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Beidi Chen, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. FlexGen: High-throughput gen-erative inference of large language models with a single GPU. In Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pages 31094–31116. PMLR, 2023. Hanlin Tang, Yang Lin, Jing Lin, Qingsen Han, Danning Ke, Shikuan Hong, Yiwu Yao, and Gongyi Wang. RazorAt-tention: Efficient KV cache compression through retrieval heads. In International Conference on Learning Represen-tations , 2025. Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. QUEST: Query-aware sparsity for efficient long-context LLM inference. In Proceedings of the 41st International Conference on Machine Learning ,volume 235 of Proceedings of Machine Learning Research ,pages 47901–47911. PMLR, 2024. Yuxuan Tian, Zihan Wang, Yebo Peng, Aomufei Yuan, Zhim-ing Wang, Bairen Yi, Xin Liu, Yong Cui, and Tong Yang. KeepKV: Eliminating output perturbation in KV cache com-pression via attention-aware merging. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 33259–33267, 2026. doi: 10.1609/aaai.v40i39.40611. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-reit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems , volume 30, 2017. Zheng Wang, Boxiao Jin, Zhongzhi Yu, and Minjia Zhang. Model tells you where to merge: Adaptive KV cache merging for LLMs on long-context tasks, 2024. URL https://arxiv.org/ abs/2407.08454. Zihao Wang, Bin Cui, and Shaoduo Gan. SqueezeAtten-tion: 2D management of KV cache in LLM inference via layer-wise optimal budget. In International Conference on Learning Representations , 2025. Shunlong Wu, Hai Lin, Shaoshen Chen, Tingwei Lu, Yongqin Zeng, Shaoxiong Zhan, Hai-Tao Zheng, and Hong-Gee Kim. SemantiCache: Efficient KV cache compres-sion via semantic chunking and clustered merging. In Pro-ceedings of the IEEE International Conference on Acous-tics, Speech and Signal Processing , 2026. doi: 10.1109/ ICASSP55912.2026.11464823. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In International Conference on Learning Representations , 2024. An Yang et al. Qwen2.5 technical report, 2024. URL https: //arxiv.org/abs/2412.15115. Weihao Yang, Hao Huang, Ningke Li, Shihao Wang, Darong Yang, Yanqi Pan, Wen Xia, Shiyi Li, and Xiangyu Zou. RESA: Bringing back what sparse attention ignores with residual estimation. In International Conference on Learning Representations , 2026. Yuxin Zhang, Yuxuan Du, Gen Luo, Yunshan Zhong, Zhenyu Zhang, Shiwei Liu, and Rongrong Ji. CaM: Cache merging for memory-efficient LLM inference. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 58840–58850. PMLR, 2024. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen. H2O: Heavy-hitter oracle for efficient generative in-ference of large language models. In Advances in Neural Information Processing Systems , volume 36, 2023. Xiabin Zhou, Wenbin Wang, Minyan Zeng, Jiaxian Guo, Xuebo Liu, Li Shen, Min Zhang, and Liang Ding. Dy-namicKV: Task-aware adaptive KV cache compression for long context LLMs. In Findings of the Association for Computational Linguistics: EMNLP 2025 , pages 8042– 8057. Association for Computational Linguistics, 2025. doi: 10.18653/v1/2025.findings-emnlp.426. Appendix A. Theoretical Analysis 
+
+We provide additional derivations for the main-residual at-tention form used by ResKV. The notation follows the pre-ceding sections. All derivations are written for one layer and one KV head unless otherwise stated. 
+
+A.1. Main-Residual Decomposition 
+
+This subsection shows why omitted cache statistics should be represented inside the same softmax as retained tokens. The decomposition below separates the full-cache output into main-cache and omitted-side numerator and denomina-tor terms. For a query q, let ap(q) = ⟨q, k p⟩/√d. Following Eq. (4), the unnormalized denominator and numerator over a token set T are denoted by ZT (q) and NT (q). If the main cache is 
+
+M and the omitted side is E = S \ M , full attention can be decomposed as 
+
+ZS (q) = ZM (q) + ZE (q), NS (q) = NM (q) + NE (q).
+
+(23) The exact full-cache output is therefore 
+
+oS (q) = NM (q) + NE (q)
+
+ZM (q) + ZE (q) . (24) Hard eviction removes both omitted terms and returns 
+
+oM (q) = NM (q)/Z M (q). The resulting output difference is 
+
+oS (q) − oM (q) = ZM (q)NE (q) − ZE (q)NM (q)
+
+ZM (q) ( ZM (q) + ZE (q)) . (25) 
+
+A.2. Residual Entry Approximation 
+
+This subsection analyzes the approximation made by each residual entry. The bound shows that a residual summary is accurate when grouped keys induce similar query logits, and it becomes an exact KV token when the group size is one. For a residual group Cj ⊂ E, the exact omitted denomi-nator and numerator are 
+
+Zj (q) = X
+
+> p∈Cj
+
+eap(q), Nj (q) = X
+
+> p∈Cj
+
+eap(q)vp. (26) ResKV stores the mean key ¯kj , mean value ¯vj , and count 
+
+cj = |Cj |. Let ¯aj (q) = ⟨q, ¯kj ⟩/√d and write the token logits in the group as ap(q) = ¯ aj (q) + ϵp(q). Then 
+
+Zj (q) = e¯aj (q) X
+
+> p∈Cj
+
+eϵp(q). (27) The residual approximation replaces the group-level log-sum with cj e¯aj (q). When |ϵp(q)| ≤ η for all p ∈ Cj ,
+
+Zj (q) − cj e¯aj (q) ≤ cj e¯aj (q) (eη − 1) . (28) If the values in the same group satisfy ∥vp∥2 ≤ V , the numerator error is bounded by 
+
+Nj (q) − cj e¯aj (q) ¯vj 2
+
+≤ cj e¯aj (q) (eη − 1) V. (29) 
+
+A.3. Validation Objective and Dynamic Gate 
+
+This subsection describes the two control mechanisms used by ResKV. The validation proxy selects layer- and KV-head-specific residual capacity under the fixed retained KV budget, while the dynamic gate controls residual influence for each decode query without changing main-cache logits or values. For a candidate residual budget r, ResKV constructs a main cache and residual cache, computes the shared-softmax output ˆor (q) on validation queries, and compares it against the full-cache output: 
+
+Lval  
+
+> r
+
+= 1
+
+|T val |
+
+X
+
+> q∈T val
+
+∥ˆor (q) − oS (q)∥22. (30) The residual budget is enabled only when this validation loss improves over the pure-main cache by the relative margin δ.During decode, the dynamic gate modulates only residual logits. The main-cache logits and values are left unchanged. With main-cache sharpness pM
+
+> max
+
+(q), the gate is 
+
+g(q) = max 
+
+
+
+gmin , sigmoid 
+
+ τ − pM
+
+> max
+
+(q)
+
+Tg
+
+ 
+
+. (31) A sharp main-cache distribution reduces residual mass, while a diffuse main-cache distribution allows residual entries to contribute more strongly. 
+
+## B. Experimental Setup 
+
+All experiments are run on a single NVIDIA A100 GPU with 40GB memory. The implementation is based on Py-Torch, Transformers, and FlashAttention-2. We evaluate two instruction-tuned GQA backbones, LLaMA-3.1-8B-Instruct and Qwen-2.5-7B-Instruct. All reported experiments are run once with a fixed random seed of 42. For GQA, ResKV constructs the main cache and residual entries at the KV-head granularity. All query heads mapped to the same KV head share the selected main indices and residual entries, while their logits and dynamic gates are computed separately. For FlashAttention-2, the main-cache branch remains in the fused attention path. We request the main-branch output and per-query log-sum-exp normalizer, evaluate the residual branch over compact residual entries, and merge the two branches through log-sum-exp statistics to produce one shared softmax over main and residual entries. 
+
+B.1. Benchmarks 
+
+We evaluate on RULER and LongBench using their official benchmark instances. The prompts, generation limits, answer formats, and metrics follow the corresponding benchmark definitions without additional data preprocessing. Across both benchmarks, we use greedy decoding and follow the benchmark metadata for the number of generated tokens. For LongBench, we use each backbone’s chat template ex-cept for code-completion tasks, where the native completion format is kept. For RULER, we use the same chat-template format for all tasks. RULER. RULER evaluates controlled long-context be-havior through synthetic retrieval and aggregation tasks. We evaluate all 13 RULER tasks at 4K and 32K context lengths. The official task templates, answer format, and string-match metric are used without modification. The reported average is the unweighted mean over the 13 tasks. 
+
+LongBench. LongBench evaluates real-world long-context understanding over 16 tasks, covering single-document QA, multi-document QA, summarization, few-shot learning, synthetic retrieval, and code completion. The benchmark prompts, answer prefixes, task-specific maximum generation lengths, and metrics are kept unchanged. We re-port the official task-specific scores and use the unweighted mean over the 16 tasks as the average. 
+
+B.2. Baseline Setups 
+
+B.2.1. Prefill Compression 
+
+This subsection fixes the common compression protocol used by all compared methods. Compression is performed once after the prefill pass, and every paired comparison uses the same total retained KV-slot budget under the same compres-sion ratio. It also defines the query-aware and query-agnostic settings, where the latter mimics prefix-cache reuse before future user queries are known. We evaluate both query-aware and query-agnostic con-struction. In the query-aware setting, the downstream query is appended to the context before cache construction. In the query-agnostic setting, the cache is constructed from the reusable context alone, and the query is provided only af-ter the compressed cache has been formed. We report compression ratios ρ ∈ { 0.6, 0.7, 0.8, 0.9}, cor-responding to retaining 40%, 30%, 20%, and 10% of the original KV slots. For each paired comparison, ResKV uses the same base scoring or allocation rule as the corresponding baseline and splits the same retained budget between main and residual entries. 
+
+B.2.2. Compared Methods 
+
+This subsection lists the token scoring or budget allocation rule used by each baseline. 
+
+H2O. H2O retains tokens with large accumulated attention mass. Following the prefill-only protocol, scores are com-puted from observation queries after prefill, and the most recent 64 tokens are protected. 
+
+TOVA. TOVA scores tokens using recent attention. We use the last-token observation window and protect the most recent token. To keep the protocol consistent across methods, TOVA selection is performed once after prefill rather than updated during decode. 
+
+SnapKV. SnapKV estimates token importance from an ob-servation window near the end of the prefill sequence. We use an observation window of 64 tokens, apply average pooling with kernel size 5, and protect the most recent 64 tokens. 
+
+AdaKV. AdaKV allocates the retained budget across KV heads. We use SnapKV scores as the token-importance signal and set the safeguard coefficient to 0.2. 
+
+B.3. ResKV Construction Settings 
+
+Unless otherwise specified, ResKV uses the same construc-tion settings across benchmarks, backbones, baselines, cache budgets, and query settings. The candidate residual budget ratios are {0, 0.05 , 0.10 , 0.15 , 0.20 }. For each layer and KV head, ResKV uses 128 observation queries, with 96 fitting queries and 32 validation queries. The validation proxy en-ables residual entries only when the held-out reconstruction loss improves over the pure-main cache by at least δ = 0 .01 
+
+in relative terms. Residual construction uses four Lloyd iterations. The clus-tering initialization is deterministic because, for each candi-date residual budget, initial centers are the evicted keys with the highest main-cache scores. Each residual entry stores the mean key, mean value, and population count of one cluster. The population count is included in the residual logit with exponent β = 1 .0. The dynamic gate is enabled at decode time with main-cache sharpness threshold τ = 0 .25 , sigmoid slope α = 12 .0 (equivalently, Tg = 1 /α in Eq. (22)), and minimum residual gate gmin = 0 .0. Residual construction is enabled for all layers. 
+
+## C. Experimental Results 
+
+The following tables provide the complete task-level results corresponding to the average results reported earlier. Each table includes all evaluated retained KV budgets and both construction settings. For every baseline–ResKV pair, bold marks the better average score within the same backbone, benchmark, budget, and construction setting. 
+
+RULER. Tables 5, 6, 7, and 8 provide the complete RULER results across the two evaluated context lengths and two backbones. Each table reports all 13 RULER tasks and the unweighted average. 
+
+LongBench. Tables 9 and 10 provide the complete Long-Bench results for LLaMA-3.1-8B-Instruct and Qwen-2.5-7B-Instruct. The tables report all 16 LongBench tasks and the unweighted average. 
+
+## D. Implementation of ResKV 
+
+We provide pseudo-code for ResKV in Algorithms 1 and 2. Algorithm 1 summarizes prefill-time cache construction with residual-budget validation. Algorithm 2 summarizes the decode-time shared-softmax computation with the dynamic residual gate. Both algorithms are written for one layer and one KV head. 
+
+## E. Limitations and Future Work 
+
+Broader model and serving coverage. ResKV is eval-uated on two instruction-tuned GQA backbones and two long-context benchmarks. Extending the evaluation to larger models, additional architectures, and serving workloads with larger batch sizes would provide a broader view of its prac-tical behavior. Algorithm 1 ResKV construction for one (layer, KV head) 
+
+Input : K, V ; budget b; residual grid G; recent window w;Lloyd steps T ; margin δ
+
+Output : main cache (KM , V M ) and residual entries 
+
+S 
+
+> 1:
+
+form observation queries; split them into fit queries and 
+
+Tval  
+
+> 2:
+
+compute token scores s on the fit queries; set recent protection P 
+
+> 3:
+
+build the pure-main cache ( r = 0 ) and compute Lval 0 
+
+> 4:
+
+for each r ∈ G with r > 0 do  
+
+> 5:
+
+m ← b − r; select Mr by (8); set Er ← S \ Mr 
+
+> 6:
+
+build r residual entries from Er by (12) and (10)  
+
+> 7:
+
+compute Lval  
+
+> r
+
+by (18)  
+
+> 8:
+
+end for  
+
+> 9:
+
+r⋆ ← arg min r> 0 Lval  
+
+> r
+> 10:
+
+if Lval  
+
+> r⋆
+
+< (1 − δ)Lval 0 then  
+
+> 11:
+
+choose r⋆ 
+
+> 12:
+
+else  
+
+> 13:
+
+choose r = 0  
+
+> 14:
+
+end if  
+
+> 15:
+
+rebuild (M, S) with the chosen r; return (KM , V M ), S
+
+Algorithm 2 ResKV decoding step for one (layer, KV head) 
+
+Input : query q; main cache (KM , V M ); residual entries S;dynamic-gate parameters τ, T g , g min 
+
+Output : attention output ˆo 
+
+> 1:
+
+ap ← ⟨ q, k p⟩/√d for all p ∈ M 
+
+> 2:
+
+pM 
+
+> max
+
+← max p∈M eap / P 
+
+> p′∈M
+
+eap′ 
+
+> 3:
+
+g ← max  gmin , sigmoid(( τ − pM
+
+> max
+
+)/T g ) 
+
+> 4:
+
+Z ← P 
+
+> p∈M
+
+eap ; N ← P 
+
+> p∈M
+
+eap vp 
+
+> 5:
+
+for each residual entry (¯kj , ¯vj , c j ) ∈ S do  
+
+> 6:
+
+¯aj ← ⟨ q, ¯kj ⟩/√d + log cj + log g 
+
+> 7:
+
+Z ← Z + e¯aj ; N ← N + e¯aj ¯vj 
+
+> 8:
+
+end for  
+
+> 9:
+
+return ˆo ← N/Z 
+
+Residual updates during generation. The current con-struction is performed once after prefill, which matches reusable prefix-cache serving. It does not refresh resid-ual entries during long generation. Future work can study lightweight residual updates for generation-heavy workloads. 
+
+Residual summaries and kernels. ResKV uses mean key-value summaries selected by a validation proxy. Richer resid-ual summaries may further improve the approximation of omitted tokens. The current implementation relies on stan-dard PyTorch and FlashAttention-2 operations, while spe-cialized kernels could further reduce the decode-time over-head of the residual branch. Table 5: RULER-4K results for LLaMA-3.1-8B-Instruct. Bold marks the better average within each paired setting. Method KV Setting CWE FWE MK1 MK2 MK3 MQ MV S1 S2 S3 QA-1 QA-2 VT Avg. Full Cache – – 99.60 85.07 100.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00 88.00 65.60 100.00 95.25 H2O 10% q-Aware 65.20 42.67 29.60 8.80 0.00 34.60 7.00 44.80 44.80 1.60 79.20 59.20 17.92 33.49 10% q-Agnostic 72.56 60.53 12.00 3.20 0.80 9.20 6.80 13.60 0.80 1.60 16.80 29.60 12.96 18.50 20% q-Aware 86.32 48.80 85.60 28.00 16.80 74.60 17.20 75.20 79.20 1.60 88.00 63.20 40.16 54.21 20% q-Agnostic 89.76 69.60 22.40 10.40 1.60 11.20 8.80 32.80 4.80 1.60 32.80 44.00 28.80 27.58 30% q-Aware 94.96 56.80 99.20 57.60 34.40 91.00 41.00 83.20 94.40 1.60 88.80 64.00 65.76 67.13 30% q-Agnostic 97.20 75.20 42.40 24.00 2.40 15.00 10.00 51.20 19.20 1.60 50.40 48.80 44.16 37.04 40% q-Aware 98.16 61.87 100.00 69.60 57.60 95.80 66.00 96.80 97.60 1.60 89.60 64.00 79.68 75.25 40% q-Agnostic 99.36 78.67 56.00 35.20 4.80 21.40 12.00 60.80 31.20 1.60 55.20 53.60 58.40 43.71 +ResKV 10% q-Aware 69.76 45.07 73.60 28.00 0.80 51.60 9.80 68.00 83.20 1.60 84.80 61.60 48.32 48.17 
+
+10% q-Agnostic 73.36 71.20 15.20 7.20 0.80 10.20 8.00 36.80 4.80 1.60 18.40 36.00 29.28 24.06 
+
+20% q-Aware 91.52 54.40 98.40 62.40 12.80 84.40 34.80 89.60 95.20 1.60 90.40 64.00 76.96 65.88 
+
+20% q-Agnostic 92.88 77.33 36.00 30.40 0.80 16.00 9.60 51.20 18.40 1.60 33.60 44.80 52.80 35.80 
+
+30% q-Aware 96.08 64.27 100.00 87.20 32.80 94.00 67.00 95.20 97.60 1.60 89.60 64.80 91.68 75.53 
+
+30% q-Agnostic 97.84 81.87 52.80 46.40 2.40 20.20 12.00 65.60 36.00 1.60 48.00 57.60 65.28 45.20 
+
+40% q-Aware 98.96 69.07 100.00 95.20 62.40 96.00 83.40 96.00 98.40 1.60 89.60 64.00 95.04 80.74 
+
+40% q-Agnostic 99.12 81.87 71.20 54.40 8.80 26.60 15.00 81.60 54.40 1.60 56.80 56.80 76.48 52.67 
+
+SnapKV 10% q-Aware 40.96 51.47 96.00 44.80 0.00 92.20 24.20 98.40 91.20 1.60 84.00 60.80 47.20 56.37 10% q-Agnostic 10.24 69.60 19.20 6.40 1.60 15.00 10.00 44.80 6.40 1.60 14.40 31.20 21.44 19.38 20% q-Aware 73.44 59.20 100.00 72.00 24.00 96.80 72.40 100.00 96.80 1.60 89.60 63.20 80.48 71.50 20% q-Agnostic 68.88 72.53 42.40 16.80 3.20 23.20 14.60 51.20 32.80 1.60 26.40 43.20 48.16 34.23 30% q-Aware 87.12 64.80 98.40 87.20 47.20 97.80 90.20 100.00 99.20 1.60 92.00 65.60 92.80 78.76 30% q-Agnostic 88.16 77.07 60.00 28.80 4.80 31.00 16.00 67.20 49.60 1.60 40.80 48.80 64.32 44.47 40% q-Aware 94.56 67.47 99.20 98.40 65.60 97.00 95.40 100.00 98.40 1.60 91.20 66.40 99.36 82.66 40% q-Agnostic 97.12 77.33 72.80 41.60 17.60 38.40 19.40 81.60 61.60 1.60 52.80 54.40 78.56 53.45 +ResKV 10% q-Aware 43.52 57.33 97.60 64.00 0.00 85.60 28.80 96.80 92.00 1.60 86.40 59.20 76.80 60.74 
+
+10% q-Agnostic 20.72 75.73 19.20 8.00 1.60 13.20 9.60 67.20 13.60 1.60 16.80 30.40 45.92 24.89 
+
+20% q-Aware 81.60 72.27 100.00 91.20 18.40 93.40 76.20 100.00 96.00 1.60 89.60 64.80 97.60 75.59 
+
+20% q-Agnostic 84.64 81.07 50.40 16.00 2.40 26.00 11.00 69.60 45.60 1.60 24.00 41.60 73.60 40.58 
+
+30% q-Aware 94.56 74.67 100.00 96.80 37.60 93.80 89.00 100.00 97.60 1.60 92.00 64.80 98.88 80.10 
+
+30% q-Agnostic 96.48 81.33 68.80 34.40 8.00 34.00 14.00 79.20 57.60 1.60 36.00 46.40 85.12 49.46 
+
+40% q-Aware 97.20 73.60 100.00 97.60 65.60 97.00 94.80 100.00 98.40 1.60 91.20 66.40 99.68 83.31 
+
+40% q-Agnostic 98.24 80.53 84.00 52.80 16.00 41.40 17.80 89.60 66.40 1.60 52.80 56.80 89.92 57.53 
+
+TOVA 10% q-Aware 37.92 41.87 100.00 83.20 0.00 78.40 82.80 100.00 85.60 0.00 90.40 62.40 40.16 61.75 10% q-Agnostic 66.72 6.40 24.00 0.80 0.00 4.40 1.60 39.20 0.80 0.00 14.40 30.40 24.96 16.44 20% q-Aware 64.24 61.60 99.20 96.00 0.00 95.80 97.40 100.00 88.80 7.20 91.20 64.00 92.00 73.65 20% q-Agnostic 87.68 34.93 57.60 3.20 0.00 7.40 4.80 83.20 1.60 1.60 24.00 39.20 72.80 32.15 30% q-Aware 78.72 72.00 100.00 96.80 1.60 97.00 98.80 100.00 92.00 33.60 88.80 64.00 98.56 78.61 30% q-Agnostic 95.36 54.67 80.80 9.60 0.00 16.80 7.40 97.60 2.40 1.60 39.20 46.40 95.68 42.12 40% q-Aware 86.88 76.53 99.20 96.00 22.40 98.60 98.20 100.00 96.80 65.60 88.00 64.00 100.00 84.02 40% q-Agnostic 97.60 69.87 92.80 17.60 0.00 28.80 8.00 100.00 7.20 1.60 54.40 54.40 99.20 48.57 +ResKV 10% q-Aware 42.00 43.47 99.20 88.80 0.00 87.20 85.00 100.00 90.40 0.80 88.00 60.00 61.44 65.10 
+
+10% q-Agnostic 72.00 11.47 32.80 0.80 0.00 5.00 3.00 59.20 0.80 0.00 14.40 28.00 41.28 20.67 
+
+20% q-Aware 66.48 64.00 100.00 93.60 0.00 94.80 97.00 100.00 92.80 12.00 89.60 63.20 94.88 74.49 
+
+20% q-Agnostic 92.32 52.53 74.40 7.20 0.00 11.80 5.40 93.60 1.60 1.60 24.80 43.20 75.84 37.25 
+
+30% q-Aware 84.24 75.73 99.20 95.20 4.80 97.80 99.00 100.00 92.80 45.60 88.00 64.80 99.36 80.50 
+
+30% q-Agnostic 96.64 73.07 86.40 12.80 0.00 25.40 9.80 100.00 6.40 1.60 40.80 52.00 97.28 46.32 
+
+40% q-Aware 93.44 79.20 99.20 95.20 29.60 98.60 98.40 100.00 96.80 72.00 88.80 66.40 100.00 85.97 
+
+40% q-Agnostic 98.24 85.60 93.60 22.40 0.00 43.00 13.20 100.00 10.40 1.60 54.40 53.60 99.84 51.99 
+
+AdaKV 10% q-Aware 61.04 54.13 90.40 62.40 5.60 81.00 15.00 100.00 89.60 1.60 84.80 60.00 60.64 58.94 10% q-Agnostic 36.80 72.53 12.80 8.00 1.60 11.00 9.00 45.60 4.00 1.60 16.00 32.80 28.00 21.52 20% q-Aware 89.12 66.13 97.60 84.80 36.80 94.80 71.20 100.00 96.80 1.60 87.20 64.00 90.72 75.44 20% q-Agnostic 91.20 76.00 39.20 23.20 6.40 18.40 12.80 69.60 20.80 1.60 38.40 44.80 66.08 39.11 30% q-Aware 95.92 68.80 99.20 96.00 68.80 99.40 89.40 100.00 99.20 1.60 89.60 66.40 97.12 82.42 30% q-Agnostic 97.76 79.47 61.60 47.20 18.40 28.40 15.80 78.40 40.00 1.60 51.20 53.60 83.68 50.55 40% q-Aware 98.32 74.40 100.00 99.20 91.20 100.00 97.60 100.00 100.00 2.40 90.40 65.60 99.36 86.04 40% q-Agnostic 98.72 81.87 81.60 63.20 38.40 39.80 18.80 89.60 65.60 1.60 62.40 52.80 95.20 60.74 +ResKV 10% q-Aware 77.04 65.60 99.20 91.20 19.20 89.00 42.80 100.00 92.80 1.60 88.00 60.80 89.44 70.51 
+
+10% q-Agnostic 19.12 78.67 29.60 12.80 4.00 18.20 10.20 80.80 18.40 1.60 14.40 32.00 65.76 29.66 
+
+20% q-Aware 93.36 70.67 100.00 100.00 75.20 96.80 87.20 100.00 100.00 1.60 92.00 67.20 99.36 83.34 
+
+20% q-Agnostic 93.92 80.00 68.00 51.20 26.40 29.00 14.40 96.00 50.40 1.60 36.00 44.00 91.20 52.47 
+
+30% q-Aware 97.76 75.73 100.00 99.20 96.00 99.20 96.40 100.00 100.00 3.20 90.40 65.60 99.36 86.37 
+
+30% q-Agnostic 98.64 80.27 84.80 74.40 59.20 52.00 18.20 100.00 68.80 1.60 57.60 56.80 96.80 65.32 
+
+40% q-Aware 98.72 76.53 100.00 100.00 100.00 99.80 99.00 100.00 100.00 17.60 89.60 67.20 100.00 88.34 
+
+40% q-Agnostic 99.28 82.67 92.00 94.40 86.40 68.80 24.80 100.00 80.80 2.40 63.20 55.20 99.20 73.01 Table 6: RULER-4K results for Qwen-2.5-7B-Instruct. Bold marks the better average within each paired setting. Method KV Setting CWE FWE MK1 MK2 MK3 MQ MV S1 S2 S3 QA-1 QA-2 VT Avg. Full Cache – – 96.96 76.27 100.00 99.20 100.00 100.00 99.40 100.00 100.00 100.00 84.80 60.00 99.84 93.57 H2O 10% q-Aware 60.40 41.87 11.20 3.20 0.00 9.60 8.40 24.80 0.80 1.60 71.20 51.20 10.72 22.69 10% q-Agnostic 52.56 60.53 11.20 1.60 0.00 8.00 8.40 16.00 0.80 1.60 22.40 24.80 5.12 16.39 20% q-Aware 80.08 44.00 11.20 6.40 1.60 17.00 10.20 68.80 22.40 1.60 76.00 50.40 24.00 31.82 20% q-Agnostic 75.20 65.87 11.20 2.40 0.00 9.40 8.60 28.00 0.80 1.60 40.00 35.20 8.00 22.02 30% q-Aware 87.84 45.33 18.40 16.00 4.00 29.00 14.80 84.80 62.40 1.60 76.80 57.60 35.20 41.06 30% q-Agnostic 86.48 65.33 11.20 4.80 0.80 9.40 8.80 48.00 2.40 1.60 47.20 40.80 12.16 26.07 40% q-Aware 92.96 48.27 36.00 31.20 20.00 48.00 20.40 95.20 76.80 1.60 79.20 58.40 48.80 50.53 40% q-Agnostic 90.48 69.07 11.20 9.60 2.40 9.60 8.80 61.60 1.60 1.60 60.00 52.00 21.28 30.71 +ResKV 10% q-Aware 48.56 41.07 11.20 4.00 1.60 10.00 8.60 48.00 6.40 1.60 73.60 48.00 20.48 24.85 
+
+10% q-Agnostic 53.04 64.00 11.20 4.00 0.80 8.60 8.20 20.80 0.80 1.60 20.00 27.20 4.80 17.31 
+
+20% q-Aware 71.92 47.47 21.60 6.40 2.40 22.20 13.00 82.40 60.00 1.60 76.00 52.00 42.08 38.39 
+
+20% q-Agnostic 75.92 67.47 11.20 4.80 2.40 9.40 8.60 40.00 1.60 1.60 41.60 38.40 12.00 24.23 
+
+30% q-Aware 85.36 53.60 39.20 12.80 3.20 44.00 23.40 96.00 87.20 1.60 75.20 54.40 56.00 48.61 
+
+30% q-Agnostic 88.40 69.07 12.80 16.00 2.40 9.80 8.80 55.20 3.20 1.60 52.00 41.60 22.08 29.46 
+
+40% q-Aware 91.12 60.80 68.00 25.60 4.00 62.20 30.00 97.60 90.40 1.60 77.60 54.40 72.16 56.58 
+
+40% q-Agnostic 92.80 70.67 16.00 24.00 1.60 10.20 9.20 70.40 4.00 1.60 59.20 48.80 35.52 34.15 
+
+SnapKV 10% q-Aware 62.56 43.47 12.00 6.40 0.00 10.40 8.80 47.20 11.20 1.60 73.60 50.40 24.48 27.09 10% q-Agnostic 31.60 52.53 11.20 3.20 0.00 9.60 8.80 44.00 0.80 1.60 19.20 24.00 12.00 16.81 20% q-Aware 81.92 52.53 17.60 14.40 4.00 26.40 13.40 81.60 63.20 1.60 82.40 61.60 59.36 43.08 20% q-Agnostic 79.52 61.33 11.20 8.00 1.60 9.60 8.80 45.60 1.60 1.60 36.00 39.20 26.40 25.42 30% q-Aware 91.84 55.73 28.00 28.80 13.60 44.80 22.40 90.40 77.60 1.60 82.40 60.00 77.28 51.88 30% q-Agnostic 90.48 64.27 12.00 14.40 4.00 9.60 8.80 57.60 3.20 1.60 47.20 40.80 43.36 30.56 40% q-Aware 94.24 60.27 43.20 36.80 30.40 60.20 27.00 95.20 88.00 1.60 80.80 60.00 86.08 58.75 40% q-Agnostic 94.08 65.07 13.60 19.20 8.00 10.00 8.80 67.20 7.20 1.60 56.00 48.00 56.16 34.99 +ResKV 10% q-Aware 35.28 47.20 12.00 4.00 2.40 10.40 9.00 76.00 18.40 1.60 76.00 48.00 30.24 28.50 
+
+10% q-Agnostic 35.28 68.80 11.20 4.00 1.60 9.60 8.60 43.20 0.80 1.60 24.00 26.40 12.32 19.03 
+
+20% q-Aware 68.00 58.93 33.60 6.40 3.20 28.00 16.60 95.20 73.60 1.60 79.20 54.40 75.36 45.70 
+
+20% q-Agnostic 69.60 68.53 12.00 7.20 3.20 9.60 8.80 66.40 0.80 1.60 30.40 44.00 35.20 27.49 
+
+30% q-Aware 83.68 62.67 61.60 13.60 4.00 56.20 27.80 96.80 87.20 1.60 80.00 56.00 92.16 55.64 
+
+30% q-Agnostic 85.36 69.07 13.60 13.60 3.20 9.60 8.80 82.40 5.60 1.60 41.60 41.60 55.68 33.21 
+
+40% q-Aware 92.72 67.47 70.40 23.20 7.20 75.40 32.40 94.40 89.60 1.60 80.00 54.40 96.32 60.39 
+
+40% q-Agnostic 93.84 69.07 20.00 21.60 5.60 10.40 9.40 89.60 11.20 1.60 57.60 52.00 76.16 39.85 
+
+TOVA 10% q-Aware 27.44 30.93 19.20 0.00 0.00 0.60 4.20 71.20 40.00 0.00 78.40 52.80 2.40 25.17 10% q-Agnostic 41.76 8.27 2.40 0.00 0.00 0.40 0.60 29.60 0.80 0.00 21.60 20.80 7.52 10.29 20% q-Aware 41.20 45.07 33.60 0.00 0.00 7.00 21.80 98.40 88.00 0.00 78.40 56.80 44.80 39.62 20% q-Agnostic 76.16 17.60 4.80 0.00 0.00 1.20 1.60 57.60 0.80 0.80 28.00 25.60 25.12 18.41 30% q-Aware 54.80 56.27 53.60 0.80 0.00 18.40 38.80 100.00 98.40 0.00 77.60 59.20 77.92 48.91 30% q-Agnostic 84.64 25.60 8.00 0.00 0.00 3.00 3.20 83.20 0.80 0.00 39.20 37.60 71.20 27.42 40% q-Aware 64.32 64.53 73.60 1.60 0.80 36.60 58.80 100.00 98.40 0.80 79.20 59.20 90.88 56.06 40% q-Agnostic 91.20 39.20 9.60 0.80 0.00 5.40 4.80 96.00 0.80 0.80 44.00 45.60 85.92 32.62 +ResKV 10% q-Aware 40.80 32.53 17.60 0.00 0.00 0.20 6.60 76.80 47.20 0.00 73.60 50.40 11.52 27.48 
+
+10% q-Agnostic 41.84 17.33 2.40 0.00 0.00 0.20 0.80 23.20 0.80 0.00 19.20 24.00 6.40 10.47 
+
+20% q-Aware 64.32 50.93 40.80 1.60 0.00 9.60 26.80 98.40 91.20 0.00 78.40 56.00 60.00 44.47 
+
+20% q-Agnostic 63.36 36.27 4.80 1.60 0.00 1.80 1.80 59.20 0.80 0.80 31.20 33.60 42.24 21.34 
+
+30% q-Aware 75.92 62.40 64.00 4.00 0.00 25.00 46.60 100.00 98.40 0.00 72.80 55.20 85.12 53.03 
+
+30% q-Agnostic 78.64 43.73 9.60 4.00 0.00 4.60 3.60 88.00 1.60 0.80 40.00 42.40 82.24 30.71 
+
+40% q-Aware 83.92 68.80 78.40 12.00 0.00 44.60 67.20 100.00 98.40 1.60 75.20 56.00 93.12 59.94 
+
+40% q-Agnostic 87.12 60.53 9.60 10.40 0.00 8.60 6.00 96.00 1.60 1.60 43.20 44.00 90.24 35.30 
+
+AdaKV 10% q-Aware 32.40 41.60 12.00 5.60 0.00 11.60 9.00 76.00 23.20 1.60 71.20 46.40 20.80 27.03 10% q-Agnostic 33.44 58.93 11.20 4.00 0.80 9.60 8.80 56.80 1.60 1.60 21.60 24.00 6.56 18.38 20% q-Aware 52.40 54.40 35.20 12.00 5.60 29.60 15.40 91.20 68.00 1.60 78.40 53.60 75.52 44.07 20% q-Agnostic 52.56 63.47 11.20 10.40 4.80 9.60 8.80 78.40 2.40 1.60 37.60 33.60 28.48 26.38 30% q-Aware 95.36 60.80 33.60 37.60 19.20 42.60 23.80 90.40 76.80 1.60 84.00 60.80 85.12 54.74 30% q-Agnostic 93.92 68.00 12.80 18.40 4.00 9.60 9.00 72.00 4.80 1.60 46.40 40.00 53.76 33.41 40% q-Aware 97.04 64.27 54.40 51.20 48.80 61.20 28.80 92.80 85.60 1.60 83.20 60.00 93.12 63.23 40% q-Agnostic 96.80 70.40 16.00 28.00 13.60 10.60 9.20 77.60 9.60 1.60 64.80 44.00 70.40 39.43 +ResKV 10% q-Aware 40.16 45.60 12.80 5.60 2.40 12.00 8.80 76.80 26.40 1.60 72.00 45.60 18.24 28.31 
+
+10% q-Agnostic 41.12 63.20 11.20 4.00 2.40 9.60 8.80 53.60 1.60 1.60 20.80 26.40 6.72 19.31 
+
+20% q-Aware 60.64 57.60 36.80 10.40 5.60 29.20 15.60 89.60 68.00 1.60 77.60 56.00 74.24 44.84 
+
+20% q-Agnostic 62.96 66.13 12.00 12.00 5.60 9.60 8.80 80.80 4.00 1.60 36.80 36.80 27.36 28.03 
+
+30% q-Aware 85.20 65.60 60.80 19.20 12.80 60.20 27.60 96.00 85.60 1.60 77.60 59.20 94.40 57.37 
+
+30% q-Agnostic 87.92 71.47 16.80 20.80 8.80 11.00 8.80 89.60 14.40 1.60 48.80 44.80 55.20 36.92 
+
+40% q-Aware 93.52 70.93 79.20 35.20 24.00 74.40 38.00 96.00 87.20 1.60 79.20 55.20 96.48 63.92 
+
+40% q-Agnostic 95.04 72.00 29.60 37.60 16.80 13.60 9.00 98.40 28.00 1.60 61.60 48.00 80.16 45.49 Table 7: RULER-32K results for LLaMA-3.1-8B-Instruct. Bold marks the better average within each paired setting. Method KV Setting CWE FWE MK1 MK2 MK3 MQ MV S1 S2 S3 QA-1 QA-2 VT Avg. Full Cache – – 31.44 88.27 100.00 98.40 99.20 99.80 99.40 100.00 100.00 100.00 84.00 52.00 98.88 88.57 H2O 10% q-Aware 22.72 69.60 92.80 20.00 15.20 91.80 51.60 98.40 96.80 4.00 81.60 50.40 84.64 59.97 10% q-Agnostic 0.00 72.53 10.40 3.20 0.00 11.20 7.00 76.00 6.40 2.40 21.60 32.00 31.52 21.10 20% q-Aware 31.36 79.73 99.20 43.20 55.20 99.00 91.60 100.00 96.80 20.00 81.60 51.20 94.24 72.55 20% q-Agnostic 0.56 80.27 20.00 4.80 0.00 15.20 11.60 86.40 18.40 4.00 26.40 37.60 51.68 27.45 30% q-Aware 31.68 83.20 99.20 58.40 76.80 100.00 97.00 99.20 98.40 47.20 82.40 51.20 96.16 78.53 30% q-Agnostic 1.28 83.47 31.20 12.80 0.80 23.60 22.80 90.40 35.20 8.00 32.80 40.00 65.44 34.45 40% q-Aware 26.72 83.73 100.00 74.40 96.00 99.20 97.80 99.20 98.40 68.00 81.60 50.40 97.28 82.52 40% q-Agnostic 3.76 84.00 44.80 20.00 5.60 37.60 40.60 92.80 53.60 17.60 38.40 43.20 75.84 42.91 +ResKV 10% q-Aware 29.28 70.40 99.20 37.60 16.80 92.40 70.00 98.40 97.60 5.60 84.00 48.00 95.20 64.96 
+
+10% q-Agnostic 0.00 78.67 12.00 4.80 0.00 12.00 8.60 87.20 8.00 2.40 25.60 31.20 56.64 25.16 
+
+20% q-Aware 43.76 81.33 100.00 64.00 51.20 97.00 94.00 99.20 98.40 23.20 84.00 49.60 97.92 75.66 
+
+20% q-Agnostic 1.60 82.13 22.40 11.20 0.00 18.60 14.40 94.40 13.60 4.00 32.80 39.20 73.28 31.35 
+
+30% q-Aware 50.56 83.20 100.00 80.00 77.60 99.40 97.40 99.20 98.40 56.80 83.20 49.60 98.24 82.58 
+
+30% q-Agnostic 3.44 84.53 37.60 16.00 0.80 32.00 30.80 96.80 38.40 8.80 38.40 43.20 80.80 39.35 
+
+40% q-Aware 46.08 84.80 100.00 89.60 90.40 99.20 98.60 98.40 98.40 78.40 84.00 51.20 99.52 86.05 
+
+40% q-Agnostic 9.52 85.60 48.00 33.60 7.20 40.40 50.60 96.80 60.80 15.20 44.80 46.40 87.84 48.21 
+
+SnapKV 10% q-Aware 9.04 57.60 99.20 88.00 24.80 92.60 90.80 100.00 98.40 5.60 84.00 51.20 97.60 69.14 10% q-Agnostic 0.00 65.07 12.00 4.80 0.00 12.80 8.20 89.60 8.80 2.40 25.60 31.20 57.44 24.45 20% q-Aware 20.80 68.53 99.20 95.20 64.80 98.00 98.00 100.00 96.80 46.40 84.00 52.00 99.04 78.67 20% q-Agnostic 0.32 70.40 23.20 9.60 1.60 16.60 12.80 97.60 28.80 4.80 27.20 36.00 75.04 31.07 30% q-Aware 22.40 75.47 99.20 95.20 88.80 99.80 98.20 100.00 97.60 71.20 84.00 51.20 98.24 83.18 
+
+30% q-Agnostic 0.96 71.73 33.60 20.00 4.80 22.20 17.80 100.00 53.60 7.20 34.40 41.60 93.76 38.59 40% q-Aware 24.56 79.47 100.00 99.20 94.40 99.20 99.20 100.00 98.40 89.60 84.00 51.20 98.72 86.00 40% q-Agnostic 2.64 75.20 42.40 36.80 14.40 34.20 36.60 100.00 76.80 13.60 43.20 48.00 95.68 47.66 +ResKV 10% q-Aware 4.80 74.13 99.20 86.40 29.60 90.20 90.80 100.00 98.40 8.00 84.00 50.40 98.08 70.31 
+
+10% q-Agnostic 0.00 73.60 11.20 4.80 0.00 11.60 7.60 100.00 8.00 2.40 22.40 33.60 82.56 27.52 
+
+20% q-Aware 15.28 76.00 99.20 95.20 66.40 98.00 98.40 100.00 96.80 45.60 84.00 52.00 99.04 78.92 
+
+20% q-Agnostic 0.24 76.00 19.20 10.40 1.60 15.20 12.60 100.00 26.40 2.40 31.20 40.80 90.24 32.79 
+
+30% q-Aware 20.16 76.80 99.20 97.60 84.80 99.00 98.60 100.00 96.80 74.40 84.00 51.20 98.24 83.14 30% q-Agnostic 0.56 79.20 31.20 19.20 6.40 22.00 18.80 100.00 54.40 7.20 36.00 43.20 95.52 39.51 
+
+40% q-Aware 27.92 81.33 100.00 98.40 96.00 99.60 98.20 100.00 97.60 91.20 84.80 51.20 98.24 86.50 
+
+40% q-Agnostic 2.32 80.80 40.00 36.80 13.60 32.40 36.60 100.00 77.60 13.60 43.20 49.60 96.32 47.91 
+
+TOVA 10% q-Aware 27.60 66.13 99.20 84.80 0.00 92.80 92.00 100.00 97.60 42.40 78.40 52.80 96.96 71.59 10% q-Agnostic 0.00 29.33 12.00 0.80 0.00 9.80 6.00 95.20 0.80 2.40 19.20 29.60 76.32 21.65 20% q-Aware 31.44 76.53 98.40 90.40 0.00 95.80 97.80 100.00 98.40 76.80 79.20 50.40 99.36 76.50 20% q-Agnostic 0.16 59.47 34.40 0.80 0.00 12.80 10.60 98.40 4.00 2.40 26.40 37.60 96.96 29.54 30% q-Aware 28.72 79.73 100.00 92.80 8.80 97.60 97.40 100.00 97.60 94.40 80.00 52.00 99.52 79.12 30% q-Agnostic 0.88 72.27 55.20 3.20 0.00 18.60 24.00 100.00 8.80 2.40 29.60 42.40 98.72 35.08 40% q-Aware 27.92 83.47 100.00 95.20 31.20 98.60 98.60 100.00 98.40 100.00 80.00 51.20 99.52 81.85 40% q-Agnostic 3.76 83.73 72.00 10.40 0.00 30.00 47.20 100.00 17.60 4.80 36.00 43.20 99.52 42.17 +ResKV 10% q-Aware 27.44 69.87 99.20 81.60 0.00 92.60 92.60 100.00 98.40 46.40 82.40 48.80 98.88 72.17 
+
+10% q-Agnostic 0.00 57.87 16.00 0.00 0.00 10.40 6.60 96.80 1.60 2.40 20.00 29.60 85.92 25.17 
+
+20% q-Aware 34.48 79.73 100.00 92.00 0.00 96.40 96.60 100.00 97.60 77.60 84.80 50.40 99.36 77.61 
+
+20% q-Agnostic 0.48 73.33 40.00 1.60 0.00 13.80 11.80 96.80 5.60 2.40 27.20 36.80 98.56 31.41 
+
+30% q-Aware 39.68 81.60 100.00 95.20 9.60 98.40 97.20 100.00 98.40 96.00 84.80 51.20 99.52 80.89 
+
+30% q-Agnostic 1.44 80.27 58.40 6.40 0.00 23.60 28.40 100.00 12.80 2.40 33.60 40.00 99.36 37.44 
+
+40% q-Aware 41.04 83.47 100.00 95.20 32.80 98.40 99.00 100.00 99.20 99.20 84.80 49.60 99.68 83.26 
+
+40% q-Agnostic 7.44 86.93 76.00 14.40 0.00 38.00 48.80 100.00 23.20 4.80 39.20 44.00 99.52 44.79 
+
+AdaKV 10% q-Aware 5.76 68.53 99.20 81.60 52.00 97.40 95.20 100.00 97.60 10.40 82.40 51.20 97.28 72.20 10% q-Agnostic 0.00 72.00 12.00 8.00 0.80 13.20 8.60 92.00 13.60 2.40 24.80 30.40 72.16 26.92 20% q-Aware 19.20 75.20 100.00 93.60 88.00 99.40 99.40 100.00 99.20 56.00 84.00 51.20 99.52 81.90 20% q-Agnostic 1.12 75.47 25.60 21.60 12.00 20.00 18.20 99.20 52.80 8.00 32.00 41.60 89.44 38.23 30% q-Aware 25.44 78.93 100.00 99.20 96.00 99.60 99.80 100.00 100.00 86.40 84.00 50.40 99.04 86.06 30% q-Agnostic 2.24 80.00 52.80 45.60 31.20 38.00 43.60 100.00 81.60 24.00 39.20 47.20 97.92 52.57 40% q-Aware 29.12 82.40 100.00 98.40 99.20 99.60 99.60 100.00 100.00 94.40 84.00 51.20 99.04 87.46 40% q-Agnostic 3.68 83.47 73.60 61.60 52.00 57.20 72.00 100.00 91.20 42.40 52.80 46.40 99.20 64.27 +ResKV 10% q-Aware 9.76 78.40 99.20 95.20 78.40 98.40 97.20 100.00 97.60 24.80 84.80 49.60 98.56 77.84 
+
+10% q-Agnostic 0.00 77.60 16.80 17.60 4.00 14.80 12.00 100.00 20.80 2.40 30.40 36.80 92.48 32.74 
+
+20% q-Aware 29.52 81.87 100.00 97.60 97.60 99.40 98.80 100.00 97.60 83.20 84.00 51.20 99.04 86.14 
+
+20% q-Agnostic 1.04 80.53 36.00 48.00 28.00 32.20 34.20 100.00 72.00 8.00 36.00 44.00 97.12 47.47 
+
+30% q-Aware 32.56 85.33 100.00 98.40 98.40 99.40 99.20 100.00 100.00 94.40 84.00 51.20 98.88 87.83 
+
+30% q-Agnostic 4.56 85.07 67.20 73.60 61.60 49.20 69.40 100.00 89.60 29.60 50.40 47.20 98.72 63.55 
+
+40% q-Aware 34.56 86.67 100.00 98.40 99.20 99.40 99.40 100.00 100.00 99.20 84.00 51.20 98.56 88.51 
+
+40% q-Agnostic 9.12 86.40 86.40 85.60 79.20 67.20 84.20 100.00 98.40 60.00 60.00 51.20 98.24 74.30 Table 8: RULER-32K results for Qwen-2.5-7B-Instruct. Bold marks the better average within each paired setting. Method KV Setting CWE FWE MK1 MK2 MK3 MQ MV S1 S2 S3 QA-1 QA-2 VT Avg. Full Cache – – 62.80 80.53 98.40 87.20 62.40 99.80 91.20 100.00 100.00 100.00 70.40 56.00 95.04 84.91 H2O 10% q-Aware 28.24 61.33 31.20 0.80 0.00 27.80 4.20 91.20 60.00 2.40 26.40 20.00 88.00 33.97 
+
+10% q-Agnostic 31.68 61.60 8.80 2.40 0.00 9.60 6.40 68.00 0.80 2.40 16.80 28.80 24.16 20.11 20% q-Aware 41.84 70.40 36.80 3.20 0.00 40.40 8.80 98.40 77.60 2.40 27.20 19.20 92.00 39.86 20% q-Agnostic 40.24 66.40 8.80 4.80 0.00 10.20 6.20 83.20 0.80 2.40 20.00 32.80 52.00 25.22 30% q-Aware 50.08 74.13 39.20 4.80 0.80 50.40 11.40 99.20 83.20 4.80 29.60 18.40 94.08 43.08 30% q-Agnostic 44.08 71.73 8.80 5.60 0.80 10.20 6.40 91.20 0.80 2.40 24.00 39.20 63.68 28.38 40% q-Aware 57.52 75.47 41.60 9.60 0.80 54.80 16.80 99.20 88.00 10.40 31.20 17.60 93.92 45.92 40% q-Agnostic 50.32 70.40 9.60 6.40 1.60 10.80 6.40 90.40 4.00 2.40 28.80 42.40 69.60 30.24 +ResKV 10% q-Aware 27.76 64.27 28.80 0.80 0.00 27.00 4.40 92.00 59.20 2.40 29.60 17.60 85.60 33.80 10% q-Agnostic 28.64 66.93 6.40 1.60 0.00 4.60 3.20 84.00 0.80 2.40 16.00 24.00 44.80 21.80 
+
+20% q-Aware 44.16 72.53 37.60 3.20 0.00 41.60 8.20 98.40 77.60 3.20 28.00 20.80 91.68 40.54 
+
+20% q-Agnostic 41.76 72.00 6.40 4.00 0.00 4.60 3.40 90.40 0.80 2.40 26.40 28.80 67.04 26.77 
+
+30% q-Aware 53.12 76.53 40.00 5.60 0.80 49.80 11.80 99.20 84.00 4.00 29.60 18.40 92.96 43.52 
+
+30% q-Agnostic 53.04 75.47 6.40 4.80 0.80 5.00 3.60 93.60 4.00 2.40 28.00 36.00 75.20 29.87 
+
+40% q-Aware 59.20 77.33 43.20 9.60 0.80 54.40 16.20 99.20 88.00 11.20 32.00 18.40 94.24 46.44 
+
+40% q-Agnostic 61.60 77.60 6.40 11.20 0.80 5.40 4.80 96.00 7.20 2.40 35.20 39.20 79.84 32.90 
+
+SnapKV 10% q-Aware 27.60 57.60 34.40 3.20 0.00 36.40 5.80 100.00 77.60 2.40 31.20 19.20 95.68 37.78 10% q-Agnostic 27.44 57.60 6.40 3.20 0.00 4.80 3.20 93.60 0.80 2.40 16.80 24.00 85.92 25.09 20% q-Aware 39.76 68.27 41.60 5.60 0.80 50.40 11.20 100.00 89.60 4.80 29.60 16.80 97.28 42.75 20% q-Agnostic 41.84 63.47 6.40 6.40 0.00 5.20 3.60 98.40 2.40 2.40 23.20 31.20 89.44 28.77 30% q-Aware 50.80 70.13 44.80 7.20 0.80 53.40 15.80 100.00 91.20 12.80 29.60 20.00 96.80 45.64 30% q-Agnostic 50.48 70.13 7.20 6.40 0.80 5.00 4.60 98.40 7.20 2.40 28.80 35.20 89.92 31.27 40% q-Aware 58.08 71.20 45.60 12.80 4.00 55.40 20.00 100.00 92.80 20.80 29.60 20.80 96.80 48.30 40% q-Agnostic 58.40 71.20 8.00 12.80 0.80 5.80 4.80 100.00 7.20 2.40 28.00 40.80 88.64 32.99 +ResKV 10% q-Aware 27.52 72.27 34.40 3.20 0.00 35.60 6.00 100.00 77.60 2.40 32.00 18.40 94.88 38.79 
+
+10% q-Agnostic 26.88 73.33 6.40 2.40 0.00 4.80 3.20 92.80 1.60 2.40 15.20 22.40 84.48 25.84 
+
+20% q-Aware 43.76 74.13 41.60 4.80 0.80 51.00 12.20 100.00 89.60 5.60 31.20 17.60 96.32 43.74 
+
+20% q-Agnostic 44.32 74.13 6.40 5.60 0.80 5.00 3.40 98.40 3.20 2.40 23.20 30.40 88.16 29.65 
+
+30% q-Aware 53.12 75.47 45.60 6.40 0.80 54.20 16.20 100.00 91.20 12.00 29.60 20.00 96.64 46.25 
+
+30% q-Agnostic 54.16 72.80 8.00 7.20 0.80 5.00 4.60 98.40 6.40 2.40 27.20 33.60 90.56 31.62 
+
+40% q-Aware 59.28 76.80 45.60 10.40 2.40 56.00 19.60 100.00 92.80 23.20 30.40 19.20 96.32 48.62 
+
+40% q-Agnostic 60.72 75.20 8.00 9.60 0.80 5.80 4.80 100.00 11.20 2.40 31.20 40.80 90.08 33.89 
+
+TOVA 10% q-Aware 24.96 48.80 14.40 0.00 0.00 3.80 3.40 99.20 58.40 0.00 24.80 16.80 63.84 27.57 10% q-Agnostic 35.76 10.40 4.00 0.00 0.00 3.00 0.80 80.00 0.80 0.00 16.80 24.00 19.04 14.97 20% q-Aware 35.04 60.00 28.80 0.00 0.00 10.60 7.80 100.00 81.60 0.00 25.60 16.80 86.40 34.82 20% q-Agnostic 39.20 32.00 3.20 0.00 0.00 1.80 1.60 95.20 0.80 0.00 20.80 24.80 70.88 22.33 30% q-Aware 43.60 66.67 39.20 0.00 0.00 21.00 14.00 100.00 86.40 1.60 28.00 19.20 93.76 39.49 30% q-Agnostic 48.24 52.27 4.80 0.80 0.00 2.20 2.20 97.60 0.80 0.00 24.80 28.00 81.60 26.41 40% q-Aware 48.40 71.73 46.40 2.40 0.00 31.00 17.80 100.00 92.00 8.80 28.80 18.40 93.12 42.99 40% q-Agnostic 56.64 64.80 5.60 1.60 0.00 3.60 3.40 100.00 0.80 1.60 28.00 34.40 86.56 29.77 +ResKV 10% q-Aware 22.72 53.33 17.60 0.00 0.00 4.60 3.20 98.40 54.40 0.00 25.60 18.40 61.92 27.71 
+
+10% q-Agnostic 24.16 32.80 1.60 0.00 0.00 1.40 0.20 80.80 0.80 0.00 17.60 19.20 32.96 16.27 
+
+20% q-Aware 36.88 69.07 29.60 0.00 0.00 11.00 7.40 100.00 79.20 0.00 27.20 18.40 84.00 35.60 
+
+20% q-Agnostic 38.08 42.93 3.20 0.00 0.00 2.00 1.60 95.20 0.80 0.00 22.40 25.60 68.16 23.07 
+
+30% q-Aware 49.28 73.33 40.80 0.80 0.00 19.80 12.60 100.00 85.60 4.80 29.60 19.20 92.00 40.60 
+
+30% q-Agnostic 49.20 64.27 4.80 0.80 0.00 2.40 2.20 98.40 1.60 0.00 28.80 29.60 82.40 28.04 
+
+40% q-Aware 56.56 77.07 46.40 1.60 0.00 28.80 17.20 100.00 92.00 8.00 28.80 19.20 93.76 43.80 
+
+40% q-Agnostic 58.24 73.87 6.40 0.80 0.00 3.60 3.40 100.00 3.20 1.60 30.40 35.20 87.36 31.08 
+
+AdaKV 10% q-Aware 28.96 59.73 38.40 4.00 0.80 38.80 5.80 99.20 78.40 3.20 29.60 17.60 96.96 38.57 10% q-Agnostic 30.56 59.20 6.40 4.00 0.00 4.80 3.40 92.00 1.60 2.40 18.40 27.20 86.88 25.91 20% q-Aware 50.00 68.27 44.80 7.20 2.40 53.60 16.20 100.00 90.40 9.60 29.60 17.60 96.80 45.11 20% q-Agnostic 48.40 65.87 6.40 8.00 0.80 4.80 3.60 92.00 1.60 2.40 24.00 35.20 89.76 29.45 30% q-Aware 62.16 71.73 45.60 12.80 10.40 55.40 21.60 100.00 92.00 23.20 30.40 19.20 96.80 49.33 30% q-Agnostic 65.04 74.93 10.40 13.60 3.20 10.80 6.40 91.20 9.60 2.40 25.60 40.00 87.36 33.89 40% q-Aware 66.88 75.73 52.00 22.40 21.60 59.00 27.20 100.00 93.60 49.60 30.40 19.20 95.84 54.88 40% q-Agnostic 63.84 78.40 11.20 20.00 8.00 12.60 7.80 91.20 13.60 3.20 36.80 44.00 87.84 36.81 +ResKV 10% q-Aware 31.76 74.40 38.40 4.00 0.80 38.80 5.60 99.20 78.40 3.20 29.60 17.60 96.32 39.85 
+
+10% q-Agnostic 30.40 76.00 6.40 4.00 0.80 4.80 3.20 92.80 1.60 2.40 19.20 27.20 84.64 27.19 
+
+20% q-Aware 53.04 76.27 44.80 7.20 2.40 53.60 15.60 100.00 90.40 11.20 29.60 17.60 96.80 46.04 
+
+20% q-Agnostic 52.80 75.73 6.40 8.00 0.80 5.00 3.80 92.80 2.40 2.40 24.00 36.80 90.72 30.90 
+
+30% q-Aware 63.20 77.33 44.80 12.00 9.60 55.60 22.20 100.00 92.00 24.80 29.60 18.40 96.48 49.69 
+
+30% q-Agnostic 63.84 77.33 6.40 11.20 8.00 6.00 6.00 96.00 12.00 2.40 33.60 43.20 91.52 35.19 
+
+40% q-Aware 67.68 78.13 51.20 24.80 20.80 58.20 26.20 100.00 93.60 49.60 30.40 18.40 96.16 55.01 
+
+40% q-Agnostic 65.68 78.40 12.00 25.60 18.40 8.60 9.80 98.40 24.80 3.20 40.00 40.80 92.80 39.88 Table 9: LongBench results for LLaMA-3.1-8B-Instruct. Bold marks the better average within each paired setting. Method KV Setting QA Summ. Few-shot Synthetic Code Avg. Narr. Qasper MFQA Hotpot 2Wiki Musique GovReport QMSum MultiNews TREC TriviaQA SAMSum PCount PRe LCC RepoBench-P Avg. Full Cache – – 30.68 47.72 54.64 59.49 51.04 32.86 35.33 25.20 26.99 72.50 89.55 44.83 10.15 100.00 52.65 49.24 48.93 H2O 10% q-Aware 31.23 30.27 50.72 55.79 47.69 27.76 26.40 23.87 20.68 43.50 89.52 43.26 13.12 99.50 52.27 52.22 44.24 10% q-Agnostic 25.82 15.29 26.14 41.79 24.05 18.02 25.38 19.85 20.90 44.00 90.93 43.38 9.50 50.00 52.27 47.91 34.70 20% q-Aware 31.84 37.48 52.84 57.31 50.90 29.83 28.47 24.28 22.79 53.00 90.17 43.13 13.65 99.50 52.38 52.19 46.24 20% q-Agnostic 28.66 23.39 35.57 49.63 36.15 21.25 28.05 21.20 22.48 48.50 90.52 44.21 10.00 84.00 52.38 48.83 40.30 30% q-Aware 30.68 41.10 54.10 55.89 49.65 29.77 30.03 24.94 24.07 56.00 90.02 43.58 11.65 99.50 52.54 51.44 46.56 30% q-Agnostic 29.00 30.62 42.45 54.40 43.54 24.47 29.50 22.33 24.48 51.00 89.79 44.87 12.55 94.50 52.54 49.24 43.46 40% q-Aware 30.70 43.68 53.40 56.76 50.70 29.31 31.26 24.64 25.02 59.50 89.92 44.10 11.15 99.50 53.14 49.46 47.02 40% q-Agnostic 30.22 36.72 45.48 55.51 46.81 25.34 31.00 23.40 25.19 54.00 89.96 44.20 12.63 98.50 53.14 49.31 45.09 +ResKV 10% q-Aware 30.66 35.22 52.18 57.81 49.52 32.12 26.39 24.34 20.73 48.50 89.23 43.80 11.62 99.50 52.64 54.97 45.58 
+
+10% q-Agnostic 26.49 17.19 26.74 44.07 29.53 19.41 25.90 19.76 21.05 44.50 89.97 44.02 7.60 65.50 52.64 51.27 36.60 
+
+20% q-Aware 30.32 39.86 54.44 57.88 49.04 34.01 28.84 24.19 23.53 54.50 90.02 43.72 11.15 99.50 54.67 53.91 46.85 
+
+20% q-Agnostic 29.32 26.54 35.86 51.46 36.87 26.41 28.19 21.25 23.30 50.50 90.26 44.97 10.60 90.00 54.67 51.09 41.96 
+
+30% q-Aware 30.22 44.70 54.64 58.19 50.80 33.27 30.19 24.47 24.27 58.00 90.35 44.09 11.65 99.50 53.94 52.67 47.56 
+
+30% q-Agnostic 27.93 33.96 42.26 55.46 43.00 29.68 29.58 22.69 24.84 54.50 89.84 44.84 10.55 98.50 53.94 51.68 44.58 
+
+40% q-Aware 30.50 45.13 55.06 58.73 50.68 32.28 31.40 24.68 25.49 62.00 89.91 43.83 11.15 100.00 54.96 52.30 48.01 
+
+40% q-Agnostic 28.81 39.30 45.25 55.95 48.65 28.50 31.03 23.59 25.55 55.50 89.84 44.24 12.65 99.50 54.94 52.00 45.96 
+
+SnapKV 10% q-Aware 30.91 37.07 53.87 57.11 44.36 27.94 25.71 23.85 19.60 48.00 87.80 42.54 10.05 99.50 52.97 52.16 44.59 10% q-Agnostic 24.24 20.49 23.43 43.19 23.36 19.85 25.30 19.80 19.96 41.50 89.57 42.79 7.00 54.50 52.97 48.64 34.79 20% q-Aware 29.53 44.61 55.59 59.17 49.54 30.48 29.10 24.09 22.82 58.00 89.36 43.94 11.63 99.50 53.55 52.25 47.07 20% q-Agnostic 27.89 25.31 30.21 53.37 36.29 25.96 27.70 21.54 22.62 50.00 89.31 44.09 7.10 86.00 53.66 48.97 40.63 30% q-Aware 29.00 45.23 54.99 58.88 50.21 31.84 30.47 24.64 24.17 64.50 89.27 44.19 11.13 99.50 52.97 50.84 47.61 30% q-Agnostic 26.99 31.44 39.45 55.48 46.52 27.25 29.75 23.04 23.79 56.50 90.49 44.00 9.05 92.50 53.31 49.23 43.67 40% q-Aware 30.22 45.91 54.93 59.08 51.09 32.40 31.61 24.57 25.11 67.00 89.77 43.82 9.65 99.50 52.60 50.56 47.99 40% q-Agnostic 27.99 37.44 45.58 55.42 44.87 28.07 31.28 23.52 25.00 58.50 90.01 44.22 9.05 99.50 52.60 49.73 45.17 +ResKV 10% q-Aware 30.50 38.08 53.99 57.96 45.90 29.23 26.22 24.09 20.42 49.00 89.35 42.82 13.10 99.50 55.12 55.29 45.66 
+
+10% q-Agnostic 23.17 22.25 24.23 46.26 23.61 19.77 25.33 19.71 20.85 44.00 89.31 43.14 10.00 55.00 55.13 50.86 35.79 
+
+20% q-Aware 29.49 44.61 55.55 59.48 48.77 32.33 29.23 24.67 23.07 58.00 89.53 43.88 12.63 99.50 55.10 54.42 47.52 
+
+20% q-Agnostic 26.20 27.10 32.27 50.96 36.63 25.80 28.33 21.81 22.87 48.50 89.99 43.91 9.60 90.00 55.10 52.27 41.33 
+
+30% q-Aware 29.43 45.62 54.90 58.65 50.06 31.81 30.64 24.89 24.10 66.00 89.41 43.75 12.15 99.50 54.71 53.39 48.06 
+
+30% q-Agnostic 28.66 32.77 42.43 55.73 45.37 28.44 29.88 22.77 23.98 56.50 89.50 44.43 8.55 97.00 54.71 52.62 44.58 
+
+40% q-Aware 30.14 47.18 55.01 58.77 50.44 33.26 31.56 24.74 25.19 66.50 90.03 43.83 10.65 99.50 54.80 53.39 48.44 
+
+40% q-Agnostic 28.51 37.69 45.64 55.61 46.51 29.45 31.20 23.44 25.00 60.00 90.01 44.54 10.05 99.50 54.80 52.71 45.92 
+
+TOVA 10% q-Aware 30.27 31.82 53.47 55.04 50.50 28.63 26.20 23.50 20.75 52.50 91.25 44.90 11.58 100.00 51.55 48.27 45.01 10% q-Agnostic 19.27 12.95 23.58 42.47 23.84 16.52 25.56 19.35 20.31 28.50 90.15 43.29 10.60 79.00 51.55 47.19 34.63 20% q-Aware 31.04 40.65 53.53 56.09 50.37 29.91 29.19 24.36 22.12 61.50 90.32 44.63 14.55 100.00 53.31 49.70 46.95 20% q-Agnostic 22.84 20.58 31.15 50.41 33.92 23.18 28.50 21.33 22.86 41.50 89.33 43.80 12.05 95.50 52.95 49.09 39.94 30% q-Aware 30.77 43.96 54.65 55.82 50.77 29.51 30.79 24.64 24.04 65.50 90.31 44.45 12.65 99.50 54.01 50.64 47.63 30% q-Agnostic 24.25 30.95 39.23 57.13 42.52 25.78 30.38 22.14 23.67 45.50 89.65 44.23 13.04 98.00 54.01 49.98 43.15 40% q-Aware 29.90 45.38 55.23 57.80 51.18 30.99 31.62 25.12 24.94 68.00 90.21 44.24 11.20 99.50 53.86 50.97 48.13 40% q-Agnostic 25.95 38.56 44.73 56.21 46.15 30.63 31.24 22.93 24.85 50.00 89.95 44.69 11.64 99.00 53.86 50.04 45.03 +ResKV 10% q-Aware 30.21 36.86 52.74 56.85 50.24 32.47 26.71 24.05 21.30 57.00 91.25 45.03 11.05 100.00 53.83 52.21 46.36 
+
+10% q-Agnostic 20.80 14.22 23.37 42.58 23.87 17.03 25.80 19.46 21.00 36.00 90.18 43.30 10.10 79.50 53.85 50.72 35.74 
+
+20% q-Aware 29.33 42.41 54.97 57.63 49.99 31.20 29.10 24.48 22.78 63.50 90.57 44.34 10.55 100.00 55.15 53.00 47.44 
+
+20% q-Agnostic 23.84 21.61 30.39 52.24 33.56 23.08 28.69 21.06 22.62 44.00 90.17 43.85 11.55 96.00 55.15 51.81 40.60 
+
+30% q-Aware 29.05 44.42 54.70 58.27 50.54 32.63 30.76 24.96 24.14 66.50 90.71 44.30 11.15 100.00 55.39 53.42 48.18 
+
+30% q-Agnostic 24.17 32.26 41.09 54.04 46.66 28.54 30.27 22.34 23.91 48.00 89.75 44.51 12.04 98.00 55.39 52.61 43.97 
+
+40% q-Aware 29.78 45.38 56.40 58.47 50.61 32.40 31.88 25.08 25.27 68.00 89.58 44.35 11.20 100.00 55.42 53.09 48.56 
+
+40% q-Agnostic 27.52 38.68 47.29 56.85 47.66 30.41 31.47 22.69 24.98 51.00 89.79 44.94 11.64 99.00 55.42 52.93 45.77 
+
+AdaKV 10% q-Aware 30.93 38.91 53.25 57.78 47.13 30.71 26.13 24.29 19.98 52.00 89.59 43.17 10.10 99.50 53.98 52.72 45.64 10% q-Agnostic 25.18 21.60 26.73 47.05 26.01 19.35 25.48 20.60 20.54 49.00 89.73 43.00 6.00 55.50 53.98 50.43 36.26 20% q-Aware 29.55 43.13 55.13 58.49 49.29 32.33 28.63 24.50 23.47 62.50 89.62 43.51 11.05 100.00 53.10 51.63 47.25 20% q-Agnostic 27.71 29.17 33.42 55.56 39.76 26.13 27.67 22.20 23.14 56.00 89.80 44.30 9.60 86.50 53.10 49.46 42.10 30% q-Aware 30.06 46.29 56.32 58.74 51.71 32.25 30.44 24.75 24.14 66.00 89.86 44.22 11.05 100.00 52.11 51.02 48.06 30% q-Agnostic 28.81 35.76 41.96 55.14 46.06 29.53 29.72 23.41 24.42 60.50 89.71 43.62 10.05 96.00 52.11 49.69 44.78 40% q-Aware 29.67 46.79 54.44 58.89 51.79 31.48 32.28 24.72 25.25 69.50 89.70 44.40 11.15 99.50 51.26 50.08 48.18 40% q-Agnostic 28.37 39.51 44.22 56.40 48.88 31.18 31.16 23.08 25.40 62.00 89.79 44.16 11.55 97.50 52.03 49.93 45.95 +ResKV 10% q-Aware 30.09 41.81 55.82 57.91 50.03 32.22 26.52 24.17 21.11 61.00 89.49 43.70 12.05 99.50 56.86 56.01 47.39 
+
+10% q-Agnostic 23.65 23.98 28.76 50.38 25.87 20.02 26.12 20.92 20.84 51.50 89.44 43.14 9.12 75.00 56.87 52.38 38.62 
+
+20% q-Aware 29.70 47.18 56.05 58.52 51.87 34.03 29.29 24.69 23.17 68.00 89.12 43.89 11.63 99.50 54.26 54.32 48.45 
+
+20% q-Agnostic 28.70 32.21 35.87 53.93 42.72 28.93 28.78 21.79 23.54 61.00 90.04 44.55 9.00 95.50 54.26 52.98 43.99 
+
+30% q-Aware 30.07 46.52 56.42 58.28 52.18 33.11 31.08 25.02 24.46 70.50 89.92 44.22 10.63 99.50 54.16 53.32 48.71 
+
+30% q-Agnostic 28.86 37.21 44.32 57.22 46.53 28.22 30.43 23.42 24.60 66.50 89.79 44.73 10.55 100.00 54.16 53.16 46.23 
+
+40% q-Aware 29.93 46.80 55.15 58.78 51.56 32.82 32.43 25.21 25.90 70.50 89.70 44.72 11.15 100.00 53.56 52.71 48.81 
+
+40% q-Agnostic 28.99 42.19 48.27 55.57 48.13 28.66 31.91 23.73 25.47 69.50 89.74 44.88 12.05 100.00 53.56 51.85 47.16 Table 10: LongBench results for Qwen-2.5-7B-Instruct. Bold marks the better average within each paired setting. Method KV Setting QA Summ. Few-shot Synthetic Code Avg. Narr. Qasper MFQA Hotpot 2Wiki Musique GovReport QMSum MultiNews TREC TriviaQA SAMSum PCount PRe LCC RepoBench-P Avg. Full Cache – – 29.33 46.36 50.27 55.96 42.49 27.55 33.73 24.27 25.41 73.50 86.51 41.20 12.00 100.00 58.19 63.39 48.14 H2O 10% q-Aware 28.52 33.75 38.55 48.07 33.37 19.50 26.63 23.18 18.66 39.00 86.92 40.78 10.50 99.83 49.32 56.31 40.81 10% q-Agnostic 20.28 13.38 24.14 31.35 23.28 14.87 26.30 18.17 19.36 42.50 86.89 39.26 8.00 54.92 49.54 57.79 33.13 20% q-Aware 28.45 38.23 46.61 52.73 36.58 25.24 29.32 23.79 21.44 44.00 86.34 41.02 10.50 99.75 55.39 60.12 43.72 20% q-Agnostic 23.83 20.25 29.15 40.58 27.65 17.40 28.96 19.52 21.64 46.00 85.59 39.98 6.00 91.08 55.41 59.74 38.30 30% q-Aware 28.66 42.07 47.58 54.94 38.41 24.87 30.03 23.67 22.56 47.00 86.86 41.22 13.50 99.08 58.60 61.81 45.05 30% q-Agnostic 25.01 27.38 33.76 47.21 32.16 21.49 30.10 20.53 22.64 48.00 87.08 40.62 9.00 97.50 58.82 61.68 41.44 40% q-Aware 29.05 43.08 49.27 54.31 40.65 26.55 31.41 23.77 23.22 53.00 86.90 41.25 12.50 99.75 59.70 63.33 46.11 40% q-Agnostic 26.03 34.43 37.99 52.64 34.06 24.90 31.11 21.45 23.38 49.50 87.38 41.31 10.50 99.67 59.21 62.32 43.49 +ResKV 10% q-Aware 28.94 36.04 41.14 52.32 35.88 23.22 27.33 23.39 19.73 42.00 87.17 40.58 9.50 99.75 53.29 58.33 42.41 
+
+10% q-Agnostic 22.55 15.62 26.12 33.50 22.97 16.74 27.17 18.89 20.08 43.50 86.84 39.89 8.00 75.75 53.24 60.27 35.70 
+
+20% q-Aware 29.39 40.59 46.26 53.75 38.63 25.44 29.75 23.93 21.96 47.00 88.35 40.96 10.50 99.75 59.27 61.77 44.83 
+
+20% q-Agnostic 25.53 21.95 31.50 44.03 31.32 19.93 29.50 20.17 22.13 47.00 86.48 39.88 9.50 95.92 59.27 61.35 40.34 
+
+30% q-Aware 29.26 41.83 47.72 55.15 39.72 26.40 31.14 23.70 23.05 51.50 88.03 41.09 11.00 100.00 58.93 64.05 45.79 
+
+30% q-Agnostic 26.80 30.75 35.09 49.67 32.54 22.94 31.25 20.76 23.14 49.50 86.79 40.48 11.50 99.25 58.93 62.12 42.59 
+
+40% q-Aware 29.55 43.26 48.86 54.87 40.71 25.91 31.73 24.22 23.55 54.50 86.95 40.90 10.50 99.75 59.91 63.99 46.20 
+
+40% q-Agnostic 27.00 36.75 39.25 52.15 34.20 26.71 31.84 22.18 23.55 53.50 86.71 40.98 13.00 99.58 59.91 63.48 44.42 
+
+SnapKV 10% q-Aware 28.76 37.69 42.88 52.81 34.64 25.04 26.45 22.78 18.14 42.00 86.87 40.39 10.50 99.50 51.90 54.15 42.16 10% q-Agnostic 19.43 14.06 24.55 36.48 23.98 17.13 26.35 18.34 18.69 44.50 87.71 39.17 7.50 44.58 52.23 56.82 33.22 20% q-Aware 29.69 41.63 48.15 55.27 36.08 24.47 29.56 24.04 20.59 53.00 86.84 40.46 10.00 100.00 56.89 58.53 44.70 20% q-Agnostic 22.21 22.43 30.67 45.89 28.77 22.00 28.98 19.94 21.28 49.00 87.61 40.20 7.00 81.33 57.05 59.98 39.02 30% q-Aware 29.46 43.66 48.46 55.95 41.09 26.53 30.75 23.96 22.27 56.00 86.17 40.65 10.50 100.00 59.72 61.58 46.05 30% q-Agnostic 24.17 27.85 35.01 50.63 34.44 22.02 30.38 20.98 22.60 54.00 87.26 40.67 7.50 94.50 59.50 61.69 42.08 40% q-Aware 29.95 44.58 49.09 54.98 41.73 26.29 31.69 23.79 23.10 58.50 86.43 41.24 11.50 100.00 58.57 62.49 46.50 40% q-Agnostic 23.88 34.33 38.09 55.21 36.26 24.88 31.55 22.17 23.20 59.00 87.54 40.65 8.00 97.67 58.45 62.84 43.98 +ResKV 10% q-Aware 30.03 38.88 43.74 54.39 35.41 26.29 27.14 23.26 18.62 44.00 86.98 39.75 8.50 99.50 52.07 56.62 42.82 
+
+10% q-Agnostic 22.59 14.30 25.45 40.59 24.30 14.92 26.72 18.22 19.18 45.00 88.50 38.72 7.00 66.67 52.07 59.66 35.24 
+
+20% q-Aware 29.70 42.01 48.32 55.41 39.79 26.40 29.60 23.99 21.13 55.50 87.37 40.48 9.50 99.50 59.54 60.91 45.57 
+
+20% q-Agnostic 23.41 23.36 28.69 47.74 27.70 23.10 29.26 20.10 21.48 53.00 87.35 39.69 8.00 93.67 59.54 62.04 40.51 
+
+30% q-Aware 28.90 43.87 48.17 56.08 41.42 25.74 30.93 23.72 22.36 61.00 87.34 40.92 10.00 100.00 60.04 63.22 46.48 
+
+30% q-Agnostic 24.28 27.77 34.71 52.60 33.03 22.11 30.99 21.07 22.70 56.00 86.85 40.31 8.50 99.17 60.04 62.18 42.64 
+
+40% q-Aware 29.49 44.66 48.83 56.07 41.16 26.39 32.32 24.13 23.57 64.50 86.79 41.28 9.50 100.00 60.79 63.79 47.08 
+
+40% q-Agnostic 26.51 34.70 38.81 53.33 36.48 25.60 31.78 22.28 23.57 60.00 87.58 40.28 9.00 99.58 60.79 63.37 44.60 
+
+TOVA 10% q-Aware 27.77 31.20 42.03 48.08 32.46 19.91 27.05 21.96 19.67 35.00 85.01 41.30 9.50 99.00 48.18 51.94 40.00 10% q-Agnostic 17.45 13.51 22.50 32.52 18.87 14.42 27.60 18.30 18.74 29.00 86.21 40.03 10.00 72.92 48.41 57.72 33.01 20% q-Aware 28.09 37.15 47.12 52.15 34.53 22.65 30.04 22.62 21.76 47.50 85.26 41.17 11.50 99.12 53.95 57.76 43.27 20% q-Agnostic 21.85 21.10 30.09 42.25 30.21 18.21 30.17 19.50 21.09 42.00 86.79 40.26 10.00 95.33 53.80 59.13 38.86 30% q-Aware 27.83 39.09 50.07 54.38 38.42 26.13 31.02 23.48 22.67 56.00 87.03 41.97 11.00 100.00 56.83 59.29 45.33 30% q-Agnostic 24.10 29.01 35.55 47.08 32.85 19.81 31.30 20.75 22.08 47.00 85.92 41.06 10.50 99.25 56.98 60.89 41.51 40% q-Aware 29.44 41.95 49.41 55.45 39.36 27.11 31.80 23.63 23.21 64.00 86.45 41.50 11.50 99.75 56.37 61.61 46.41 40% q-Agnostic 24.17 34.92 39.63 51.48 34.64 24.90 32.14 21.38 22.76 52.50 87.16 41.74 12.50 98.92 56.71 61.41 43.56 +ResKV 10% q-Aware 27.31 33.44 44.66 51.26 33.95 23.36 27.95 22.85 20.50 42.50 85.51 40.59 11.00 98.25 54.14 54.64 41.99 
+
+10% q-Agnostic 18.58 14.27 24.55 32.83 19.83 16.80 28.23 18.33 19.88 32.00 87.70 39.32 9.00 82.92 54.14 59.64 34.88 
+
+20% q-Aware 28.13 38.82 47.56 53.00 35.93 25.99 30.26 22.78 22.16 54.00 86.72 40.97 12.00 99.25 57.94 60.26 44.74 
+
+20% q-Agnostic 22.26 21.15 29.66 44.62 31.90 22.22 30.58 20.02 21.12 41.50 86.78 40.46 10.00 97.08 57.94 60.60 39.87 
+
+30% q-Aware 27.50 40.82 49.37 53.89 37.91 25.15 31.33 23.43 23.00 61.50 87.19 41.50 12.00 99.75 57.57 61.75 45.85 
+
+30% q-Agnostic 24.30 31.02 35.33 48.45 34.23 21.68 31.49 21.28 22.33 51.00 86.18 40.62 11.50 99.17 57.57 61.81 42.37 
+
+40% q-Aware 28.67 42.65 49.65 56.53 40.46 25.84 32.29 24.30 23.69 71.00 87.23 41.56 11.00 100.00 57.99 62.33 47.20 
+
+40% q-Agnostic 26.29 35.35 39.40 53.11 34.80 25.04 32.45 21.38 23.30 56.00 87.06 41.40 11.00 98.42 57.99 62.92 44.12 
+
+AdaKV 10% q-Aware 29.53 35.87 44.43 51.07 35.15 23.40 27.14 23.20 18.49 45.50 87.23 40.12 11.00 99.50 50.03 54.50 42.26 10% q-Agnostic 20.78 15.22 25.67 37.27 22.13 17.00 26.27 18.09 19.04 43.50 87.14 39.67 7.00 43.33 54.05 56.34 33.28 20% q-Aware 29.09 41.82 46.89 54.88 38.00 24.86 29.24 23.27 20.85 55.50 86.66 40.64 11.00 100.00 58.00 57.42 44.88 20% q-Agnostic 23.35 22.53 29.57 44.57 28.65 21.37 28.61 20.09 21.45 53.50 87.89 40.00 5.00 79.00 56.82 59.35 38.86 30% q-Aware 29.20 43.44 48.95 55.50 40.70 25.42 30.29 24.09 22.05 59.00 86.59 40.69 12.00 100.00 59.06 60.65 46.10 30% q-Agnostic 24.82 27.41 35.50 50.57 32.93 21.83 30.22 21.28 22.64 57.50 87.50 40.27 6.50 93.17 58.69 60.71 41.97 40% q-Aware 29.21 44.73 49.02 55.81 42.11 27.31 31.29 23.96 23.21 61.50 86.51 41.26 11.50 100.00 58.40 61.36 46.70 40% q-Agnostic 25.24 32.87 37.13 54.02 34.47 24.07 31.17 21.91 23.36 62.00 86.66 40.36 10.00 98.17 58.33 61.62 43.84 +ResKV 10% q-Aware 30.03 36.15 43.15 52.51 35.97 22.75 27.34 23.06 18.83 45.00 86.76 40.24 11.50 99.50 51.24 56.34 42.52 
+
+10% q-Agnostic 20.70 17.41 25.76 36.75 24.03 16.64 27.04 19.32 19.52 43.50 87.56 38.87 8.00 75.67 51.20 58.04 35.63 
+
+20% q-Aware 29.53 40.78 48.11 55.54 37.74 25.30 29.63 23.66 20.92 53.00 87.00 41.05 8.50 99.50 60.30 60.92 45.09 
+
+20% q-Agnostic 24.56 25.91 33.61 47.58 30.59 21.60 29.48 21.12 21.50 51.50 87.23 40.03 9.50 98.17 60.30 60.50 41.45 
+
+30% q-Aware 29.98 43.61 50.42 55.89 40.40 26.16 30.99 23.61 22.47 58.00 87.36 40.77 11.50 100.00 60.31 62.33 46.49 
+
+30% q-Agnostic 25.77 31.17 37.84 50.41 32.47 23.14 30.73 21.80 22.42 56.00 86.25 41.07 9.50 99.83 60.31 62.14 43.18 
+
+40% q-Aware 29.11 44.29 49.57 54.87 40.93 27.32 32.24 23.91 23.60 64.50 87.47 41.09 10.00 100.00 59.76 63.52 47.01 
+
+40% q-Agnostic 26.52 34.79 39.98 54.29 38.63 25.81 31.96 22.34 23.71 61.00 87.08 41.14 9.00 99.75 59.76 63.38 44.95

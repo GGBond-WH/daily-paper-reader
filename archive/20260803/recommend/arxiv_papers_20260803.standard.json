@@ -1,0 +1,208 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-03T21:28:39.471759+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 4,
+    "deep_cap": 6,
+    "deep_selected": 4,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [
+    {
+      "id": "2607.28699v1",
+      "source": "arxiv",
+      "title": "WitCert: Sound Runtime Risk Observability and Gating for KV-Cache Quantization",
+      "abstract": "KV-cache quantization is validated today by offline benchmark averages; a deployed system cannot tell whether compression is damaging the request it is serving right now. We give it a provably sound runtime meter, a \"DTrace for KV quantization\": a per-(layer, head, step) upper bound on the total variation between exact and compressed attention. The meter has two tiers: a deterministic band-norm-witness bound, sound for any cache-preserving black-box quantizer and for any query (adaptive-safe, worst-case Cauchy-Schwarz plus RoPE band-unitarity), and a tighter probabilistic certificate for a controlled subtractively-dithered INT8 quantizer under an explicit request-level failure budget (stated for non-adaptive queries; core theorems machine-checked in Lean 4). Three results. Observability: the meter enters SGLang through an environment-guarded patch, and any scheme registered as one tensor function is measured in live serving. Repair: meter-driven gating, risk-ranked where the witness is saturated and certified where it is informative, empirically restores the quality floor at benchmark scale. For example, raw-cast FP8 improves from 22.8 back to 79.7 on hard RULER tasks, with the difference from uncompressed bounded at [+0.0, +0.8] by a paired test. Analysis: aggressive schemes survive on cross-layer error cancellation, not per-step fidelity. In a 28-layer sweep, no single layer's pollution alone loses anything (0/28), and the certified INT8 cache serves 1.88 times more KV tokens at the same memory in SGLang.",
+      "authors": [
+        "Fanzhe Wei",
+        "Li Liu"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR",
+        "cs.AI"
+      ],
+      "published": "2026-07-30T11:04:45+00:00",
+      "link": "https://arxiv.org/pdf/2607.28699v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "sound runtime bounds for KV quantization",
+      "llm_evidence_cn": "为KV量化提供可证明的运行时上界",
+      "llm_evidence": "为KV量化提供可证明的运行时上界",
+      "canonical_evidence": "为KV量化提供可证明的运行时上界",
+      "llm_tldr_en": "WitCert provides a provably sound runtime meter for KV-cache quantization, giving per-layer per-head per-step upper bounds on the total variation between exact and compressed attention, including a probabilistic certificate for an INT8 quantizer.",
+      "llm_tldr_cn": "现有KV缓存量化仅靠离线基准均值验证，无法感知当前请求是否正被压缩损害。本文提出WitCert，为KV量化提供可证明可靠的运行时度量，即逐层、逐头、逐步对精确与压缩注意力总变差给出上界。该度量包含适用于任何缓存保持黑盒量化器的确定性界限，以及面向受控减抖动INT8量化器的概率性证书。这为在线KV量化风险监控提供了理论基础。",
+      "llm_tldr": "现有KV缓存量化仅靠离线基准均值验证，无法感知当前请求是否正被压缩损害。本文提出WitCert，为KV量化提供可证明可靠的运行时度量，即逐层、逐头、逐步对精确与压缩注意力总变差给出上界。该度量包含适用于任何缓存保持黑盒量化器的确定性界限，以及面向受控减抖动INT8量化器的概率性证书。这为在线KV量化风险监控提供了理论基础。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.29591v1",
+      "source": "arxiv",
+      "title": "ResKV: Reconstructing Omitted Attention Contributions for Fixed-Budget KV Cache Compression",
+      "abstract": "KV cache compression is essential for efficient long-context inference. Existing eviction methods permanently discard unselected tokens and consequently remove their aggregate contribution to attention. Merging-based alternatives preserve more information but can perturb retained keys and values that should remain exact. We observe that the information omitted by cache eviction can be formulated as residual statistics in both the numerator and denominator of softmax attention. Based on this observation, we propose ResKV, which divides a fixed KV budget into an exact main cache and a compact residual cache that reconstructs the contribution of omitted tokens. ResKV lets main-cache tokens and residual entries participate in the same softmax normalization, so residual entries restore both attention numerator and denominator mass rather than acting as a post-hoc correction. A construction-time validation proxy determines residual allocation for each layer and KV head, while a decode-time dynamic gate adjusts residual contributions for individual queries. Comprehensive evaluations on LongBench and RULER, covering query-aware and query-agnostic settings, multiple backbones, cache budgets, and representative compression baselines, demonstrate broad improvements under the same retained KV budget while preserving the practical efficiency of compressed decoding, including peak memory usage and long-context decode throughput.",
+      "authors": [
+        "Yuhang Zhan",
+        "Lisi Chen",
+        "Shuo Shang"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-31T16:16:45+00:00",
+      "link": "https://arxiv.org/pdf/2607.29591v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Proposes ResKV, a fixed-budget KV cache compression method reconstructing omitted attention contributions.",
+      "llm_evidence_cn": "提出ResKV，一种在固定预算下通过重建被省略注意力贡献进行KV缓存压缩的方法。",
+      "llm_evidence": "提出ResKV，一种在固定预算下通过重建被省略注意力贡献进行KV缓存压缩的方法。",
+      "canonical_evidence": "提出ResKV，一种在固定预算下通过重建被省略注意力贡献进行KV缓存压缩的方法。",
+      "llm_tldr_en": "ResKV divides the KV budget into an exact main cache and a compact residual cache that reconstructs omitted token contributions, improving fixed-budget KV cache compression.",
+      "llm_tldr_cn": "长上下文推理中，KV缓存压缩至关重要。现有驱逐策略会永久丢弃未选中token，从而损失其注意力贡献；合并式方法则可能扰动本应精确的键值。ResKV将固定缓存预算分为精确主缓存和紧凑残差缓存，在softmax注意力的分子分母中重建被省略token的贡献，使主缓存与残差条目共同参与注意力计算，在固定预算下显著提升压缩效率与生成质量。",
+      "llm_tldr": "长上下文推理中，KV缓存压缩至关重要。现有驱逐策略会永久丢弃未选中token，从而损失其注意力贡献；合并式方法则可能扰动本应精确的键值。ResKV将固定缓存预算分为精确主缓存和紧凑残差缓存，在softmax注意力的分子分母中重建被省略token的贡献，使主缓存与残差条目共同参与注意力计算，在固定预算下显著提升压缩效率与生成质量。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.28979v1",
+      "source": "arxiv",
+      "title": "Mixture-of-Translators: Translating KV Caches Across Heterogeneous Large Language Models",
+      "abstract": "Heterogeneous Large Language Model (LLM) systems increasingly rely on shared contexts, retrieved evidence, and multi-agent dialogue histories, yet their internal key-value (KV) caches remain model-specific and cannot be reused across architectures. Consequently, each model must repeatedly prefill or store caches for the same context, limiting the scalability of multi-model reasoning and long-context generation. We propose Mixture-of-Translators(MoT), a cache translation framework that maps context KV caches from a source LLM into the cache space of a target LLM. Unlike prior approaches that depend on a single projection path or global shared latent space, MoT uses multiple translator modules to capture diverse source--target mappings. To further reduce residual translation error, we introduce a Context Correction Loss that aligns the replayed target trajectory with the native target trajectory. We reveal two competing failure modes in cache translation: propagated translation shift from early injection and last-state shift from late injection. MoT addresses them through translator mixtures and target-side correction. Across homogeneous and heterogeneous translations among Qwen2.5, GPT-2, and OPT models, MoT preserves downstream QA performance, including Qwen2.5-7B-scale translation with 51.0% average closed-set QA accuracy and 0.43 average extractive QA F1. In practical case studies, MoT enables quality-preserving memory reuse for multi-agent reasoning and retains 96.3% of direct-context quality in long-context cache-augmented generation, demonstrating scalable KV cache reuse across heterogeneous LLMs.",
+      "authors": [
+        "Jin-woo Lee",
+        "Minkyung Song",
+        "Junghyun Oh",
+        "Seunghoon Han",
+        "Soyoung Park",
+        "Gwangseon Jang",
+        "Sungsu Lim"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-07-31T03:07:31+00:00",
+      "link": "https://arxiv.org/pdf/2607.28979v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Proposes KV cache translation framework across heterogeneous LLMs to reuse caches and reduce repeated prefill.",
+      "llm_evidence_cn": "提出异构LLM间的KV缓存翻译框架，实现缓存复用并减少重复预填充。",
+      "llm_evidence": "提出异构LLM间的KV缓存翻译框架，实现缓存复用并减少重复预填充。",
+      "canonical_evidence": "提出异构LLM间的KV缓存翻译框架，实现缓存复用并减少重复预填充。",
+      "llm_tldr_en": "Proposes Mixture-of-Translators, a cache translation framework using multiple translator modules to map source LLM KV caches into a target LLM's cache space, enabling cross-model KV cache reuse and reducing repeated prefill.",
+      "llm_tldr_cn": "异构大模型系统中不同模型的KV缓存互相不兼容，导致同一上下文需要反复预填充。本文提出混合翻译器MoT，用多个翻译模块把源模型的KV缓存映射到目标模型缓存空间，比单一投影或共享隐空间更灵活。该方法可在多模型推理和长上下文生成中复用共享上下文，降低重复预填充带来的扩展瓶颈，为跨模型缓存共享提供了新机制。",
+      "llm_tldr": "异构大模型系统中不同模型的KV缓存互相不兼容，导致同一上下文需要反复预填充。本文提出混合翻译器MoT，用多个翻译模块把源模型的KV缓存映射到目标模型缓存空间，比单一投影或共享隐空间更灵活。该方法可在多模型推理和长上下文生成中复用共享上下文，降低重复预填充带来的扩展瓶颈，为跨模型缓存共享提供了新机制。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2607.29076v1",
+      "source": "arxiv",
+      "title": "Selective KV Cache Protection for Noise-Resilient LLM Inference on Analog Compute-In-Memory Systems",
+      "abstract": "Analog compute-in-memory (CIM) arrays have emerged as a promising substrate for energy-efficient LLM inference, particularly for weight-stationary computations in linear layers. However, extending analog CIM to attention mechanisms introduces a fundamental challenge: KV cache operations demand repeated in-situ weight updates, and the resulting mismatch with the weight-stationary paradigm exposes dynamic computations to significant hardware noise, a critical problem that remains largely unexplored. In this paper, we present the first systematic study of dynamic attention computation on analog CIM arrays, revealing that initial and recent tokens exhibit disproportionate vulnerability to hardware noise. Motivated by this token-level insight, we propose a hierarchical token protection strategy that keeps sink tokens and a sliding recent-token window on a higher-precision digital path while processing the bulk KV cache on analog CIM. A co-designed scheduler combines analog programming, ownership transition, and bulk-MVM tile formation to bound digital overhead. Evaluations on nine LLMs show that our approach lowers average perplexity under analog noise from 33.91 to 11.95, close to the clean baseline of 11.06, while improving dynamic-KV programming-row utilization from 23.1\\% to 91.2\\%.",
+      "authors": [
+        "Yuannuo Feng",
+        "Wenyong Zhou",
+        "Yuang Ma",
+        "Yizhe Chen",
+        "Wenshuai Yao",
+        "Yuxin Xie",
+        "Ngai Wong",
+        "Wang Kang"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR"
+      ],
+      "published": "2026-07-31T06:56:20+00:00",
+      "link": "https://arxiv.org/pdf/2607.29076v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "Directly studies KV cache operations in attention on analog CIM and proposes selective KV cache protection.",
+      "llm_evidence_cn": "直接研究模拟CIM上注意力机制的KV缓存操作并提出选择性KV缓存保护。",
+      "llm_evidence": "直接研究模拟CIM上注意力机制的KV缓存操作并提出选择性KV缓存保护。",
+      "canonical_evidence": "直接研究模拟CIM上注意力机制的KV缓存操作并提出选择性KV缓存保护。",
+      "llm_tldr_en": "Analyzes dynamic attention KV cache operations on analog CIM systems, shows initial and recent tokens are more noise-vulnerable, and proposes selective KV cache protection for noise-resilient LLM inference.",
+      "llm_tldr_cn": "模拟存内计算阵列以权重固定方式实现线性层可显著降低LLM推理能耗，但将其扩展到注意力机制时，KV缓存操作需要反复原位更新，与权重固定范式冲突并引入严重硬件噪声，这一问题此前鲜有研究。本文首次系统分析模拟CIM上的动态注意力计算，发现序列初始与最近的token对噪声格外脆弱。基于此提出选择性KV缓存保护机制，优先保护这些易受影响缓存的键值，在保持硬件能效的同时显著提升推理鲁棒性，为模拟CIM上的注意力部署提供了可行方案。",
+      "llm_tldr": "模拟存内计算阵列以权重固定方式实现线性层可显著降低LLM推理能耗，但将其扩展到注意力机制时，KV缓存操作需要反复原位更新，与权重固定范式冲突并引入严重硬件噪声，这一问题此前鲜有研究。本文首次系统分析模拟CIM上的动态注意力计算，发现序列初始与最近的token对噪声格外脆弱。基于此提出选择性KV缓存保护机制，优先保护这些易受影响缓存的键值，在保持硬件能效的同时显著提升推理鲁棒性，为模拟CIM上的注意力部署提供了可行方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.29678v1",
+      "source": "arxiv",
+      "title": "TokTier: Exact Stateful Tokenization for Agentic LLM Serving",
+      "abstract": "LLM serving systems cache prompt KV state, yet most front ends still re-tokenize the full request text on every call. The cost lands on coding agents, which resubmit a long transcript after each small tool result, and reuse is hard because even a short append can change token boundaries near the end of the previous sequence. Across 153,951 calls from two agent ecosystems, the median call appends about 1.4K characters, and only 1.0-3.6% of calls start or rebuild a session with contexts of millions of characters. At a 94.1% fleet prompt-cache hit rate, tokenization reaches up to 64% of time to first token.   TokTier is a stateful tokenization service with one contract: emitted token IDs are always identical to full reference tokenization of the request text. For a session continuation, it re-tokenizes a small window around the append and splices only after a per-request stable-boundary check, widening the window or falling back to full tokenization on failure. For a call without a reusable prefix, it decomposes GPT-family regex pre-tokenization into run-local rules and runs exact pre-tokenization and BPE on a GPU. A sampled shadow verifier re-checks live traffic.   Across 17 tokenizer families, differential campaigns cover 1.5x10^10 split checks, a 12.4 TB real-text corpus, and 93,000+ replayed agent steps, with zero divergence. Incremental repair takes 0.5-1.1 ms from 100K to 3M characters, up to 437x faster than HF tokenization and 2.1x faster at 1M than the strongest cache-based baseline (Gigatoken) fully prewarmed. GPU full tokenization encodes a 1M-character request in 0.87 ms, up to 491x below HF and 23.4x below the fastest published CPU method. With vLLM, median time to first token drops 16-34% and P99 drops 23% under recorded bursts. Under a 50 ms P99 objective, four repair cores plus one GPU sustain 1,821 requests/s where a 16-core stateless front end saturates at 40.",
+      "authors": [
+        "Zhenyu Zhang",
+        "Zhichao Cao"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.DC",
+        "cs.PF"
+      ],
+      "published": "2026-07-31T17:56:30+00:00",
+      "link": "https://arxiv.org/pdf/2607.29678v1",
+      "tags": [
+        "keyword:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Stateful tokenization preserves token identity to enable prompt KV cache reuse across calls in agentic serving.",
+      "llm_evidence_cn": "有状态分词保证token一致，从而在智能体服务中实现提示词KV缓存复用。",
+      "llm_evidence": "有状态分词保证token一致，从而在智能体服务中实现提示词KV缓存复用。",
+      "canonical_evidence": "有状态分词保证token一致，从而在智能体服务中实现提示词KV缓存复用。",
+      "llm_tldr_en": "TokTier is a stateful tokenization service that guarantees token IDs identical to full reference tokenization, enabling prompt KV cache reuse for agent transcripts; with high fleet cache hit rate, it removes tokenization as a time-to-first-token bottleneck.",
+      "llm_tldr_cn": "LLM服务系统虽然缓存了提示词的KV状态，但多数前端仍会在每次调用时重新分词，编码智能体反复提交长记录导致严重耗时。TokTier通过有状态分词服务保证输出与完整参考分词逐字一致，即使附加内容改变了部分token边界也能复用缓存。在两个智能体生态15万余次调用上，该方法有效降低了首token时延中的分词占比，为前缀缓存生效提供关键支撑。",
+      "llm_tldr": "LLM服务系统虽然缓存了提示词的KV状态，但多数前端仍会在每次调用时重新分词，编码智能体反复提交长记录导致严重耗时。TokTier通过有状态分词服务保证输出与完整参考分词逐字一致，即使附加内容改变了部分token边界也能复用缓存。在两个智能体生态15万余次调用上，该方法有效降低了首token时延中的分词占比，为前缀缓存生效提供关键支撑。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}

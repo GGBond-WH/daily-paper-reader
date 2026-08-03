@@ -1,0 +1,3178 @@
+Title: Mixture-of-Translators: Translating KV Caches Across Heterogeneous Large Language Models
+
+URL Source: https://arxiv.org/pdf/2607.28979v1
+
+Published Time: Mon, 03 Aug 2026 00:26:57 GMT
+
+Number of Pages: 44
+
+Markdown Content:
+# Mixture-of-Translators: Translating KV Caches Across Heterogeneous Large Language Models 
+
+Jin-woo Lee 1 Minkyung Song 1∗ Junghyun Oh 1∗ Seunghoon Han 1
+
+Soyoung Park 1 Gwangseon Jang 2 Sungsu Lim 1†
+
+> 1
+
+Chungnam National University 2KISTI 
+
+## Abstract 
+
+Heterogeneous Large Language Model (LLM) systems increasingly rely on shared contexts, retrieved evidence, and multi-agent dialogue histories, yet their internal key-value (KV) caches remain model-specific and cannot be reused across archi-tectures. Consequently, each model must repeatedly prefill or store caches for the same context, limiting the scalability of multi-model reasoning and long-context generation. We propose Mixture-of-Translators (MoT ), a cache translation frame-work that maps context KV caches from a source LLM into the cache space of a target LLM. Unlike prior approaches that depend on a single projection path or global shared latent space, MoT uses multiple translator modules to capture diverse source–target mappings. To further reduce residual translation error, we introduce a 
+
+Context Correction Loss that aligns the replayed target trajectory with the native target trajectory. We reveal two competing failure modes in cache translation: prop-agated translation shift from early injection and last-state shift from late injection. MoT addresses them through translator mixtures and target-side correction. Across homogeneous and heterogeneous translations among Qwen2.5 , GPT-2 , and OPT 
+
+models, MoT preserves downstream QA performance, including Qwen2.5-7B -scale translation with 51 .0% average closed-set QA accuracy and 0.43 average extractive QA F1. In practical case studies, MoT enables quality-preserving mem-ory reuse for multi-agent reasoning and retains 96 .3% of direct-context quality in long-context cache-augmented generation, demonstrating scalable KV cache reuse across heterogeneous LLMs. 
+
+## 1 Introduction 
+
+A heterogeneous Large Language Model (LLM) system faces a fundamental incompatibility: the context state computed by one model is not directly readable by another. Without translation, each model must reconstruct or store its own version of the same long context, retrieved evidence, dialogue history, or agent-generated intermediate state. Thus, the key-value (KV) cache becomes more than an inference artifact; it is a model-specific memory whose reuse depends on whether internal states can be transferred across cache spaces. Prompt caching and cache-augmented generation demonstrate the value of reusing repeated context [ 1, 2, 3 , 4], but existing mechanisms remain largely tied to a single model or cache format. This limitation becomes critical in emerging LLM workflows. In multi-agent reasoning, agents repeatedly process the same passage, question, previous responses, and dialogue history, causing memory to grow with the number of agents [ 5, 6, 7 ]. In long-context cache-augmented generation, precomputed document caches avoid repeated prefilling, but each model still requires its own model-           
+
+> ∗Equal contribution.
+> †Corresponding author: sungsu@cnu.ac.kr
+> Preprint. arXiv:2607.28979v1 [cs.CL] 31 Jul 2026 Question: Where is a teacher teaching?
+> Agent 1 Agent 2
+> Agent 2: i n a
+> classroom …
+> scalability
+> Agent 1: Teacher works …
+> Agent 2: at th eschool …
+> Agent 1:Students learn …
+> Translator
+> Translator
+> Gate Translator ∑
+> accuracy
+> Mixture -of -Translators
+> No Prior Dialogue
+
+Figure 1: Mixture-of-translators for multi-agent reasoning. 0.50 0.75 1.00 1.25 1.50 1.75 
+
+Peak GPU Memory (GiB) 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+> F1
+
+KVComm 
+
+C2C-Projection 
+
+LSC 
+
+Interlat 
+
+MoT (Retain) MoT (Free) 
+
+Figure 2: 10-agent performance landscape (only 
+
+MoT exhibits scale-invariant memory). dependent cache representation [ 3 , 4, 8 ]. Scalable context reuse therefore requires translating internal KV states across heterogeneous models while preserving generation quality. Recent work explores language-free communication through internal states, including cache-to-cache projection, selective KV sharing, hidden-state communication, and shared latent cache alignment [ 9,10 , 11 , 12 ]. However, these methods often rely on a single projection path, a fixed compatibility assumption, or a global shared space. Such designs can be insufficient when source and target models differ in depth, hidden dimension, attention layout, or KV-head structure, where heterogeneous cache translation may require multiple translation modes rather than one universal mapping. We propose MoT (Mixture-of-Translators) , a cache translation architecture that maps source-model context KV caches into a target-model cache space using multiple translator modules. Instead of forcing all cache states through a single translator, MoT learns token-level translator combinations for heterogeneous source–target mappings. We further introduce a Context Correction Loss that aligns the replayed target trajectory with the native target trajectory, reducing residual error after translation. Our analysis identifies two competing errors in cache translation. Early translation suffers from propagated translation shifts, while late translation leaves insufficient upper layers for correction. MoT addresses the former by increasing translation capacity through multiple translators, and context correction addresses the latter by directly supervising target-side replay. Together, they provide a practical mechanism for robust cache reuse across heterogeneous LLMs. Fig. 1 illustrates MoT in a multi-agent reasoning case study, where agents communicate by translating cache states and keep the long context and dialogue history in a shared cache space. Fig. 2 summarizes the 10-agent results across F1 and GPU peak memory: MoT preserves F1 while reducing peak memory by more than 1GiB, showing scale-invariant memory behavior without sacrificing translation quality. We evaluate MoT on closed-set QA, extractive QA, multi-agent reasoning, and long-context cache-augmented generation across homogeneous and heterogeneous translations among Qwen2.5 , GPT-2 ,and OPT . At the Qwen2.5-7B scale, MoT achieves 51 .0% average accuracy on closed-set QA and 0.43 
+
+average F1 on extractive QA. In GPT-family experiments, it reaches 42 .0% average accuracy and 0.22 
+
+average F1. In long-context cache-augmented generation, MoT preserves 96 .3% of direct-context quality, showing that translated caches retain information needed for downstream generation. 
+
+Key Contributions. 
+
+1. Competing Translation Errors. We identify propagation error and correction-deficit error as two competing causes of cache-translation failure. 2. Mixture-of-Translators Architecture. We introduce MoT, a multi-translator architecture that captures diverse source–target KV-cache mappings beyond a single universal translator. 3. Context Correction Loss. We propose a replay-trajectory alignment objective that reduces residual target-side error after cache translation. 4. Empirical Validation. We show that MoT preserves cache similarity and downstream QA performance across homogeneous and heterogeneous model pairs. 20 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 3.24
+> 3.26
+> 3.28
+> 3.30
+> 3.32
+> 3.34
+> 3.36
+> 3.38
+> Validation Loss
+> L0-L5
+> L1-L6
+> L2-L7 L3-L8 L4-L9
+> L5-L10
+> L6-L11 MoT
+> Native
+
+Figure 3: U-shape loss caused by two compet-ing errors. 0 1 2 3 4 5 6    
+
+> First Layer Index of Translation Channels
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> Average Norm
+> L0-L5
+> L1-L6 L2-L7
+> L3-L8 L4-L9 L5-L10 L6-L11
+> Translation Shift ||s_T||
+> Last-State Shift ||s_L||
+
+Figure 4: Exponential decay of propagated last-state shift. 5. Practical Case Studies. We demonstrate MoT in multi-agent reasoning and long-context CAG, showing quality-preserving memory and storage reuse for scalable LLM workflows. 
+
+## 2 Preliminaries 
+
+2.1 Problem Setup Translation. We consider context-conditioned generation, where a long context xCtx and a task prompt xPrompt are used to generate a completion y. Let MSrc and MTgt denote the source and target models. Since their cache spaces generally differ, the source context cache KV Src ,Ctx cannot be directly reused by the target model. We therefore define cache translation as learning 
+
+KV Src ,Ctx 7 −→ dKV Tgt ,Ctx 
+
+,
+
+which maps the source context cache into the target cache space. Native denotes the reference setting where the target model directly prefills xCtx without translation. 
+
+Communication. Cache translation can be viewed as directional communication from source layers to target layers. A connected source–target layer pair c = ( i, j ) is called a channel , and the channel set used for translation is 
+
+C = {(ir , j r )}|C| 
+
+> r=1
+
+,
+
+where |C| is the number of channels. Since translation quality also depends on where the cache is injected, channel location motivates the following analysis of two competing error dynamics. 
+
+2.2 Competing Dynamics of Two Translation Errors 
+
+As shown in Fig. 3, in the homogeneous gpt2 →gpt2 setting, we varied the translation layer position by sliding a channel window of size 6 while increasing the start layer from 0 to 6. Across these positions, we consistently observed a U-shaped loss curve. This pattern suggests that different types of translation error dominate at the two extremes of the layer range: early windows suffer more from propagated translation shifts, whereas later windows leave fewer upper layers available for correction. In this section, we theoretically analyze the competing dynamics of these two errors. We consider the effect of cache translation through the residual recurrence of a Transformer decoder. Motivated by prior work that models perturbation-induced feature shifts across layer positions [ 13 ], and by analyses that use residual connections as a useful lens for modeling signal and representation propagation in Transformer-like architectures [ 14 , 15 , 16 ], we analyze how a translation-induced hidden-state shift behaves as a function of the highest target translation layer. 
+
+Definition 2.1. (Residual Transformer Recurrence) For each target layer ℓ, let the layer recurrence be written as 
+
+hℓ = hℓ−1 + Fℓ(hℓ−1), 1 ≤ ℓ ≤ L, (1) 
+
+where hℓ ∈ Rd denotes the hidden states after the ℓ-th layer, and Fℓ denotes the residual branch. The residual branch Fℓ absorbs the attention, MLP, normalization, and their sequential composition. 
+
+30 25 50 75 100 125 150 175  
+
+> Orthogonal Shift β
+> −15
+> −10
+> −5
+> 0
+> 5
+> Anti-Shift Correction  α
+> L0
+> d=0.824
+> L1
+> d=0.778
+> L2
+> d=0.830
+> L3
+> d=0.912
+> L4
+> d=1.041
+> L5
+> d=1.164
+> L6
+> d=1.000
+
+Figure 5: Decomposition of correction coefficients. 0  
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> Token Groups (Group Size=8)
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> Layer Index
+> Context Prompt Completion
+> −1.00
+> −0.75
+> −0.50
+> −0.25
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Cosine Similarity(Native vs Translation)
+
+Figure 6: Error propagation and correction. 0 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cosine Similarity(Native vs Translation)  Context Prompt Completion
+
+Figure 7: Inverted U-shape similarity curve. 
+
+Assumption 2.2. (Local Lipschitz Residual Branch) There exists a constant δ ≥ 0 such that, for every layer ℓ, the residual branch Fℓ is locally Lipschitz on the hidden-state region. That is, for any two hidden states x and x′ in this region, 
+
+∥Fℓ(x) − Fℓ(x′)∥ ≤ δ∥x − x′∥. (2) 
+
+We call δ the uniform residual-branch Lipschitz constant. 
+
+Propagation Error. As shown in Fig. 4, we empirically observe that when an error induced by translation at a lower layer propagates to the final layer, the resulting hidden-state shift decays exponentially. In this paragraph, we theoretically model this phenomenon. 
+
+Proposition 2.3 (Exponential Decay of Propagated Last-State Shift) . Under Assumption 2.2, suppose that the translation-induced shift component formed at the first target translation layer propagates to the final hidden states through the same target residual recurrence. Then, 
+
+∥sL∥ ≤ (1 + δ)L−TStart ∥sTStart ∥, TStart := min {j | (i, j ) ∈ C} . (3) 
+
+Thus, for fixed L and ∥sTStart ∥, the last-state shift bound decreases exponentially as TStart increases. Proof. The proof is deferred to Appendix B.2. 
+
+Correction Deficit Error. As shown in Fig. 5, moving the translation window upward leaves fewer upper layers available to correct the translation-induced shift. We summarize this behavior using three quantities: αT :L for anti-shift correction, βT :L for orthogonal shift, and dT :L for the remaining shift along the original direction. Empirically, αT :L decreases as the translation layer moves upward, whereas βT :L remains nearly unchanged. This indicates that late translation leaves fewer layers available for anti-shift correction, making correction harder. We verify this trend through the increase of the correction-deficit coefficient dT :L. Formal definitions are deferred to Definition B.1. 
+
+Proposition 2.4 (Increase of Correction-Deficit Coefficient) . Under Assumption 2.2, suppose that the translation shift at the highest target translation layer is nonzero, i.e., sT̸ = 0 , where T := max {j |
+
+(i, j ) ∈ C} . Then, as T approaches the final layer, the remaining correction opportunity decreases, and the correction-deficit coefficient reaches its terminal value dL:L = 1 .Proof. The proof is deferred to Appendix B.3. 
+
+Competing-Dynamics Translation Objective. Fig. 6 compares similarity to the native KV cache when translating the context over layers [3 , 8] . Across the context, prompt, and completion token groups, we observe both correction and propagation: similarity increases toward later layers for token group 0, while error also grows in the upper-right region, indicating accumulated propagation. Fig. 7 further shows similarity trends while sliding a 6-layer translation window from layer 0 to layer 6. Unlike Prompt and completion, the Context region exhibits an inverted U-shaped similarity curve, consistent with the U-shaped loss in Fig. 3. This suggests that insufficient correction is especially pronounced for translated context caches. Together, these observations show that translation-layer selection induces two competing errors. The first is the translation shift sT accumulated inside the channel window, whose bound can increase as the highest translated layer T moves upward. The second is the final last-state shift sL, which remains when upper layers after translation cannot sufficiently correct the shift. Thus, translating too early can amplify propagation error, whereas translating too late can increase correction-deficit error. We now decompose the components that constitute sL.4The Pacific Ocean is 
+
+> the largest ocean on
+> Earth. It covers over
+> 30% of the planet.
+> Source Model
+> (Qwen2.5 -0.5B)
+
+2. KV Translation 
+
+(Mixture -of -Translators) 
+
+1. Context 
+
+Prefill    
+
+> Prefill 19
+> Prefill 20
+> Prefill 21
+
+MoT  
+
+> 22
+> 23
+> 24
+> Prefill 1
+
+3. Context 
+
+Replay 
+
+4. Prompt 
+
+Prefill 
+
+5. Completion 
+
+Output     
+
+> Context
+> Correction Loss
+> 43 Sparse Prefill
+> 45 Replay
+> 47 Replay
+> The Pacific Ocean is
+> the largest ocean on
+> Earth. It covers over
+> 30% of the planet.
+> Target Model
+> (Qwen2.5 -14B)
+> 48 Layers
+> 44
+> 46
+> 48
+
+KV 
+
+KV 
+
+KV           
+
+> 1 Sparse Prefill
+> Which ocean
+> is the largest
+> on Earth?
+> Translated
+> Prefilled
+> Replayed
+> Translated
+> Translated
+> Pacific Ocean. The
+> Translator
+> Translator
+> Gate Translator ∑
+> 22 23 24
+> Cross
+> Attention
+> Cross
+> Attention
+> Cross
+> Attention
+> 44 46 48
+> KV
+> QQQ
+> KV KV
+> Translator
+
+KV 
+
+KV 
+
+KV Figure 8: Overview of Mixture-of-Translators and Context Correction Loss .
+
+Proposition 2.5 (Last-State Shift Decomposition) . Assume that sT̸ = 0 . For the correction deficit coefficient dT :L and the orthogonal shift coefficient βT :L defined in Definition B.1, 
+
+∥sL∥2 = d2 
+
+> T:L
+
+∥sT ∥2 + β2  
+
+> T:L
+
+(4) 
+
+holds. Therefore, the last-state shift can be decomposed into the correction deficit component that remains along the translation-shift direction and the orthogonal shift component. Proof. The proof is deferred to Appendix B.4. Proposition 2.5 shows that the last-state shift is not determined solely by the translation shift. Even when the translation shift ∥sT ∥ is small, the last-state shift ∥sL∥ can remain large due to correction deficit dT :L or orthogonal shift βT :L. Conversely, reducing only the last-state shift does not necessarily prevent a large translation shift from forming. Therefore, translation should jointly reduce the translation shift ∥sT ∥ and the last-state shift ∥sL∥:
+
+min ( ∥sT ∥, ∥sL∥) .
+
+The former captures error accumulated within the selected channel set, while the latter captures residual error after upper-layer correction. Optimizing only one is insufficient; robust cache translation requires controlling both competing error dynamics. 
+
+## 3 Proposed Method: Mixture-of-Translators 
+
+The theoretical analysis in the preliminaries shows that cache translation must jointly control two error dynamics: the translation shift ∥sT ∥ formed inside the channel window and the last-state shift 
+
+∥sL∥ remaining after insufficient upper-layer correction. Based on this analysis, we propose two learning components. First, Section 3.1 introduces MoT (Mixture-of-Translators ), which reduces token-level translation mismatch inside the channel window through gated translator routing. Second, Section 3.2 introduces Context Correction Loss , which aligns the replayed target trajectory with the native target trajectory after translation and directly targets the remaining last-state shift. These two components are used within the overall cache-translation pipeline shown in Fig. 8. The pipeline consists of five stages: 1⃝ Context Prefill , which computes the source context cache and selects translation channels; 2⃝ KV Translation , where MoT maps the source cache into the target cache space; 3⃝ Context Replay , which reconstructs the target-side context cache with context-correction supervision; 4⃝ Prompt Prefill , which conditions the target model on the reconstructed cache; and 5⃝ Completion Output , which generates the final response. Channel mapping and cache replay are detailed in Appendix C.3 and Appendix C.4. 53.1 Mixture-of-Translators 
+
+Each translator used in MoT is instantiated as the backbone translator described in Appendix C.2. A single backbone translator uses one translation rule for the entire cache, which can limit its ability to capture diverse source–target cache correspondences. To reduce the translation shift ∥sT ∥, MoT 
+
+combines multiple translators and lets the model select their mixture weights. The gating is performed at the token level, so different tokens can use different translator combinations. 
+
+Definition 3.1 (Mixture-of-Translators ). For a fixed channel set C, let zu denote the source context-cache input at token u. We introduce NTr translators {Tr m}NTr  
+
+> m=1
+
+and a gating function that produces nonnegative token-level scores g(zu) = ( g1(zu), . . . , g NTr (zu)) . Here, Top-K denotes the number of translators used for each token. Let the selected translator indices at token u be TTop -K (u) := Top-K ( g(zu)) . The selected scores are renormalized as 
+
+egm(zu) := gm(zu)
+
+P  
+
+> r∈T Top -K(u)
+
+gr (zu) , m ∈ T Top -K (u).
+
+Then, the output of Mixture-of-Translators is defined as 
+
+Tr MoT (zu) := X 
+
+> m∈T Top -K(u)
+
+egm(zu) Tr m(zu). (5) 
+
+Proposition 3.2 (Translation-Shift Reduction by Translator Mixtures) . For a fixed channel set C, the optimal Mixture-of-Translators cannot induce a larger translation shift ∥sT ∥ than the optimal single translator. Moreover, the inequality is strict whenever a translator mixture realizes a translation not representable by any single translator and yields a smaller shift at the highest translation layer T .Proof. The proof is deferred to Appendix B.5. 
+
+3.2 Context Correction Loss. 
+
+MoT reflects token-specific translation difficulty and thereby reduces the translation shift ∥sT ∥ formed inside the channel window. However, even if ∥sT ∥ becomes small, the last-state shift ∥sL∥ may still remain when the upper layers after translation fail to provide sufficient correction. Therefore, it is necessary to directly constrain the target model after translation to follow the native hidden-state trajectory. To this end, we introduce the Context Correction Loss .For a fixed channel set C, let bhTgt  
+
+> ℓ
+
+denote the hidden states obtained by replaying the target model with the translated context cache, and let hTgt  
+
+> ℓ
+
+denote the hidden states obtained when the target model natively prefills the same context. The ideal objective of the Context Correction Loss is to directly align the hidden-state trajectory after translation with the native trajectory: 
+
+LSrc →Tgt CC (C) = PLℓ=TStart +1 bhTgt  
+
+> ℓ
+
+− hTgt 
+
+> ℓ
+> 2
+
+. (6) Since the loss includes the final-layer term bhTgt  
+
+> L
+
+− hTgt 
+
+> L
+> 2
+
+= ∥sL∥2, it directly reduces the last-state shift. Implementation details, including the KV-based heuristic, are provided in Appendix C.1. 
+
+## 4 Experiments 
+
+We evaluate MoT on downstream QA benchmarks under both homogeneous and heterogeneous cache-translation settings. Section 4.1 summarizes the experimental setup, and Section 4.2 reports the main results. Section 4.3 analyzes the effects of correction behavior, loss design, and the MoT architecture. Additional ablations and scalability analyses are provided in Appendix E.4 and Appendix E.5. 
+
+4.1 Experimental Setup Benchmarks. We evaluate two QA benchmark groups: closed-set QA , including BoolQ, Pub-MedQA, and MMLU-Redux, reported by average accuracy; and extractive QA , including SQuAD-v1.1 and NewsQA, reported by average F1. For case studies, we additionally use Doc2Dial for multi-agent reasoning and HotpotQA-E for long-context CAG in Section 5. 6Setting Method Cosine BoolQ(%) PubMed MMLU Acc Avg(%) SQuAD NewsQA F1 Avg GPU Peak Sim QA(%) Redux(%) Memory (GiB) Homogeneous                                                                                                        
+
+> 0.5B →0.5B
+> Native N/A 66.0 56.0 35.0 52.0 0.56 0.34 0.45 1.92
+> C2C-Project 0.02 39.0 22.0 23.0 28.0 0.04 0.01 0.03 1.92
+> Interlat 0.98 43.0 42.0 19.0 35.0 0.29 0.25 0.27 1.95
+> KVComm 0.98 62.0 46.0 27.0 45.0 0.05 0.04 0.04 1.91
+> LSC 0.01 6.0 20.0 23.0 16.0 0.06 0.01 0.04 4.09
+> MoT 1.00 60.0 52.0 35.0 49.0 0.54 0.30 0.42 3.29
+> Heterogeneous
+> 7B →0.5B
+> Native N/A 66.0 56.0 35.0 52.0 0.56 0.34 0.45 15.25
+> C2C-Project 0.02 47.0 18.0 24.0 30.0 0.05 0.01 0.03 15.25
+> Interlat 0.98 41.0 44.0 20.0 35.0 0.29 0.25 0.27 15.27
+> LSC 0.01 22.0 9.0 14.0 15.0 0.05 0.01 0.03 18.21
+> MoT 1.00 65.0 53.0 35.0 51.0 0.53 0.32 0.43 16.62
+
+Table 1: Homogeneous and heterogeneous Qwen2.5 translation results. Health Other  
+
+> Math
+> Culture
+> Physics
+> Computer science
+> Psychology
+> Philosophy
+> Politics History
+> Business
+> Biology
+> Economics
+> Law
+> Chemistry
+> Engineering
+> Geography
+> 0.2
+> 0.4
+> 0.6 Native
+> LSC
+> Interlat
+> C2C-Project
+> MoT
+
+Figure 9: MMLU-Redux 7B .0 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 20
+> 40
+> 60
+> 80
+> 100
+> 120
+> 140
+> 160
+> Average Norm
+> L0-L5
+> L1-L6
+> L2-L7
+> L3-L8 L4-L9
+> L5-L10
+> L6-L11
+> Translation Shift ||s_T||
+> Last-State Shift ||s_L||
+
+Figure 10: Improved shifts. 0 20 40 60 80 100 120 140   
+
+> Orthogonal Shift β
+> −8
+> −6
+> −4
+> −2
+> 0
+> 2
+> Anti-Shift Correction  α
+> L0
+> d=0.832
+> L1
+> d=0.943
+> L2
+> d=1.053
+> L3
+> d=1.166
+> L4
+> d=1.262 L5
+> d=1.276
+> L6
+> d=1.000
+
+Figure 11: Improved correction. 
+
+Methods. We compare eight methods. Native directly runs the target model without transla-tion; C2C-Project (Cache-to-Cache Projection)[ 9] uses projection-only cache mapping from C2C (implemented by us); Interlat [ 11 ] communicates last-hidden-state latent messages (open source 3); 
+
+KVComm [10 ] selectively shares attention-ranked KV layers (open source 4); LSC (Latent Space Communication)[ 12 ] aligns KV caches through a shared latent space (implemented by us); Single Backbone is the single-backbone translator used for MoT ; MoT-h is an HCache-inspired hidden-state translation variant for memory-efficient cache restoration [ 8], see Appendix C.5 for detailed description; and MoT is our gated mixture of cache translators with context-correction training. 
+
+Models. We evaluate all methods on homogeneous and heterogeneous decoder-only model pools spanning Qwen2.5 , GPT-2 , and OPT , from hundreds of millions of parameters to 7B. These models vary in attention layout, depth, hidden size, and head dimension, covering both compatible and mismatched cache spaces. See Appendix E.1 for the shared translator training configuration. 
+
+4.2 Results 
+
+Table 1 shows homogeneous and heterogeneous translation results for Qwen2.5 . This setting reflects architectural heterogeneity within the same model family: Qwen2.5-7B has larger depth and hidden dimension, more attention heads, and more key-value heads than Qwen2.5-0.5B , leading to different layer-wise representation dimensions and KV cache shapes. MoT maintains stable performance across both closed-set QA and extractive QA. In the homogeneous setting, MoT achieves an average accuracy of 49 .0% and an average F1 of 0.42. In the heterogeneous setting, it achieves an average accuracy of 51 .0% and an average F1 of 0.43. These results show that MoT remains stable even when the source model has larger capacity and the source and target cache spaces differ more substantially. In contrast, C2C-Project achieves only 0.03 average F1 in both settings, indicating that projection-only mapping cannot capture the multi-layer cache mismatch needed for extractive QA. Interlat 
+
+partially recovers closed-set QA but remains limited on extractive QA, likely because last-layer hidden-state communication does not reconstruct the full KV hierarchy. KVComm performs well on BoolQ in the homogeneous setting, but its low average F1 suggests that selectively copied KV layers leave important unshared layers unmodeled; we omit it in the heterogeneous setting because it 
+
+> 3
+
+https://github.com/XiaoDu-flying/Interlat 
+
+> 4
+
+https://github.com/Zephyroam/KVComm 
+
+70.00            
+
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> F1 (Bar)
+> Native CR PL CC
+> CC + PL
+> Native CR PL CC
+> CC + PL
+> 0
+> 10
+> 20
+> 30
+> Accuracy (Line, %)
+> Single Backbone MoT
+> Native CR PL CC CC + PL
+
+Figure 12: Loss ablation.                 
+
+> Method Acc(%) F1 Translator Usage
+> CV 2Entropy
+> MoE 48.1 0.41 0.82 0.15
+> MoT-Uni 49.0 0.41 0.00 0.69
+> MoT 51.0 0.43 0.32 0.51
+
+Table 2: MoT architecture ablation. assumes homogeneous architectures. LSC also degrades substantially, consistent with our analysis that global shared-space alignment can suffer from both propagation and correction-deficit errors. Fig. 9 breaks down the MMLU-Redux results by 17 categories. In both homogeneous and heteroge-neous settings, MoT stays close to Native across categories and covers the performance region of the other translation methods. This indicates that MoT does not rely on isolated category-specific gains, but instead provides stable translation quality across diverse closed-set QA categories. Overall, MoT provides stable performance across closed-set QA and extractive QA in both homo-geneous and heterogeneous settings. These results show that token-level specialization and context correction are effective for robust cache translation. Although MoT introduces additional peak mem-ory, this overhead is only a marginal cost in larger-model translation settings. A detailed scalability analysis is provided in Appendix E.5, and additional model-family results are provided in Appendix E. 
+
+4.3 Root Cause Analysis Shifts and Correction. Fig. 10 shows that, compared with the Single Backbone & Prompt LM Loss setting in Fig. 4, the proposed MoT & Context Correction Loss sharply reduces both the translation shift ∥sT ∥ and the last-state shift ∥sL∥ across translation-layer positions. This supports that the two components suppress their target error dynamics. We further compare correction trends between Fig. 5 and Fig. 11. Overall, αT :L slightly decreases and rises only at a few later positions, while βT :L drops substantially from early translation layers and is further reduced in later layers. Although dT :L slightly increases, its magnitude remains limited. Thus, from Eq. (4) , the reduction in ∥sL∥ is better attributed to the joint decrease of ∥sT ∥ and βT :L, rather than to a substantial improvement in correction deficit. Additional results are provided in Appendix E.3. 
+
+Loss Ablation. Fig. 12 shows that the proposed CC (Context Correction ) loss remains effective independently of MoT . Even in the Single Backbone setting, without routing, CC yields more stable accuracy and F1 gains than the prior CR (Context Reconstruction) and PL (Prompt LM ) losses [ 12 ]. This suggests that CC directly reduces the last-state shift by aligning the translated cache with the native target trajectory, rather than relying on translator routing. The same trend holds under MoT ,supporting our analysis that reducing the translation shift with MoT and the last-state shift with CC 
+
+are complementary. Individually, CR and PL provide limited recovery, whereas CC gives stronger gains. Combining CC with PL achieves best accuracy and F1 by coupling context-level KV correction with prompt-conditioned generation supervision, so we adopt CC +PL as the final heuristic loss. 
+
+MoT Architecture Ablation. Using the same heterogeneous setting as above, we compare translator selection in MoT under the simplest configuration, (Top -K, N Tr ) = (1 , 2) . As baselines, we use 
+
+MoE (Mixture-of-Experts), which splits the internal Dense MLP into experts, and MoT-Uni , which always uses translators uniformly. The results are summarized in Table 2. Usage Imbalance is 
+
+CV 2 = Var e(Ie)/Mean e(Ie)2, where Ie is the cumulative selection count of translator e, and Usage Entropy is − P 
+
+> e
+
+pe log pe with pe = Ie/ P 
+
+> j
+
+Ij . Higher entropy indicates more balanced translator usage. Table 2 shows that MoE usage is highly skewed, while MoT-Uni is balanced but lacks input-specific selectivity. In contrast, MoT uses both translators selectively and achieves higher Acc and F1, supporting that token-wise translator selection helps reduce the translation shift sT .8LSC  
+
+> (Retain)
+> Interlat
+> (Retain)
+> MoT
+> (Retain)
+> MoT
+> (Free)
+> 0.0
+> 0.2
+> GPU Peak Memory (GiB)
+> 0.0
+> 0.1
+> 0.2
+> F1
+> Peak Memory F1
+
+(a) 2 Agents LSC   
+
+> (Retain)
+> Interlat
+> (Retain)
+> MoT
+> (Retain)
+> MoT
+> (Free)
+> 0.0
+> 0.2
+> GPU Peak Memory (GiB)
+> 0.0
+> 0.1
+> 0.2
+> F1
+> Peak Memory F1
+
+(b) 4 Agents 
+
+Figure 13: Agent scalability. 4K 8K 16K 24K    
+
+> Budget
+> 0.10
+> 0.15
+> 0.20
+> F1
+> Native C2C-Project Interlat MoT
+
+(a) F1 by Budget 4K 8K 16K 24K     
+
+> Budget
+> 250
+> 500
+> 750
+> 1000
+> 1250
+> TTFT (ms)
+> Native C2C-Project Interlat MoT
+
+(b) TTFT by Budget 
+
+Figure 14: Long-context scalability. 
+
+## 5 Case Studies 
+
+Memory Reuse: Multi-Agent Reasoning. In multi-agent reasoning, agents sequentially refine answers by reusing the passage, question, previous responses, and accumulated dialogue history. As the number of agents grows, KV cache management becomes increasingly costly. This case study evaluates whether MoT reduces memory growth through inter-agent cache offload while preserving reasoning quality. We define the first agent as the Hub Agent , which uses the same cache offload mechanism as the other agents but retains the accumulated KV history for final response generation. We compare two cache strategies: Retain , which keeps all agents’ caches, and Free , which removes non-hub caches after offload. Fig. 13 compares 2-agent and 4-agent settings. In Retain , each agent keeps its KV cache after its turn, so peak memory increases with the number of agents: Interlat 
+
+(Retain ) and LSC (Retain ) increase by about 77%, and MoT (Retain ) by about 86%. In contrast, 
+
+MoT (Free ) removes non-hub caches after offload, limiting the active cache working set. With 4 agents, it uses about 36% less peak memory than MoT (Retain ), showing improved memory scalability. Moreover, in the extreme 10-agent scale-up setting in Fig. 1, MoT (Free ) uses only about 0.3GiB, whereas the other Retain -based methods exceed 1GiB; this gap necessarily grows as the number of agents increases. MoT also preserves quality better as the agent count increases. While 
+
+Interlat loses F1 in the 4-agent setting, both MoT (Retain ) and MoT (Free ) maintain stable F1. Thus, 
+
+MoT (Free ) reduces peak memory without sacrificing reasoning quality, demonstrating accuracy-preserving cache eviction through offload and providing scale-invariant memory management .Details are provided in Appendix F.1. 
+
+Storage Reuse: Long-Context CAG. This case study evaluates long-context CAG (Cache-Augmented Generation), where long contexts are stored as KV caches and reused. On HotpotQA-E ,we vary the context budget over 4K, 8K, 16K, and 24K. Native represents the RAG setting that prefills the original context for every query, while the other methods reuse stored caches in the CAG setting. Fig. 14(a) shows that C2C-Project and Interlat remain in a low-F1 regime even as the context budget increases. In contrast, MoT improves substantially with larger budgets, especially at 16K and 24K, indicating that it can effectively reuse long-context information stored in the KV cache. Fig. 14(b) shows that TTFT (Time to First Token) increases with context budget. Native incurs larger prefill cost, while CAG methods incur cache conversion and injection overhead. MoT shows only marginally higher TTFT due to the additional use of MoT. Overall, MoT achieves F1 close to 
+
+Native under large budgets, showing stronger cache-reuse quality for long-context CAG. Details are provided in Appendix F.2. 
+
+## 6 Conclusion 
+
+We introduced MoT (Mixture-of-Translators) , a cache translation framework for reusing KV caches across heterogeneous LLMs. MoT combines multiple translator modules with token-level routing and a Context Correction Loss that aligns the replayed target trajectory with the native target trajectory. Our analysis identified two competing error sources, propagated translation shift and correction-deficit error, which motivate this joint design. Experiments on closed-set QA, extractive QA, multi-agent reasoning, and long-context cache-augmented generation show that MoT preserves downstream quality across homogeneous and heterogeneous model pairs. The case studies further demonstrate memory reuse in multi-agent reasoning and storage reuse in long-context CAG, reducing redundant cache construction while maintaining generation quality. These results suggest that heterogeneous KV-cache translation is a practical direction for scalable multi-model LLM systems. 9References 
+
+[1] OpenAI. Prompt caching (openai api guide), 2025. Accessed 2026-03-02. [2] Anthropic. Prompt caching with the claude api (cookbook), 2024. Accessed 2026-03-02. [3] Brian J Chan, Chao-Ting Chen, Jui-Hung Cheng, and Hen-Hsen Huang. Don’t do rag: When cache-augmented generation is all you need for knowledge tasks. In Companion Proceedings of the ACM on Web Conference 2025 , pages 893–897, 2025. [4] S. Lu, H. Wang, Y. Rong, Z. Chen, and Y. Tang. TurboRAG: Accelerating retrieval-augmented generation with precomputed KV caches for chunked text. In Proceedings of the 2025 Con-ference on Empirical Methods in Natural Language Processing , 2025. Also available as arXiv:2410.07590. [5] Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch. Improving factuality and reasoning in language models through multiagent debate. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 11733–11763. PMLR, 2024. [6] Guohao Li, Hasan Abed Al Kader Hammoud, Hani Itani, Dmitrii Khizbullin, and Bernard Ghanem. Camel: Communicative agents for “mind” exploration of large language model society. In Advances in Neural Information Processing Systems , volume 36, pages 51991–52008, 2023. [7] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Zhang Shaokun, Jiale Liu, Ahmed Hassan Awadallah, Ryen W. White, Doug Burger, and Chi Wang. Autogen: Enabling next-gen llm applications via multi-agent conversations. In 
+
+First Conference on Language Modeling , 2024. [8] Shiwei Gao, Youmin Chen, and Jiwu Shu. Fast state restoration in llm serving with hcache. In Proceedings of the Twentieth European Conference on Computer Systems , pages 128–143, 2025. [9] Tianyu Fu, Zihan Min, Hanling Zhang, Jichao Yan, Guohao Dai, Wanli Ouyang, and Yu Wang. Cache-to-cache: Direct semantic communication between large language models. arXiv preprint arXiv:2510.03215 , 2025. [10] Xiangyu Shi, Marco Chiesa, Gerald Q Maguire Jr, and Dejan Kostic. Kvcomm: Enabling efficient llm communication through selective kv sharing. arXiv preprint arXiv:2510.03346 ,2025. [11] Zhuoyun Du, Runze Wang, Huiyu Bai, Zouying Cao, Xiaoyong Zhu, Yu Cheng, Bo Zheng, Wei Chen, and Haochao Ying. Enabling agents to communicate entirely in latent space. arXiv preprint arXiv:2511.09149 , 2025. [12] Lucio M Dery, Zohar Yahav, Henry Prior, Qixuan Feng, Jiajun Shen, and Arthur Szlam. Latent space communication via kv cache alignment. arXiv preprint arXiv:2601.06123 , 2026. [13] Junhao Zheng, Xidi Cai, Shengjie Qiu, and Qianli Ma. Spurious forgetting in continual learning of language models. arXiv preprint arXiv:2501.13453 , 2025. [14] Bobby He, James Martens, Guodong Zhang, Aleksandar Botev, Andrew Brock, Samuel L Smith, and Yee Whye Teh. Deep transformers without shortcuts: Modifying self-attention for faithful signal propagation. arXiv preprint arXiv:2302.10322 , 2023. [15] Zhen Qin, Jinxin Zhou, and Zhihui Zhu. On the convergence of gradient descent on learning transformers with residual connections. arXiv preprint arXiv:2506.05249 , 2025. [16] Manas Deb and Tokunbo Ogunfunmi. Information-theoretical analysis of a transformer-based generative ai model. Entropy , 27(6):589, 2025. [17] Tim Finin, Richard Fritzson, Don McKay, and Robin McEntire. Kqml as an agent commu-nication language. In Proceedings of the Third International Conference on Information and Knowledge Management , pages 456–463. Association for Computing Machinery, 1994. 10 [18] H. Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Agüera y Arcas. Communication-efficient learning of deep networks from decentralized data. In Proceedings of the 20th International Conference on Artificial Intelligence and Statistics , volume 54 of 
+
+Proceedings of Machine Learning Research , pages 1273–1282. PMLR, 2017. [19] Eunjeong Jeong, Seungeun Oh, Hyesung Kim, Jihong Park, Mehdi Bennis, and Seong-Lyun Kim. Communication-efficient on-device machine learning: Federated distillation and augmentation under non-iid private data. arXiv preprint arXiv:1811.11479 , 2018. [20] Daliang Li and Junpu Wang. Fedmd: Heterogenous federated learning via model distillation. In 
+
+FL-NeurIPS 2019: International Workshop on Federated Learning for User Privacy and Data Confidentiality , 2019. [21] Jakob N. Foerster, Yannis M. Assael, Nando de Freitas, and Shimon Whiteson. Learning to communicate with deep multi-agent reinforcement learning. In Advances in Neural Information Processing Systems , volume 29, pages 2145–2153, 2016. [22] Angeliki Lazaridou and Marco Baroni. Emergent multi-agent communication in the deep learning era. arXiv preprint arXiv:2006.02419 , 2020. [23] Sirui Hong, Mingchen Zhuge, Jonathan Chen, Xiawu Zheng, Yuheng Cheng, Jinlin Wang, Ceyao Zhang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. Metagpt: Meta programming for a multi-agent collaborative framework. In The Twelfth International Conference on Learning Representations ,2024. [24] Junlin Wang, Jue Wang, Ben Athiwaratkun, Ce Zhang, and James Zou. Mixture-of-agents enhances large language model capabilities. In The Thirteenth International Conference on Learning Representations , 2025. [25] Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E. Gonzalez, M. Waleed Kadous, and Ion Stoica. Routellm: Learning to route llms from preference data. In 
+
+The Thirteenth International Conference on Learning Representations , 2025. [26] Zejiang Shen, Hunter Lang, Bailin Wang, Yoon Kim, and David Sontag. Learning to decode collaboratively with multiple language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 12974–12990, Bangkok, Thailand, 2024. Association for Computational Linguistics. [27] Chau Pham, Boyi Liu, Yingxiang Yang, Zhengyu Chen, Tianyi Liu, Jianbo Yuan, Bryan A. Plummer, Zhaoran Wang, and Hongxia Yang. Let models speak ciphers: Multiagent debate through embeddings. In The Twelfth International Conference on Learning Representations ,2024. [28] Vignav Ramesh and Kenneth Li. Communicating activations between language model agents. In Forty-second International Conference on Machine Learning , 2025. [29] Yichen Tang, Weihang Su, Yujia Zhou, Yiqun Liu, Min Zhang, Shaoping Ma, and Qingyao Ai. Augmenting multi-agent communication with state delta trajectory. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 10219–10240, Suzhou, China, 2025. Association for Computational Linguistics. [30] Ruofan Jia, Weiying Xie, Jie Lei, Jitao Ma, Haonan Qin, and Leyuan Fang. HeteroTune: Efficient federated learning for large heterogeneous models, 2024. [31] Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch. Improv-ing factuality and reasoning in language models through multiagent debate. arXiv preprint arXiv:2305.14325 , 2023. [32] Lu Ye, Ze Tao, Yong Huang, and Yang Li. Chunkattention: Efficient self-attention with prefix-aware KV cache and two-phase partition, 2024. 11 [33] In Gim, Guojun Chen, Seung-seob Lee, Nikhil Sarda, Anurag Khandelwal, and Lin Zhong. Prompt cache: Modular attention reuse for low-latency inference. In Proceedings of Machine Learning and Systems , volume 6, pages 325–338, 2024. [34] Zaifeng Pan, Ajjkumar Patel, Zhengding Hu, Yipeng Shen, Yue Guan, Wan-Lu Li, Lianhui Qin, Yida Wang, and Yufei Ding. KVFlow: Efficient prefix caching for accelerating LLM-based multi-agent workflows, 2025. [35] Youmin Chen, Chenggang Huang, Lianhui Qin, Zheng Zhang, Yin Yan, Yihua Cheng, Zizhe Han, Yizhang Wu, and Junchen Jiang. IMPRESS: An importance-informed multi-tier prefix KV storage system for LLM serving. In 23rd USENIX Conference on File and Storage Technologies (FAST 25) , pages 187–201, Santa Clara, CA, 2025. USENIX Association. [36] Xinye Zhao and Spyridon Mastorakis. SemshareKV: Efficient KVcache sharing for semantically similar prompts via token-level LSH matching. In Findings of the Association for Computational Linguistics: IJCNLP 2025 , pages 455–466, Hanoi, Vietnam, January 2025. Association for Computational Linguistics. [37] Huan Yang, Renji Zhang, Mingzhe Huang, Weijun Wang, Yin Tang, Yuanchun Li, Yunxin Liu, and Deyu Zhang. KVShare: An LLM service system with efficient and effective multi-tenant KV cache reuse, 2025. [38] Anonymous. Towards a collaborative memory for agentic workflow: Breaking the prefix barrier with segment-level KV cache sharing. OpenReview (ICLR 2026 Submission), 2026. [39] Zihan Chen, Zeshen Li, Howard H. Yang, Tony Q. S. Quek, and Jihong Park. Federated inference for heterogeneous llm communication and collaboration. In AAAI 2026 Workshop on ML4Wireless , 2026. Position Paper. [40] Yuhan Liu, Yuyang Huang, Jiayi Yao, Zhuohan Gu, Kuntai Du, Hanchen Li, Yihua Cheng, Junchen Jiang, Shan Lu, Madan Musuvathi, and Esha Choukse. Droidspeak: KV cache sharing for cross-LLM communication and multi-LLM serving, 2024. [41] Hyesung Jeon, Hyeongju Ha, and Jae-Joon Kim. LRAgent: Efficient KV cache sharing for multi-LoRA LLM agents, 2026. [42] Xiaoze Liu, Ruowang Zhang, Weichen Yu, Siheng Xiong, Liu He, Feijie Wu, Hoin Jung, Matt Fredrikson, Xiaoqian Wang, and Jing Gao. The vision wormhole: Latent-space communication in heterogeneous multi-agent systems. arXiv preprint arXiv:2602.15382 , 2026. [43] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information processing systems , 33:9459–9474, 2020. [44] Jingbo Yang, Bairu Hou, Wei Wei, Yujia Bao, and Shiyu Chang. KVLink: Accelerating large language models via efficient KV cache reuse. arXiv preprint arXiv:2502.16002 , 2025. 12 A Related Work 
+
+A.1 Communication between Models 
+
+Communication between models has been studied at multiple levels before the emergence of LLMs, including symbolic messages, parameters, logits, and vector messages. Symbolic communication externalizes a model output as a message and passes it to another model [ 17 ]; federated learning shares parameters or model updates [ 18 ]; and federated distillation exchanges logits or soft targets [ 19 , 20 ]. Emergent communication encourages cooperation through learned vector messages or non-linguistic protocols [ 21 , 22 ]. However, these approaches mainly focus on training time aggregation, output level distillation, or task-specific protocols, and do not directly transmit the internal state generated for a particular input context. With the advent of LLMs, natural language communication has become the standard interface for model-to-model interaction. Role-based collaboration, mixture-of-agents, debate, and routing methods improve performance or efficiency by exchanging text messages, aggregating responses, or selecting appropriate models [ 6, 7, 23 , 24 , 5 , 25 , 26 ]. However, text-to-text communication compresses internal representations into discrete tokens, introducing a semantic bottleneck and decoding overhead, while routing does not directly transfer internal understanding between models. Recent studies have also explored embedding, activation, and latent state communication [ 27 , 28 , 29 ], but they often depend on specific representation choices or language trajectories. Heterogeneous federated fine-tuning methods such as HeteroTune are closer to training time knowledge sharing [30]. Recent model communication methods directly use internal states conditioned on a specific context as the communication medium. KVComm [ 10 ] proposes training-free cache communication that approximates KV cache offsets for shared contexts in multi-agent settings to reduce cross-context prefill redundancy. LSC [ 12 ] aligns the KV caches of multiple models into a global shared latent space and enables models to read and write each other’s cache representations through in/out adapters. Cache-to-Cache (C2C) [ 9] projects and fuses the source model’s KV cache into the receiver model space, enabling direct cache-to-cache semantic communication without text. Interlat [ 11 ] treats the last hidden states corresponding to an agent’s generated message as thought representations and improves the efficiency of language-free communication through latent compression. These studies extend model communication from text, logits, and parameters to the exchange of context-specific internal states. However, KVComm mainly focuses on cross-context cache reuse among RoPE-based LLMs, LSC requires shared-space alignment, and C2C may incur increasing fuser or translator training costs as the model pool grows. In addition, while Interlat demonstrates efficient agent communication through hidden states based latent communication, it is orthogonal to cache translation that explicitly handles KV cache format mismatch. MoT aims to alleviate the representation bottleneck of existing cache communication methods that rely on a single translator or a fixed shared space by using a gated mixture of translators for heterogeneous KV cache translation. 
+
+A.2 Memory Reuse for Agentic Reasoning 
+
+In agentic reasoning such as multi-agent debate, parallel agent execution, and branching search, system prompts, tool instructions, retrieved contexts, and shared workspaces are repeatedly used across multiple agents or branches [ 31 ]. Sharing or reusing prefix KV caches can avoid redundant prefilling for identical prefixes, but most prefix KV sharing methods do not support reuse across heterogeneous models because KV caches are tied to internal formats specific to each model. Thus, in multi-model settings, even the same prefix must be cached separately for each model, resulting in memory redundancy. In this subsection, heterogeneous support means that the same prefix cache can be reused regardless of the model architecture. Token-exact prefix matching approaches, such as chunk-level sharing [ 32 ], PromptCache, which structurally fixes and reuses prompt segments [ 33 ], workflow-aware cache management and multi-tier prefix storage [ 34 , 35 ], and semantic or segment level reuse methods [ 36 , 37 , 38 ], all assume the same model or the same KV format, and therefore cannot fundamentally remove redundancy in multi-model settings. Cross-model KV communication methods, including C2C[ 9], LSC[ 12 ], and FedRefine[ 39 ], can transfer prefix states across different models or devices, showing the potential to reduce prefix redundancy in multi-model agentic reasoning. However, these approaches may require additional 13 Category Heterogeneous Support Cache Format Memory Redundancy                        
+
+> ChunkAttention[32], PromptCache[33], KVFlow[34], IMPRESS[35], SemShareKV[36], KVShare[37], CrossKV[38] No KV Cache O(M)
+> DroidSpeak[40] No KV Cache O(1 + (1 −ρ)M)
+> LRAgent[41] No KV Cache O(1 + M r )
+> C2C[9], LSC[12], FedRefine[39] Yes KV Cache O(1)
+> Vision Wormhole[42] Yes Visual Tokens (Non-KV) N/A
+> MoT (Proposed) Yes KV Cache O(1)
+
+Table 3: Summary of related work from the perspective of memory redundancy caused by model-dependent prefix caches in multi-model inference. The fourth column denotes how the number of additional KV cache copies required for reusing the same prefix scales with the number of models 
+
+M . For DroidSpeak, ρ ∈ [0 , 1] denotes the fraction of KV cache that is shared, and for LRAgent, r
+
+denotes the LoRA rank. Vision Wormhole is based on visual latent tokens rather than KV caches, and is therefore marked as N/A for KV cache memory redundancy. management costs, such as pairwise fuser or translator training, shared-space alignment, or federated communication. In this subsection, we compare these methods from the perspective of memory redundancy. Under the assumption of the same backbone or the same architecture, limited cross-model sharing is possible. DroidSpeak shares KV caches among variants with the same architecture while selectively recomputing some layers, but its strong compatibility assumption makes it difficult to regard it as supporting heterogeneous models [ 40 ]. LRAgent decomposes KV caches in multi-LoRA settings into shared backbone components and LoRA adapter components, but it operates only under a shared-backbone assumption [ 41 ]. These approaches can reduce multi-model redundancy, but they are difficult to generalize to heterogeneous models. Vision Wormhole [ 42 ] recently proposed latent communication based on visual latent tokens, rather than KV caches, through the visual interface of vision-language models (VLMs). Since this differs from cache reuse that stores and shares prefix KV caches, we include it only as related work in this subsection. 
+
+MoT unifies shared prefix caches into the hub model format and absorbs KV format mismatch with model-specific translators, allowing heterogeneous multi-model systems to maintain only a single copy of the shared prefix cache. This separates memory redundancy from the number of models and reduces it to O(1) .Table 3 summarizes the related work in this subsection from the perspective of memory redundancy. Prefix KV sharing methods that do not support heterogeneous models require KV caches to be duplicated across models in multi-model settings because their KV formats are tied to model-specific internal representations, resulting in O(M ) scaling. DroidSpeak and LRAgent partially reduce redundancy under strong compatibility assumptions. Cross-model KV communication methods such as C2C, LSC, and FedRefine reduce per-model cache copies by transferring prefix states across models, while MoT pursues the same goal by unifying caches in the hub model format. 
+
+A.3 Storage Reuse for Long-Context RAG 
+
+Retrieval-Augmented Generation (RAG) is a representative approach that improves accuracy without additional training by retrieving query-relevant documents and including them in the prompt context [43 ]. Since text is a common interface that all models can interpret, the storage itself can be shared across heterogeneous models. However, text-based approaches must repeatedly perform prefilling and KV cache construction for every request, and therefore do not provide storage reuse in the sense of reusing stored internal states. For RAG workloads, storage reuse has been explored by precomputing and storing internal states for document prefixes offline and reusing them online. TurboRAG precomputes KV caches for retrieved chunks and concatenates them online [ 4 ]. CAG preloads a document collection into the context window, builds offline KV caches, and performs generation using only the query online in a retrieval-free setting [ 3]. Hidden states restoration methods store prefill hidden states and later restore them online to rebuild KV caches through key/value projections, thereby moving the stored 14 Category Heterogeneous Support Storage Redundancy Training Complexity                 
+
+> RAG[43] Yes (Text) N/A (No KV Cache Stored) N/A CAG[3], HCache[8] No O(M)N/A TurboRAG[4], KVLink[44] No O(M)O(M P )
+> MoT (Proposed) Yes O(1) O(M p )
+
+Table 4: Summary of related work from the perspective of storage reuse in RAG tasks. Storage redundancy denotes the dominant scaling term in the number of KV cache copies that must be maintained when multiple models reuse the same item prefix. Training complexity denotes the dominant offline training cost required to enable cross-model reuse. P and p denote the full-model parameter count and the translator parameter count, respectively, where typically p ≪ P .representation from KV caches to hidden states [ 8]. KVLink also targets KV cache reuse for retrieval chunks, but it involves trainable special tokens and a training procedure [44]. However, in most of these methods, the stored internal state, whether a KV cache or a hidden state, is tied to a specific model architecture and tokenizer. When the model changes, the same item must be stored again or maintained separately for each model [ 4, 3, 8 ]. In other words, when the goal of storage reuse extends from item reuse to cross-model reuse, model-dependent states become the bottleneck. 
+
+MoT stores each shared prefix item only once as a KV cache of the hub model mH. At online inference time, it performs one-hop hub-to-target translation to skip the target model’s prefilling, thereby enabling storage reuse across heterogeneous models without requiring per-model stores for prefix state caches. Table 4 summarizes the related work in this subsection from the perspective of storage reuse. Prefix state cache methods suffer from O(M ) storage redundancy as the number of models increases, because each model requires its own model-dependent state. TurboRAG and KVLink require model-specific offline fine-tuning, whereas MoT maintains only a single copy and uses translator-based training, keeping storage redundancy fixed at O(1) while keeping offline training cost linear in the number of models. 
+
+## B Deferred Proofs 
+
+B.1 Shift Delta and Correction Deficit Coefficient Definition B.1. (Shift Delta and Correction Deficit Coefficient) For the highest target translation layer T , let sT denote the translation shift accumulated within the channel set, and let sL denote the final shift observed at the last hidden state. We define the shift delta additionally induced by the remaining upper layers after T as 
+
+∆sT :L := sL − sT
+
+That is, the shift delta is a vector that describes how the residual dynamics after T modify the translation shift. When sT̸ = 0 , we define the anti-shift correction coefficient as 
+
+αT :L := −
+
+D
+
+∆sT :L, u∥E
+
+, u∥ := sT
+
+∥sT ∥ . (7) 
+
+Here, u∥ denotes the unit vector in the translation-shift direction. We also define the orthogonal shift coefficient as 
+
+βT :L := ∆sT :L −
+
+D
+
+∆sT :L, u∥E
+
+u∥ . (8) 
+
+Finally, the correction deficit coefficient is defined as 
+
+dT :L := ⟨sL, u∥⟩∥sT ∥ . (9) 
+
+This value is a normalized projection coefficient that quantifies how much of the translation-shift direction accumulated within the channel set remains in the last hidden state. 
+
+15 B.2 Proof of Proposition 2.3 
+
+Proof. Let hℓ and bhℓ denote the hidden states after the ℓ-th layer induced by the native target cache and the translated target cache, respectively, and define 
+
+sℓ := hℓ − bhℓ
+
+The shift formed at TStart is given by 
+
+sTStart = hTStart − bhTStart 
+
+This proposition tracks how much the translation-induced shift component generated at TStart can be amplified as it passes through subsequent layers. For each layer ℓ = TStart + 1 , . . . , L , assuming that the two hidden-state trajectories propagate through the same target residual recurrence, we can write 
+
+hℓ = hℓ−1 + Fℓ(hℓ−1), bhℓ = bhℓ−1 + Fℓ(bhℓ−1)
+
+Therefore, 
+
+sℓ = sℓ−1 +
+
+
+
+Fℓ(hℓ−1) − Fℓ(bhℓ−1)
+
+
+
+.
+
+Taking the norm on both sides and applying the triangle inequality together with Assumption 2.2, we obtain 
+
+∥sℓ∥ ≤ ∥ sℓ−1∥ + δ∥sℓ−1∥ = (1 + δ)∥sℓ−1∥.
+
+Applying this recursively for ℓ = TStart + 1 , . . . , L gives 
+
+∥sL∥ ≤ (1 + δ)L−TStart ∥sTStart ∥.
+
+This proves Eq. (3) . Since L and ∥sTStart ∥ are fixed, increasing TStart reduces the exponent L−TStart ,and hence the bound on the propagated last-state shift decreases exponentially. 
+
+B.3 Proof of Proposition 2.4 
+
+This appendix gives the detailed derivation behind Proposition 2.4. The key point is that, as the highest target translation layer T moves toward the final layer L, fewer upper layers remain available to correct the translation shift. Consequently, the correction-deficit coefficient approaches its terminal value. 
+
+Proof. Let hℓ and bhℓ denote the hidden states after the ℓ-th layer induced by the native target cache and the translated target cache, respectively, and define 
+
+sℓ := hℓ − bhℓ.
+
+For a channel set C, define the target translation layer set and its boundary layers as 
+
+ITgt (C) := {j | (i, j ) ∈ C} , TStart := min ITgt (C), T := max ITgt (C).
+
+The shift formed at TStart is given by 
+
+sTStart = hTStart − bhTStart .
+
+For each layer ℓ = TStart + 1 , . . . , T , assuming that the two hidden-state trajectories propagate through the same target residual recurrence, we can write 
+
+hℓ = hℓ−1 + Fℓ(hℓ−1), bhℓ = bhℓ−1 + Fℓ(bhℓ−1).
+
+Therefore, 
+
+sℓ = sℓ−1 +
+
+
+
+Fℓ(hℓ−1) − Fℓ(bhℓ−1)
+
+
+
+.
+
+Taking the norm and applying the triangle inequality together with Assumption 2.2, we obtain 
+
+∥sℓ∥ ≤ ∥ sℓ−1∥ + δ∥sℓ−1∥ = (1 + δ)∥sℓ−1∥.
+
+Applying this recursively for ℓ = TStart + 1 , . . . , T gives 
+
+∥sT ∥ ≤ (1 + δ)T −TStart ∥sTStart ∥. (10) 16 Thus, when TStart and ∥sTStart ∥ are fixed, the upper bound on the translation shift ∥sT ∥ can increase as T increases. We now bound the correction opportunity provided by the remaining upper layers after T . By Definition B.1, 
+
+∆sT :L = sL − sT .
+
+Also, 
+
+sL − sT =
+
+> L
+
+X 
+
+> ℓ=T+1
+
+(sℓ − sℓ−1),
+
+and therefore 
+
+∥∆sT :L∥ ≤ 
+
+> L
+
+X 
+
+> ℓ=T+1
+
+∥sℓ − sℓ−1∥.
+
+For each term, 
+
+sℓ − sℓ−1 = Fℓ(hℓ−1) − Fℓ(bhℓ−1),
+
+so by Assumption 2.2, 
+
+∥sℓ − sℓ−1∥ ≤ δ∥sℓ−1∥.
+
+Moreover, applying the recurrence bound starting from T , we have 
+
+∥sℓ−1∥ ≤ (1 + δ)ℓ−1−T ∥sT ∥.
+
+Therefore, 
+
+∥∆sT :L∥ ≤ 
+
+> L
+
+X 
+
+> ℓ=T+1
+
+δ(1 + δ)ℓ−1−T ∥sT ∥.
+
+Computing the geometric sum yields 
+
+∥∆sT :L∥ ≤ 
+
+
+
+(1 + δ)L−T − 1
+
+
+
+∥sT ∥.
+
+By Definition B.1, the anti-shift correction coefficient is 
+
+αT :L = −
+
+D
+
+∆sT :L, u∥E
+
+.
+
+Thus, by the Cauchy–Schwarz inequality, 
+
+αT :L ≤
+
+D
+
+∆sT :L, u∥E
+
+≤ ∥ ∆sT :L∥.
+
+Hence, 
+
+αT :L ≤
+
+
+
+(1 + δ)L−T − 1
+
+
+
+∥sT ∥. (11) Substituting Eq. (10) into this bound gives 
+
+αT :L ≤
+
+
+
+(1 + δ)L−TStart − (1 + δ)T −TStart 
+
+
+
+∥sTStart ∥. (12) Therefore, when TStart and ∥sTStart ∥ are fixed, this upper bound decreases to 0 as T → L. This for-malizes the intuition that late translation leaves fewer remaining upper layers for anti-shift correction. Finally, we derive the correction-deficit bound. Since 
+
+sL = sT + ∆ sT :L
+
+and 
+
+sT = ∥sT ∥u∥,
+
+we have 
+
+⟨sL, u∥⟩ = ∥sT ∥ +
+
+D
+
+∆sT :L, u∥E
+
+= ∥sT ∥ − αT :L.
+
+Dividing both sides by ∥sT ∥, we obtain 
+
+dT :L = 1 − αT :L
+
+∥sT ∥ .
+
+17 Using Eq. (11), we get 
+
+dT :L ≥ 1 −
+
+
+
+(1 + δ)L−T − 1
+
+
+
+= 2 − (1 + δ)L−T . (13) Thus, when L is fixed, the lower bound on dT :L increases as T increases. When T = L, there are no remaining upper layers, so 
+
+∆sL:L = sL − sL = 0 .
+
+Therefore, 
+
+αL:L = 0 , βL:L = 0 .
+
+Moreover, if sL̸ = 0 , then 
+
+u∥ = sL
+
+∥sL∥ .
+
+Hence, 
+
+dL:L = ⟨sL, sL/∥sL∥⟩ ∥sL∥ = 1 .
+
+Thus, at the final hidden state, no upper-layer correction opportunity remains, and the correction-deficit coefficient reaches its terminal value. 
+
+B.4 Proof of Proposition 2.5 
+
+Proof. By Definition B.1, 
+
+αT :L = −
+
+D
+
+∆sT :L, u∥E
+
+and 
+
+βT :L = ∆sT :L −
+
+D
+
+∆sT :L, u∥E
+
+u∥ .
+
+Therefore, when βT :L > 0, for some u⊥ ⊥ u∥, we can write 
+
+∆sT :L = −αT :Lu∥ + βT :Lu⊥
+
+When βT :L = 0 , the same expression holds by choosing any u⊥ ⊥ u∥.By definition, 
+
+sL = sT + ∆ sT :L
+
+and 
+
+sT = ∥sT ∥u∥
+
+Thus, 
+
+sL = ( ∥sT ∥ − αT :L)u∥ + βT :Lu⊥.
+
+Since u∥ ⊥ u⊥,
+
+∥sL∥2 = ( ∥sT ∥ − αT :L)2 + β2 
+
+> T:L
+
+.
+
+Moreover, by Definition B.1, 
+
+dT :L = ⟨sL, u∥⟩∥sT ∥ = ∥sT ∥ − αT :L
+
+∥sT ∥ .
+
+Therefore, 
+
+∥sT ∥ − αT :L = dT :L∥sT ∥.
+
+Substituting this into the previous expression gives Eq. (4). 18 B.5 Proof of Proposition 3.2 
+
+Proof. Fix the channel set C, and let 
+
+T := max ITgt (C)
+
+be the highest target translation layer in the selected channel window. For any translator realization, denote by dKV Tgt ,Ctx  
+
+> C
+
+the translated target-side context cache injected into the target model, and let 
+
+sT = bhTgt  
+
+> T
+
+− hTgt 
+
+> T
+
+be the translation shift at layer T , where bhTgt  
+
+> T
+
+is the hidden states induced by the translated cache and hTgt  
+
+> T
+
+is the hidden states induced by the native target cache. We compare two translator classes. The first is the class of single backbone translators. For a token-level source-cache input zu, a single backbone translator produces 
+
+Tr Single (zu).
+
+The same translation rule is applied to every token u.The second is the class of Mixture-of-Translators . For the same token-level input zu, it produces 
+
+Tr MoT (zu) = X 
+
+> m∈T Top -K(u)
+
+egm(zu) Tr m(zu),
+
+where egm(zu) denotes the normalized routing weight after Top-K selection. This class contains the single backbone translator as a special case. Indeed, choose one translator index m0, set 
+
+Tr m0 = Tr Single ,
+
+and choose the routing scores so that, for every token u,
+
+gm0 (zu) = 1 , gm(zu) = 0 for all m̸ = m0.
+
+Then TTop -K (u) contains m0, the normalized routing weight satisfies 
+
+egm0 (zu) = 1 ,
+
+and therefore 
+
+Tr MoT (zu) = Tr m0 (zu) = Tr Single (zu)
+
+for every token u. Hence every cache translation produced by a single backbone translator can also be produced by a Mixture-of-Translators .Now consider the translation-shift objective 
+
+S(Tr) := ∥sT (Tr) ∥2 ,
+
+where sT (Tr) denotes the shift induced at layer T when the translated cache is generated by translator 
+
+Tr . Let 
+
+Tr ⋆ 
+
+> Single
+
+∈ arg min 
+
+> Tr Single
+
+∥sT (Tr Single )∥2
+
+be an optimal single backbone translator, and let 
+
+Tr ⋆ 
+
+> MoT
+
+∈ arg min 
+
+> Tr MoT
+
+∥sT (Tr MoT )∥2
+
+be an optimal Mixture-of-Translators .Since the MoT translator class contains the single backbone translator class as a subset, minimizing the same nonnegative objective over the MoT class cannot yield a larger optimum value. Therefore, 
+
+∥sT (Tr ⋆
+
+> MoT
+
+)∥2 ≤ sT (Tr ⋆
+
+> Single
+
+) 2 .
+
+Taking square roots on both sides gives 
+
+∥sT (Tr ⋆
+
+> MoT
+
+)∥ ≤ sT (Tr ⋆
+
+> Single
+
+) .
+
+19 Thus, the optimal translator mixture cannot induce a larger translation shift than the optimal single backbone translator. It remains to show when the inequality becomes strict. Suppose there exists a token-wise MoT 
+
+realization fTr MoT such that the induced shift at the highest target translation layer satisfies 
+
+sT (fTr MoT ) < sT (Tr ⋆
+
+> Single
+
+) .
+
+This condition means that token-wise routing realizes a cache translation that cannot be matched by the best single translator under the translation-shift objective. Since Tr ⋆ 
+
+> MoT
+
+is optimal over the MoT 
+
+class, we have 
+
+∥sT (Tr ⋆
+
+> MoT
+
+)∥ ≤ sT (fTr MoT ) .
+
+Combining the two inequalities yields 
+
+∥sT (Tr ⋆
+
+> MoT
+
+)∥ < sT (Tr ⋆
+
+> Single
+
+) .
+
+Therefore, whenever input-dependent routing provides a translation that is not representable by any single backbone translator and yields a smaller shift at layer T , the optimal Mixture-of-Translators 
+
+strictly reduces the translation shift. This proves that MoT weakly dominates a single backbone translator with respect to the translation shift ∥sT ∥, and strictly improves it whenever token-wise specialization provides a better cache translation for the selected channel window. 
+
+## C Proposed Method Details 
+
+C.1 Context Correction Loss 
+
+In practice, instead of explicitly storing and comparing hidden states, we use a heuristic that compares the KV cache formed during replay with the native KV cache. Thus, in implementation, we use the following KV-based form: 
+
+> L
+
+X
+
+> ℓ=TStart +1
+
+bKTgt  
+
+> ℓ
+
+− KTgt 
+
+> ℓ
+> 2
+
++ bVTgt  
+
+> ℓ
+
+− VTgt 
+
+> ℓ
+> 2
+
+
+
+. (14) 
+
+Proposition C.1 (Last-State Shift Reduction by Context Correction Loss ). Suppose that the stacked final-layer key/value projection of the target model has full column rank. Then, reducing the final-layer term of Eq. (14) provides a training signal that reduces an upper bound on the last-state shift 
+
+∥sL∥.Proof. Let the final-layer key and value projection matrices be denoted by WKL and WVL , respectively, and define the stacked final-layer key/value projection as 
+
+WKV L := 
+
+WKL
+
+WVL
+
+
+
+.
+
+The assumption in Proposition C.1 means that WKV L has full column rank. At each layer, the native key and value caches are fixed linear projections of the native hidden state: 
+
+KTgt  
+
+> ℓ
+
+= WKℓ hTgt  
+
+> ℓ
+
+, VTgt  
+
+> ℓ
+
+= WVℓ hTgt  
+
+> ℓ
+
+.
+
+Similarly, the replayed key and value caches are given by 
+
+bKTgt  
+
+> ℓ
+
+= WKℓ bhTgt  
+
+> ℓ
+
+, bVTgt  
+
+> ℓ
+
+= WVℓ bhTgt  
+
+> ℓ
+
+.
+
+By the definition of the last-state shift, 
+
+sL = bhTgt  
+
+> L
+
+− hTgt  
+
+> L
+
+.
+
+Therefore, at the final layer, 
+
+bKTgt  
+
+> L
+
+− KTgt  
+
+> L
+
+= WKL sL, bVTgt  
+
+> L
+
+− VTgt  
+
+> L
+
+= WVL sL.
+
+20 Therefore, the final-layer KV matching error is 
+
+WKL sL 
+
+> 2
+
++ WVL sL 
+
+> 2
+
+=
+
+WKL
+
+WVL
+
+
+
+sL
+
+> 2
+
+.
+
+Since WKL
+
+WVL
+
+
+
+is fixed by the target model and has full column rank, any nonzero shift sL̸ = 0 cannot vanish in the final-layer key/value space. Furthermore, because this projection is a fixed linear map that does not change during training, the proportional relationship between the final-layer KV matching error and the last-state shift also remains fixed throughout training. Therefore, reducing the final-layer KV matching error is equivalent to reducing a fixed upper bound on ∥sL∥. Since Eq. (14) includes this final-layer term, the KV-based implementation is justified as a heuristic for reducing the last-state shift. 
+
+C.2 Backbone Translator 
+
+The backbone translator in this work is a module that directly translates the context KV cache of the source model into the cache space of the target model for a selected channel set. We adopt the cross-attention architecture from prior work [ 12 ]. However, unlike shared-latent-space approaches, our method does not introduce an additional shared latent space; instead, it directly performs cache translation between the layer pairs specified by the channel set. The backbone translator independently translates the key cache and the value cache. It first projects the source cache block into a common translator space, and then combines layer-wise cache information within the channel set through a cross-attention-based translator module. The resulting representation is then projected into the target cache space to produce the translated context KV cache. This architecture can be applied not only when the actual layer indices are contiguous, but also when the channel set is non-contiguous. This section provides the simplified mathematical formulation of the backbone translator used inside 
+
+MoT . The backbone translator follows the cross-attention-based translation pattern of prior work [ 12 ], but does not introduce an additional shared latent space. Instead, it directly translates the source context cache block into the target cache space for the selected channel set. Given a fixed channel set C, let 
+
+XSrc ,Ctx  
+
+> C
+
+= ( XSrc ,Ctx 1 , . . . , XSrc ,Ctx  
+
+> N
+
+)
+
+denote the source-side cache block selected by C, where N = |C| . Here, the index r ∈ { 1, . . . , N }
+
+refers only to the slot order inside the selected channel window, not to an absolute model layer index. Key and value caches are translated independently, so the following description applies to each 
+
+X ∈ { K, V }.First, each source cache slot is normalized and projected into the translator hidden space: 
+
+zXr = ϕ WX 
+
+> In
+
+LN X
+
+> In
+
+ XSrc ,Ctx 
+
+> r
+
+ , r = 1 , . . . , N, 
+
+where ϕ denotes the GELU activation. The translator then performs recurrent cross-attention over the projected window. It maintains a running hidden states hX , initialized from the first projected slot: 
+
+hX 
+
+> 0
+
+= zX 
+
+> 1
+
+.
+
+For each slot r, the running hidden states attend to the corresponding projected source cache slot: 
+
+hXr = CAB Xr
+
+ hXr−1, zXr
+
+ , r = 1 , . . . , N. 
+
+The cross-attention block is defined as 
+
+aXr = CrossAttn  LN Q(hXr−1), LN C (zXr ), LN C (zXr ) ,
+
+ehXr = hXr−1 + aXr ,
+
+21 (a) gpt2-medium          
+
+> ↔gpt2
+> (b) gpt2-medium
+> ↔pythia-160m
+> (c) gpt2-medium
+> ↔distilgpt2
+> (d) gpt2-medium
+> ↔MathGPT2
+> (e) gpt2-medium
+> ↔DialoGPT-small
+
+Figure 15: Preliminary layer-mapping analysis. Layer-wise similarity between heterogeneous model architectures, computed from the mean key/value cache representations obtained on the same Open-WebText samples. 
+
+hXr = ehXr + FFN 
+
+
+
+LN F (ehXr )
+
+
+
+.
+
+Thus, in the notation CrossAttn( Q, K, V ), the query Q is the normalized running hidden state, while both the key K and value V are the normalized projected source cache slot. Intuitively, the running hidden states accumulates information from previously visited slots, and each cross-attention step lets it retrieve the information needed from the current source slot. This cross-layer scan can be repeated for multiple translator stages, following the recurrent translator pattern of LSC [12]. After the final scan, the hidden states collected across the channel window are concatenated and projected into the target cache space: 
+
+FX = Concat  hX 
+
+> 1
+
+, . . . , hXN
+
+ ,
+
+bXTgt ,Ctx  
+
+> C
+
+= ϕ WX 
+
+> Out
+
+LN X
+
+> Out
+
+ FX  , X ∈ { K, V }.
+
+The translated key and value blocks are then combined as 
+
+dKV Tgt ,Ctx  
+
+> C
+
+=
+
+ bKTgt ,Ctx  
+
+> C
+
+, bVTgt ,Ctx 
+
+> C
+
+
+
+.
+
+This formulation abstracts away implementation-level details such as tensor layout changes and reshaping. The important point is that the backbone translator uses recurrent cross-attention to fuse information across the selected source cache window and directly emits the corresponding target cache block. It serves as the basic translation unit used by MoT : each expert in MoT has the same backbone structure, while the routing function determines how the outputs of multiple backbone translators are selected or combined for each token. 
+
+C.3 Pre-Translation Phase: Channel Mapping 
+
+Channel mapping is the pre-translation stage that determines the set of layer pairs C over which cache translation is performed between the source model and the target model. The main focus of this work is to learn accurate cache translation for a given channel set, while the bi-objective problem of jointly optimizing the size of the channel set is left outside the scope of this paper. Therefore, we assume that |C| is given, and discuss the corresponding parameter search in the experimental section. Before specifying the channel-mapping rule, we first conduct a preliminary layer-mapping analysis to examine whether layers of heterogeneous models exhibit a meaningful correspondence. Specifically, we prefill the same OpenWebText samples into both models, compute the mean representations of the key and value caches produced at each layer, and measure the layer-wise similarity for all source–target layer combinations. Fig. 15 visualizes the resulting similarity matrices for several heterogeneous model pairs. Fig. 15(a)–(d) show that, even when the source and target models have different numbers of layers, high similarity often appears between layers with similar relative depths. In other words, lower-depth source layers tend to form mean KV representations that are more similar to lower-depth target layers, 22 while higher-depth source layers are more similar to higher-depth target layers. This trend appears as a spectral diagonal pattern in the similarity matrix, suggesting that relative depth provides a useful first-order principle for constructing channel mappings. In particular, Fig. 15(b) shows the result between gpt2-medium and pythia-160m . Although the two models do not share the same training data or architecture family, they still exhibit high similarity between layer pairs with similar depth ratios. This suggests that the depth-ratio relationship is not merely a phenomenon within the same model family, but may also hold under more general forms of model heterogeneity. By contrast, Fig. 15(e) illustrates an exceptional case. When models differ substantially in their instruction-following behavior or training data distribution, the spectral diagonal pattern can become less pronounced. In such cases, a fixed depth-ratio rule may not always yield the optimal channel mapping. We therefore treat depth-ratio mapping as a simple and effective default strategy, while leaving adaptive channel mapping under stronger data or instruction mismatch as future work. Motivated by this preliminary analysis, we use Depth-Ratio Mapping [ 9 ] as the default channel-mapping rule. Intuitively, even when two models differ, lower layers tend to encode lower-level representations, whereas higher layers tend to encode higher-level representations. Therefore, it is natural to connect layer pairs that have similar relative depths. Depth-Ratio Mapping connects source layers and target layers in order according to their relative depth. That is, it aligns the source model from bottom to top with the target model from bottom to top, so that lower-depth source layers are connected to lower-depth target layers, and higher-depth source layers are connected to higher-depth target layers. Let the resulting ordered channel sequence be 
+
+CDR = ( c1, c 2, . . . , c m).
+
+Here, each cr denotes the r-th depth-ratio layer pair, and 
+
+m = min( LSrc , L Tgt )
+
+is the length of the sequence. Given |C| , we do not search over all possible subsets of CDR . Instead, we use only contiguous channel windows as candidates: 
+
+CDR (|C| ) = {cq , c q+1 , . . . , c q+|C|− 1} 1 ≤ q ≤ m − |C| + 1 .
+
+This design is motivated by Proposition 2.3 and Proposition 2.4, which show that translating at too early layers can increase propagation error, whereas translating at too late layers can reduce correction opportunity. Therefore, instead of selecting sparse and disconnected channels, choosing a single contiguous window allows us to move the start and end points of the window together and more stably find a balance between the two error dynamics. The final channel set is selected as the one that minimizes the validation loss among the sliding-window candidates. However, training the full MoT for every candidate channel window is compu-tationally expensive. Therefore, during the channel optimization stage, we use a single backbone translator as a proxy to quickly evaluate the validation loss of each candidate. Since this proxy uses the same backbone structure as the translators inside MoT , it is suitable for measuring the translation difficulty induced by channel location. The detailed structure of the backbone translator is provided in Appendix C.2: 
+
+CSrc →Tgt  
+
+> ⋆
+
+= arg min  
+
+> C′∈CDR (|C| )
+
+LSrc →Tgt Val (C′).
+
+C.4 Post-Translation Phase: Cache Replay 
+
+Immediately after translation, we need to construct a cache replay procedure so that the selected translation result can be used in the actual long-context setting. After the translation phase, the source model’s context cache has been converted into the cache space of the target model, and this translated result should be usable as the actual context cache of the target model. However, the translated cache provides only the context KV cache corresponding to the target translation layer set ITgt . Therefore, in order to obtain a target-side context KV cache that can be used consistently during subsequent prompt prefill and completion generation, a cache replay procedure that passes the context through the target model again is required. 23 The most direct approach is to perform full attention at each target layer ℓ, while injecting the translated KV cache instead of the native KV cache only at the translated layers. Let NCtx denote the context length, LTgt the number of target layers, and d the attention dimension. Since full-attention-based replay allows each context query token to attend to all previous context key-value tokens, its computational complexity is approximately 
+
+O LTgt N 2Ctx d .
+
+In particular, replay is performed before prompt prefill in order to reconstruct the target-side context cache. Thus, for long contexts, the N 2Ctx term dominates the cost, and the need to pass through multiple target layers makes this procedure expensive. To reduce this cost, we use Top-S Source-Guided Sparse Attention . Here, SSparse denotes the number of source-guided key positions to be attended to at each context query position. The key idea is that, during target replay, we do not attend to all context key-value tokens again. Instead, we select only the token positions that the source model regarded as important in the given context and reuse them for target attention. In other words, the selection criterion for sparse attention is not newly learned inside the target model, but is derived from the attention pattern of the source model. Let the context KV cache used for replay at target layer ℓ be denoted by 
+
+KV Tgt ,Ctx  
+
+> ℓ
+
+=
+
+ ¯KTgt ,Ctx  
+
+> ℓ
+
+, ¯VTgt ,Ctx 
+
+> ℓ
+
+
+
+.
+
+It is defined as 
+
+KV Tgt ,Ctx  
+
+> ℓ
+
+=
+
+( dKV Tgt ,Ctx  
+
+> ℓ
+
+, ℓ ∈ I Tgt ,
+
+KV Tgt ,Ctx  
+
+> ℓ
+
+, ℓ / ∈ I Tgt .
+
+That is, at the target translation layers, we inject the translated context KV cache, while at the remaining layers, we use the context KV cache computed by the native replay process of the target model. Full-attention replay computes, for each context token position u ∈ { 1, . . . , N Ctx },
+
+oFull  
+
+> ℓ,u
+
+= Attn 
+
+
+
+QTgt  
+
+> ℓ,u
+
+, ¯KTgt ,Ctx  
+
+> ℓ, 1: u
+
+, ¯VTgt ,Ctx 
+
+> ℓ, 1: u
+
+
+
+.
+
+Thus, each context query attends to the entire causal context 
+
+{1, . . . , u }.
+
+In contrast, Top-S Source-Guided Sparse Attention first defines the source guidance layer correspond-ing to target layer ℓ as 
+
+π(ℓ).
+
+Here, π(ℓ) is a source layer map used to guide the sparse attention pattern of target layer ℓ. Let the attention score used as context replay guidance at source layer π(ℓ) be 
+
+ASrc  
+
+> π(ℓ)
+
+∈ RNCtx ×NCtx .
+
+We omit the head index, and when necessary, interpret this as an attention map averaged over heads. For each context query position u, we define the SSparse context key positions most strongly attended to by the source attention as 
+
+Nℓ(u) = Top-S 
+
+
+
+ASrc 
+
+> π(ℓ),u, 1: u
+
+, S Sparse 
+
+
+
+.
+
+Then, the attention in target replay attends only to the selected source-guided sparse context token set, rather than to the entire context: 
+
+oSparse  
+
+> ℓ,u
+
+= Attn 
+
+
+
+QTgt  
+
+> ℓ,u
+
+, ¯KTgt ,Ctx  
+
+> ℓ, Nℓ(u)
+
+, ¯VTgt ,Ctx 
+
+> ℓ, Nℓ(u)
+
+
+
+.
+
+In other words, the reference set of full attention, 
+
+{1, . . . , u },
+
+is replaced by the source-guided Top-S context position set 
+
+Nℓ(u).
+
+24 When SSparse ≪ NCtx , the attention cost of each target layer is reduced from 
+
+O(N 2Ctx d)
+
+to 
+
+O(NCtx SSparse d).
+
+Accordingly, the overall replay cost is reduced approximately as 
+
+O LTgt N 2Ctx d −→ O LTgt NCtx SSparse d .
+
+In implementation, for stability, some bottom layers can be kept as full-attention layers, while source-guided sparse attention is applied only to the remaining layers. Let LFull denote the number of bottom full-attention layers. Then, the attention reference set is defined as 
+
+Nℓ(u) = 
+
+({1, . . . , u }, ℓ < L Full ,
+
+Top-S 
+
+
+
+ASrc 
+
+> π(ℓ),u, 1: u
+
+, S Sparse 
+
+
+
+, ℓ ≥ LFull .
+
+Overall, the cache replay procedure in the post-translation phase can be summarized as follows. First, the translated target context KV cache is injected into the target translation layers, while the remaining layers are reconstructed through the target model’s native computation. Standard full-attention replay attends to all context tokens and therefore incurs a quadratic cost in NCtx . In contrast, the proposed Top-S Source-Guided Sparse Attention reduces the replay cost to nearly linear in the context length by attending only to the SSparse context tokens selected by the source attention pattern. The target model then performs prompt prefill conditioned on the target-side context cache obtained through replay and finally generates the completion. 
+
+C.5 Hidden States Translation: MoT-h 
+
+This section describes MoT-h , a memory-efficient variant of MoT . While MoT directly translates the source context KV cache into the target KV cache space, MoT-h translates intermediate activations and lets the target model restore the corresponding KV cache through its own fixed key and value projections. This design is inspired by HCache [ 8 ], which observes that the KV cache of a transformer can be restored from the intermediate activation entering the attention module, instead of storing or transferring the full KV cache. In Sections 3.2 and 4.3, we use the term hidden states as an abstract representation for readability. Here, we use the more precise term intermediate activation to emphasize the connection to HCache. Let 
+
+aTgt 
+
+denote a target-side intermediate activation used to construct the target KV cache. The key and value cache are deterministic projections of this activation: 
+
+KTgt = WK aTgt , VTgt = WV aTgt .
+
+Therefore, if a translator can produce a target-compatible intermediate activation 
+
+baTgt ,
+
+then the target model can recover the corresponding KV cache by applying its native key and value projections: 
+
+bKTgt = WK baTgt , bVTgt = WV baTgt .
+
+Thus, MoT-h does not translate key and value tensors separately. Instead, it translates a single activation representation and relies on the target model’s own attention projections to construct the KV cache. Formally, MoT-h replaces KV-to-KV translation with activation-to-activation translation. For a selected channel set C, the source-side intermediate activation block is translated into a target-compatible intermediate activation block: 
+
+baTgt ,Ctx  
+
+> C
+
+= Tr MoT-h 
+
+
+
+aSrc ,Ctx 
+
+> C
+
+
+
+.
+
+25 The target model then uses this translated activation block and restores the target cache through its native key and value projections: 
+
+dKV Tgt ,Ctx  
+
+> C
+
+=
+
+
+
+WK baTgt ,Ctx  
+
+> C
+
+, WV baTgt ,Ctx 
+
+> C
+
+
+
+.
+
+In this sense, MoT-h keeps the same high-level translation pipeline as MoT , but changes the translated representation from KV cache to intermediate activation. This design reduces memory usage because an intermediate activation is a single tensor, whereas a KV cache contains both key and value tensors. In the common transformer setting where the activation dimension and the combined key/value cache dimension are comparable, translating and storing intermediate activations instead of KV cache reduces the translated state size by roughly half. The KV cache is restored only when needed through the fixed projections already present in the target model. As a result, MoT-h can lower peak memory and transfer cost compared with MoT .The benefit comes with a trade-off. Since MoT-h translates a single activation representation and relies on the target model to recover both key and value from it, it has less direct control over the target KV cache than MoT , which translates key and value separately. This can reduce the effective representation capacity of the translator and may make translation more difficult, especially when the source and target models differ substantially in capacity or architecture. Consistent with the empirical results, MoT-h improves memory efficiency but can show a marginal drop in accuracy compared with 
+
+MoT .Overall, MoT-h is a memory-oriented variant of MoT . While MoT prioritizes translation quality by directly matching the target KV cache space, MoT-h prioritizes memory efficiency by translating HCache-style intermediate activations and restoring KV cache through the target model’s native projections. 
+
+## D Benchmark Prompts 
+
+This section summarizes the prompt format used for each benchmark. The main goal of our evaluation is to measure whether a target model can use a long input through translated cache, instead of directly prefilling the full context. Therefore, each prompt is designed to clearly separate long information from the short query. Long and difficult input, such as a passage, abstract, article, or multi-document evidence, is placed in the context region. The short question, answer cue, or choice instruction required by the target model is placed in the prompt region. In the boxes below, the red context region denotes the part subject to cache translation, while the blue prompt and completion regions denote the part where the target model receives a short query and generates the answer. The benchmarks are divided into two groups: closed-set QA and extractive QA. Closed-set QA benchmarks have a fixed answer space, and the generated answer is matched to the valid answer set to compute accuracy. Extractive QA benchmarks require the model to generate a short answer grounded in the passage, and the output is evaluated by token-level F1 against gold answers. 
+
+D.1 Closed-set QA benchmarks 
+
+We use BoolQ, PubMedQA, and MMLU-Redux as closed-set QA benchmarks. Each dataset is represented with three regions: context, prompt, and completion. The context contains the long input information, the prompt contains the short question or choice instruction, and the completion contains the generated answer expected to match one of the valid candidates. The model is evaluated by accuracy after answer matching. 
+
+Text 1. BoolQ prompt with sample 
+
+Dataset. BoolQ is a binary QA benchmark where the model reads a passage and answers with either yes or no. 26 Context – Translated Cache Region 
+
+Read the passage and answer the question with yes or no only. Passage: ⟨Passage ⟩
+
+Prompt – Target-Side Query Region 
+
+Question: ⟨Question ⟩
+
+Answer: 
+
+Completion – Target Output Region 
+
+yes or no 
+
+Sample. Context – Translated Cache Region 
+
+Read the passage and answer the question with yes or no only. Passage: Windows Movie Maker is a discontinued video editing software by Microsoft. It is a part of Windows Essentials software suite and offers the ability to create and edit videos as well as to publish them on OneDrive, Facebook, Vimeo, YouTube, and Flickr. 
+
+Prompt – Target-Side Query Region 
+
+Question: is windows movie maker part of windows essentials Answer: 
+
+Completion – Target Output Region 
+
+yes 
+
+Text 2. PubMedQA prompt with sample 
+
+Dataset. PubMedQA is a biomedical QA benchmark where the model reads an abstract and answers with yes, no, or maybe. 
+
+Context – Translated Cache Region 
+
+Read the abstract and answer the biomedical research question with yes, no, or maybe only. Abstract: ⟨Abstract ⟩
+
+Prompt – Target-Side Query Region 
+
+Question: ⟨Question ⟩
+
+Answer: 
+
+27 Completion – Target Output Region 
+
+yes or no or maybe 
+
+Sample. Context – Translated Cache Region 
+
+Read the abstract and answer the biomedical research question with yes, no, or maybe only. Abstract: Halofantrine is a newly developed antimalarial drug used for the treatment of Plasmodium falciparum malaria. The introduction of this drug has been delayed because of its possible side effects, and due to insufficient studies on adverse reactions in humans. . . . Halofantrine has mild to moderate pathological effects on cochlea histology, and can be considered an ototoxic drug. 
+
+Prompt – Target-Side Query Region 
+
+Question: Is halofantrine ototoxic? Answer: 
+
+Completion – Target Output Region 
+
+yes 
+
+Text 3. MMLU-Redux prompt with sample 
+
+Dataset. MMLU-Redux is a multiple-choice QA benchmark with subject-specific questions. The model generates one answer label from four candidates. 
+
+Context – Translated Cache Region 
+
+Subject: ⟨Subject ⟩
+
+Question: ⟨Question ⟩
+
+Prompt – Target-Side Query Region 
+
+Choices: (A) ⟨Choice 1 ⟩
+
+(B) ⟨Choice 2 ⟩
+
+(C) ⟨Choice 3 ⟩
+
+(D) ⟨Choice 4 ⟩
+
+Answer: 
+
+Completion – Target Output Region 
+
+(A) or (B) or (C) or (D) 
+
+Sample. 
+
+28 Context – Translated Cache Region          
+
+> Subject: abstract algebra Question: Find all cin Z3such that Z3[x]/(x3+cx 2+ 1) is a field.
+
+Prompt – Target-Side Query Region 
+
+> Choices: (A) 0 (B) 2 (C) 1 (D) 3 Answer:
+
+Completion – Target Output Region 
+
+> (B)
+
+D.2 Extractive QA benchmarks 
+
+The extractive QA benchmarks include SQuAD-v1.1 and NewsQA. Both datasets use the same context–prompt–completion structure. A passage is placed in the context region, while a short question is placed in the prompt region. The model generates a short answer, and the output is evaluated by token-level F1 against the gold answers. Under this abstraction, SQuAD-v1.1 and NewsQA evaluate whether the translated context cache preserves the evidence needed for short-answer extraction. Although the model produces the answer autoregressively, the task is not treated as open-ended generation; instead, it is evaluated as extractive QA. 
+
+Text 4. Unified extractive QA prompt 
+
+Datasets. SQuAD-v1.1 and NewsQA use the same short-answer extractive QA prompt format. HotpotQA-E in the long-context CAG case study follows the same format with a multi-document context. 
+
+Context – Translated Cache Region  
+
+> Read the passage and answer the question briefly. Use a short phrase from the passage when possible. Passage: ⟨Passage / article / multi-document evidence ⟩
+
+Prompt – Target-Side Query Region  
+
+> Question: ⟨Question ⟩
+> Answer:
+
+Completion – Target Output Region 
+
+> ⟨Short answer ⟩
+
+29 Text 5. SQuAD-v1.1 sample 
+
+Dataset. SQuAD-v1.1 is an extractive QA benchmark where the model reads a single Wikipedia passage and generates a short answer grounded in the passage. 
+
+Context – Translated Cache Region 
+
+Read the passage and answer the question briefly. Use a short phrase from the passage when possible. Passage: Architecturally, the school has a Catholic character. Atop the Main Building’s gold dome is a golden statue of the Virgin Mary. Immediately in front of the Main Building and facing it, is a copper statue of Christ with arms upraised with the legend “Venite Ad Me Omnes”. Next to the Main Building is the Basilica of the Sacred Heart. Immediately behind the basilica is the Grotto, a Marian place of prayer and reflection. . . . 
+
+Prompt – Target-Side Query Region 
+
+Question: To whom did the Virgin Mary allegedly appear in 1858 in Lourdes France? Answer: 
+
+Completion – Target Output Region 
+
+Saint Bernadette Soubirous 
+
+Text 6. NewsQA sample 
+
+Dataset. NewsQA is an extractive QA benchmark where the model reads a news article and generates a short answer grounded in the article. 
+
+Context – Translated Cache Region 
+
+Read the passage and answer the question briefly. Use a short phrase from the passage when possible. Passage: City officials said the new transportation plan will expand bus routes, add protected bike lanes, and increase late-night service. The first phase of construction is expected to begin next spring and will focus on downtown corridors. Supporters argue that the plan will reduce congestion, while critics are concerned about construction delays and costs. 
+
+Prompt – Target-Side Query Region 
+
+Question: When is the first phase of construction expected to begin? Answer: 
+
+Completion – Target Output Region 
+
+next spring 
+
+30 Method Cosine BoolQ PubMed MMLU Acc Avg SQuAD NewsQA F1 Avg GPU Peak Sim QA Redux Memory (GiB)                                                       
+
+> Native N/A 51.0 36.0 17.0 35.0 0.50 0.29 0.40 7.06 C2C-Project 0.12 37.0 7.0 9.0 18.0 0.13 0.02 0.07 7.09 Interlat 0.63 65.0 38.0 15.0 39.0 0.16 0.04 0.10 7.18 KVComm 0.82 17.0 2.0 4.0 8.0 0.02 0.00 0.01 6.80
+> LSC 0.07 25.0 2.0 19.0 15.0 0.06 0.01 0.04 12.67
+> MoT 0.89 62.0 45.0 18.0 42.0 0.42 0.01 0.22 13.54
+
+Table 5: Homogeneous translation : gpt2-large → gpt2-large .                                                         
+
+> Method Cosine BoolQ PubMed MMLU Acc Avg SQuAD NewsQA F1 Avg GPU Peak Sim QA Redux Memory (GiB)
+> Native N/A 51.0 36.0 17.0 35.0 0.50 0.29 0.40 10.18 C2C-Project 0.11 45.0 14.0 13.0 24.0 0.13 0.02 0.08 10.21
+> Interlat 0.58 55.0 36.0 18.0 36.0 0.12 0.02 0.07 10.36 LSC 0.10 35.0 4.0 17.0 19.0 0.07 0.00 0.03 18.67
+> MoT 0.89 61.0 46.0 19.0 42.0 0.43 0.02 0.22 16.66
+
+Table 6: Heterogeneous translation : gpt2-xl → gpt2-large .
+
+## E Additional Results 
+
+E.1 Translator Training Configuration 
+
+All trainable translator-based methods are trained on OpenWebText using the same common optimiza-tion setup. We use sequences of 128 tokens, where the first 64 tokens define the context region and the remaining tokens define the prompt-side training signal. Unless otherwise specified, translators are trained for 500 steps with batch size 4, gradient accumulation 4, AdamW with learning rate 
+
+10 −4, weight decay 0.01 , 50 warmup steps followed by cosine decay, gradient clipping at 1.0, and an OpenWebText shuffle buffer of 50K examples. These shared hyperparameters were empirically selected across multiple experiments; method-specific hyperparameters follow the corresponding original papers or open-source implementations. 
+
+Compute Worker. All training and inference experiments were conducted on a compute worker equipped with two NVIDIA H100 GPUs. The same two-GPU worker was used consistently across translator training, channel-selection experiments, downstream benchmark evaluation, ablation stud-ies, scalability experiments, and case-study inference. Unless otherwise specified, reported GPU peak memory values are measured from runs executed under this two-H100 setup. 
+
+E.2 Homogeneous and Heterogeneous Translations 
+
+Table 5 reports the homogeneous translation result for gpt2-large →gpt2-large . Among the translation methods, MoT achieves the strongest overall performance, obtaining the highest average accuracy of 42 .0% and the highest average F1 of 0.22. It also achieves the highest cosine similarity of 0.89, indicating that the translated cache is better aligned with the target cache space than those produced by the baselines. In closed-set QA, MoT obtains the best PubMedQA score and remains competitive on BoolQ and MMLU-Redux, while in extractive QA it substantially improves SQuAD over the other translation methods. Although Interlat achieves the best BoolQ score, its extractive QA performance remains limited, suggesting that last-hidden-state communication does not sufficiently preserve the token-level evidence needed for answer extraction. Similarly, C2C-Project, KVComm, and LSC show limited F1, indicating that projection-only mapping, selective KV sharing, or global shared-space alignment is insufficient for robust cache reuse in this setting. Overall, MoT provides the most balanced behavior across closed-set and extractive QA. Table 6 further evaluates a heterogeneous translation setting, gpt2-xl →gpt2-large , where the source and target models differ in depth and representation size. In this more challenging setting, MoT 
+
+again achieves the highest cosine similarity of 0.89, the best average accuracy of 42 .0% , and the best average F1 of 0.22 among the translation methods. Compared with the baselines, MoT improves both closed-set QA and extractive QA: it obtains the best BoolQ, PubMedQA, MMLU-Redux, SQuAD, 31 0 1 2 3 4 5 6    
+
+> First Layer Index of Translation Channels
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> Average Norm
+> L0-L5
+> L1-L6 L2-L7
+> L3-L8 L4-L9 L5-L10 L6-L11
+> Translation Shift ||s_T||
+> Last-State Shift ||s_L||
+
+(a) Single Backbone & Prompt LM Loss .0 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 20
+> 40
+> 60
+> 80
+> 100
+> 120
+> 140
+> 160
+> Average Norm
+> L0-L5
+> L1-L6
+> L2-L7
+> L3-L8 L4-L9
+> L5-L10
+> L6-L11
+> Translation Shift ||s_T||
+> Last-State Shift ||s_L||
+
+(b) MoT & Context Correction Loss .
+
+Figure 16: Shift improvement. 0 25 50 75 100 125 150 175  
+
+> Orthogonal Shift β
+> −15
+> −10
+> −5
+> 0
+> 5
+> Anti-Shift Correction  α
+> L0
+> d=0.824
+> L1
+> d=0.778
+> L2
+> d=0.830
+> L3
+> d=0.912
+> L4
+> d=1.041
+> L5
+> d=1.164
+> L6
+> d=1.000
+
+(a) Single Backbone & Prompt LM Loss .0 20 40 60 80 100 120 140   
+
+> Orthogonal Shift β
+> −8
+> −6
+> −4
+> −2
+> 0
+> 2
+> Anti-Shift Correction  α
+> L0
+> d=0.832
+> L1
+> d=0.943
+> L2
+> d=1.053
+> L3
+> d=1.166
+> L4
+> d=1.262 L5
+> d=1.276
+> L6
+> d=1.000
+
+(b) MoT & Context Correction Loss .
+
+Figure 17: Correction improvement from layer L0 to L6. and average scores, while matching the best NewsQA score. These results indicate that MoT remains effective even when a larger source cache must be mapped into a smaller and structurally different target cache space. We omit KVComm in this heterogeneous setting because it assumes homogeneous KV cache compatibility and does not support heterogeneous source–target architectures. Across both GPT-2 family settings, MoT consistently provides stronger cache alignment and more robust downstream performance than the competing translation methods. The gains are especially clear on extractive QA, where accurate preservation of context information is critical. MoT introduces additional peak memory due to the use of multiple translators, but this is a marginal overhead relative to the benefit of improved cache alignment and stable downstream performance. These additional results confirm that the effectiveness of MoT is not limited to the Qwen2.5 experiments in Section 4.2, but also generalizes to both homogeneous and heterogeneous GPT-2 family translations. 
+
+E.3 Root Cause Analysis Shifts and Correction. Fig. 16 and Fig. 17 reorganize the shift and correction results shown separately in Fig. 4, Fig. 10, Fig. 5, and Fig. 11. These appendix figures place the before-and-after results side by side for easier comparison between the setting before applying the proposed method, 
+
+Single Backbone & Prompt LM Loss , and the setting after applying it, MoT & Context Correction Loss .Similarly, Fig. 18 and Fig. 19 show the improvements in validation loss and F1 score. The U-shaped loss curve changes substantially into a sharply decreasing trend, and the F1 curve also becomes flat across the entire layer range without large variation, rather than exhibiting an inverted U-shape. This can likewise be interpreted as a consequence of reducing both the initial translation shift ∥sT ∥ and the last-state shift ∥sL∥.
+
+Layer-wise Translated Error Propagation and Correction. In Fig. 6, we examined the KV cache similarity heatmap between Native and MoT when the context is translated from translation start layer 3, corresponding to the layer range [3,8]. This analysis confirmed the phenomena of error propagation 32 0 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 3.24
+> 3.26
+> 3.28
+> 3.30
+> 3.32
+> 3.34
+> 3.36
+> 3.38
+> Validation Loss
+> L0-L5
+> L1-L6
+> L2-L7 L3-L8 L4-L9
+> L5-L10
+> L6-L11 MoT
+> Native
+
+(a) Single Backbone & Prompt LM Loss .0 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 3.18
+> 3.20
+> 3.22
+> 3.24
+> 3.26
+> 3.28
+> Validation Loss
+> L0-L5
+> L1-L6
+> L2-L7
+> L3-L8
+> L4-L9 L5-L10
+> L6-L11
+> MoT
+> Native
+
+(b) MoT & Context Correction Loss .
+
+Figure 18: Validation loss improvement. 0 1 2 3 4 5 6 
+
+> First Layer Index of Translation Channels
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> 0.14
+> F1  L0-L5
+> L1-L6
+> L2-L7
+> L3-L8 L4-L9
+> L5-L10
+> L6-L11
+> MoT
+> Native
+
+(a) Single Backbone & Prompt LM Loss .0 1 2 3 4 5 6     
+
+> First Layer Index of Translation Channels
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> 0.14
+> F1
+> L0-L5
+> L1-L6 L2-L7 L3-L8
+> L4-L9 L5-L10 L6-L11
+> MoT
+> Native
+
+(b) MoT & Context Correction Loss .
+
+Figure 19: F1 score improvement. and correction at the KV level. Fig. 20 provides an overall heatmap overview comparing the trends in KV similarity before and after applying MoT , while sliding the translation start layer over 0, 2, 4, and 6. The most noticeable change appears between Fig. 6(a) and Fig. 6(b): under Single Backbone , severe error propagates across all regions, whereas MoT substantially alleviates this propagation. In the context-token region above the translation window in Fig. 6(c–f), the corresponding regions in (d) and (f) become slightly brighter than those in (c) and (e), which indirectly indicates improved correction. In particular, when focusing on token group 0, both Single Backbone and MoT show a tendency for correction to become stronger near the top layers. Fig. 21(a) shows the inverted U-shaped similarity trend that appears especially in the context region, whereas Fig. 21(b) shows that the error propagation effect is almost eliminated under MoT . This can be attributed to the large reduction in ∥sT ∥ observed earlier. However, at the final translation-layer index 6, correction-deficit error still remains, which is consistent with the analysis in Proposition 2.4 that the correction deficit increases to 1 at the final layer. Note that this does not mean that correction itself has failed. 
+
+E.4 Ablation Top-K and Number of Translators. Table 7 compares F1 and GPU Peak Memory under different routing and translator-count settings. The (1,1) row corresponds to Single Backbone and is included only as a reference point, while the remaining rows are MoT configurations used for hyperparameter selection. Across the MoT settings, the best F1 is obtained either with (1,2) or (2,4) depending on the source–target direction, indicating that increasing Top-K and the number of translators does not consistently yield a clear performance advantage. In contrast, GPU Peak Memory increases mainly with the number of translators, and (1,2) consistently uses the least memory among the 33 0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Cosine Similarity(Native vs Translation)
+
+(a) Layer 0 ( Single Backbone )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00  
+
+> Cosine Similarity(Native vs Translation)
+
+(b) Layer 0 ( MoT )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Cosine Similarity(Native vs Translation)
+
+(c) Layer 2 ( Single Backbone )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00  
+
+> Cosine Similarity(Native vs Translation)
+
+(d) Layer 2 ( MoT )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Cosine Similarity(Native vs Translation)
+
+(e) Layer 4 ( Single Backbone )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00  
+
+> Cosine Similarity(Native vs Translation)
+
+(f) Layer 4 ( MoT )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Cosine Similarity(Native vs Translation)
+
+(g) Layer 6 ( Single Backbone )0
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+
+Token Groups (Group Size=8) 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+> Layer Index
+
+Context Prompt Completion 
+
+−1.00 
+
+−0.75 
+
+−0.50 
+
+−0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00  
+
+> Cosine Similarity(Native vs Translation)
+
+(h) Layer 6 ( MoT )
+
+Figure 20: Error propagation improvement. 
+
+MoT configurations. Therefore, we conservatively choose (Top -K, N Tr ) = (1 , 2) as the default configuration. 34 0 1 2 3 4 5 6  
+
+> First Layer Index of Translation Channels
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cosine Similarity(Native vs Translation)  Context Prompt Completion
+
+(a) KV Similarity ( Single Backbone )0 1 2 3 4 5 6   
+
+> First Layer Index of Translation Channels
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cosine Similarity(Native vs Translation)  Context Prompt Completion
+
+(b) KV Similarity ( MoT )
+
+Figure 21: Overall error propagation improvement. 
+
+Translation Direction (Top-K, NTr ) F1 GPU Peak Memory (GiB) 
+
+gpt2 →gpt2-medium 
+
+(1,1) 0.343 3.678 (1,2) 0.336 5.131 
+
+(1,4) 0.347 7.960 (2,4) 0.350 7.959 
+
+gpt2-medium →gpt2 
+
+(1,1) 0.124 3.442 (1,2) 0.127 4.835 
+
+(1,4) 0.124 7.526 (2,4) 0.135 7.525 
+
+Qwen2.5-0.5B →Qwen2.5-1.5B 
+
+(1,1) 0.529 10.280 (1,2) 0.535 12.828 
+
+(1,4) 0.531 17.898 (2,4) 0.522 17.899 
+
+Qwen2.5-1.5B →Qwen2.5-0.5B 
+
+(1,1) 0.388 10.106 (1,2) 0.395 12.530 
+
+(1,4) 0.364 17.321 (2,4) 0.370 17.322 
+
+opt-125m →opt-350m 
+
+(1,1) 0.048 3.524 (1,2) 0.045 4.975 
+
+(1,4) 0.048 7.806 (2,4) 0.050 7.806 
+
+opt-350m →opt-125m 
+
+(1,1) 0.043 3.286 (1,2) 0.045 4.681 
+
+(1,4) 0.044 7.371 (2,4) 0.043 7.371 
+
+Table 7: F1 and peak memory according to Top-K out of NTr translators 
+
+Channel Mapping. To examine the effect of the channel-mapping strategy, we compare Terminal Mapping and Depth-Ratio Mapping. Terminal Mapping concentrates the channels near the final layers of the target model, whereas Depth-Ratio Mapping connects source and target layers that have similar relative depths. As shown in Fig. 22, Depth-Ratio Mapping achieves higher Gen F1 than Terminal Mapping in most settings. In particular, when the Channel Ratio is 1.0, Terminal Mapping suffers a large drop in F1, whereas Depth-Ratio Mapping maintains relatively high F1. This shows that connecting layers with similar depth ratios provides more stable cache translation than concentrating channels in the terminal region. Therefore, in the remaining experiments, we use Depth-Ratio Mapping as the default channel-mapping strategy. 
+
+Ratio of Translation Channels. To determine the optimal size of the channel set, we vary the ratio of channels used for actual translation among all Depth-Ratio channel candidates and measure both 35 medium→gpt2 
+
+> Ratio=0.5
+> medium→gpt2
+> Ratio=1.0
+> large→gpt2
+> Ratio=0.5
+> large→gpt2
+> Ratio=1.0
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> 0.14
+> F1
+> Channel Mapping
+> Terminal
+> Depth-Ratio
+
+Figure 22: Channel mapping comparison : Terminal vs. Depth-Ratio. 0          
+
+> 500
+> 1000
+> 1500
+> 2000
+> Latency (Bar, ms)
+> 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1
+> Ratio of Channels
+> 0
+> 0.1
+> 0.2
+> F1 (Line)
+> Qwen2.5-0.5B→0.5B gpt2-medium→gpt2 opt-350m→125m
+
+Figure 23: Effect of ChannelRatio of transla-tion channels. 0 1 2 3 4 5
+
+> # Full Attention Bottom Layers
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> F1  gpt2→gpt2-large
+> gpt2→gpt2-medium
+> gpt2→gpt2
+
+Figure 24: Effect of the number of full attention layers at the bottom. 0       
+
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> GPU Peak Memory (Bar, GiB)
+> 2345
+> Number of Models
+> 0
+> 2000
+> 4000
+> Training Duration (Line, sec)
+> C2C Interlat MoT-h LSC MoT
+
+Figure 25: Training scalability of GPT-2 with an increasing number of models in the translation pool. validation performance and latency. As shown in Fig. 23, F1 generally decreases and latency increases as the channel ratio becomes larger. This indicates that using more channels does not necessarily lead to better translation; rather, it may increase the likelihood of including propagation error or correction-deficit error, while also increasing the translation cost. Although a low channel ratio is advantageous in terms of both accuracy and latency, using too small a ratio can limit the available translation channels and make performance unstable depending on the model and task. Therefore, we use ChannelRatio = 0 .3 as the default setting, since it maintains high F1 stably across multiple models while keeping the latency increase small. 
+
+Number of Full Attention Layers at Bottom. Top-S Source-Guided Sparse Attention reduces the replay cost, but small perturbations in the lowest target layers can substantially disrupt the subsequent representation mapping. Therefore, it is necessary to keep full attention in some bottom layers. To verify this, we vary the number of full attention layers at the bottom and measure F1 in three settings with target models of 12, 24, and 36 layers: ( gpt2 →gpt2 , gpt2 →gpt2-medium ,and gpt2 →gpt2-large ). As shown in Fig. 24, even as the target model becomes deeper, most of the performance gain occurs when full attention is applied to only a small number of bottom layers, and converting additional bottom layers to full attention provides limited benefit. This is consistent with prior analysis showing that representation-mapping collapse caused by perturbations is most pronounced in the lowest layers [ 13 ]. Therefore, in this work, we set the number of bottom full-attention layers to LFull = 2 to balance efficiency and accuracy. This choice minimizes the additional cost of full-attention replay while mitigating the loss of lower-layer mapping caused by sparse replay. 36 0       
+
+> 5
+> 10
+> 15
+> 20
+> 25
+> Peak Memory (Bar, GiB)
+> base medium large xl
+> Source Model Capacity
+> 0
+> 0.1
+> F1 (Line)
+> Native C2C-Project Interlat LSC MoT
+
+(a) F1 and peak inference memory. 0        
+
+> 200
+> 400
+> 600
+> 800
+> 1000
+> 1200
+> Latency (Bar, ms)
+> base medium large xl
+> Source Model Capacity
+> 0
+> 200
+> 400
+> 600
+> Throughput (Line, tok/s)
+> Native C2C-Project Interlat LSC MoT
+
+(b) Inference throughput and latency. 
+
+Figure 26: Scalability of the GPT-2 model family with increasing source-model capacity. 
+
+E.5 Scalability 
+
+This appendix provides additional scalability analyses that complement the main benchmark results. We study two axes of scalability. First, we evaluate training scalability as the number of models participating in the translation pool increases. Second, we evaluate capacity scalability by fixing the target model and increasing the capacity of the source model within the same model family. The purpose of these experiments is not to show that larger source models always improve downstream accuracy, but to examine whether translation quality, peak memory, latency, and throughput remain stable as the translation setting becomes larger or more heterogeneous. 
+
+Number of Training Models. Fig. 25 shows the training scalability results when the number of participating models increases in a translation pool composed of gpt2 -family models. C2C-Project 
+
+and Interlat appear efficient in terms of training duration and peak memory, but their lower cost does not necessarily translate into reliable translation quality, as shown by the main benchmark and capacity-scaling results. This indicates that training efficiency alone is insufficient if the translated cache cannot preserve downstream QA performance. By contrast, LSC shows a rapid increase in training duration as the number of models grows. This behavior is expected because shared-space alignment requires losses over model pairs, leading to quadratic scaling with respect to the number of models in the translation pool. As the pool becomes larger, this pairwise training structure quickly becomes expensive. 
+
+MoT uses multiple translators directly and therefore incurs a higher peak-memory cost as the number of participating models increases. However, this cost should be interpreted together with translation quality. As shown in the capacity-scaling results below, when the source model becomes larger, the translator-related memory overhead becomes relatively small compared with the model-side memory footprint. Moreover, MoT-h provides a memory-oriented alternative when the direct KV-to-KV translation of MoT becomes a bottleneck. Since MoT-h translates intermediate activations and restores KV caches through the target model projections, it reduces the transferred state size and yields a clear peak-memory advantage, although it can introduce a marginal accuracy trade-off. Overall, MoT and MoT-h provide a more practical trade-off between translation quality and scalability than methods that are efficient but fail to preserve downstream performance. 
+
+Model Capacity. We next evaluate capacity scalability by fixing the target model and increasing only the source-model capacity. This is a challenging setting because the target cache space remains fixed while the source representation becomes larger and potentially more mismatched. Empirically, we found this direction to be more difficult than the reverse setting where the source model is fixed and the target model capacity increases. Therefore, this experiment directly tests whether each method can translate increasingly larger source caches into the same target cache space without degrading downstream quality. For the GPT-2 family, we fix the target model to gpt2 and increase the source model from gpt2 to 
+
+gpt2-xl . As shown in Fig. 26, MoT keeps F1 closest to Native even as the source model capacity increases. C2C-Project remains close to Native in peak memory and latency, but its F1 drops substantially, indicating that simple projection is not sufficient for preserving the information needed 37 0       
+
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> Peak Memory (Bar, GiB)
+> 0.5B 1.5B 3B 7B
+> Source Model Capacity
+> 0
+> 0.2
+> 0.4
+> F1 (Line)
+> Native C2C-Project Interlat LSC MoT
+
+(a) Peak memory and F1. 0        
+
+> 500
+> 1000
+> 1500
+> 2000
+> 2500
+> Latency (Bar, ms)
+> 0.5B 1.5B 3B 7B
+> Source Model Capacity
+> 50
+> 100
+> 150
+> 200
+> 250
+> Throughput (Line, tok/s)
+> Native C2C-Project Interlat LSC MoT
+
+(b) Latency and throughput. 
+
+Figure 27: Scalability of the Qwen2.5 model family with increasing source-model capacity. 0      
+
+> 10
+> 20
+> 30
+> 40
+> Peak Memory (Bar, GiB)
+> 1.3B 2.7B 6.7B
+> Source Model Capacity
+> 0
+> 0.025
+> 0.05
+> F1 (Line)
+> Native C2C-Project Interlat LSC MoT
+
+(a) Peak memory and F1. 0       
+
+> 250
+> 500
+> 750
+> 1000
+> 1250
+> Latency (Bar, ms)
+> 1.3B 2.7B 6.7B
+> Source Model Capacity
+> 0
+> 500
+> 1000
+> Throughput (Line, tok/s)
+> Native C2C-Project Interlat LSC MoT
+
+(b) Latency and throughput. 
+
+Figure 28: Scalability of the OPT model family with increasing source-model capacity. by the target model. Interlat and LSC also fail to preserve F1 consistently, and LSC becomes unstable in the largest gpt2-xl setting. In contrast, MoT requires additional peak memory due to the translator module, but its F1 degradation is limited and its latency and throughput remain stable in larger-capacity regimes. Fig. 27 shows the same analysis for the Qwen2.5 model family. The target model is fixed to 
+
+Qwen2.5-0.5B , while the source model increases from Qwen2.5-0.5B to Qwen2.5-7B . Across this range, MoT maintains F1 closest to Native . The F1 of MoT remains stable as source capacity increases, while C2C-Project , Interlat , and especially LSC show much larger degradation. In terms of peak memory, MoT uses additional memory compared with Native , but this overhead remains nearly constant across source capacities. Thus, the relative impact of the translator overhead becomes smaller as the source model grows. Latency and throughput also remain stable, suggesting that the overhead of MoT does not accumulate with source-model capacity. Fig. 28 shows the capacity-scaling behavior for the OPT model family. The target model is fixed to opt-125m , and the source model is increased to opt-1.3b , opt-2.7b , and opt-6.7b . The 
+
+opt-125m source result is excluded from the figure because it behaves as an outlier. Homogeneous-only methods such as KVComm are also excluded from this heterogeneous capacity-scaling com-parison. In this setting, MoT again preserves F1 close to Native across source capacities. While the absolute F1 values of the OPT family are lower than those of Qwen2.5 , MoT remains the most consistent method in terms of quality preservation. LSC collapses across all OPT capacity settings, whereas C2C-Project and Interlat show less severe degradation but are less consistent than MoT .Overall, the capacity-scaling experiments show that MoT remains stable when the source model becomes larger while the target model is fixed. C2C-Project can be memory- and latency-efficient, but often fails to preserve downstream F1. Interlat provides stable system-level metrics but is less reliable in quality preservation. LSC suffers from quality collapse in several large-capacity settings, likely due to the difficulty of maintaining a global shared latent space across increasingly heterogeneous model pairs. By contrast, MoT consistently offers the best F1 preservation, with a mostly constant translator-related memory overhead and stable latency-throughput behavior. These results support the 38 use of MoT in settings where a fixed target model must reuse or communicate with caches produced by larger source models. 
+
+## F Details of Case Studies 
+
+F.1 Multi-Agent Reasoning offload  
+
+> …
+> …
+> …
+> offload
+> offload
+> offload
+> …
+> Turn n
+> Agent 1
+> Turn n+1
+> Agent 2
+> Turn n+2
+> Hub
+> Turn N
+> Hub
+> …
+> (cleared)
+> (cleared)
+> Retain Free
+> Agent 1
+> Hub
+> Agent
+> Agent 2 Agent 1
+> Hub
+> Agent
+> Agent 2
+> Agent 1
+> Hub Agent
+> Agent 2
+> Agent 1
+> Hub Agent
+> Agent 2
+> Turn n
+> Agent 1
+> Turn n+1
+> Agent 2
+> Turn n+2
+> Hub
+> Turn N
+> Hub
+> …
+
+Figure 29: Comparison of Retain and Free cache management strategies in multi-agent reasoning. Multi-Agent Reasoning is an evaluation setting in which multiple agents interact sequentially and progressively construct an answer. Since the input context and previous responses are repeatedly processed at each turn, the way KV caches are maintained and transferred becomes a key factor in memory efficiency as the number of agents increases. Therefore, this experiment compares the scalability of each method in a multi-agent setting in terms of peak memory and F1 score. In this experiment, we use vicgalle/gpt2-open-instruct-v1 as the backbone model, and com-pare LSC , Interlat , and MoT trained under the bfloat16 setting. For evaluation, we use Doc2Dial, which has document-grounded multi-turn QA characteristics. To remove the effect of retrieval on the results, we use the gold grounding excerpt corresponding to each question as the input context. We vary the number of agents over 2, 3, 4, and run the same 13 turns in all settings. 
+
+10-Agent Scale-Up Setting. The 10-agent experiment visualized in Fig. 1 follows the same multi-agent reasoning setup as Section 5. The only differences are that we scale the number of agents to 
+
+10 and perform cache translation among Qwen2.5-3B-Instruct models. All agents sequentially refine the answer using the same passage, question, previous responses, and accumulated dialogue history, while the cache management strategy follows the same Retain and Free comparison protocol described above. This scale-up setting is used to stress-test whether MoT can preserve reasoning quality while keeping the active KV-cache working set nearly invariant as the number of agents increases. 
+
+Cache Strategies. In this experiment, we compare two KV cache management strategies for multi-agent reasoning: Retain and Free . Figure 29 conceptually illustrates how the two strategies retain and offload caches. In Retain , each agent keeps its local KV cache even after completing its turn. Therefore, as the dialogue progresses, each agent’s reasoning history accumulates in that agent’s cache, allowing all participating agents to continuously use their own previous contexts. However, this strategy has the 39 limitation that overall memory usage increases as the number of agents and turns grows, because the resident caches of multiple agents must be maintained simultaneously. In contrast, in Free , after a non-hub agent completes its turn, it offloads the generated cache to the 
+
+Hub Agent and then clears its local cache. The Hub Agent preserves the full dialogue history by accumulating the offloaded translated caches, thereby maintaining the reasoning context required for final response generation. Since non-hub agents do not keep their caches in resident memory after their turns, Free can reduce memory usage compared with Retain . In other words, Free aims to improve the memory efficiency of multi-agent reasoning by concentrating the accumulated context in the Hub Agent while removing the cache-retention cost of non-hub agents. 
+
+Prompt Design. Each agent in Multi-Agent Reasoning generates an answer to the same question based on the given passage. In the initial turn, the Hub Agent directly generates an answer using only the passage and the question. In subsequent follow-up turns, each agent improves the existing answer by referring not only to the passage, but also to the previous agent’s response. The passage and the previous agent’s response are placed in the translated context region, which corresponds to the contextual information that can be transferred through cache translation. Through this process, each agent can progressively refine the answer based on previous reasoning results. 
+
+Text 7. Multi-Agent Reasoning initial prompt 
+
+Dataset. Doc2Dial QA requires the model to answer a user question using the given passage. 
+
+Setting. In the initial turn, the agent generates an answer directly from the passage and the question. 
+
+Context – Translated Cache Region 
+
+> ### Instruction: Use the passage to answer the Question accurately. ### Passage:
+> ⟨Passage ⟩
+
+Prompt – Target-Side Query Region 
+
+> ### Question:
+> ⟨Question ⟩
+> ### Response:
+
+Completion – Target Output Region 
+
+> ⟨Answer ⟩
+
+Text 8. Multi-Agent Reasoning follow-up prompt with sample 
+
+Dataset. Doc2Dial QA requires the model to answer a user question using the given passage. 
+
+Setting. In the follow-up turn, the agent improves the answer by referring to the passage, the question, and the previous agent response. 40 Context – Translated Cache Region 
+
+### Instruction: Using the passage and previous Agent’s response, improve the answer to the Question. ### Passage: 
+
+⟨Passage ⟩
+
+### Previous Agent Response: 
+
+⟨Previous Agent Response ⟩
+
+Prompt – Target-Side Query Region 
+
+### Question: 
+
+⟨Question ⟩
+
+### Response: 
+
+Completion – Target Output Region 
+
+⟨Improved Answer ⟩
+
+Sample. Context – Translated Cache Region 
+
+### Instruction: Using the passage and previous Agent’s response, improve the answer to the Question. ### Passage: If you do not maintain liability insurance for your vehicle, the DMV may suspend your vehicle registration and driver license. To clear the suspension, you must provide proof of insurance or follow the instructions in the DMV notice. ### Previous Agent Response: You need insurance or the DMV can suspend your registration. 
+
+Prompt – Target-Side Query Region 
+
+### Question: What happens if I do not get insurance? ### Response: 
+
+Completion – Target Output Region 
+
+You will need to get insurance, or the DMV may suspend both your registration and license. 
+
+F.2 Long-Context CAG Long-Context Specific Ablation. Fig. 30 shows the F1 trend of MoT according to the Top-
+
+S size used in source-guided sparse attention. Top-S denotes the number of source-side sparse-attention candidates to be referenced during cache reuse, and this analysis is conducted to select the representative MoT configuration used in the subsequent method-level comparison. Overall, Top-S = 128 achieves the highest F1. Although it is lower than Native under the 4K budget, it improves rapidly from 8K onward and reaches F1 comparable to or higher than Native at 16K and 41 4096 8192 16384 24576 
+
+> Budget
+> 0.14
+> 0.16
+> 0.18
+> 0.20
+> 0.22
+> F1
+> Native
+> Top-S=128
+> Top-S=64
+> Top-S=32
+> Top-S=16
+
+Figure 30: Effect of Top-S for source-guided sparse attention across long-context budgets. 0   
+
+> 200
+> 400
+> 600
+> 800
+> 1000
+> TTFT (Bar, ms)
+> Native C2C-Project Interlat MoT
+> 0.100
+> 0.125
+> 0.150
+> 0.175
+> 0.200
+> 0.225
+> F1 (Line)
+
+Figure 31: Average F1 and TTFT for long-context CAG. 24K. This shows that, when a sufficient number of source-side candidates is used, MoT can effectively reuse long-context information from the stored KV cache. By contrast, performance becomes limited as Top-S decreases. Top-S = 64 shows a gradual improvement as the budget increases, but it remains below Top-S = 128 , while Top-S = 32 and Top-S = 16 show lower F1 overall. In particular, Top-S = 16 does not improve as the budget increases and instead tends to degrade, suggesting that an overly small sparse-attention candidate set is insufficient for preserving or reconstructing useful information from long contexts. Therefore, we use Top-S = 128 , which shows the most stable F1, as the representative setting for MoT in this paper. 
+
+Average of Long-Context CAG results. Fig. 31 summarizes the average F1 and average TTFT over all context budgets. In terms of average F1, Native achieves the highest performance with 0.2125, while MoT achieves 0.2047, resulting in a gap of only 0.0078 from Native . This means that 
+
+MoT preserves approximately 96.3% of the F1 of Native , showing that the quality loss in generation is limited even in the CAG setting where the original context is not directly prefilled. In contrast, the average F1 scores of C2C-Project and Interlat are only 0.1102 and 0.1368, respec-tively. MoT achieves approximately 85.8% higher average F1 than C2C-Project and approximately 49.6% higher average F1 than Interlat . This gap suggests that, in the CAG setting, what matters is not merely reusing a cache, but whether the reused cache is preserved in a form that the target model can effectively use during generation. In terms of average TTFT, MoT shows higher latency than the other CAG methods. This is because 
+
+MoT performs both cache transformation and context replay. However, given that the average F1 gap from Native is very small, this overhead can be interpreted not simply as inefficiency, but as the cost of preserving long-context QA quality. Fig. 14 in Section 5 shows that these average results are not dependent on a specific budget, but are also consistent with the trend as the budget increases. In particular, MoT maintains F1 close to Native 
+
+under large context budgets, supporting that the average performance gap in Fig. 31 reflects quality preservation across the overall long-context regime. 
+
+Prompt Design. Text 9. HotpotQA-E sample Dataset. HotpotQA-E is a long-context multi-hop QA benchmark with multiple Wikipedia-style documents. The model must find the required evidence in the long multi-document context and answer a short question. 
+
+42 Context – Translated Cache Region    
+
+> Read the following context and complete the task. Context: Title: The Oberoi Group The Oberoi Group is a hotel company with its head office in Delhi. The company owns and operates luxury hotels and resorts under the Oberoi and Trident brands. . . .
+> Title: Oberoi Family The Oberoi family is an Indian family that is famous for its involvement in hotels through The Oberoi Group. Members of the family have been associated with the development of luxury hospitality in India. . . .
+> Title: Delhi Delhi, officially the National Capital Territory of Delhi, is a city and union territory of India containing New Delhi, the capital of India. . . .
+
+Prompt – Target-Side Query Region 
+
+> Question or task: The Oberoi family is part of a hotel company that has a head office in what city? Answer:
+
+Completion – Target Output Region 
+
+> Delhi
+
+## G License 
+
+We summarize the licenses and terms of use of the datasets, external method implementations, and model checkpoints used in this work. 
+
+Benchmarks and training data. BoolQ is released under Creative Commons Share-Alike 3.0. PubMedQA’s official repository is released under the MIT license, while the underlying PubMed abstracts may be subject to their original publisher terms. MMLU-Redux is released under CC-BY-4.0. SQuAD-v1.1 and HotpotQA are released under CC BY-SA 4.0. Doc2Dial is released under CC-BY-3.0. NewsQA is distributed under the official Microsoft Research download terms, and the underlying CNN articles remain subject to CNN’s rights. OpenWebText uses an Apache-2.0 dataset script, but the underlying web documents may have heterogeneous upstream terms; we use it only for research training and do not redistribute raw examples. 
+
+External methods. For external method baselines, KVComm [ 10 ] and Interlat [ 11 ] are used from their public implementations, both of which are released under Apache-2.0. C2C [ 9], LSC [ 12 ], and the HCache-inspired hidden-state translation variant [ 8] are implemented by us based on the corresponding papers, and no third-party source code is redistributed. 
+
+Models. Qwen2.5 checkpoints used in this work are released under Apache-2.0. GPT-2 family checkpoints are released under the MIT / OpenAI Modified MIT license. DistilGPT2 and Pythia check-points are released under Apache-2.0. DialoGPT-small and vicgalle/gpt2-open-instruct-v1 
+
+are released under MIT. OPT checkpoints are governed by the OPT license agreement, which permits non-commercial research use and restricts commercial or production use. For MathGPT2 , we follow the license of the specific checkpoint used; if FlameF0X/MathGPT2 is used, it is released under MIT. 
+
+Usage. All third-party datasets, model checkpoints, and external method implementations are used only for research, training, and evaluation. We do not redistribute the raw benchmark data, model weights, or third-party source code. 43 H Limitations and Broader Impacts 
+
+This work has several limitations. First, as shown in the shift and correction analysis in Section 4.3, MoT reduces the final last-state shift ∥sL∥ mainly by decreasing the translation shift ∥sT ∥ and the orthogonal shift component βT :L. However, the correction-deficit factor dT :L changes only marginally. This suggests that MoT improves the translated trajectory without directly increasing the target model’s intrinsic correction ability. Developing objectives or architectures that explicitly reduce correction deficit remains an important future direction. Second, our channel mapping relies on depth-ratio alignment as a simple and effective default strategy. As discussed in Appendix C.3, this assumption can become weaker when models differ substantially in instruction tuning, training data distribution, or representation organization. In such cases, relative layer depth may not provide a sufficiently reliable mapping between source and target cache spaces. Future work should therefore investigate adaptive channel mapping methods that account for stronger model mismatch. Third, this work does not fully address cross-tokenization cache translation. When source and target models use different tokenizers, their cache positions may not correspond directly, making token-level cache translation more difficult. Supporting cross-tokenization communication, as explored in related latent communication settings [ 11 ], is an important extension for broader heterogeneous LLM systems. The broader impact of MoT is primarily tied to efficient reuse of internal model states. By reducing redundant prefilling, memory duplication, and repeated cache storage, MoT can lower computational cost and energy consumption in multi-model and long-context LLM workflows, potentially contribut-ing to more resource- efficient and lower-carbon inference. At the same time, making multi-agent and multi-model systems more scalable may accelerate the deployment of highly automated agentic workflows. While this can improve productivity, it also raises questions about oversight, accountabil-ity, and the role of human judgment when increasingly capable agents are used in decision-support settings. These risks are not specific to cache translation, but improved system efficiency can make such deployments easier, and therefore should be considered alongside technical progress. 44
