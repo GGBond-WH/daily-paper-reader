@@ -1,0 +1,233 @@
+{
+  "date": "20260804",
+  "date_label": "",
+  "generated_at": "2026-08-04 21:58:24 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2608.00528v1",
+      "route": "202608/04/2608.00528v1-s4r-selective-sampling-subspaces-and-sparse-reconstruction-for-compressed-long-context-kv-caching",
+      "title": "S$^4$R: Selective Sampling, Subspaces, and Sparse Reconstruction for Compressed Long-Context KV Caching",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "低秩子空间与稀疏重建压缩KV缓存",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.00902v1",
+      "route": "202608/04/2608.00902v1-practical-online-kv-cache-compaction-for-llm-agents-an-empirical-study",
+      "title": "Practical Online KV Cache Compaction for LLM Agents: An Empirical Study",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "面向LLM代理的在线KV缓存压缩方法，对比token淘汰与注意力匹配",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01126v1",
+      "route": "202608/04/2608.01126v1-spatial-prefix-caching-for-wireless-edge-llm-inference-a-stochastic-geometry-and-queueing-framework",
+      "title": "Spatial Prefix Caching for Wireless Edge LLM Inference: A Stochastic-Geometry and Queueing Framework",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "针对边缘LLM推理的前缀KV缓存，降低首token延迟",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01247v1",
+      "route": "202608/04/2608.01247v1-restorekv-recovering-full-cache-behavior-under-aggressive-query-agnostic-kv-cache-eviction",
+      "title": "RestoreKV: Recovering Full-Cache Behavior Under Aggressive Query-Agnostic KV Cache Eviction",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "通过学习恢复机制在查询无关的KV驱逐下重建全缓存行为",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01655v1",
+      "route": "202608/04/2608.01655v1-prefixplace-provable-prefix-key-value-placement-for-large-language-model-serving-under-heterogeneous-compute-and-transfer-costs",
+      "title": "PrefixPlace: Provable Prefix Key-Value Placement for Large Language Model Serving under Heterogeneous Compute and Transfer Costs",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "异构计算与传输成本下的前缀KV放置优化",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01657v1",
+      "route": "202608/04/2608.01657v1-preserving-admission-responsibility-in-multi-tenant-large-language-model-prefix-caches",
+      "title": "Preserving Admission Responsibility in Multi-Tenant Large Language Model Prefix Caches",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "面向多租户LLM服务的前缀缓存准入责任管理",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.00311v1",
+      "route": "202608/04/2608.00311v1-sedem-selective-decompression-of-hidden-state-memories-for-long-context-question-answering",
+      "title": "SeDeM: Selective Decompression of Hidden-State Memories for Long-Context Question Answering",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "通过隐藏状态记忆的选择性解压处理KV缓存增长的上下文压缩方法",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01526v1",
+      "route": "202608/04/2608.01526v1-an-internet-for-the-kv-cache-rethinking-classical-infrastructure-boundaries-in-the-llm-inference-age",
+      "title": "An Internet for the KV Cache: Rethinking Classical Infrastructure Boundaries in the LLM Inference Age",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "面向跨上下文KV缓存存储与复用的LLM推理基础设施",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01631v1",
+      "route": "202608/04/2608.01631v1-does-accuracy-equal-evidence-reasoning-faithfulness-under-kv-cache-compression",
+      "title": "Does Accuracy Equal Evidence? Reasoning Faithfulness under KV Cache Compression",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "在多模型上分析KV缓存压缩对推理忠实性的影响",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01662v1",
+      "route": "202608/04/2608.01662v1-longcat-sparse-attention-taming-the-lightning-via-streaming-aware-hierarchical-cross-layer-indexing",
+      "title": "LongCat Sparse Attention: Taming the Lightning via Streaming-aware Hierarchical Cross-Layer Indexing",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "面向稀疏注意力KV索引的软硬件协同设计，优化推理访存",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.02032v1",
+      "route": "202608/04/2608.02032v1-dart-decoded-attention-over-recurrent-states-for-efficient-long-context-sequence-modeling",
+      "title": "DART: Decoded Attention over Recurrent States for Efficient Long-Context Sequence Modeling",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "将状态空间模型状态解释为压缩的键值缓存",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.02134v1",
+      "route": "202608/04/2608.02134v1-messages-not-tokens-grounded-coresets-for-faithful-vlm-compression",
+      "title": "Messages, Not Tokens: Grounded Coresets for Faithful VLM Compression",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "压缩视觉token以减少提示KV缓存",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2608.01651v1",
+      "route": "202608/04/2608.01651v1-bole-efficient-tree-speculation-for-hybrid-attention-language-models",
+      "title": "Bole: Efficient Tree Speculation for Hybrid-Attention Language Models",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "为混合注意力模型设计高效树形投机解码，降低自回归验证中的KV临时内存开销",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    },
+    {
+      "paper_id": "2607.25380v1",
+      "route": "202608/04/2607.25380v1-memory-for-large-language-models",
+      "title": "Memory for Large Language Models",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "综述LLM中的记忆机制，将注意力KV缓存纳入瞬态记忆范畴",
+      "first_seen_at": "2026-08-04 21:58:24 UTC",
+      "updated_at": "2026-08-04 21:58:24 UTC"
+    }
+  ]
+}
