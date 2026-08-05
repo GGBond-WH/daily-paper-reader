@@ -1,0 +1,169 @@
+{
+  "date": "20260805",
+  "date_label": "",
+  "generated_at": "2026-08-05 22:06:01 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2608.02691v1",
+      "route": "202608/05/2608.02691v1-output-aware-rotation-for-int2-kv-cache-quantization",
+      "title": "Output-Aware Rotation for INT2 KV-Cache Quantization",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "通过输出感知旋转实现INT2 KV缓存量化，降低长上下文LLM推理的内存与带宽开销",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.02901v1",
+      "route": "202608/05/2608.02901v1-anchorkv-anchor-residual-kv-cache-compression",
+      "title": "AnchorKV: Anchor-Residual KV Cache Compression",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "提出AnchorKV，以锚点-残差方式压缩KV缓存，无需丢弃token，实现20倍压缩。",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.03228v1",
+      "route": "202608/05/2608.03228v1-saki-score-aware-low-rank-key-indexing-for-long-context-kv-retrieval",
+      "title": "SAKI: Score-Aware Low-Rank Key Indexing for Long-Context KV Retrieval",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "无训练的低秩KV缓存索引，直接保留注意力分数，用于长上下文检索并减少KV缓存内存",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.03229v1",
+      "route": "202608/05/2608.03229v1-unified-lookup-table-inference-with-signed-digit-kv-caches-for-ternary-llms",
+      "title": "Unified Lookup-Table Inference with Signed-Digit K/V Caches for Ternary LLMs",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "将KV状态组织为缩放多平面带符号数字以统一查找表推理，压缩缓存表示",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.03276v1",
+      "route": "202608/05/2608.03276v1-taskpress-query-agnostic-kv-cache-compression-via-task-guided-pruning",
+      "title": "TaskPress: Query-Agnostic KV Cache Compression via Task-Guided Pruning",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "提出任务引导、查询无关的KV缓存压缩方法（剪枝），针对长上下文推理。",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.03555v1",
+      "route": "202608/05/2608.03555v1-heterogeneous-llm-serving-with-general-purpose-processing-near-memory-for-retrieval-based-sparse-attention",
+      "title": "Heterogeneous LLM Serving with General-Purpose Processing-Near-Memory for Retrieval-Based Sparse Attention",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "将KV缓存转移到近内存节点并在其上执行所有读取KV的操作，实现解码阶段内存高效管理",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.03893v1",
+      "route": "202608/05/2608.03893v1-cross-model-kv-cache-transfer-in-llm-families-a-closed-form-linear-mapping-for-prefill-reuse",
+      "title": "Cross-Model KV Cache Transfer in LLM Families: A Closed-Form Linear Mapping for Prefill Reuse",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "闭式线性映射在模型尺寸间复用KV缓存以跳过预填充",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2607.29575v1",
+      "route": "202608/05/2607.29575v1-slim-saturation-aware-lightweight-performance-modeling-for-llm-serving",
+      "title": "SLIM: Saturation-Aware Lightweight Performance Modeling for LLM Serving",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "硬件剖析揭示解码阶段注意力核饱和是LLM服务吞吐平台期的根源，可用于KV缓存感知的服务优化",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.02560v1",
+      "route": "202608/05/2608.02560v1-structured-memory-for-edge-language-models-persistent-context-and-corpus-retrieval-via-o1-ssm-state-injection",
+      "title": "Structured Memory for Edge Language Models: Persistent Context and Corpus Retrieval via O(1) SSM State Injection",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "针对生成时KV缓存增长问题，改用SSM隐状态注入消除预填充与缓存开销",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    },
+    {
+      "paper_id": "2608.02870v1",
+      "route": "202608/05/2608.02870v1-maglev-sliding-recurrent-memory",
+      "title": "Maglev: Sliding Recurrent Memory",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "使用滑动窗口注意力和循环K/V注入保持固定大小记忆，减少自回归生成中KV缓存的内存占用。",
+      "first_seen_at": "2026-08-05 22:06:01 UTC",
+      "updated_at": "2026-08-05 22:06:01 UTC"
+    }
+  ]
+}

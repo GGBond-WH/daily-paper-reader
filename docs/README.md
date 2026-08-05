@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-05</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 14 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-04 21:58:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-05 22:06:01 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日14篇KV缓存压缩研究精读6篇，其中两篇获9.0高分，聚焦长上下文缓存与LLM智能体的在线压缩实践。最值得关注S$^4$R的采样-子空间-稀疏重构方案，以及智能体KV缓存压缩的实证结论，两篇均达9分水平。建议普通读者优先精读这两篇高影响力工作，再结合SeDeM等8分速读论文拓展视野。</p>
+<p>今日聚焦KV缓存压缩与量化，另涉LLM性能建模和边缘内存优化。最值得精读的两篇高分为INT2量化结合输出感知旋转，以及锚残差KV缓存压缩，均直指推理显存瓶颈。建议优先复现这两项方法，速读内容作为性能调优与边缘部署的辅助参考。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="S$^4$R: Selective Sampling, Subspaces, and Sparse Reconstruction for Compressed Long-Context KV Caching">S$^4$R: Selective Sampling, Subspaces, and Sparse Reconstruction for Compressed Long-Context KV Caching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Practical Online KV Cache Compaction for LLM Agents: An Empirical Study">Practical Online KV Cache Compaction for LLM Agents: An Empirical Study</span></li><li><span class="dpr-home-dashboard-paper-title" title="Spatial Prefix Caching for Wireless Edge LLM Inference: A Stochastic-Geometry and Queueing Framework">Spatial Prefix Caching for Wireless Edge LLM Inference: A Stochastic-Geometry and Queueing Framework</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Output-Aware Rotation for INT2 KV-Cache Quantization">Output-Aware Rotation for INT2 KV-Cache Quantization</span></li><li><span class="dpr-home-dashboard-paper-title" title="AnchorKV: Anchor-Residual KV Cache Compression">AnchorKV: Anchor-Residual KV Cache Compression</span></li><li><span class="dpr-home-dashboard-paper-title" title="SAKI: Score-Aware Low-Rank Key Indexing for Long-Context KV Retrieval">SAKI: Score-Aware Low-Rank Key Indexing for Long-Context KV Retrieval</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>7</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SeDeM: Selective Decompression of Hidden-State Memories for Long-Context Question Answering">SeDeM: Selective Decompression of Hidden-State Memories for Long-Context Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="An Internet for the KV Cache: Rethinking Classical Infrastructure Boundaries in the LLM Inference Age">An Internet for the KV Cache: Rethinking Classical Infrastructure Boundaries in the LLM Inference Age</span></li><li><span class="dpr-home-dashboard-paper-title" title="Does Accuracy Equal Evidence? Reasoning Faithfulness under KV Cache Compression">Does Accuracy Equal Evidence? Reasoning Faithfulness under KV Cache Compression</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SLIM: Saturation-Aware Lightweight Performance Modeling for LLM Serving">SLIM: Saturation-Aware Lightweight Performance Modeling for LLM Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Structured Memory for Edge Language Models: Persistent Context and Corpus Retrieval via O(1) SSM State Injection">Structured Memory for Edge Language Models: Persistent Context and Corpus Retrieval via O(1) SSM State Injection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Maglev: Sliding Recurrent Memory">Maglev: Sliding Recurrent Memory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>8</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>3</strong></span></div>
 </section>
 </div>
 

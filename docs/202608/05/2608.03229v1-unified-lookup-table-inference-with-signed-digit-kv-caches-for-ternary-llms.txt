@@ -1,0 +1,1389 @@
+Title: Unified Lookup-Table Inference with Signed-Digit K/V Caches for Ternary LLMs
+
+URL Source: https://arxiv.org/pdf/2608.03229v1
+
+Published Time: Wed, 05 Aug 2026 00:37:39 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# UNIFIED LOOKUP -T ABLE INFERENCE WITH SIGNED -D IGIT K/V CACHES FOR TERNARY LLM S
+
+Ziang DUAN †‡ 1,2, Jiajun WU †3,4, Zetian CHEN 2, Hao SONG 2, Yanwen DENG 2, Zixuan SHEN 1
+
+Nuobei XIE 2, Simo WU 2, Bolun WANG 2, Peng ZHOU 2, and Chao WANG 11School of Optical and Electronic Information, Huazhong University of Science and Technology, China 
+
+> 2
+
+LuxiTech Co. Ltd., Shenzhen, China 
+
+> 3
+
+AI Chip Center for Emerging Smart Systems, Hong Kong SAR 
+
+> 4
+
+Hong Kong University of Science and Technology, Hong Kong SAR 
+
+duanzang@hust.edu.cn, jiajunwu@ust.hk, z773366@outlook.com, synapse787fx@gmail.com yan@luxitech.cn, d202281028@hust.edu.cn, roger@luxitech.cn, simo@luxitech.cn wangbolun@luxitech.cn, zp@luxitech.cn, chao wang me@hust.edu.cn 
+
+August 5, 2026 
+
+ABSTRACT 
+
+Ternary LLMs make their weight-dominated projections compact and efficient, but attention remains a mismatch: its K/V cache is created online and is typically processed by a separate higher-precision engine. Compressing this cache alone does not resolve the mismatch. To execute attention with the same lookup-table machinery as ternary projections, values accumulated in one reduction must retain a compatible representation and scale. This requirement also differs for keys and values during causal decoding, because newly generated values may belong to an unfinished cache block. This work develops a unified lookup-table inference approach for ternary LLMs. It stores runtime K/V states as scaled multi-plane signed digits organized around the reduction structure of attention. The resulting digit planes are consumed directly by activation-derived tables, avoiding dense K/V materialization between cache storage and attention computation. The design combines online K/V formation, bounded handling of incomplete value blocks, and a shared multi-stream datapath for Linear projections and attention. A constraint-guided search selects the representation and execution policy for a target quality–efficiency trade-off. Experiments on native and post-training ternary models validate the approach across cache capacity, model quality, and hardware efficiency. 
+
+1 Introduction 
+
+Large language models (LLMs) support interactive applications such as chatbots and code generation [1–4], but au-toregressive inference remains costly because of repeated weight access and the growing K/V cache [5]. Model compression is therefore crucial [6]. Ternary LLMs [7–10] constrain Linear weights to {− 1, 0, +1 }, reducing weight storage while enabling faster computation than higher-precision models [11]. Grouped lookup-table (LUT) execution [12–19] is a natural match for ternary Linear projections. It replaces a group of weight–activation products with table construction, lookup, and reduction: a fixed ternary weight group selects one activation-derived sum. The weight addresses can be prepared offline and reused across tokens, while each runtime table serves multiple output channels. This execution model has consequently been realized across the stack, from LUT-table generators and processing elements [12, 13, 17], to optimized CPU kernels [14], and full LLM accelerators [15, 16, 18, 19]. 
+
+> †
+
+Ziang DUAN and Jiajun WU contributed equally to this work. 
+
+> ‡
+
+This work was conducted during an internship at LuxiTech Co. Ltd. arXiv:2608.03229v1 [cs.AR] 4 Aug 2026 A PREPRINT - A UGUST 5, 2026 Linear Layers                              
+
+> Self-Attention
+> LUT Engine
+> MAC Engine Non-uni fi ed compute fabrics K/V grows with contexts length
+> +1 0-1
+> -1 +1 -1
+> 0+1 0
+> Static ternary W,R = 1
+> Reuse ternary LUT-based arithmetic
+> D[0]
+> +1 0-1
+> -1 +1 -1
+> 0+1 0
+> D[0]
+> +1 0-1
+> -1 +1 -1
+> 0+1 0
+> D[1]
+> +1 0-1
+> -1 +1 -1
+> 0+1 0
+> D[2]
+> ...
+> Runtime K/V ,R = 1, 2, 3, ...
+> Uni fi ed signed-digit W/K/V
+> (a) (b)
+> LHS RHS
+> Online K/V Encoder
+> Raw K/V
+> LUT Build Lookup Sum
+> Shift Add
+> << +
+> ...
+> Shared datapath
+> Packed Executable K/V
+> Uni fi ed GEMM + Post-processing data fl ow
+> Shared LUT-based Compute
+> INT8 or BF16
+> RSD
+> (c)
+
+Figure 1: Signed-digit K/V representation and unified execution model. However, existing ternary LLM accelerators commonly apply LUT execution only to static Linear weights, while re-taining separate integer or floating-point datapaths for query–key multiplication and probability–value accumulation (QK ⊤ and P V ) in self-attention [16–18, 20], as illustrated in Figure 1(a). Some designs leave the K/V cache un-quantized and execute attention on floating-point K/V [16, 18]. Others reduce K/V-cache capacity and bandwidth with low-bit codes, specialized scaling, outlier handling, or residual windows, but materialize intermediate floating-point K/V values for attention computation [21–26]. In both cases, attention cannot directly use the packed ternary-address format consumed by the LUT fabric, requiring a separate compute path. Some algorithmic methods retain ternary K/V representations during attention. For example, KVTQ uses ternary residual channels to replace multiplications with additions [27]. Yet ternary digits alone do not make attention directly executable on a Linear LUT engine. Values contributing to one LUT reduction must share a scale; otherwise, each partial result requires floating-point scaling and accumulation. This condition affects K and V differently. In QK ⊤,one K token produces one completed score, allowing a token-local scale. In P V , each output value combines V data from many tokens, so token-local V scales occur within the same sum. V must instead be organized by value channel over a token interval, whose newest suffix remains incomplete during causal decoding. These representation, layout, and finalization constraints make ternary attention nontrivial to migrate onto a Linear LUT engine. To meet these requirements, we propose a quantization–architecture co-design that extends directly executable LUT computation from static ternary weights to dynamic K/V attention. Figure 1(b) illustrates the key representation. Our system encodes each K/V block with one shared scale and R restricted signed-digit (RSD) planes at template-selected power-of-two positions. Each plane contains ternary digits stored as packed LUT addresses; plane weighting and scale recovery occur after lookup and reduction. Static ternary weights are the R = 1 case, whereas runtime K/V uses additional planes when needed without reconstructing dense values before attention. This common representation lets Linear layers, QK ⊤, and P V use the same LUT interface. During autoregressive decoding, K blocks are finalized when their tokens are produced, while an incomplete V interval remains in a bounded tail until it forms a scale-consistent packed block. Figure 1(c) shows how the proposed system turns the representation and layout requirements into one execution path. Its cache-resident RSD format encodes dynamic K/V as packed ternary addresses with a shared block scale, while the operator-aligned K/V layout preserves causal cache updates. An online encoder produces these addresses at runtime; Linear layers, QK ⊤, and P V then share table construction, lookup, and post-processing without reconstructing final-2A PREPRINT - A UGUST 5, 2026 ized dense K/V. Concurrent streams co-schedule blocks with the same plane count to maintain compatible execution latency. The A8 configuration constructs LUTs from dynamically quantized INT8 activation-side operands, whereas the A16 configuration retains BF16 operands; both use the same RSD K/V representation. The representation, block geometry, plane count, template gaps, and stream mapping jointly determine quality, capac-ity, and execution time. We therefore use a hardware-aware DSE to select legal representation and mapping policies under a quality constraint. Across native and QAT-converted ternary models, the selected policies reduce packed K/V payload to as little as 21% of BF16. Relative to throughput-matched heterogeneous baselines, the A8 configuration im-proves attention throughput per area and per power by 2.52 × and 2.30 × on Falcon-E-3B, while the A16 configuration improves them by 4.78 × and 8.61 × on OPT-350M, respectively. 
+
+2 Background and Related Work 
+
+2.1 Ternary Models and LUT Compute 
+
+BitNet b1.58 2B4T and Spectra use ternary weights in {− 1, 0, +1 } for the dominant linear layers [9, 10]. Such models can be trained from scratch with quantization-aware training (QAT), and QAT can also convert pretrained full-precision LLMs into ternary variants [28–30]. The low precision of ternary weights makes LUT computation a natural alternative to fixed-point MAC: a ternary group indexes a finite set of activation sums. Compared with fixed-point MAC arrays, LUT execution replaces per-product multiplication with table construction, lookup, and reduction, and its energy advantage grows as operand precision decreases [12]. T-MAC realizes grouped lookup on CPUs, LUT Tensor Core maps the principle to a custom tensor-core organization, and recent generators explore specialized LUT datapaths [13–15]. T-MAN applies table lookup to low-bit operations that are inefficient on mobile NPUs [19]. At the system level, ternary accelerators apply LUT-based computation to linear projections and execute attention through separate integer- or BF16-based datapaths. TeLLMe combines table-lookup ternary linear with dedicated attention logic [16]. TENET couples sparse ternary LUT cores with high-precision cores [17], while VitaLLM sched-ules ternary projections and INT8 attention across distinct arithmetic resources [20]. LUT-LLM uses two-dimensional lookup for linear and a separate attention dataflow [18]. These systems retain distinct arithmetic paths for ternary linear layers and attention. The proposed system provides a common LUT substrate for both operations. 
+
+2.2 K/V Cache Quantization 
+
+K/V cache size and bandwidth scale linearly with sequence length. KIVI leverages asymmetric statistics via per-channel K, per-token V, and a full-precision residual window [21]. KVQuant, SKVQ, and QAQ introduce outlier handling, smoothing, sliding windows, and adaptive precision [22, 23, 31]. CommVQ learns additive codebooks compatible with rotary embeddings, while AQUA-KV and Oaken fuse offline analysis with online cache encoding [24, 32, 33]. KVTQ encodes K/V as multiple ternary residual digits [27]. Specifically, KVTuner assigns a precision level to each layer, RateQuant allocates bits across heads using calibrated curves of rate versus distortion, InnerQ incorporates hardware cost into K/V cache quantization, and Titanus jointly models dependent cache tiers during online pruning and quantization [25, 26, 34, 35]. Several prior methods also defer V quantization until enough tokens have accumulated to form a complete block [21,36]. The proposed system encodes the resulting K/V blocks as packed RSD planes with a shared scale, making dynamic K/V directly executable on the LUT substrate used for static ternary weights. 
+
+2.3 Hardware-Aware Quantization 
+
+Hardware-aware LLM accelerators exploit low-bit or adaptable formats, bit-serial execution, and LUT arithmetic [15, 16, 20, 37–43], as summarized in Table 1. Mixed precision further exploits nonuniform quantization sensitivity to balance accuracy and hardware cost [40, 42, 44–47]. The proposed system extends this principle by jointly selecting signed-digit K/V policies and legal mappings for a unified LUT fabric. 
+
+3 Arithmetic and Quantization 
+
+This section first formulates linear and attention products under a common GEMM interface, and then extends ternary LUT arithmetic to runtime K/V through a block-wise restricted signed-digit representation. 3A PREPRINT - A UGUST 5, 2026 Table 1: Qualitative Comparison with Representative Related Works 
+
+Work Compute Applied Mixed HW-aware fabric format precision DSE 
+
+Auto-NBA [39] MAC INT ✓ ✓
+
+ANT [40] MAC INT/FLINT/PoT ✓ ✗
+
+OliVe [41] MAC INT/FLINT/Abfloat ✓ ✗
+
+MSD [42] Bit-serial INT/SD ✓ ✓
+
+BitMoD [43] Bit-serial INT/FP ✗ ✗
+
+VitaLLM [20] Fused MAC INT/ternary ✓ ✗
+
+TeLLMe [16] LUT INT/ternary ✗ ✗
+
+LUT Tensor Core [15] LUT INT/FP ✓ ✓
+
+This Work LUT BF16/INT/SD ✓ ✓
+
+3.1 LLM Inference and Ternary GEMM 
+
+For layer ℓ, the input activations are projected into queries, keys, and values: 
+
+[Qℓ Kℓ Vℓ] = Xℓ
+
+> in
+
+[WℓQ WℓK WℓV ],
+
+Xℓ 
+
+> out
+
+= MLP( Aℓ). (1) For head h, let M and N denote the query and K/V sequence lengths, respectively, where M = N during prefill and 
+
+M = 1 during decode. With dk = d/n h, attention is computed as 
+
+Pℓ,h = softmax 
+
+ Qℓ,h (Kℓ,h )⊤
+
+√dk
+
+
+
+,
+
+Aℓ,h = Pℓ,h Vℓ,h .
+
+(2) where Qℓ,h ∈ RM ×dk , Kℓ,h , Vℓ,h ∈ RN ×dk , Pℓ,h ∈ RM ×N , and Aℓ,h ∈ RM ×dk .We express all matrix products using the operator-local convention 
+
+Y[M, N ] = X[M, K ]Z[K, N ], (3) where X and Z are the left-hand-side (LHS) and right-hand-side (RHS) operands. Activations, queries, and attention probabilities use the LHS path, while static weights, cached keys, and cached values use the RHS path, enabling linear, 
+
+QK ⊤, and PV to share one LUT interface. For one output entry, LUT-based ternary GEMM partitions the RHS operand into groups of G ternary values and precomputes all 3G possible signed sums of the corresponding LHS activations [13, 16]. Let AG = {− 1, 0, +1 }G. A ternary group a ∈ A G is mapped to the LUT address 
+
+idx G(a) = 
+
+> G−1
+
+X
+
+> j=0
+
+(aj + 1)3 G−1−j . (4) For G = 3 , the 33 = 27 ternary states fit in a five-bit binary address. For example, a = ( −1, 0, +1) maps to index 5,represented as 00101 .For LUT group g, the precompute unit constructs 
+
+Tg [idx G(a)] = 
+
+> G−1
+
+X
+
+> j=0
+
+X(g×G+j)aj . (5) For ternary RHS block b, let wg denote its g-th ternary group and sb its block scale. The output is obtained by reducing the selected LUT entries over groups and blocks: 
+
+bY = X
+
+> b
+
+sb
+
+X
+
+> g
+
+Tg [idx G(wg )] . (6) Equation (6) defines the ternary linear LUT interface, which we next extend to runtime K/V without dense reconstruc-tion. 4A PREPRINT - A UGUST 5, 2026 0 2 4 6 80 14                                
+
+> 29
+> Layer
+> K cache
+> 02468014
+> 29
+> V cache
+> 02468
+> CSD digits
+> 015
+> 31
+> Layer  02468
+> CSD digits
+> 015
+> 31
+> 0
+> 0.5
+> BF16 Ternary SD Quant
+> 30
+> 50
+> 70
+> BitNet
+> Falcon-E
+> 64.9
+> 58.1
+> 34.7 35.7
+> 64.4
+> 57.8
+> -30.2pp +29.7pp
+> -22.4pp +22.1pp
+> −1 01
+> x/max| x|
+> 0
+> 1
+> 2
+> 3
+> Freq.
+> Δ = 1
+> Δ = 2
+> Δ = 3
+> Δ = 4
+> L29 V block: best Δ = 1
+> Δ1 Δ2 Δ3 Δ4
+> MSE
+> −1 01
+> x/max| x|
+> Δ = 1
+> Δ = 2
+> Δ = 3
+> Δ = 4
+> L15 K block: best Δ = 2
+> Δ1 Δ2 Δ3 Δ4
+> MSE
+> BitNet Falcon-E-3B
+
+(a) (b) 
+
+(c) 
+
+Figure 2: Signed-digit K/V quantization analysis. (a) Nonzero-digit distribution of canonical-CSD INT8 K/V in BitNet and Falcon-E-3B. (b) Multiple-choice accuracy with BF16, ternary, and three-plane K/V. (c) Normalized block distributions, two-plane codebooks, and corresponding quantization MSEs for representative K and V blocks. 
+
+3.2 Block Signed-Digit Quantization 
+
+Figure 2(a) shows that canonical-CSD INT8 K/V values in BitNet and Falcon-E-3B typically contain only two or three nonzero digits, motivating a compact multi-plane representation [42]. As shown in Figure 2(b), a single ternary plane causes substantial accuracy degradation, whereas three planes largely recover BF16 accuracy. The proposed system therefore represents each K/V block b with Rb RSD planes. Static ternary weights are the special case R = 1 and retain the LUT interface in Eqn. (6). For a BF16 K/V block Z(b), let pb = {pb[0] , . . . , p b[Rb − 1] } denote the integer bit positions assigned to its Rb signed-digit planes. Plane r therefore contributes dr 2pb[r], with larger positions carrying greater significance. The position set determines the normalized codebook, while a shared scale sets the block magnitude: 
+
+qb =
+
+> Rb−1
+
+X
+
+> r=0
+
+2pb[r], sb = max i |Z(b) 
+
+> i
+
+|
+
+qb
+
+. (7) The corresponding normalized codebook is 
+
+Cb =
+
+(Rb−1X
+
+> r=0
+
+dr 2pb[r] dr ∈ {− 1, 0, +1 }
+
+)
+
+. (8) Each normalized K/V value is mapped to its nearest codeword. Midpoint ties select the even-ranked codeword, while duplicate digit tuples use the lexicographically first tuple. For an LHS slice Xg and the r-th RSD digit group dg,r , substituting the signed-digit representation into Eqn. (5) gives 
+
+bY = X
+
+> b
+
+X
+
+> g
+
+X⊤ 
+
+> g
+
+sbRb−1X
+
+> r=0
+
+2pb[r]dg,r 
+
+!
+
+= X
+
+> b
+
+sbRb−1X
+
+> r=0
+
+2pb[r] X
+
+> g
+
+Tg [idx G(dg,r )] .
+
+(9) Each RSD plane reuses the ternary LUT addressing rule, and the plane results are shifted and accumulated after lookup. For Rb = 1 and dg, 0 = wg , Eqn. (9) reduces to Eqn. (6), unifying ternary weights and RSD K/V under one executable LUT representation. 5A PREPRINT - A UGUST 5, 2026 A common exponent shift can be absorbed into the block scale. For p′
+
+> b
+
+[r] = pb[r] + κ,
+
+q′ 
+
+> b
+
+= 2 κqb, s′ 
+
+> b
+
+= 2 −κsb, (10) and 
+
+s′
+
+> b
+
+X
+
+> r
+
+dr 2p′ 
+
+> b[r]
+
+= sb
+
+X
+
+> r
+
+dr 2pb[r]. (11) Thus, a common shift preserves both reconstruction and packed encoding. The proposed system stores only the relative plane configuration 
+
+τb = ( Rb, ∆b), (12) where Rb is the plane count and ∆b records the exponent gaps. The first plane is fixed at zero: 
+
+pb[0] = 0 , pb[r] = 
+
+> r−1
+
+X
+
+> j=0
+
+∆b[j]. (13) At fixed Rb = 2 , Figure 2(c) shows that ∆ = 1 minimizes the MSE for the representative V block, while ∆ = 2 
+
+is preferred for the K block. Adjusting the exponent gaps adapts the reconstruction levels to each block distribution, improving fidelity without increasing the plane count or execution cycles. With G = 3 packing, the digit-plane storage is 
+
+Bdigit = 5 X
+
+> b
+
+Rb
+
+l nb
+
+3
+
+m
+
+bits , (14) where nb is the number of valid values in block b; scales and template identifiers are stored separately. Hence, Rb
+
+determines K/V cache footprint and plane-loop cost, while ∆b adjusts fidelity at fixed Rb. This separation motivates the mixed-(R, ∆) optimization in Section 5. 
+
+3.3 Executable K/V Layout and Causal Finalization 
+
+The factorization in Eqn. (9) imposes an execution constraint. For one RHS output column and reduction block b,direct LUT execution requires 
+
+X(b)bz(b) = sbRb−1X
+
+> r=0
+
+2pb[r]X(b)d(b) 
+
+> r
+
+, (15) where d(b) 
+
+> r
+
+is the r-th ternary RHS plane. All entries in b must share sb, allowing rescaling after LUT lookup and plane reduction; otherwise, per-subblock rescaling would break the unified post-lookup schedule. The two attention products require different RHS layouts: 
+
+Q[M, d k]K⊤[dk, N ] → P[M, N ],
+
+P[M, N ]V[N, d k] → A[M, d k]. (16) For QK ⊤, RHS columns are cached tokens and reduction traverses dk, so K blocks are token-local and finalized when each key is produced. For PV , RHS columns are value channels and reduction traverses the causal token dimension, so V blocks span token intervals. Before deployment, the DSE statically scans legal templates for each operator/layer/head/channel-block class and fixes τb = ( Rb, ∆b). All runtime instances reuse this template. Appending a value to an unfinished V interval may change its maximum and scale, invalidating earlier RSD codes. The proposed system therefore keeps one bounded V-tail of at most BV tokens, containing authoritative input-precision values and two packed RSD banks. After update t, it recomputes sb,t over the ℓt valid entries and re-encodes the complete prefix with the fixed τb into the inactive bank. Once encoding completes, it atomically commits the bank selector with (ℓt, s b,t ) and permits PV only after both softmax and the commit complete. Consequently, PV never observes an incomplete prefix or codes generated under different scales. Tail encoding overlaps with QK ⊤ and softmax. The latency model charges ℓtdk encoding operations and the cor-responding tail-buffer accesses before applying this overlap. The work is bounded by BV dk values per head and is independent of context length. When ℓt = BV , the active bank is committed directly as a finalized packed block and the tail is reused. Thus, per request and layer, dense V state is bounded by one open interval, and no finalized block is rewritten. 6A PREPRINT - A UGUST 5, 2026 Cluster # N Cluster # 2 
+
+Model Ternary Weights 
+
+Finalized Signed Digit K/V Blocks 
+
+Off-Chip Memory 
+
+Live Activations 
+
+Metadata 
+
+Open V-Block Region 
+
+Global Buffer 
+
+Cluster # 1 
+
+Metadata 
+
+Host Manager  
+
+> LHS (Act,Q,P) RHS (W,K,V)
+> Data Dispatch Fabric
+
+Scratchpad 
+
+> ...
+
+GAT 
+
+PSA 
+
+RSU Meta 
+
+> xL
+> BA
+
+PCU 
+
+> Core Controller
+
+Core # 1 
+
+> Streams Output
+> PSU
+> Core # 2
+> Core # N
+
+... 
+
+> Output
+
+NFU 
+
+DQEU 
+
+MISC       
+
+> 2-3 922 115
+
+... 
+
+LHS (Act,Q,P), int8 + decode   
+
+> PCU PCU PCU
+
+... ...   
+
+> G
+> -6 17 8
+> Current Block Other blocks Pre-compute Units
+> -1
+> 1
+> 0
+> 0
+> 1
+> 1
+> 1
+> -1
+> -1
+> -1
+> 1
+> 0
+> 0
+> 1
+> 1
+> 1
+> -1
+> -1
+
+... ... 
+
+> 0
+> 1
+> 0
+> 0
+> -1
+> 1
+> 1
+> -1
+> 0
+> 1
+> 1
+> 0
+> 1
+> 0
+> -1
+> 1
+> -1
+> 0
+
+... ... 
+
+> LUT 1 Streams (S = 2)
+
+... 
+
+RHS (W,K,V) 
+
+> Group Adder Tree (GAT)
+> Plane Shift & ACC (PSA)
+> Rescale Unit (RSU)
+> Block ACC (BA) Controller
+> Meta Data
+
+Core Data fl ow   
+
+> LUT 2 Streams (S = 2)
+> LUT 1 LUT 2 LUT L
+
+Cluster Shared SRAM 
+
+Cluster 
+
+Cluster Controller 
+
+Shared W and K blocks 
+
+> BF16 'open' block
+> New token
+> Token
+
+DQEU in cluster 
+
+Update 'open' blocks region 
+
+> ...
+> ...
+
+V Quant. Flow 
+
+> SD blocks until 'closed'
+
+(a) Memory hierarchy and V quantization  fl ow (b) The multi-core architecture with LUT-based compute lanes 
+
+Figure 3: Overview of the proposed system. (a) Memory hierarchy and online V-block quantization with an Open V-Block Region. (b) Multicore cluster and core dataflow with independent RHS streams through shared PCU/LUT pipelines. Input 
+
+Stream 
+
+> MUX
+
+Grouped Ping -pong FIFO 
+
+|x| 
+
+Rst Cnt Rst Cnt 
+
+Absmax Comparator Scale 
+
+KV Compressor 
+
+Input 
+
+Config Max SD Code 
+
+> MUX
+
+MAX 
+
+Reg 
+
+x
+
+1
+
+x
+
+1
+
+> MUX
+
+MUX 
+
+Codebook 
+
+R=2 
+
+Code book 
+
+R=2 
+
+Δ=[2] 
+
+R=3 
+
+Δ=[1,2] 
+
+Config 
+
+Nearest Engine 
+
+11 ternary 5
+
+1( -1) ternary 3
+
+111 ternary 11 
+
+(-1)11 ternary -5
+
+Δ=[2] Δ=[1,2] 
+
+Data flow 
+
+in DQEU 
+
+code 0
+
+... 
+
+... 
+
+<
+
+< <
+
+< <
+
+Int8 Bypass 
+
+②q ③Nearest RSD Code 
+
+④Compressed Code 
+
+> Runtime Example: R=3,
+
+Δ=[1,2],p=[0,1,3], MAX SD Code=11 
+
+① Input 
+
+K lane K0 K1 K2 K3 K4 K5 
+
+①BF16 x 2.0 1.2 0.68 0.1 -1.3 -0.5 
+
+②q
+
+③Nearest RSD Code 
+
+11 7 4 1 -7 -3
+
+(amax) 
+
+d2
+
+d1
+
+11 7 3 1 -7 -3
+
+1 1 0 0 -1 0
+
+1 0 1 0 0 -1
+
+④Compressed Code 
+
+d2
+
+d1
+
+(1,1,0) 25 
+
+(1,0,1) 23 (0, -1,0) 10 
+
+(0,0, -1) 12 
+
+d0 1 -1 1 1 1 -1
+
+d0 (1, -1,1) 20 (1,1, -1) 24 
+
+code 1
+
+code N-2
+
+code N-1
+
+Codebook 
+
+R=3 
+
+127 
+
+Figure 4: DQEU datapath, shown for the A8 configuration. The A16 configuration bypasses the activation branch and reuses the K/V encoding branch. 
+
+4 Hardware Architecture and Dataflow 
+
+The proposed system couples the signed-digit representation with a unified multicore LUT architecture for linear, 
+
+QK ⊤, and P V . This section presents its core organization, online encoding, tiled streaming dataflow, and operator latency model. 
+
+4.1 Hardware System Design 
+
+Figure 3(a) shows the memory hierarchy and V-block lifecycle. Off-Chip Memory stores Model Ternary Weights, Finalized Signed Digit K/V Blocks, and metadata. The Global Buffer (GB) holds Live Activations, Shared W and K Blocks, metadata, and the bounded V-tail in its Open V-Block Region. New V tokens enter through the cluster DQEU, and finalized blocks are committed to Off-Chip Memory. 7A PREPRINT - A UGUST 5, 2026 Figure 3(b) shows the cluster organization. The Data Dispatch Fabric distributes LHS (A/Q/P ), RHS (W/K/V ),metadata, and output tiles between Cluster Shared SRAM, the compute cores, and the shared NFU and DQEU. The nonlinear function unit (NFU) handles masking, attention scaling, and softmax, while the Cluster Controller and miscellaneous control logic (MISC) enforce tile-level dependencies. Each core contains a Scratchpad, a Core Controller, L paired Pre-Compute Units (PCUs) and LUTs, and up to Smax 
+
+independent RHS streams. Each PCU builds the 3G LUT entries, which the streams access through independent read ports. For example, with BK = 32 and G = 3 , L = 11 LUT units cover 33 positions with one padding position. Two streams process two output columns concurrently, providing 64 useful RHS values per plane cycle. Within each stream, the Group Adder Tree (GAT) sums LUT outputs, the Plane Shifter & Accumulator (PSA) combines the signed-digit planes, the Rescale Unit (RSU) applies the block scale, and the Block Accumulator (BA) retains partial sums until the full reduction completes. The core dataflow in Figure 3(b) illustrates the A8 configuration, whose INT8 A/Q/P values build the LUTs before the RSU applies activation and RHS scales. The A16 configuration shares this dataflow, but BF16 A/Q/P bypass activation quantization and build BF16 table entries, so its DQEU encodes only K/V. The Open V-Block Region stores the authoritative BF16 V-tail block and two signed-digit shadow banks. On each append, the DQEU updates the inactive shadow while attention reads the active one, after which the controller atom-ically swaps them. Once complete, the active shadow and its metadata are committed as a Finalized Signed Digit V Block in Off-Chip Memory, and the region is reused. Token-local K is encoded and appended directly, so finalized cache blocks are never rewritten. 
+
+4.2 Dynamic Quantization and Encoding Unit 
+
+Figure 4 shows the Dynamic Quantization and Encoding Unit (DQEU). A grouped ping-pong FIFO overlaps block capture and encoding. The absmax/scaling path, Nearest Engine, and K/V Compressor derive block scales, select RSD digits, and pack LUT addresses. For block b, τb = ( Rb, ∆b) determines qb and Cb, while the MAX register provides max i |Z(b) 
+
+> i
+
+| to derive sb using Eqn. (7). The Nearest Engine selects codewords, and the compressor packs the resulting planes in G = 3 groups using Eqn. (4). The lower example uses τb = (3 , [1 , 2]) , giving positions [0 , 1, 3] and qb = 11 . For maximum 2.0,
+
+sb = 2 .0/11 : values 2.0 and −1.3 map to 11 and −7, represented by (d2, d 1, d 0) = (1 , 1, 1) and (−1, 0, 1) . The first three values produce plane addresses 25 , 23 , and 20 .For a V-tail update, the DQEU combines the retained input-precision prefix with newly projected V values, recom-putes the shared scale, and re-encodes the complete prefix into the inactive bank while the committed bank remains unchanged. One DQEU is provisioned to sustain the K/V production rate of one core even during a full R = 3 V-tail rebuild; token-local K encoding is less demanding because it processes no retained prefix. The grouped ping-pong FIFO decouples these operations and allows encoding to overlap with continued Projection execution without creating a DQEU backlog. After encoding, the bank selector, valid length, and scale are committed atomically before P V 
+
+accesses the updated tail. The A8 configuration also emits INT8 A/Q/P, whereas the A16 configuration uses the DQEU only for K/V. 
+
+4.3 Tiled Streaming Dataflow and Scheduling 
+
+Figure 5(a) unifies linear, QK ⊤, and P V as the same matrix product XM ×K ZK×N . Each TM × TN output tile maps to one cluster and carries the full K reduction, avoiding inter-tile accumulation. Within a cluster, cores shard M , and each core’s active streams shard N . For each BK -wide reduction block , the scratchpad stages the LHS/RHS slices, and the PCU builds one LHS-derived LUT image shared by all streams. Each stream reads an RHS quantization block over its R planes, and BA commits only after the full reduction. Only axis roles differ: A/Q/P are activation-like LHS operands, and W/K ⊤/V are RHS streams. QK ⊤ streams cached-token columns and reduces the head dimension, making K token-local; P V streams V channels and reduces context, so V is per-channel when BVN = 1 . The plane-loop bound R is set by a policy-level R-group: QK groups tokens at fixed K/V head and channel block, while PV groups channel blocks at fixed K/V head and token block, with ∆ remaining block-wise. Figure 5(b) shows the steady-state producer-consumer overlap. While LUT and post-processing consume a ready RHS stream from one table bank, the PCU builds the next LHS table in the alternate bank and the DQEU prepares a future activation or K/V block in its ping-pong buffers. Because these engines process different work on separate resources, preparation is hidden whenever it finishes before the concurrent RHS; only pipeline fill, drain, or a slower stage remains exposed. The same dependency-ready rule lets Q/K/V projections, K/V encoding, QK ⊤, the NFU, and 
+
+P V overlap across tiles. 8A PREPRINT - A UGUST 5, 2026 LHS Group                                        
+
+> RHS Stream
+> RHS Stream
+> LHS Group
+> RHS Stream
+> RHS Stream
+> Pre -compute (PCU) …
+> …
+> LUT & Post -Proc.
+> Quantization (DQEU)
+> //=== Linear : (X,Z)=(A,W); QK: (Q,K^T); PV: (P,V ) ===
+> for op, X, Z, sx in layer _DAG :
+> for tile, cluster in dispatch( schedule( op )):
+> // Output tile
+> cluster.SRAM .stage (X[ tile.M , :], Z[:, tile.N ])
+> parallel_for core, M_c in (tile.M ,C):
+> // Dispatch Mto core s
+> BA[core] = 0 // Block -wise Accumulate
+> for K_b in blocks (K , B_K ): // K -reduction
+> X_b ,Z_b =Scratchpad .stage (X[ M_c,K_b ],Z [K_b,tile.N ])
+> LUT[core] = PCU.build (X_b ) // Pre -build LUTs
+> parallel_for stream, N_s in split( tile.N ,S ):
+> // Share LUT over streams
+> for n in N_s:
+> b, ps = block( K_b , n), 0
+> for r in range( R_of (b, op)):
+> // Bit -serial stream
+> ps = PSA( ps , GAT(LUT[core]. read( Z_b,b, r)))
+> BA[core , stream, n ] += RSU( ps ,x.scal e*b.scale )
+> emit (Y[ M_c,tile.N ], BA[core ]) // Final Output
+> (a) Pseudo code of the LHS -stationary dataflow
+> (b) Stream -based overlap pipeline to hide pre -building and quantization latency
+> …
+> Time
+> Double -buffering for
+> SRAM and scratchpad
+> DAG
+> Schedule
+> Fully
+> Pipeline
+> LHS
+> RHS
+> @
+> G=3 Stream
+> =M_c
+
+…
+
+> N
+
+Figure 5: Tiled streaming dataflow. (a) The hierarchical LHS-stationary loop nest shared by linear, QK ⊤, and P V .(b) Steady-state overlap pipeline. 
+
+4.4 Operator Latency Model 
+
+Consider one GEMM XM ×K ZK×N under fixed hardware H and schedule π = ( TM , T N , B K , C act , S act , . . . ). The schedule creates ⌈M/T M ⌉⌈ N/T N ⌉ output tiles, each retaining the full K reduction across NB = ⌈K/B K ⌉ blocks. Within a tile, Cact cores partition its M rows and Seff = min( Sact , S max , N t) streams per core partition its Nt valid columns. For reduction block b, let Cbuild ,b be its PCU table-build time and Cexec ,b the slowest active core/stream time through LUT lookup and the pipelined GAT/PSA/RSU/BA stages, using each RHS block’s group-constrained R and exact tails. Denote the operator latency by Cop = Cop (M, K, N ; H, π, R). Double-buffered LUT banks overlap build of block b+1 with execution of block b, so the simulator computes 
+
+Ctile = Csetup + Cbuild ,0
+
++ 
+
+> NB−2
+
+X
+
+> b=0
+
+max( Cexec ,b, C build ,b+1 )+ Cexec ,NB−1 + Cemit ,Cop = Schd H,π 
+
+
+
+{C(i,j )tile }i,j 
+
+
+
+.
+
+(17) Here, Schd refers to the schedules of all output tiles on the available clusters. The max term exposes the intended overlap: LUT construction is hidden when stream execution dominates; R changes plane work, whereas ∆ at fixed R
+
+is timing-invariant. 
+
+5 Quantization-Dataflow Co-Optimization 
+
+5.1 Framework Overview 
+
+K/V signed-digit precision and hardware mapping must be optimized jointly, but exhaustive group-wise enumeration is intractable. The proposed system therefore uses the four-stage multi-fidelity flow in Figure 6. Stage I specifies the pretrained model, target hardware, quantization constraints, and deployment objective. Stage II constructs the joint search space of signed-digit policies and legal dataflow mappings under fixed area, power, capacity, 9A PREPRINT - A UGUST 5, 2026 Traf fi cLatency Model Quality 
+
+III: SALUT DSE Optimizer  
+
+> Optimal
+> Opt. Region
+> Candidates
+> Greedy Fine-grained Cycle-accurate Estimator
+> Data fl ow Scheduler
+> Simulator
+> Candidate 0
+> Lat 0, Acc 0
+> Lat 1, Acc 1
+> ...
+> Area/power Ef fi ciency Memory footprint Data Traf fi cModel Accuracy
+
+II: Joint Optimization     
+
+> LLM Model HW Con fi gGoal/Trade-off
+> Quant. Con fi gOpt. Data fl ow FPGA ASIC
+
+IV: Hardware Deployment I: Speci fi c Customized Input 
+
+> Deploy Q_Proj.0 K_Proj.0
+> Candidate 1
+> Lat 0, Acc 0
+> Lat 1, Acc 1
+> ...
+> Q_Proj.0 K_Proj.0
+> ... Candidate Pool
+> Linear Programming Relaxation
+> Layer-wise Discrete Optimization
+> Pareto Pruning
+> Fine-grained Calibration
+> Encoding-Aware Data fl ow
+> 1
+> 0
+> -1
+> -1
+> 0
+> 1
+> -1
+> 0
+> ...
+> R,
+> Quantizer
+> Quant. Con fi g
+> Tile order, Data reuse... Clusters+ Cores parallel Stream...
+> I
+> am
+> Fine Inference Quantized
+> Evaluator Matrics
+
+Figure 6: Multi-fidelity co-optimization flow. and dependency constraints. Stage III uses analytical surrogates to generate and prune candidates, the formulation-based simulator to determine deployment cost, and held-out inference to validate quality. Stage IV fixes the selected policy and its best legal mapping for FPGA or ASIC deployment. The following subsections formalize the policy, cost, and multi-fidelity search. 
+
+5.2 Problem Definition 
+
+Let H denote the fixed accelerator and its R-group contract. A policy p = ( B, {Rw}, {∆b}) specifies the K/V block shape B, a plane count Rw ∈ { 1, 2, 3} for each RHS group w, and an exponent-gap template ∆b for each block b.Co-scheduled members share Rw for compatible plane latency but retain independent ∆b. A mapping π may change tiling, active cores and streams, loop order, multicast, and cache residency, but not the policy grouping. Let S(p) be the finite set of mappings satisfying capacity, bandwidth, and dependency constraints. For policy p and mapping π, the simulator returns the lexicographically ordered deployment cost 
+
+C(H, p, π ) =  L(H, p, π ), T ext (H, p, π ), M GB (H, p, π ), (18) where L, Text , and MGB are whole-request latency, off-chip traffic, and peak Global Buffer usage, respectively; the proposed system minimizes them in this order. Let ∆NLL( p) denote the increase in held-out mean token-level negative log-likelihood (NLL) over dense BF16 K/V, and let ϵ be the allowed quality-loss bound. From candidate set 
+
+C, the proposed system selects 
+
+π⋆(p) = arg min  
+
+> π∈S (p)
+
+C(H, p, π ),
+
+bp = arg min   
+
+> p∈C ,∆NLL( p)≤ϵ
+
+C(H, p, π ⋆(p)) . (19) The inner search exhaustively evaluates the declared finite mapping set S(p), making π⋆(p) optimal within that set. The outer search evaluates a compact candidate frontier C. Since PPL( p)/PPL BF16 = exp(∆NLL( p)) , the NLL budget ϵ induces a relative-perplexity bound and screens candidate policies before held-out validation. 
+
+5.3 R-Group-Aware Multi-Fidelity Search 
+
+For every observed block b and plane count r, the quantizer evaluates legal exponent-gap templates Tr . Using nor-malized maximum error hb,t and MSE mb,t , it selects the best template and aggregates its excess error within each 10 A PREPRINT - A UGUST 5, 2026 
+
+Algorithm 1 Multi-Fidelity Policy Search 
+
+Require: Model f , calibration and validation data, hardware H, legal block shapes B, NLL limit ϵ
+
+Ensure: Selected design (bp, π ⋆(bp)) 
+
+1: C ← ∅
+
+2: for each B ∈ B compatible with H do 
+
+3: Select t⋆b,r and build Ew,r and bCw,r 
+
+4: for each excess-error budget τ do 
+
+5: Solve Eqn. (22) 6: Project and repair; add the resulting policy to C
+
+7: end for 
+
+8: end for 
+
+9: Remove duplicate and surrogate-dominated policies 10: for each p ∈ C do 
+
+11: Find π⋆(p) and record C(H, p, π ⋆(p)) with S IMULATE 
+
+12: end for 
+
+13: Remove policies dominated under simulator cost 14: Progressively measure ∆NLL( p) and prune failures 15: return the lowest-cost survivor with ∆NLL( p) ≤ ϵ
+
+R-group: 
+
+eb,t = αh b,t + βm b,t , t⋆b,r = arg min 
+
+> t∈T r
+
+eb,t ,Ew,r =
+
+P 
+
+> b∈w
+
+eb,t ⋆b,r − min r′
+
+P 
+
+> b∈w
+
+eb,t ⋆b,r ′
+
+|B obs 
+
+> o(w)
+
+| . (20) Here Bobs  
+
+> o(w)
+
+contains the observed calibration blocks in the QK or PV operator containing w. Operator-wise normaliza-tion prevents QK’s larger block count from overwhelming PV, while conditional template selection removes ∆ from the global assignment. The proposed system approximates hardware cost using active-plane work and K/V storage: 
+
+bCw,r = λplane ¯nvisit  
+
+> w
+
+r + λfootprint ¯nvalue  
+
+> w
+
+r, (21) where ¯nvisit  
+
+> w
+
+and ¯nvalue  
+
+> w
+
+are normalized expected block visits and stored values. For excess-error budget τ , the relaxed variable xw,r assigns plane count r to group w:
+
+min 
+
+> x
+
+X
+
+> w,r
+
+bCw,r xw,r s.t. X
+
+> w,r
+
+Ew,r xw,r ≤ τ, 
+
+X
+
+> r
+
+xw,r = 1 ∀w, 0 ≤ xw,r ≤ 1 ∀w, r. (22) For each budget τ , the proposed system solves the relaxation in Eqn. (22) and projects each group to its largest fractional option. A first greedy pass repairs error-budget violations by choosing the change with the highest error reduction per unit of added cost. A second greedy pass uses the remaining error slack to maximize cost reduction per unit of added error. Together with t⋆b,R w , the repaired assignment defines a candidate policy. As summarized in Algorithm 1, sweeping τ produces a frontier C after removing duplicate and surrogate-dominated policies. For each survivor, the formulation-based simulator exhaustively evaluates the legal mappings in S(p) and re-moves policies dominated under the deployment cost in Eqn. (18). Progressively larger held-out subsets then measure paired ∆NLL against dense BF16 K/V, reject clear failures early, and validate the remaining cost–quality frontier. The final design is the lowest-cost survivor satisfying ∆NLL ≤ ϵ.
+
+6 Evaluation 
+
+We evaluate whether executable RSD K/V preserves model quality, improves hardware and inference efficiency, and enables useful quality–cost trade-offs. We then place the implementation results in the context of prior accelerators. 
+
+6.1 Experimental Setup Models. We evaluate native ternary BitNet b1.58 2B4T and FalconE-1B/3B, together with QAT-converted ternary OPT-350M/1.3B/2.7B [8–10, 48]. The A8 configuration converts activation-side operands ( A/Q/P ) to INT8 before 11 A PREPRINT - A UGUST 5, 2026 HellaSwag        
+
+> PIQA
+> ARC-E
+> ARC-C
+> OBQA
+> BoolQ
+> WinoG.
+> CSQA
+> TruthfulQA
+> Avg.
+> −8
+> −6
+> −4
+> −2
+> 0
+> 2
+> 4
+> Accuracy change (pp)  BitNet-2B Falcon-E-1B Falcon-E-3B
+> (a) SALUT-A8 models
+> Original avg. accuracy (%)
+> BitNet-2B: 64.9
+> Falcon-E-1B: 53.4
+> Falcon-E-3B: 58.1
+> HellaSwag
+> PIQA
+> ARC-E
+> ARC-C
+> OBQA
+> BoolQ
+> WinoG.
+> CSQA
+> MMLU
+> Avg.
+> −3
+> −2
+> −1
+> 0
+> 1
+> 2
+> 3
+> OPT-350M OPT-1.3B OPT-2.7B
+> (b) SALUT-A16 QAT models
+> Original avg. accuracy (%)
+> OPT-350M: 33.8
+> OPT-1.3B: 36.5
+> OPT-2.7B: 38.5
+> Uniform R = 2 Uniform R = 3
+
+Figure 7: Full-test task-accuracy changes of uniform R = 2 and R = 3 relative to matched dense K/V. Each segment connects the two measured uniform settings. Insets list the nine-task average accuracy of each original checkpoint. LUT construction, whereas the A16 configuration retains them in BF16. Both designs use ternary linear weights and signed-digit K/V. We use the A8 configuration for BitNet and Falcon-E and the A16 configuration for OPT, and compare quality with the same checkpoint using dense BF16 K/V. 
+
+ASIC Evaluation. To quantify the cost of provisioning separate linear and attention compute, we synthesize the proposed system and a throughput-matched Baseline in a TSMC 40-nm standard-cell library at 1.1 V, with A8 at 500 MHz and A16 at 250 MHz. Both retain LUT execution for ternary linear and projection layers, while the Baseline uses dedicated dense MAC attention. In A8, the proposed system’s DQEU quantizes A/Q/P and encodes K/V, while the Baseline retains activation quantization and matches the fixed-R = 3 QK/PV issue rate with INT8 MACs. In A16, the DQEU encodes only K/V for the proposed system and is absent from the BF16 ×BF16-MAC Baseline. Dynamic power uses matched gate-level VCD windows in PrimeTime PX. The Baseline clock-gates its inactive LUT or MAC domain so that heterogeneous area is retained without charging avoidable switching. 
+
+Simulator. Our cycle-accurate model captures LUT construction, signed-digit plane execution, reductions, pipeline overheads, and data transfers for a given model, request, mixed-R policy, hardware mapping, and bandwidth. It reports operator and request cycles, TTFT, TPOT, throughput, traffic, and K/V footprint. Unless noted otherwise, both systems use 16 cores, 250 MHz, and 128 GB/s. The equal-area A8 serving experiment is re-scored at the synthesized 500-MHz target. The DSE searches hardware-legal (R, ∆) policies and selects the fastest one that satisfies the held-out NLL constraint. 
+
+Metrics. Hardware speedup is relative to the matched Baseline, and operator efficiency is normalized throughput per area or active dynamic power. ASIC area and power are reported in 10 3 μm2 and mW. Absolute compute efficiency uses TOPS/mm 2 and TOPS/W, or TFLOPS/mm 2 and TFLOPS/W for BF16. TTFT is time to first token, and TPOT is the average interval between output tokens. We report external-memory traffic separately from packed K/V footprint and use it only as an indicator of memory-system energy [5]. 
+
+6.2 Cross-Model Quantization Quality 
+
+Figure 7 compares uniform R = 2 and R = 3 with matched dense-K/V checkpoints. The inset in each panel reports the original checkpoint’s average accuracy over the nine tasks. At the conservative R = 3 setting, every model remains within 0.50 pp of dense K/V, showing that signed-digit K/V can preserve model quality across native and QAT-converted ternary models. The larger model- and task-dependent variation at R = 2 shows that lower plane counts reduce representation and execution costs at a nonuniform quality cost. A single global precision is therefore unnecessarily conservative for robust blocks and unsafe for sensitive ones. This observation motivates the block-wise mixed-R policies evaluated in the DSE, where hardware benefits are accepted only after a held-out quality check. 
+
+6.3 Hardware Evaluation 
+
+At fixed R = 3 , each 64-value group takes three plane cycles. The throughput-matched Baseline therefore uses a 22-lane dense attention array, issuing 22/22/20 products with the two unused lanes clock-gated in the final cycle. As shown in Table 2, the encoder adds only 2.2%/3.9% of LUT-Core area in A8/A16, whereas the separate dense-attention 12 A PREPRINT - A UGUST 5, 2026 Table 2: Compute-tile area and active QK T power at fixed R = 3 .
+
+Area ( 10 3 μm2) Power (mW, QK T, R = 3 )System LUT Core Encode Logic Dense Attention Array LUT Core Encode Logic Dense Attention Array Proposed-A8 58.67 ∗ 1.32 — 5.80 0.590 —Baseline-A8 59.85 ∗ — 38.62 0.00 — 12.70 Proposed-A16 283.11 10.96 — 23.60 0.374 —Baseline-A16 289.72 — 737.01 0.00 — 133.0  
+
+> ∗For Proposed-A8 and Baseline-A8, LUT-Core area includes the shared INT8 quantization logic. Encode Logic denotes the signed-digit encoder portion of the DQEU in A8 and the DQEU in A16. 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+
+(a) A8 - QK T  
+
+> 1.64 ×
+> 2.14 ×
+> 2.46 ×
+> 2.54 ×2.58 ×2.61 ×
+> 1
+> 3
+> 5
+> 7
+> 9
+> 11
+
+(b) A16 - QK T 
+
+> 3.49 ×
+> 5.66 ×5.43 ×
+> 9.88 ×
+> 5.24 ×
+> 9.43 ×
+> Falcon-E
+> 1B †
+> BitNet
+> 2B ∗
+> Falcon-E
+> 3B ∗
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+
+(c) A8 - PV 
+
+> 1.64 ×
+> 1.76 ×
+> 2.05 ×
+> 1.90 ×
+> 2.46 ×
+> 2.00 ×
+> OPT
+> 1.3B †
+> OPT
+> 350M ∗
+> OPT
+> 2.7B ∗
+> 1
+> 3
+> 5
+> 7
+> 9
+> 11
+
+(d) A16 - PV       
+
+> 3.49 ×
+> 6.01 ×
+> 4.12 ×
+> 7.33 ×
+> 4.13 ×
+> 7.36 ×
+> Normalized efficiency (Baseline = 1)
+> ∗DSE-selected mixed-Rconfigurations; †fixed-R = 3 evaluation.
+> Throughput / area Throughput / dynamic power
+
+Figure 8: Normalized QK/PV throughput-per-area and throughput-per-power across evaluated models, relative to the heterogeneous Baseline with separate linear and attention engines. † denotes fixed-R = 3 points; the remaining points use model-specific mixed-R policies selected by the DSE, combining unified-LUT architectural gains with lower average plane counts. array adds 64.5%/254.4%. For QK T, the proposed system consumes 6.39/23.97 mW, compared with 12.70/133.0 mW for the Baseline attention arrays. In Figure 8, the inactive Baseline domain is clock-gated during each PTPX window, while its full provisioned area is included. For a mixed-R policy with block fraction fr , measured power Pr , and ¯R = P 
+
+> r
+
+rf r , we use 
+
+Pmix =
+
+P 
+
+> r
+
+fr rP r
+
+¯R , Tmix = 3T3
+
+¯R , (23) where T3 is fixed-R = 3 throughput. The fixed-R = 3 points isolate the architectural benefit because the proposed system and the Baseline execute the same three-plane workload. Falcon-E-1B reaches 1.64 ×/2.14 × throughput-per-area/power for QK and 1.64 ×/1.76 ×
+
+for PV on Proposed-A8, while OPT-1.3B reaches 3.49 ×/5.66 × and 3.49 ×/6.01 × on Proposed-A16. These gains therefore come from reusing the linear LUT and reduction datapath for attention rather than provisioning a separate dense-attention array. The larger A16 gains reflect the higher area and power cost avoided by replacing the BF16 MAC array. The mixed-R points further benefit from DSE-selected lower plane counts, which reduce execution cycles and switch-ing activity without resizing the compute substrate. Taking the arithmetic mean over QK and PV, Falcon-E-3B on Proposed-A8 achieves 2.52 × throughput per area and 2.30 × throughput per power over the throughput-matched 40-nm Baseline. OPT-350M on Proposed-A16 achieves 4.78 × and 8.61 ×, respectively. These results show that ar-13 A PREPRINT - A UGUST 5, 2026 0.25 1 4 16 64 256 1024 
+
+Operational intensity (op/byte)         
+
+> 32
+> 64
+> 128
+> 256
+> 512
+> Throughput (Gop/s)  Solid: 128 GB/s Dashed: 32 GB/s
+> QK Baseline QK SALUT PV Baseline PV SALUT
+> Baseline peak 88
+> SALUT peak 433
+> 64 512 4096
+> 64 512 4096
+
+Figure 9: Area-matched QK/PV roofline for BitNet-2B under the selected mixed-R policy across context lengths and memory bandwidths. 64 
+
+> 128
+> 256
+> 512
+> 1K
+> 1.1K
+> 2K
+> 3K
+> 4K
+> 0
+> 20
+> 40
+> 60
+> (a) A8 BitNet-2B: Prefill
+> 59.0%
+> 64
+> 128
+> 256
+> 512
+> 1K
+> 1.1K
+> 2K
+> 3K
+> 4K
+> (b) A8 BitNet-2B: Decode K/V
+> 59.0%
+> 64
+> 128
+> 256
+> 512
+> 1K
+> 2K
+
+Context tokens  
+
+> 0
+> 20
+> 40
+> 60
+> (c) A16 OPT-2.7B: Prefill 68.6%
+> 64
+> 128
+> 256
+> 512
+> 1K
+> 2K
+
+Context tokens     
+
+> (d) A16 OPT-2.7B: Decode K/V 68.5%
+> External-memory data traffic saved (%)
+> B1 B8 B32 K/V footprint
+
+Figure 10: External-memory traffic and packed K/V footprint savings for BitNet-2B and OPT-2.7B across context length and batch size. chitectural reuse and DSE-selected precision provide complementary efficiency gains; the associated model-quality trade-offs are quantified in Section VI-E. 
+
+6.4 Operator and Inference Efficiency 
+
+Figure 9 uses the full compute-tile areas in Table 2, 59.99 and 98.47 10 3 μm2 for Proposed-A8 and Baseline-A8, and holds external bandwidth fixed under continuous equal-area normalization. Compressed K/V reads raise QK and PV operational intensity by 2.38 to 2.50 ×, while the smaller unified tile raises attainable throughput under the same area budget. The realized points remain below the fixed-R = 1 peak because the selected policy executes an average of more than one plane per value. Thus, the gain comes from both fewer transferred bytes and more useful attention work per unit area. Figure 10 measures total external-memory traffic, including transfers unaffected by K/V compression, as a proxy for memory-system energy [5]. Savings grow with context length and batch size because shared model traffic is 14 A PREPRINT - A UGUST 5, 2026 64 256 1K 4K     
+
+> 1.4
+> 1.6
+> 1.8
+> 2.0
+> Speedup vs. Baseline
+> (a) TTFT
+> 1.81 ×
+> 1.75 ×
+> 64 256 1K 4K
+> (b) Mean TPOT
+> 1.92 ×
+> 1.80 ×
+> Sequence length (tokens)
+> BitNet-2B FalconE-3B
+
+Figure 11: Estimated equal-area A8 request-level speedup at 500 MHz and 128 GB/s. Each point is the geometric mean over B = 1 , 8, 32 , including scale and template metadata reads. Table 3: Buffer-side overhead at 4,096 tokens and B = 1 . K/V and metadata are in MiB. 
+
+Model Packed K/V Metadata MiB (% K/V) Total / BF16 V-tail MiB (% GB) 
+
+BitNet-2B 61.66 7.25 (11.8%) 23.0% 1.91 (3.0%) Falcon-E-3B 26.15 3.09 (11.8%) 22.8% 0.81 (1.3%) 
+
+increasingly amortized while per-sequence K/V traffic grows. They reach 40.5% for BitNet-2B and 57.3% for OPT-2.7B at the largest settings. For the OPT traffic sweep, we apply fixed-R = 3 encoding across the modeled context range to isolate the context-length scaling of K/V traffic. For request-level inference, integer provisioning replaces the continuous normalization with realizable tile counts. The area of 16 Baseline-A8 tiles accommodates 26 Proposed-A8 tiles after rounding down, using 99.0% of the same budget. We re-score operator service at 500 MHz and 128 GB/s while retaining fixed pipeline overheads and charging K/V metadata reads. In Figure 11, the gains increase with context length as attention occupies more of each request. At 4K, TTFT improves by 1.81 × and 1.75 × for BitNet-2B and Falcon-E-3B, while mean TPOT improves by 1.92 ×
+
+and 1.80 ×. TPOT benefits more strongly because every decode step revisits a growing cache. Table 3 charges one FP16 runtime scale and one 8-bit template ID per encoded block. Even after this charge, the cache remains below 23.0% of dense BF16. The Open V-Block Region holds the V-tail state until a 32-token V block is finalized. This state comprises one authoritative BF16 tail block and two signed-digit shadow banks. Because it covers only the current partial block and is reused after finalization, it does not grow with sequence length and occupies only 1.3% to 3.0% of the shared 64-MiB Global Buffer at 4K. 
+
+6.5 Design Space Exploration 
+
+We first quantify how selected plane counts translate into cycles. Since a 64-value group consumes one cycle per active plane, ideal throughput relative to fixed R = 3 scales as 3/ ¯R. As shown in Table 4, the BitNet-2B policy improves QK/PV throughput by 1.50 ×/1.25 ×, while OPT-350M achieves 1.56 ×/1.18 × without resizing the core. The higher PV plane counts lead to smaller PV speedups. Across the nine tasks, the selected mixed-R policies reduce mean accuracy by 0.72 pp for BitNet-2B, 1.86 pp for Falcon-E-3B, 1.54 pp for OPT-350M, and 0.56 pp for OPT-2.7B relative to their matched dense-K/V checkpoints. We further examine BitNet-2B as a block-32 case study, separate from the model-specific operating points in Table 4. Figure 12 shows the capacity trade-off. Under the primary ϵ = 0 .08 NLL budget, the selected policy reduces packed K/V footprint by 35.3% relative to uniform R = 3 , achieves ∆NLL = 0 .0515 , and lies on the held-out quality– footprint frontier. Figure 13 shows the selection process. LP projection and repair yield 25 hardware-feasible policies, the formulation-based simulator evaluates request latency, and paired inference measures ∆NLL on eight held-out 4,096-token seg-ments. The calibration proxy ranks candidate policies, while held-out NLL enforces the deployment constraint. Their 15 A PREPRINT - A UGUST 5, 2026 20 40 60 80 100 
+
+Packed K/V footprint (% of dense BF16) ↓ 
+
+0
+
+1
+
+2
+
+3
+
+> Measured held-out ΔNLL
+
+Uniform R = 3 Dense BF16 K/V     
+
+> 20 25 30
+> 0.00
+> 0.04
+> 0.08
+> Deployment region
+> Selected @ ε = 0.08
+> Policies Pareto frontier Selected
+
+Figure 12: Measured BitNet-2B quality–K/V footprint frontier across 25 hardware-legal block-32 policies at 4,096 tokens. 0 10 20 30              
+
+> Calibration proxy ↓
+> 0
+> 1
+> 2
+> 3
+> Measured held-out ΔNLL
+> ε = 0.08
+> (a) Proxy fidelity
+> More aggressive
+> (lower cost)
+> Selected
+> ρs= 0.998
+> τ = 0.987
+> 1.00 1.05 1.10 1.15
+> Whole-request speedup vs. uniform R = 3 (×)
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Measured held-out ΔNLL
+> ε = 0.08
+> ε = 0.01
+> (b) Quality–speed frontier
+> Uniform R = 3
+> Fastest @ ε = 0.01
+> Fastest @ ε = 0.08
+> Next faster
+> (fails gate)
+> 025 50 75 100
+> Active block share (%)
+> ε = 0.08 QK
+> ε = 0.08 PV
+> ε = 0.01 QK
+> ε = 0.01 PV
+> (c) Joint (R, Δ) policy adaptation
+> 12.2 54.2 33.6
+> 96.0
+> 62.2 37.8
+> 42.1 21.3 33.1
+> R = 1
+> R = 3, Δ = (1, 2)
+> R = 2, Δ = 1
+> R = 3, Δ = (2, 1)
+> R = 2, Δ = 2
+> R = 3, other Δ
+> R = 2, other Δ
+
+Figure 13: Measured BitNet-2B block-32 DSE at 4,096 tokens: (a) proxy fidelity, (b) quality–speed frontier, and (c) selected QK/PV policy composition. Spearman correlation reaches ρs = 0 .998 . Under ϵ = 0 .08 , the fastest feasible policy achieves a 1.123 × request-level speedup at ∆NLL = 0 .0515 . The next faster policy reaches 1.150 × but is rejected at ∆NLL = 0 .2594 . Tightening the budget to ϵ = 0 .01 instead selects a 1.079 × policy at ∆NLL = 0 .0021 , demonstrating that the quality gate controls the operating point. Finally, Figure 13(c) shows different QK and PV mixtures because R determines plane cycles while ∆ changes the codebook at fixed hardware cost. All serving sweeps use the selected primary policy without per-request retuning. 
+
+6.6 Comparison with Related Accelerators 
+
+Finally, we compare the proposed system with representative LLM accelerators at two levels. The same-node and same-library Baselines in Table 2 and Figure 8 provide controlled architectural comparisons, while Table 5 places the proposed system in the context of prior implementations using each design’s reported process and computation boundary. For Proposed-A8 Projection, the complete INT8 ×W1.58 datapath achieves 5.38 TOPS/W, compared with 3.25 TOPS/W for BitMoD and 5.12 TOPS/W for Tender. For runtime attention, Proposed-A16 achieves 0.69 TFLOPS/W for QK/PV, while FIGLUT reports 0.47 TFLOPS/W. Thus, the proposed system provides compa-rable compute efficiency despite using a more conservative 40-nm, 1.1-V process rather than the 28-nm processes of these designs. We additionally report the 29.01 TOPS/W Proposed-A8 LUT-array-only result at the computation boundary used by LUT Tensor Core. The QK/PV results use quality-selected average plane counts of ¯R = 1 .92 for A8 and ¯R = 2 .13 for A16, demonstrating that the shared LUT substrate remains effective for dynamic K/V execution. 16 A PREPRINT - A UGUST 5, 2026 Table 4: Throughput benefit of two representative mixed-R policies.                         
+
+> Model QK
+> R= 3 →¯R,T /T 3
+> PV
+> R= 3 →¯R,T /T 3
+> BitNet-2B (A8 configuration) 3→2.00 ,1.50 ×3→2.40 ,1.25 ×
+> OPT-350M (A16 configuration) 3→1.93 ,1.56 ×3→2.54 ,1.18 ×
+
+Table 5: Compute efficiency comparison.                                             
+
+> Work Compute boundary Node / V / MHz Area eff.
+> (TOPS/mm 2)
+> Energy eff.
+> (TOPS/W)
+> LUT Tensor Core [15] INT1 ×INT8 LUT PE without PSUM 28 nm / 0.9 V / 1000 –63.78 BitMoD [43] FP16 ×b1 bit-serial tile 28 nm / – / 1000 1.29 ‡3.25 ‡
+> Tender [49] INT4 systolic array 28 nm / – / 1000 2.06 ∗5.12 ∗
+> FIGLUT [50] FP–INT LUT GEMM 28 nm / – / 100 –0.47
+> (TFLOPS/W)
+> Slim-Llama [51] Binary/ternary LLM processor 28 nm / 0.58–1.0 V / 25–200 0.243 60.0
+> Proposed-A8 Projection, INT8 ×W1.58 40 nm / 1.1 V / 500 1.07
+> (3.74 †)
+> 5.38
+> (29.01 †)
+> Proposed-A8 QK/PV, INT8 ×RSD (Avg. ¯R= 1 .92 )40 nm / 1.1 V / 500 0.55 3.95
+> Proposed-A16 Projection, BF16 ×W1.58 40 nm / 1.1 V / 250 0.109
+> (TFLOPS/mm 2)
+> 1.59
+> (TFLOPS/W)
+> Proposed-A16 QK/PV, BF16 ×RSD (Avg. ¯R= 2 .13 )40 nm / 1.1 V / 250 0.051
+> (TFLOPS/mm 2)
+> 0.69
+> (TFLOPS/W)
+> †Parenthesized A8 Projection values use the LUT-array-only boundary of LUT Tensor Core [15]. Unparenthesized values include the complete datapath. ∗Tender retains its reported INT4 accounting (two operations per MAC). ‡BitMoD retains its reported bit-serial accounting.
+
+7 Conclusion 
+
+This paper presents a quantization–architecture co-design that resolves the representation and layout mismatch be-tween ternary linear LUT execution and dynamic K/V attention. By treating ternary weights as the single-plane (R = 1 ) case of a restricted signed-digit representation, the proposed system encodes runtime K/V into packed ternary planes that remain directly executable through the same activation-derived LUT interface without reconstructing dense cache entries. To satisfy the different reduction structures of QK ⊤ and P V , it uses operator-aligned K/V layouts and a bounded V-tail mechanism that maintains scale-consistent encoding during incremental cache updates. Its unified multi-stream architecture shares LUT construction, lookup, reduction, and post-processing across linear, QK ⊤, and 
+
+P V , while a hardware-aware DSE coordinates signed-digit precision, block geometry, and stream mapping under quality and implementation constraints. Overall, this work establishes K/V cache quantization as a directly executable computation format for LUT-based attention. This capability extends ternary LUT computation from static linear projections to dynamic attention on a shared compute substrate. 
+
+8 Acknowledgements 
+
+The authors would like to express deep appreciation to LuxiTech Co. Ltd. for the essential development and exper-imental resources support. Furthermore, this work was partially funded by the Huazhong University of Science and Technology Cross Research Support Program (2024JCYJ036) and the Wuhan Municipal Key Science and Technology Program (2022010402020045), and was partially conducted by ACCESS – AI Chip Center for Emerging Smart Sys-tems, supported by the InnoHK initiative of the Innovation and Technology Commission of the Hong Kong Special Administrative Region Government. 
+
+References 
+
+[1] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F. Christiano, Jan Leike, and Ryan Lowe. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems ,volume 35, pages 27730–27744, 2022. [2] OpenAI. GPT-4 technical report, 2023. 17 A PREPRINT - A UGUST 5, 2026 [3] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cum-mings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba. Evaluating large language models trained on code, 2021. [4] Baptiste Rozi` ere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu, Romain Sauvestre, Tal Remez, J´ er´ emy Rapin, Artyom Kozhevnikov, Ivan Evtimov, Joanna Bitton, Manish Bhatt, Cristian Canton Ferrer, Aaron Grattafiori, Wenhan Xiong, Alexandre D´ efossez, Jade Copet, Faisal Azhar, Hugo Touvron, Louis Martin, Nicolas Usunier, Thomas Scialom, and Gabriel Synnaeve. Code llama: Open foundation models for code, 2023. [5] Andrei Ivanov, Nikoli Dryden, Tal Ben-Nun, Shigang Li, and Torsten Hoefler. Data movement is all you need: A case study on optimizing transformers. In Proceedings of Machine Learning and Systems , volume 3, pages 711–732, 2021. [6] Xunyu Zhu, Jian Li, Yong Liu, Can Ma, and Weiping Wang. A survey on model compression for large language models. Transactions of the Association for Computational Linguistics , 12:1556–1577, 2024. [7] Hongyu Wang, Shuming Ma, Li Dong, Shaohan Huang, Huaijie Wang, Lingxiao Ma, Fan Yang, Ruiping Wang, Yi Wu, and Furu Wei. Bitnet: Scaling 1-bit transformers for large language models, 2023. [8] Shuming Ma, Hongyu Wang, Lingxiao Ma, Lei Wang, Wenhui Wang, Shaohan Huang, Li Dong, Ruiping Wang, Jilong Xue, and Furu Wei. The era of 1-bit llms: All large language models are in 1.58 bits, 2024. [9] Shuming Ma, Hongyu Wang, Shaohan Huang, Xingxing Zhang, Ying Hu, Ting Song, Yan Xia, and Furu Wei. Bitnet b1.58 2b4t technical report, 2025. [10] Ayush Kaushal, Tejas Vaidhya, Arnab Kumar Mondal, Tejas Pandey, Aaryan Bhagat, and Irina Rish. Spectra: Surprising effectiveness of pretraining ternary language models at scale, 2024. [11] Weibang Dai, Xiaogang Chen, Houpeng Chen, Sannian Song, Shunfen Li, Tao Hong, and Zhitang Song. Lookup table-based computing: A survey from software implementations to hardware architectures. ACM Comput. Surv. ,58(7), February 2026. [12] Jinmook Lee, Changhyeon Kim, Sanghoon Kang, Dongjoo Shin, Sangyeob Kim, and Hoi-Jun Yoo. Unpu: An energy-efficient deep neural network accelerator with fully variable weight bit precision. IEEE Journal of Solid-State Circuits , 54(1):173–185, 2019. [13] Robin Geens, Joran Heldens, Joren Dumoulin, and Marian Verhelst. Hardware generation and exploration of lookup table-based accelerators for 1.58-bit llm inference, 2026. Presented at ISPASS 2026. [14] Jianyu Wei, Shijie Cao, Ting Cao, Lingxiao Ma, Lei Wang, Yanyong Zhang, and Mao Yang. T-mac: Cpu renaissance via table lookup for low-bit llm deployment on edge. In Proceedings of the Twentieth European Conference on Computer Systems , 2025. [15] Zhiwen Mo, Lei Wang, Jianyu Wei, Zhichen Zeng, Shijie Cao, Lingxiao Ma, Naifeng Jing, Ting Cao, Jilong Xue, Fan Yang, and Mao Yang. Lut tensor core: A software-hardware co-design for lut-based low-bit llm inference. In Proceedings of the 52nd Annual International Symposium on Computer Architecture , 2025. [16] Ye Qiao, Zhiheng Chen, Yifan Zhang, Yian Wang, and Sitao Huang. Tellme: An efficient end-to-end ternary llm prefill and decode accelerator with table-lookup matmul on edge fpgas. In Proceedings of the 2026 ACM/SIGDA International Symposium on Field Programmable Gate Arrays , FPGA ’26, page 247–257, New York, NY, USA, 2026. Association for Computing Machinery. [17] Zhirui Huang, Rui Ma, Shijie Cao, Ran Shu, Ian Wang, Ting Cao, Chixiao Chen, and Yongqiang Xiong. Tenet: An efficient sparsity-aware lut-centric architecture for ternary llm inference on edge, 2025. [18] Zifan He, Shengyu Ye, Rui Ma, Yang Wang, and Jason Cong. Lut-llm: Efficient language model inference with memory-based computations on fpgas, 2025. [19] Jianyu Wei, Qingtao Li, Shijie Cao, Lingxiao Ma, Zixu Hao, Yanyong Zhang, Xiaoyan Hu, and Ting Cao. T-man: Enabling end-to-end low-bit llm inference on npus via unified table lookup, 2025. [20] Zi-Wei Lin and Tian-Sheuan Chang. Vitallm: A versatile, ultra-compact ternary llm accelerator with dependency-aware scheduling. IEEE Transactions on Circuits and Systems for Artificial Intelligence , 2026. 18 A PREPRINT - A UGUST 5, 2026 [21] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. Kivi: A tuning-free asymmetric 2bit quantization for kv cache, 2024. [22] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. Kvquant: Towards 10 million context length llm inference with kv cache quantization. In 
+
+Advances in Neural Information Processing Systems , 2024. [23] Haojie Duanmu, Zhihang Yuan, Xiuhong Li, Jiangfei Duan, Xingcheng Zhang, and Dahua Lin. Skvq: Sliding-window key and value cache quantization for large language models, 2024. [24] Junyan Li, Yang Zhang, Muhammad Yusuf Hassan, Talha Chafekar, Tianle Cai, Zhile Ren, Pengsheng Guo, Foroozan Karimzadeh, Colorado Reed, Chong Wang, and Chuang Gan. Commvq: Commutative vector quan-tization for kv cache compression. In Proceedings of the 42nd International Conference on Machine Learning ,volume 267 of Proceedings of Machine Learning Research , pages 36831–36845, 2025. [25] Xing Li, Zeyu Xing, Yiming Li, Linping Qu, Hui-Ling Zhen, Wulong Liu, Yiwu Yao, Sinno Jialin Pan, and Mingxuan Yuan. Kvtuner: Sensitivity-aware layer-wise mixed-precision kv cache quantization for efficient and nearly lossless llm inference. In Proceedings of the International Conference on Machine Learning , 2025. [26] Fei Zuo, Zikang Zhou, Hao Cong, Xiaoyan Xi, and Ho Fai Leung. Ratequant: Optimal mixed-precision kv cache quantization via rate-distortion theory, 2026. [27] Ruipeng Kang, Xiao Zheng, Patrick Lp, Liufeng Wang, Minquan Fang, Zhengbiao Wu, and Xiantao Zhang. Kvtq: Compressing the kv cache to hardware efficient ternary digits by fine-grained dynamic quantization. Sub-mitted to ICLR 2024, 2023. [28] Tianqi Chen, Zhe Li, Weixiang Xu, Zeyu Zhu, Dong Li, Lu Tian, Emad Barsoum, Peisong Wang, and Jian Cheng. Ternaryllm: Ternarized large language model, 2024. [29] Guoan Wang, Feiyu Wang, Zongwei Lv, Yikun Zong, and Tong Yang. Hestia: A hessian-guided differentiable quantization-aware training framework for extremely low-bit llms, 2026. [30] Hong Huang, Decheng Wu, Qiangqiang Hu, Guanghua Yu, Jinhai Yang, Jianchen Zhu, Xue Liu, and Dapeng Wu. Sherry: Hardware-efficient 1.25-bit ternary quantization via fine-grained sparsification, 2026. [31] Shichen Dong, Wen Cheng, Jiayu Qin, and Wei Wang. Qaq: Quality adaptive quantization for llm kv cache, 2024. [32] Alina Shutova, Vladimir Malinovskii, Vage Egiazarian, Denis Kuznedelev, Denis Mazur, Nikita Surkov, Ivan Ermakov, and Dan Alistarh. Cache me if you must: Adaptive key-value quantization for large language models, 2025. [33] Minsu Kim, Seongmin Hong, RyeoWook Ko, Soongyu Choi, Hunjong Lee, Junsoo Kim, Joo-Young Kim, and Jongse Park. Oaken: Fast and efficient llm serving with online-offline hybrid kv cache quantization. In Proceed-ings of the 52nd Annual International Symposium on Computer Architecture , 2025. [34] Sayed Mohammadreza Tayaranian Hosseini, Amir Ardakani, and Warren J. Gross. Innerq: Hardware-aware tuning-free quantization of kv cache for large language models, 2026. [35] Peilin Chen and Xiaoxuan Yang. Titanus: Enabling kv cache pruning and quantization on-the-fly for llm accel-eration. In Proceedings of the Great Lakes Symposium on VLSI , 2025. [36] Raushan Turganbay. Unlocking longer generation with key-value cache quantization. Hugging Face Blog, 2024. [37] Ali Hadi Zadeh, Mostafa Mahmoud, Ameer Abdelhadi, and Andreas Moshovos. Mokey: enabling narrow fixed-point inference for out-of-the-box floating-point transformer models. In Proceedings of the 49th Annual Inter-national Symposium on Computer Architecture , pages 888–901, 2022. [38] Teng Wang, Lei Gong, Chao Wang, Yang Yang, Yingxue Gao, Xuehai Zhou, and Huaping Chen. Via: Anovel vision-transformer accelerator based on fpga. IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems , 41(11):4088–4099, 2022. [39] Yonggan Fu, Yongan Zhang, Yang Zhang, David Cox, and Yingyan Lin. Auto-nba: Efficient and effective search over the joint space of networks, bitwidths, and accelerators. In Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pages 3505–3517, 2021. [40] Cong Guo, Chen Zhang, Jingwen Leng, Zihan Liu, Fan Yang, Yunxin Liu, Minyi Guo, and Yuhao Zhu. Ant: Exploiting adaptive numerical data type for low-bit deep neural network quantization. In Proceedings of the 55th IEEE/ACM International Symposium on Microarchitecture , pages 1414–1433, 2022. [41] Cong Guo, Jiaming Tang, Weiming Hu, Jingwen Leng, Chen Zhang, Fan Yang, Yunxin Liu, Minyi Guo, and Yuhao Zhu. Olive: Accelerating large language models via hardware-friendly outlier-victim pair quantization. In Proceedings of the 50th Annual International Symposium on Computer Architecture , 2023. 19 A PREPRINT - A UGUST 5, 2026 [42] Jiajun Wu, Jiajun Zhou, Yizhao Gao, Yuhao Ding, Ngai Wong, and Hayden Kwok-Hay So. Msd: Mixing signed digit representations for hardware-efficient dnn acceleration on fpga with heterogeneous resources. In 2023 IEEE 31st Annual International Symposium on Field-Programmable Custom Computing Machines (FCCM) ,pages 94–104, 2023. [43] Yuzong Chen, Ahmed F. AbouElhamayed, Xilai Dai, Yang Wang, Marta Andronic, George A. Constantinides, and Mohamed S. Abdelfattah. Bitmod: Bit-serial mixture-of-datatype llm acceleration. In 2025 IEEE Interna-tional Symposium on High Performance Computer Architecture , pages 1082–1097, 2025. [44] Kuan Wang, Zhijian Liu, Yujun Lin, Ji Lin, and Song Han. Haq: Hardware-aware automated quantization with mixed precision. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 8612–8620, 2019. [45] Zhen Dong, Zhewei Yao, Amir Gholami, Michael Mahoney, and Kurt Keutzer. Hawq: Hessian aware quantiza-tion of neural networks with mixed-precision. In 2019 IEEE/CVF International Conference on Computer Vision (ICCV) , pages 293–302, 2019. [46] Zhen Dong, Yizhao Gao, Qijing Huang, John Wawrzynek, Hayden K. H. So, and Kurt Keutzer. Hao: Hardware-aware neural architecture optimization for efficient inference, 2021. [47] Jiajun Zhou, Jiajun Wu, Yizhao Gao, Yuhao Ding, Chaofan Tao, Boyu Li, Fengbin Tu, Kwang-Ting Cheng, Hayden Kwok-Hay So, and Ngai Wong. Dybit: Dynamic bit-precision numbers for efficient quantized neural network inference. Trans. Comp.-Aided Des. Integ. Cir. Sys. , 43(5):1613–1617, May 2024. [48] Minsoo Kim, Sihwa Lee, Janghwan Lee, Sukjin Hong, Du-Seong Chang, Wonyong Sung, and Jungwook Choi. Token-scaled logit distillation for ternary weight generative language models. In Proceedings of the 37th Inter-national Conference on Neural Information Processing Systems , NIPS ’23, Red Hook, NY, USA, 2023. Curran Associates Inc. [49] Jungi Lee, Wonbeom Lee, and Jaewoong Sim. Tender: Accelerating large language models via tensor decom-position and runtime requantization. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture , pages 1048–1062, 2024. [50] Gunho Park, Hyeokjun Kwon, Jiwoo Kim, Jeongin Bae, Baeseong Park, Dongsoo Lee, and Youngjoo Lee. Figlut: An energy-efficient accelerator design for fp-int gemm using look-up tables. In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) , pages 1098–1111, 2025. [51] Sangyeob Kim, Jungwan Lee, and Hoi-Jun Yoo. Slim-llama: A 4.69mw large-language-model processor with binary/ternary weights for billion-parameter llama model. In 2025 IEEE International Solid-State Circuits Con-ference , pages 421–423, 2025. 20

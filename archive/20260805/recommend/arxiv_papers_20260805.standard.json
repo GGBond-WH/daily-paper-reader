@@ -1,0 +1,410 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-05T21:58:10.707896+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 7,
+    "deep_cap": 6,
+    "deep_selected": 7,
+    "quick_candidates": 3,
+    "quick_skim_target": 11,
+    "quick_selected": 3
+  },
+  "deep_dive": [
+    {
+      "id": "2608.02691v1",
+      "source": "arxiv",
+      "title": "Output-Aware Rotation for INT2 KV-Cache Quantization",
+      "abstract": "The key-value (KV) cache has become a major memory and bandwidth bottleneck in long-context large language model inference, making ultra-low-bit quantization increasingly important. However, existing rotation-based INT2 methods optimize cache statistics or proxy errors before the complete attention readout, even though the model is ultimately affected by the error propagated through attention and the output projection $W_O$. To address this mismatch, we propose \\textit{OptR}, an output-aware rotation method that minimizes post-$W_O$ attention-output error. OptR decomposes the post-$W_O$ attention-output error into key- and value-induced terms and learns per-head orthogonal corrections through the full INT2 quantization and attention path. OptR further applies an attention-equivalent key reparameterization to reduce large channel-wise offsets without changing the softmax distribution. Across three models and five reasoning and coding benchmarks, OptR consistently improves both QuaRot and OSCAR and strengthens long-context retrieval, while preserving the paged KV-cache format with negligible inference overhead.",
+      "authors": [
+        "Vincent-Daniel Yun",
+        "Woosang Lim",
+        "Minsoo Cheong",
+        "Sunwoo Lee",
+        "Murali Annavaram",
+        "Sai Praneeth Karimireddy",
+        "Sungjoo Yoo"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-08-03T09:24:23+00:00",
+      "link": "https://arxiv.org/pdf/2608.02691v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "INT2 KV cache quantization with output-aware rotation to reduce memory and bandwidth for long-context LLM inference",
+      "llm_evidence_cn": "通过输出感知旋转实现INT2 KV缓存量化，降低长上下文LLM推理的内存与带宽开销",
+      "llm_evidence": "通过输出感知旋转实现INT2 KV缓存量化，降低长上下文LLM推理的内存与带宽开销",
+      "canonical_evidence": "通过输出感知旋转实现INT2 KV缓存量化，降低长上下文LLM推理的内存与带宽开销",
+      "llm_tldr_en": "OptR proposes output-aware rotation for INT2 KV-cache quantization, minimizing post-output-projection attention error rather than cache statistics. It decomposes error into key- and value-induced terms, learns per-head orthogonal corrections through the full quantization and attention path, improving long-context inference efficiency.",
+      "llm_tldr_cn": "长上下文大模型推理中KV缓存已成为主要的内存和带宽瓶颈，超低比特量化至关重要。现有基于旋转的INT2方法仅优化缓存统计量或代理误差，未考虑经注意力与输出投影W_O传播的真实误差。OptR提出输出感知旋转，将经W_O后的注意力输出误差分解为键诱导与值诱导项，并沿完整INT2量化与注意力通路学习每头正交修正。实验表明该方法在保持精度的同时显著压缩KV缓存，为长上下文部署提供高效量化方案。",
+      "llm_tldr": "长上下文大模型推理中KV缓存已成为主要的内存和带宽瓶颈，超低比特量化至关重要。现有基于旋转的INT2方法仅优化缓存统计量或代理误差，未考虑经注意力与输出投影W_O传播的真实误差。OptR提出输出感知旋转，将经W_O后的注意力输出误差分解为键诱导与值诱导项，并沿完整INT2量化与注意力通路学习每头正交修正。实验表明该方法在保持精度的同时显著压缩KV缓存，为长上下文部署提供高效量化方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.02901v1",
+      "source": "arxiv",
+      "title": "AnchorKV: Anchor-Residual KV Cache Compression",
+      "abstract": "The key-value (KV) cache is the primary memory bottleneck in long-context LLM inference. Existing approaches attack it from opposite ends: eviction methods permanently discard tokens, degrading performance whenever a discarded token later proves essential, while quantization methods retain all tokens at low precision but offer limited compression. We propose AnchorKV, a compression scheme that shrinks the cache by $20\\times$ without discarding a single token. AnchorKV represents the cache using a small set of anchors stored exactly, expresses every other token through its most similar anchor, and refines only those whose approximation most affects the model's output. AnchorKV consistently preserves accuracy across models and datasets, retaining 99% of the full-cache score at the 70B scale, while keeping the entire context at a fraction of its cost.",
+      "authors": [
+        "Malik Khalaf",
+        "Yara Shamshoum",
+        "Nitzan Hodos",
+        "Yuval Sieradzki",
+        "Assaf Schuster"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.CL"
+      ],
+      "published": "2026-08-03T21:38:30+00:00",
+      "link": "https://arxiv.org/pdf/2608.02901v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Presents AnchorKV, achieving 20x KV cache compression without discarding tokens.",
+      "llm_evidence_cn": "提出AnchorKV，以锚点-残差方式压缩KV缓存，无需丢弃token，实现20倍压缩。",
+      "llm_evidence": "提出AnchorKV，以锚点-残差方式压缩KV缓存，无需丢弃token，实现20倍压缩。",
+      "canonical_evidence": "提出AnchorKV，以锚点-残差方式压缩KV缓存，无需丢弃token，实现20倍压缩。",
+      "llm_tldr_en": "Proposes AnchorKV, a KV cache compression scheme that stores exact anchor vectors and expresses other tokens through their most similar anchor, refining only high-impact tokens, achieving 20x compression without discarding tokens and retaining 99% of full-cache accuracy.",
+      "llm_tldr_cn": "针对长上下文推理中KV缓存是主要内存瓶颈、现有驱逐方法会丢失关键token而量化方法压缩率有限的问题，提出AnchorKV压缩方案。它用少量精确存储的锚点表示缓存，每个非锚点通过最相似的锚点近似表达，并仅对影响模型输出的近似部分进行细化，从而在不丢弃任何token的情况下将缓存压缩20倍。在多个模型和数据集上保持了完整缓存精度的99%，兼顾了压缩率与准确性。",
+      "llm_tldr": "针对长上下文推理中KV缓存是主要内存瓶颈、现有驱逐方法会丢失关键token而量化方法压缩率有限的问题，提出AnchorKV压缩方案。它用少量精确存储的锚点表示缓存，每个非锚点通过最相似的锚点近似表达，并仅对影响模型输出的近似部分进行细化，从而在不丢弃任何token的情况下将缓存压缩20倍。在多个模型和数据集上保持了完整缓存精度的99%，兼顾了压缩率与准确性。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.03228v1",
+      "source": "arxiv",
+      "title": "SAKI: Score-Aware Low-Rank Key Indexing for Long-Context KV Retrieval",
+      "abstract": "Existing low rank KV cache methods preserve either model weights or key variance, neither of which directly reflects the attention scores used during inference. We derive the expected attention score distortion caused by rank r key compression and show that it yields a covariance weighted low rank objective. Under a margin condition, controlling this distortion also improves top k recall. The optimal rank r solution has a closed form asymmetric factorization obtained from the SVD of the covariance weighted query key operator. This motivates SAKI, a training free KV cache index that directly preserves attention scores rather than key reconstruction quality.   Across LLaMA 3.1 8B, Qwen 2.5 7B, Mistral 7B v0.1, and Llama 3.2 3B, SAKI outperforms key PCA at every tested rank. At rank 32, it removes 13 to 30 percent of PCA's remaining top 64 recall error, including improvements from 0.748 to 0.799 on LLaMA 3.1 8B and from 0.786 to 0.850 on Qwen 2.5 7B. It improves 68 to 89 percent of attention heads per model, with the largest gains in deeper layers. Predicted score MSE reductions closely match empirical measurements, with a Pearson correlation of 0.997, while ablation studies confirm that the gains arise from optimizing the attention score objective rather than covariance weighting alone. Analysis of the scoring operator further explains why weight only, invariant subspace, and key reconstruction methods can be suboptimal.",
+      "authors": [
+        "Lin Zhang"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "stat.AP"
+      ],
+      "published": "2026-08-04T06:59:29+00:00",
+      "link": "https://arxiv.org/pdf/2608.03228v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Training-free low-rank KV cache indexing that preserves attention scores for long-context retrieval, reducing KV cache memory",
+      "llm_evidence_cn": "无训练的低秩KV缓存索引，直接保留注意力分数，用于长上下文检索并减少KV缓存内存",
+      "llm_evidence": "无训练的低秩KV缓存索引，直接保留注意力分数，用于长上下文检索并减少KV缓存内存",
+      "canonical_evidence": "无训练的低秩KV缓存索引，直接保留注意力分数，用于长上下文检索并减少KV缓存内存",
+      "llm_tldr_en": "SAKI is a training-free low-rank KV cache index that directly preserves attention scores rather than key reconstruction quality. It derives a covariance-weighted low-rank objective and closed-form asymmetric factorization from SVD of the covariance-weighted query-key operator, outperforming key PCA across LLaMA, Qwen, Mistral, and Llama models.",
+      "llm_tldr_cn": "现有低秩KV缓存方法要么保留模型权重，要么保留键方差，都不直接反映推理时使用的注意力分数。SAKI从期望注意力分数失真的角度推导出协方差加权的低秩目标，并证明在边缘条件下控制该失真可提升top-k召回。其最优解由协方差加权查询-键算子SVD得到闭式非对称分解，从而构建无训练的KV缓存索引，直接保留注意力分数而非键重建质量。在LLaMA 3.1 8B、Qwen 2.5 7B、Mistral 7B v0.1与Llama 3.2 3B上，SAKI均优于键PCA，为长上下文KV压缩提供了更有效的索引方案。",
+      "llm_tldr": "现有低秩KV缓存方法要么保留模型权重，要么保留键方差，都不直接反映推理时使用的注意力分数。SAKI从期望注意力分数失真的角度推导出协方差加权的低秩目标，并证明在边缘条件下控制该失真可提升top-k召回。其最优解由协方差加权查询-键算子SVD得到闭式非对称分解，从而构建无训练的KV缓存索引，直接保留注意力分数而非键重建质量。在LLaMA 3.1 8B、Qwen 2.5 7B、Mistral 7B v0.1与Llama 3.2 3B上，SAKI均优于键PCA，为长上下文KV压缩提供了更有效的索引方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.03229v1",
+      "source": "arxiv",
+      "title": "Unified Lookup-Table Inference with Signed-Digit K/V Caches for Ternary LLMs",
+      "abstract": "Ternary LLMs make their weight-dominated projections compact and efficient, but attention remains a mismatch: its K/V cache is created online and is typically processed by a separate higher-precision engine. Compressing this cache alone does not resolve the mismatch. To execute attention with the same lookup-table machinery as ternary projections, values accumulated in one reduction must retain a compatible representation and scale. This requirement also differs for keys and values during causal decoding, because newly generated values may belong to an unfinished cache block. This work develops a unified lookup-table inference approach for ternary LLMs. It stores runtime K/V states as scaled multi-plane signed digits organized around the reduction structure of attention. The resulting digit planes are consumed directly by activation-derived tables, avoiding dense K/V materialization between cache storage and attention computation. The design combines online K/V formation, bounded handling of incomplete value blocks, and a shared multi-stream datapath for Linear projections and attention. A constraint-guided search selects the representation and execution policy for a target quality--efficiency trade-off. Experiments on native and post-training ternary models validate the approach across cache capacity, model quality, and hardware efficiency.",
+      "authors": [
+        "Ziang Duan",
+        "Jiajun Wu",
+        "Zetian Chen",
+        "Hao Song",
+        "Yanwen Deng",
+        "Zixuan Shen",
+        "Nuobei Xie",
+        "Simo Wu",
+        "Bolun Wang",
+        "Peng Zhou",
+        "Chao Wang"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR"
+      ],
+      "published": "2026-08-04T07:00:20+00:00",
+      "link": "https://arxiv.org/pdf/2608.03229v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "stores K/V states as scaled multi-plane signed digits for unified lookup-table inference, compressing the cache representation",
+      "llm_evidence_cn": "将KV状态组织为缩放多平面带符号数字以统一查找表推理，压缩缓存表示",
+      "llm_evidence": "将KV状态组织为缩放多平面带符号数字以统一查找表推理，压缩缓存表示",
+      "canonical_evidence": "将KV状态组织为缩放多平面带符号数字以统一查找表推理，压缩缓存表示",
+      "llm_tldr_en": "This work unifies ternary LLM attention with lookup-table inference by storing K/V caches as scaled multi-plane signed digits, addressing the mismatch with high-precision attention engines.",
+      "llm_tldr_cn": "针对三值LLM中权重投影可紧凑高效查表、而注意力KV缓存需在线创建并由高精度引擎处理的不匹配问题，该工作提出统一查找表推理：将运行时KV状态存储为缩放多平面带符号数字，使注意力也能在相同查找表机制下以兼容的表示和尺度执行。它针对因果解码中新生成值可能属于未完成缓存块的特性，分别设计键与值的表示方式，在压缩KV缓存的同时保持高效推理。",
+      "llm_tldr": "针对三值LLM中权重投影可紧凑高效查表、而注意力KV缓存需在线创建并由高精度引擎处理的不匹配问题，该工作提出统一查找表推理：将运行时KV状态存储为缩放多平面带符号数字，使注意力也能在相同查找表机制下以兼容的表示和尺度执行。它针对因果解码中新生成值可能属于未完成缓存块的特性，分别设计键与值的表示方式，在压缩KV缓存的同时保持高效推理。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.03276v1",
+      "source": "arxiv",
+      "title": "TaskPress: Query-Agnostic KV Cache Compression via Task-Guided Pruning",
+      "abstract": "Long-context inference with large language models is constrained by the linear growth of the key-value cache to sequence length. While pruning offers mitigation, prevailing methods determine query-specific token importance that cannot be reused across unseen queries. In contrast, we introduce TaskPress, a framework for task-guided, query-agnostic KV cache eviction. Instead of optimizing the cache for a single query, TaskPress constructs a reusable memory representation conditioned on a high-level task guide. The guide functions as a meta-query during prefill to filter irrelevant tokens before downstream queries are issued. In addition, TaskPress leverages quantization scale factors as a zero-cost signal for detecting influential representation outliers, providing an efficient proxy for token importance. Experiments on conducted on various tasks with long context input demonstrate that TaskPress efficiently creates a compact, reusable cache across diverse queries.",
+      "authors": [
+        "Wonpyo Park",
+        "Seung-won Hwang"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-08-04T07:51:37+00:00",
+      "link": "https://arxiv.org/pdf/2608.03276v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Task-guided, query-agnostic KV cache compression via pruning for long-context LLM inference.",
+      "llm_evidence_cn": "提出任务引导、查询无关的KV缓存压缩方法（剪枝），针对长上下文推理。",
+      "llm_evidence": "提出任务引导、查询无关的KV缓存压缩方法（剪枝），针对长上下文推理。",
+      "canonical_evidence": "提出任务引导、查询无关的KV缓存压缩方法（剪枝），针对长上下文推理。",
+      "llm_tldr_en": "Introduces TaskPress, a query-agnostic KV cache eviction framework that uses a task guide as a meta-query during prefill to filter irrelevant tokens, and leverages quantization scale factors as zero-cost signals to detect outliers, enabling reusable compressed caches across unseen queries.",
+      "llm_tldr_cn": "长上下文推理受KV缓存随序列长度线性增长的制约，现有剪枝方法依赖查询特定token重要性，无法复用于未见查询。为此提出TaskPress任务引导的查询无关缓存淘汰框架，在预填充阶段以高层任务指南作为元查询过滤无关token，并利用量化缩放因子作为零成本信号识别影响性离群值，构建可复用的压缩记忆表示，从而在不牺牲精度的情况下提升缓存压缩的泛化能力。",
+      "llm_tldr": "长上下文推理受KV缓存随序列长度线性增长的制约，现有剪枝方法依赖查询特定token重要性，无法复用于未见查询。为此提出TaskPress任务引导的查询无关缓存淘汰框架，在预填充阶段以高层任务指南作为元查询过滤无关token，并利用量化缩放因子作为零成本信号识别影响性离群值，构建可复用的压缩记忆表示，从而在不牺牲精度的情况下提升缓存压缩的泛化能力。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.03555v1",
+      "source": "arxiv",
+      "title": "Heterogeneous LLM Serving with General-Purpose Processing-Near-Memory for Retrieval-Based Sparse Attention",
+      "abstract": "This paper presents a heterogeneous decode-phase serving system that relocates the KV cache out of GPU memory, motivated by the retrieval-based sparse attention that recent frontier LLMs adopt to serve million-token contexts. It partitions a decode step by operation type: GPU nodes hold the model weights and execute the projections and MoE layers, while processing-near-memory (PNM) nodes hold the KV cache and index keys and execute every operation that reads them. We first show that the assumptions behind prior PIM and PNM designs no longer hold for these operations, and derive four design requirements for such a node. From these requirements, we propose KARAT (KV-cache-resident Accelerator for Retrieval-based ATtention), a general-purpose PNM design that is the design point meeting all four. A KARAT device combines large LPDDR capacity with general-purpose compute sized for the retrieval indexer, serving an operational intensity beyond what PIM/PNM designs built for low-intensity GEMV target while accommodating diverse sparse attention algorithms that fixed-function units cannot support as they evolve. To reduce pipeline bubbles as the two device types alternate between micro-batches, we further propose opportunistic, fine-grained micro-batch scheduling (OFMS), which hides expert all-to-all behind the other micro-batch's GEMMs, and context-length-aware micro-batch rebalancing (CMR), which equalizes their token counts despite the variance in context length. Across three state-of-the-art models and real agentic traces, our proposed system improves throughput per TDP under a service-level objective by 2.09-6.13x over a GPU-only baseline and runs training-free sparse attention methods with 1.36-3.21x improvements.",
+      "authors": [
+        "Hyungkyu Ham",
+        "Junhyeong Bae",
+        "Seungheon Lee",
+        "Myeongjae Jeon",
+        "Gwangsun Kim"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR"
+      ],
+      "published": "2026-08-04T12:25:45+00:00",
+      "link": "https://arxiv.org/pdf/2608.03555v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "relocates KV cache to processing-near-memory nodes and executes all KV-reading operations there for memory-efficient decode",
+      "llm_evidence_cn": "将KV缓存转移到近内存节点并在其上执行所有读取KV的操作，实现解码阶段内存高效管理",
+      "llm_evidence": "将KV缓存转移到近内存节点并在其上执行所有读取KV的操作，实现解码阶段内存高效管理",
+      "canonical_evidence": "将KV缓存转移到近内存节点并在其上执行所有读取KV的操作，实现解码阶段内存高效管理",
+      "llm_tldr_en": "KARAT is a heterogeneous decode-phase serving system that places KV cache and index keys on processing-near-memory nodes, executing every KV-reading operation there while GPUs handle projections and MoE layers for retrieval-based sparse attention.",
+      "llm_tldr_cn": "针对前沿LLM用检索稀疏注意力服务百万token上下文时KV缓存过大、GPU内存难以承载的问题，KARAT提出异构解码服务系统：GPU节点持有模型权重并执行投影和MoE层，处理近内存（PNM）节点持有KV缓存和索引键并执行所有读取它们的操作。该工作从这些操作的特征推导出PNM设计需求并实现KARAT加速器，为KV缓存的近数据计算与内存高效服务提供了新体系结构。",
+      "llm_tldr": "针对前沿LLM用检索稀疏注意力服务百万token上下文时KV缓存过大、GPU内存难以承载的问题，KARAT提出异构解码服务系统：GPU节点持有模型权重并执行投影和MoE层，处理近内存（PNM）节点持有KV缓存和索引键并执行所有读取它们的操作。该工作从这些操作的特征推导出PNM设计需求并实现KARAT加速器，为KV缓存的近数据计算与内存高效服务提供了新体系结构。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.03893v1",
+      "source": "arxiv",
+      "title": "Cross-Model KV Cache Transfer in LLM Families: A Closed-Form Linear Mapping for Prefill Reuse",
+      "abstract": "Production deployments often swap between different-sized models in a family for cost-quality cascading, mid-conversation switching, and routing, and each swap forces the receiver to repay the prefill from scratch. We propose cross-model KV cache transfer, where the receiver reuses the source's KV cache, skipping prefill. We find that cross-model KV has substantial linear structure across matched-KV pairs, where source and target share KV head count and per-head dimension. On Qwen3 14B->32B, one source layer explains 56% of variance in the target's keys and 32% in values, rising to 79% and 65% with multiple source layers. Building on this, we design a closed-form ridge mapper that operates per head and proceeds in three steps. First, for each target layer we select the top-k most predictive source layers and concatenate their KV as input. Second, we strip RoPE from the keys before mapping, so the fit is position-free and reusable across context lengths. Third, we fit ridge regression on a small calibration set of 500 FineWeb-Edu sequences of 1,024 tokens each. Surprisingly, across six pairs in three families, this linear mapper retains 73-98% of the receiver's standalone-prefill accuracy on four pairs, while two degrade sharply. A nonlinear MLP recovers up to +37 pp HellaSwag retention on the failures. The mapper runs 2.7-25x faster than re-prefill and remains stable across multi-turn handoff, making cross-model KV cache transfer practical.",
+      "authors": [
+        "Taekyung Heo",
+        "Rasoul Shafipour",
+        "Ritchie Zhao",
+        "Maximilian Golub",
+        "Mohammad Mahdi Kamani",
+        "Ritika Borkar",
+        "Makesh Tarun Chandran",
+        "Pantea Zardoshti",
+        "Bita Darvish Rouhani"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-08-04T16:26:47+00:00",
+      "link": "https://arxiv.org/pdf/2608.03893v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Closed-form linear mapping reuses KV cache across model sizes to skip prefill",
+      "llm_evidence_cn": "闭式线性映射在模型尺寸间复用KV缓存以跳过预填充",
+      "llm_evidence": "闭式线性映射在模型尺寸间复用KV缓存以跳过预填充",
+      "canonical_evidence": "闭式线性映射在模型尺寸间复用KV缓存以跳过预填充",
+      "llm_tldr_en": "Cross-model KV cache transfer lets a target model reuse a source model's KV cache, skipping prefill. The paper finds substantial linear structure across matched KV pairs and designs a closed-form ridge mapper per head, enabling efficient prefill reuse in LLM families.",
+      "llm_tldr_cn": "生产环境中常在不同规模的同族模型间切换，导致每次都要重新计算预填充。论文提出跨模型KV缓存传输，让接收模型复用源模型的KV缓存以跳过预填充。对Qwen3 14B到32B的匹配KV对分析发现跨模型KV存在显著线性结构，单源层可解释目标键56%的方差与值32%的方差，多层后升至79%与65%。据此设计逐头的闭式岭映射器，实现轻量高效的预填充复用。该工作大幅降低模型切换与路由推理的计算开销。",
+      "llm_tldr": "生产环境中常在不同规模的同族模型间切换，导致每次都要重新计算预填充。论文提出跨模型KV缓存传输，让接收模型复用源模型的KV缓存以跳过预填充。对Qwen3 14B到32B的匹配KV对分析发现跨模型KV存在显著线性结构，单源层可解释目标键56%的方差与值32%的方差，多层后升至79%与65%。据此设计逐头的闭式岭映射器，实现轻量高效的预填充复用。该工作大幅降低模型切换与路由推理的计算开销。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2607.29575v1",
+      "source": "arxiv",
+      "title": "SLIM: Saturation-Aware Lightweight Performance Modeling for LLM Serving",
+      "abstract": "Large language model (LLM) serving commonly increases batch size to improve throughput, but performance eventually reaches a deployment-dependent plateau beyond which larger batches provide marginal gains while increasing latency and GPU memory consumption. Previous studies have attributed this behavior to HBM/DRAM bandwidth limitations, but the underlying causes have primarily been supported by conceptual arguments or high-level performance observations. As our first contribution, we present a detailed GPU characterization using hardware profiling techniques, demonstrating that throughput saturation originates in the attention kernels during the decode phase. Specifically, we show that their nearly constant arithmetic intensity as active-context lengths increases -not merely larger batch sizes- drives DRAM-bandwidth saturation, while the achieved compute throughput remains far below the hardware limit. Building on this analysis, we present the Batching Configuration Advisor (BCA), which selects the highest-throughput batching configuration satisfying a target latency constraint and identifies up to 55 GB of GPU memory allocation that can be avoided for the evaluated OPT models with minimal throughput loss. To enable these recommendations, we introduce SLIM (Saturation-Aware Lightweight Performance Model), a semi-analytical model that predicts LLM inference throughput and latency from analytical formulations of Transformer computation and memory traffic. Across the evaluated scenarios, SLIM outperforms representative performance-modeling baselines while successfully generalizing to previously unseen operating conditions.",
+      "authors": [
+        "Pol G. Recasens",
+        "Ferran Agullo",
+        "Yue Zhu",
+        "Chen Wang",
+        "Jordi Torres",
+        "Josep Ll. Berral"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC",
+        "cs.PF"
+      ],
+      "published": "2026-07-31T16:02:31+00:00",
+      "link": "https://arxiv.org/pdf/2607.29575v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "hardware profiling shows decode-phase attention kernel saturation underlies LLM serving throughput plateau; useful for KV-cache-aware serving optimization",
+      "llm_evidence_cn": "硬件剖析揭示解码阶段注意力核饱和是LLM服务吞吐平台期的根源，可用于KV缓存感知的服务优化",
+      "llm_evidence": "硬件剖析揭示解码阶段注意力核饱和是LLM服务吞吐平台期的根源，可用于KV缓存感知的服务优化",
+      "canonical_evidence": "硬件剖析揭示解码阶段注意力核饱和是LLM服务吞吐平台期的根源，可用于KV缓存感知的服务优化",
+      "llm_tldr_en": "SLIM uses hardware profiling to show that decode-phase attention kernels with nearly constant arithmetic intensity cause LLM serving throughput saturation, and builds a saturation-aware lightweight performance model to guide serving decisions.",
+      "llm_tldr_cn": "针对LLM服务增大批处理规模后吞吐量达到平台期、GPU内存与延迟成本却继续上升的问题，SLIM通过详细硬件剖析证明瓶颈源于解码阶段注意力核的近乎恒定算术强度，而非简单的HBM/DRAM带宽限制，并据此提出饱和感知的轻量级性能模型。该工作为KV缓存感知的推理优化与资源规划提供了可复用的分析方法，也解释了为何增大批处理在平台期后收益甚微。",
+      "llm_tldr": "针对LLM服务增大批处理规模后吞吐量达到平台期、GPU内存与延迟成本却继续上升的问题，SLIM通过详细硬件剖析证明瓶颈源于解码阶段注意力核的近乎恒定算术强度，而非简单的HBM/DRAM带宽限制，并据此提出饱和感知的轻量级性能模型。该工作为KV缓存感知的推理优化与资源规划提供了可复用的分析方法，也解释了为何增大批处理在平台期后收益甚微。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2608.02560v1",
+      "source": "arxiv",
+      "title": "Structured Memory for Edge Language Models: Persistent Context and Corpus Retrieval via O(1) SSM State Injection",
+      "abstract": "Retrieval-augmented generation (RAG) imposes a prefill cost proportional to retrieved context length, and -- with Transformer backbones -- a KV-cache that grows with each generated token. State-Space Models (SSMs) avoid the second cost by construction; we eliminate the first, collapsing prefill from $O(L_{context})$ to $O(1)$ per query. We introduce PRECOG (Pre-Computed Context Injection), a retrieval mechanism that exploits a property unique to SSMs: the fixed-size, position-agnostic recurrent hidden state is a complete summary of everything the model has read. PRECOG pre-encodes document corpora offline as SSM hidden states and injects the best-matching state directly at query time, bypassing in-context re-ingestion entirely. The same state-injection mechanism enables SMC (Structured Memory Consolidation): a hierarchical persistent memory with cognitive-domain clustering, an adjustable fidelity-vs-storage dial, and $O(1)$ session initialization, which consolidates short-term episodic states into long-term semantic memory and fuses both with retrieved corpus states at query time. We demonstrate the system on TENNs-LLM, a 1.2B-parameter gated-SSM language model with a 192 KB hidden state. PRECOG matches in-context RAG answer quality, reducing prefill latency from $\\sim$27 s to $<$6 ms on edge hardware -- a $\\sim$4500$\\times$ speedup that crosses the threshold from unusable to interactive. The mechanism is architecturally impossible for Transformer KV-caches, which are position-entangled and grow linearly with context length.",
+      "authors": [
+        "Anusha Madan Gopal",
+        "Aras Pirbadian",
+        "Kristofor D. Carlson",
+        "M Anthony Lewis",
+        "Jonathan Tapson"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.IR"
+      ],
+      "published": "2026-08-03T17:43:36+00:00",
+      "link": "https://arxiv.org/pdf/2608.02560v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Addresses KV-cache growth during generation by using SSM hidden state injection instead, removing prefill and cache cost for edge LMs",
+      "llm_evidence_cn": "针对生成时KV缓存增长问题，改用SSM隐状态注入消除预填充与缓存开销",
+      "llm_evidence": "针对生成时KV缓存增长问题，改用SSM隐状态注入消除预填充与缓存开销",
+      "canonical_evidence": "针对生成时KV缓存增长问题，改用SSM隐状态注入消除预填充与缓存开销",
+      "llm_tldr_en": "PRECOG pre-encodes corpora as SSM hidden states and injects the best-match state at query time, collapsing prefill to O(1) and avoiding the KV-cache growth inherent to Transformer RAG, enabling efficient persistent context on edge devices.",
+      "llm_tldr_cn": "检索增强生成在Transformer上带来随上下文线性增长的预填充代价和逐token增长的KV缓存，成为边缘部署的瓶颈。PRECOG利用状态空间模型固定大小且位置无关的隐状态可作为完整上下文的摘要这一特性，离线将文档语料编码为SSM隐状态，查询时直接注入最优匹配状态，将预填充复杂度降为O(1)，并天然避免KV缓存膨胀。实验显示该方法在边缘语言模型上大幅降低延迟与内存占用，为持久上下文与语料检索提供了高效方案。",
+      "llm_tldr": "检索增强生成在Transformer上带来随上下文线性增长的预填充代价和逐token增长的KV缓存，成为边缘部署的瓶颈。PRECOG利用状态空间模型固定大小且位置无关的隐状态可作为完整上下文的摘要这一特性，离线将文档语料编码为SSM隐状态，查询时直接注入最优匹配状态，将预填充复杂度降为O(1)，并天然避免KV缓存膨胀。实验显示该方法在边缘语言模型上大幅降低延迟与内存占用，为持久上下文与语料检索提供了高效方案。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    },
+    {
+      "id": "2608.02870v1",
+      "source": "arxiv",
+      "title": "Maglev: Sliding Recurrent Memory",
+      "abstract": "We introduce \\ours{}, a recurrent Transformer architecture with fixed-size memory that generalizes sliding-window attention while remaining parallelizable during training. \\ours{} consists of two coupled models: a prefiller $Q$, which leverages full attention\\footnote{In practice, we use interleaved full and sliding-window attention for $Q$, as this yields stronger performance. The essential requirement is that $Q$ be more expressive than $P$, with access to the full history.} to produce memory targets $m'_t$, and a decoder $P$, which uses only sliding-window attention and recurrent K/V injection to produce decoder memories $m_t$ for next-token prediction. We train \\ours{} with a memory consistency loss that aligns $m_t$ with $m'_t$, allowing inference to use $P$ alone. Empirically, \\ours{} improves validation loss and downstream pretraining benchmarks over sliding-window and latent recurrent transformer baselines. Moreover, sharing parameters between $P$ and $Q$ reduces parameter memory while preserving most of the gains.",
+      "authors": [
+        "Bo Liu",
+        "Qiang Liu"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-08-03T20:40:49+00:00",
+      "link": "https://arxiv.org/pdf/2608.02870v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Sliding-window attention with recurrent K/V injection to maintain fixed-size memory, reducing KV cache footprint in autoregressive generation.",
+      "llm_evidence_cn": "使用滑动窗口注意力和循环K/V注入保持固定大小记忆，减少自回归生成中KV缓存的内存占用。",
+      "llm_evidence": "使用滑动窗口注意力和循环K/V注入保持固定大小记忆，减少自回归生成中KV缓存的内存占用。",
+      "canonical_evidence": "使用滑动窗口注意力和循环K/V注入保持固定大小记忆，减少自回归生成中KV缓存的内存占用。",
+      "llm_tldr_en": "Introduces Maglev, a recurrent Transformer architecture with fixed-size memory that generalizes sliding-window attention, using a prefiller to set memory targets and a decoder with recurrent K/V injection, trained with a consistency loss so inference uses the decoder alone, reducing cache memory overhead.",
+      "llm_tldr_cn": "针对Transformer自回归生成中KV缓存随序列变长而线性增长的问题，提出Maglev循环Transformer架构。它由全注意力预填器和仅使用滑动窗口注意力与循环K/V注入的解码器组成，通过记忆一致性损失对齐两者，使推理仅需解码器即可运行。该固定大小记忆替代了随长度增长的完整KV缓存，在保持并行训练性的同时显著降低长序列自回归生成的内存开销，为高效长上下文推理提供了新架构思路。",
+      "llm_tldr": "针对Transformer自回归生成中KV缓存随序列变长而线性增长的问题，提出Maglev循环Transformer架构。它由全注意力预填器和仅使用滑动窗口注意力与循环K/V注入的解码器组成，通过记忆一致性损失对齐两者，使推理仅需解码器即可运行。该固定大小记忆替代了随长度增长的完整KV缓存，在保持并行训练性的同时显著降低长序列自回归生成的内存开销，为高效长上下文推理提供了新架构思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

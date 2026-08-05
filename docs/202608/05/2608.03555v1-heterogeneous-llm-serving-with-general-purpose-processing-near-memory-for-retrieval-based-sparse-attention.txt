@@ -1,0 +1,1081 @@
+Title: Heterogeneous LLM Serving with General-Purpose Processing-Near-Memory for Retrieval-Based Sparse Attention
+
+URL Source: https://arxiv.org/pdf/2608.03555v1
+
+Published Time: Wed, 05 Aug 2026 01:00:03 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Heterogeneous LLM Serving with General-Purpose Processing-Near-Memory for Retrieval-Based Sparse Attention 
+
+Hyungkyu Ham, Junhyeong Bae, Seungheon Lee, Myeongjae Jeon, and Gwangsun Kim 
+
+Pohang University of Science and Technology (POSTECH) 
+
+Abstract —This paper presents a heterogeneous decode-phase serving system that relocates the KV cache out of GPU memory, motivated by the retrieval-based sparse attention that recent frontier LLMs adopt to serve million-token contexts. It partitions a decode step by operation type: GPU nodes hold the model weights and execute the projections and MoE layers, while processing-near-memory (PNM) nodes hold the KV cache and index keys and execute every operation that reads them. We first show that the assumptions behind prior PIM and PNM designs no longer hold for these operations, and derive four design requirements for such a node. From these requirements, we propose KARAT (KV-cache-resident Accelerator for Retrieval-based ATtention), a general-purpose PNM design that is the design point meeting all four. A KARAT device combines large LPDDR capacity with general-purpose compute sized for the retrieval indexer, serving an operational intensity beyond what PIM/PNM designs built for low-intensity GEMV target while accommodating diverse sparse attention algorithms that fixed-function units cannot support as they evolve. To reduce pipeline bubbles as the two device types alternate between micro-batches, we further propose opportunistic, fine-grained micro-batch scheduling (OFMS), which hides expert all-to-all behind the other micro-batch’s GEMMs, and context-length-aware micro-batch rebalancing (CMR), which equalizes their token counts despite the variance in context length. Across three state-of-the-art models and real agentic traces, our proposed system improves throughput per TDP under a service-level objective by 2.09– 6.13 × over a GPU-only baseline and runs training-free sparse attention methods with 1.36–3.21 × improvements. 
+
+I. I NTRODUCTION 
+
+Large language models (LLMs) are now deployed across many domains [4], [66], and increasingly serve agentic work-loads, in which the model itself drives multi-turn generation loops [7], [80], [91] and tool outputs and intermediate reason-ing accumulate over a session. Real agentic traces reach 198K– 791K tokens at the 99th percentile, with 94–97% reused on the following turn (§II-A). Prefill extends each context by only a few hundred tokens per turn, whereas every decoding step must compute attention over the entire context, so the decode pool—which prefill–decode disaggregation now provisions separately [61], [72], [73], [99]—must both hold the context of every concurrently served request in memory and attend over all of them at every step. Capacity and bandwidth therefore become the bottleneck, and model architectures have evolved to relieve both: MLA (multi-head latent attention) compresses the KV cache into a low-rank latent [15], [17], [25], and sparse attention reads only a subset of it per step [12], [16], [43], [83]. Score    
+
+> Index
+> keys
+> Index
+> query
+> Index
+> scores
+> …
+> Gather
+> ……
+> Gathered tile
+> Keys Values
+> Attend
+> Output
+> Selected
+> values
+> Selected
+> keys
+> Query
+> Index -build
+> Query Index
+> query Index
+> query
+> proj.
+> Keys
+> Index
+> key
+> proj.
+> …
+> Index
+> keys
+> …
+> cached
+> Select
+> Find top -k
+> Index
+> scores
+> …
+
+Fig. 1. Stages of retrieval-based sparse attention in state-of-the-art LLMs. Stored Stored Stored Active Active Active 0      
+
+> 50
+> 100
+> 150
+> Size per request
+> (GBs)  93
+> 137
+> 78
+> 2.9 21 8.0
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2
+> 32×
+> 6.6×
+> 9.8× 90 123
+> 70
+> Main KV Index keys
+
+Fig. 2. Stored and activated KV cache and index keys at 1M context for the three evaluated models. Retrieval-based sparse attention reduces the activated data that each decoding step reads, while the full KV cache and index keys must still be stored. 
+
+In particular, retrieval-based sparse attention has been adopted by frontier LLMs as part of the model architec-ture. It layers on top of a KV-reducing attention form rather than replacing one: over MLA in GLM-5.2 [25] and DeepSeek-V3.2 [16], and over grouped-query attention (GQA) in MiniMax-M3 [43]. It stores a small index key for each of the L context tokens, and at every decoding step scores the query against all index keys, selects the top-k tokens, and attends only to them (Fig. 1). This reduces attention FLOPs and KV reads from O(L) to O(k)—6.6–32 × less KV-cache traffic at a million-token context (Fig. 2). Unlike eviction-based compression [46], [95], which bounds the footprint by discarding KV pairs at the cost of irrecoverable context loss, these methods retain every pair and add per-token index keys, reducing memory traffic but not the memory footprint. A single million-token request holds 78–137 GB of KV cache and index keys, whereas a recent eight-GPU node [57], [58] provides 1.1–1.4 TB of HBM that must also hold the hun-dreds of billions of parameters of mixture-of-experts (MoE) models [16], [25], [43]. Few requests therefore fit in GPU memory at once, and the dense FC and MoE layers spend 
+
+58 –74% of each decoding step on weight reads that a small batch cannot amortize (§IV). Thus, throughput is limited by the attainable batch size rather than by the available compute. Moreover, indexing and attention are not purely bandwidth-bound. Depending on the indexer’s score function and the 1arXiv:2608.03555v1 [cs.AR] 4 Aug 2026 attention form that consumes its output—MLA in particular— a substantial part of them is compute-intensive. They therefore demand capacity, bandwidth, and compute at once. The MoE layers, in contrast, are compute-bound only at a large batch size, determined by the capacity left for the KV cache. Two lines of prior work place the KV cache outside GPU memory, but neither addresses all three together. Offloading it to host DRAM [3], [73], [87], [98] or to CXL-attached memory [51], [92], [100] expands capacity without relocating the computation, so the O(L) index scan over all index keys and the gather of the selected tokens still cross a bandwidth-limited link. Demoting the KV caches of idle sessions to a lower memory tier [73], [88] is complementary but does not address the active sessions. Recent processing-in-memory (PIM) and processing-near-memory (PNM) designs instead relocate the computation next to the memory, but assume both the low operational intensity (OI) and the fixed form of dense multi-head attention (MHA) and GQA [27], [28], [31], [68], [94]. Under these assumptions, they keep their compute engines small and implement them as specialized PNM (SPNM) units tailored to those attention forms [20], [37]. Retrieval-based sparse attention methods, however, vary in the score function, the selection granularity, and the cadence at which the indexer runs, and new variants continue to emerge. An architecture coupled to any single method can therefore lose its advantage [21] and impede algorithmic progress. Because datacenters provision serving systems under a fixed power budget, these observations motivate a device that holds the KV cache and index keys at high capacity and bandwidth per watt, with a compute engine placed next to them. The engine must be general-purpose, since specialized units cover only a fixed set of algorithms, and sized to the moderate OI of 4–128 across the algorithms in use (§II-B). The GPUs, in contrast, must retain high compute throughput per watt, since the MoE layers become compute-bound at large batch sizes, which the added capacity can now permit. To meet these requirements, we propose a scalable hetero-geneous decode-phase serving system that partitions a decode step by operation type: GPU nodes hold the model weights and execute the projections and MoE layers, while our proposed KARAT ( KV-cache-resident Accelerator for Retrieval-based 
+
+AT tention ) nodes hold the KV cache and index keys and execute all operations that read them. A KARAT device combines LPDDR memory, which provides high memory capacity per watt, with general-purpose PNM (GPNM) cores that sustain the OI of the target operations while supporting diverse retrieval-based sparse attention algorithms. Multiple (e.g., 32) such devices form a KARAT node that matches the power and aggregate memory bandwidth of a GPU node with an order of magnitude more memory capacity. Offloading the KV cache to KARAT nodes dedicates GPU HBM to the model weights, raising the global batch size at which the MoE layers become compute-bound under the same power constraint. A decode step interleaves GPU and KARAT computation, so each batch is split into two micro-batches that pipeline the two device types. The duration of each stage, however, varies with the aggregate context length of a micro-batch, the expert skewness within the MoE layers, and the layer-wise variation of the model, leaving pipeline bubbles on whichever device is off the critical path. We therefore propose two scheduling techniques, one for each side of the pipeline. First, when GPU operations dominate, the GPUs still re-mains idle during the all-to-all communication of the MoE layer. Prior micro-batch schedulers [31], [94], [101] alternate between compute-bound GPU kernels and memory-bound PIM/PNM kernels in a static, coarse-grained manner, leaving this idle time unexploited. Thus, we propose opportunistic, fine-grained micro-batch scheduling (OFMS), which overlaps the communication with the other micro-batch’s next GEMM whenever dependencies allow, and falls back otherwise. Second, when KARAT operations dominate, the bottleneck can instead come from micro-batch imbalance: the wide vari-ance in context length across requests can leave the two micro-batches unbalanced in total tokens. Prior approaches [31], [65], [101] balance them by request count and overlook the aggregate context length, so the longer micro-batch delays the synchronization at the end of the step. We therefore propose 
+
+context-length-aware micro-batch rebalancing (CMR), which equalizes the token count of the two micro-batches whenever a request finishes or is admitted. On agentic multi-turn and long-context workloads, KARAT improves SLO-constrained decode throughput per thermal design power (TDP) by 2.09 –6.13 × across three state-of-the-art models, relative to a GPU-only baseline running the same model-native method under a P99 time-between-tokens (TBT) service-level objective (SLO) of 100 ms [6], [72]. It also runs training-free sparse attention methods without hardware change, improving throughput per watt by 1.36 –3.21 × over the GPU-only system. To summarize, this work makes the following contributions:  
+
+> •
+
+Characterization. We show that the assumptions behind prior PIM and PNM designs no longer hold, and derive four design requirements for serving diverse retrieval-based sparse attention algorithms.  
+
+> •
+
+General-purpose PNM. We characterize the PNM de-sign space for retrieval-based sparse attention and identify a design point that meets all four requirements: LPDDR chosen for capacity per watt, with general-purpose cores provisioned only to the intensity of the offloaded oper-ations, which we refer to as KARAT. Its GPNM cores support diverse retrieval-based sparse attention algorithms that specialized PNM cannot accommodate.  
+
+> •
+
+Micro-batch scheduling. We propose opportunistic, fine-grained micro-batch scheduling (OFMS), which inter-leaves GPU kernels across micro-batches to hide expert all-to-all communication.  
+
+> •
+
+Micro-batch rebalancing. We propose context-length-aware micro-batch rebalancing (CMR), which keeps the token counts of the micro-batches comparable despite the wide variance in context length. 2II. B ACKGROUND AND MOTIVATION 
+
+Throughout this section, we mark the observations that motivate our design in italics as O1 –O5 .
+
+A. Long-context Agentic LLM Serving 
+
+Agentic workloads drive a multi-turn loop in which tool outputs and intermediate reasoning accumulate over a ses-sion [80], [91]. Each turn resubmits the entire context and appends to it, so the context grows monotonically (Fig. 3). Serving systems exploit this by caching the shared prefix rather than recomputing it [42], [98]. (O1 ) Across three real agentic traces, context accumulates over turns to million scale (p99 198K–791K, max ∼1M) with high dispersion across requests (p50 ∼83–149K), and 94–97% of a turn’s prompt tokens hit the prefix cache, leaving only the remainder to be prefilled. 
+
+The two phases bear these costs asymmetrically. Prefill is compute-bound and traverses only the few hundred un-cached tokens once. Decode reuses the context at a far finer granularity: every token a turn generates attends over the entire accumulated context, so the same KV cache is read on every step and must stay close to the compute for the whole turn. Its footprint therefore caps the batch size, leaving the tensor cores idle while the memory is full. Production stacks accordingly disaggregate the two phases into separately provisioned pools [72], [73], [99], and we focus on the decode pool throughout, holding the prefill pool constant. 
+
+B. Retrieval-Based Sparse Attention 
+
+To serve million-token contexts, sparse attention selects at runtime only the tokens most relevant to the current query, reducing attention FLOPs and KV reads from O(L) to O(k).
+
+Eviction-based methods (e.g., StreamingLLM [86], H2O [95], SnapKV [46]) discard the rest, bounding memory at the cost of irrecoverable context loss. Retrieval-based methods instead retain the full KV cache and retrieve a fresh top-k
+
+set at every step, avoiding such loss. Among them, training-free approaches [11], [77], [83] attach a selection mechanism to a pretrained model, whereas model-native designs train the indexer jointly with the model and are now part of the architecture of frontier LLMs [16], [25], [43]. (O2 ) Retrieval-based sparse attention cuts KV-cache read traffic by 6.6–32 ×
+
+at a 1M-token context (Fig. 2), yet the full KV cache and its index keys must still be stored alongside MoE weights of hundreds of billions of parameters, shifting the decode bottleneck from memory bandwidth to capacity. 
+
+Their operational forms are also diverse. DeepSeek Sparse Attention (DSA) [16] scores each token as a weighted sum of ReLU-rectified dot products over a few FP8 indexer heads sharing one key head, and takes an exact global top-k at every layer. GLM-5.2 reuses that scoring function but evaluates it once every four layers [25], while MiniMax-M3 scores 128-token blocks per GQA group [43], making the gather contiguous but the selection coarse. Training-free methods add page-level min/max scans [83], LSH [12], and clustering [20]. 
+
+Operational structure and diversity. Retrieval-based sparse attention proceeds in five stages: INDEX -B UILD , SCORE ,0 20 40                                                               
+
+> Turn index
+> 0
+> 100
+> 200
+> Context length
+> (K tokens)  SWE-Pro
+> 040 80
+> Turn index
+> 0
+> 100
+> 200
+> 300 SWE-chat
+> 050 100
+> Turn index
+> 0
+> 100
+> 200
+> 300
+> 400 KVCT
+> Fig. 3. Context length distribution of multi-turn agentic workloads [10], [18], [22]: Claude Code traces with Claude Opus [8] (SWE-chat, KVCT) and OpenAI [5] coding-agent rollouts (SWE-bench Pro). Each dot denotes the median context length at a given turn, and we plot turns up to the 75th percentile (P75) of the turn-count distribution. TABLE I REPRESENTATIVE OPERATIONAL FORMS AT EACH STAGE OF RETRIEVAL -BASED SPARSE ATTENTION .Stage Observed operational forms INDEX -B UILD learned projection [16], [25], cross-layer reuse [25], page min/max [83], online clustering [20], LSH buck-eting [12], segmented clustering [11] SCORE weighted MH dot [16], [25], block score [43], sign-selected dot [83], partial dot [77], centroid GEMV [11], [20], LSH collision count [12] SELECT exact global top-k[16], [25], block top-k[43], page top-k[83], cluster top-k[11], [20], LSH sampling [12] GATHER token [16], [25], block [43], page [83], cluster [20] ATTEND MLA [16], [25], GQA [12], [20], [43], [77], [83] TABLE II EVALUATED MECHANISM FAMILIES AND THEIR KERNEL CHARACTERISTICS (MEASURED SERVING CONFIGURATIONS ;BYTE SIZES ARE PER TOKEN ,SUMMED OVER ALL LAYERS ).
+> Model GLM-5.2 (MLA+DSA) MiniMax-M3 (GQA+sparsity) DeepSeek-V3.2 (MLA+DSA) Layers (w/ indexer) 78 (21) 60 (57) 61 (61) Indexer OI ∼64 ∼4∼128 Indexer cadence every 4th layers nearly every layer every layer SELECT granularity token block (128) token ATTEND OI ∼114 ∼16 ∼228 Top-k(tokens) 2048 128 ×16 (+1 local) 2048 KV cache (KB/tok.) 89.9 122.9 70.3 Index key (KB/tok.) 2.7 14.6 7.8
+
+SELECT , G ATHER , and A TTEND . I NDEX -B UILD generates the per-token index keys ; it is O(1) per decode step and can be fused with the QKV projection or run as a separate kernel. SCORE and S ELECT together form the indexer scan , which reads the index keys of the entire context to choose the top-k
+
+tokens. G ATHER then collects the selected entries and A TTEND 
+
+computes attention over them; as the latter directly consumes the former’s output, the two can be fused into a single kernel. Each stage takes a different operational form across models, methods, and generations (Table I), including the three frontier models we evaluate (Table II). The scan, however, dominates regardless: it reads the entire context whereas A TTEND touches only O(k) tokens, so it accounts for most of the memory traffic and the FLOPs of the attention layer for long contexts (Fig. 4). It therefore sets both demands at once, at an operational intensity (OI) of 4–128 FLOPs/byte that batching cannot shift: batching amortizes weight reads, but the scan’s FLOPs and bytes scale together. (O3 ) Retrieval-based sparse attention takes many operational forms, but they share a common bottleneck: the indexer scan dominates the attention layer rather than ATTEND . Its OI of 4–128 FLOPs/byte does not change with batch size. 
+
+30   
+
+> 50
+> 100
+> Share (%)
+> GLM
+> MiniMax
+> DeepSeek
+> DRAM traffic
+> GLM
+> MiniMax
+> DeepSeek
+> FLOPs
+> GLM
+> MiniMax
+> DeepSeek
+> Kernel time
+> Indexer scan Attend SWE-pro KVCT Fig. 4. Decode cost of one layer that executes the retrieval indexer and sparse attention, at the average context lengths of the agentic traces (Table VII) with a decode batch of 256. Kernel time measured on H200.
+
+C. Expert and Data Parallelism for MoE LLM Serving 
+
+To serve MoE LLMs with hundreds of billions of parame-ters, serving systems [2], [42], [98] combine data parallelism (DP), tensor parallelism (TP), and expert parallelism (EP). EP meets the memory capacity demand by distributing the experts across GPUs, each executing only the tokens routed to it, while the dense weights are replicated and attention runs in DP [101]. At every MoE layer, the ranks dispatch tokens to their experts and combine the results after the expert GEMMs, both through all-to-all communication. Each expert therefore processes only a fraction of the global batch: with 256 experts and eight selected per token, a global batch of 8192 yields an average of 256 tokens per expert. MoE efficiency thus hinges on the global batch, the layer’s OI rising from ∼1 to over 100 FLOPs/byte between B=1 and 
+
+B=4096 (Fig. 5(a)). The all-to-all exchange, however, grows with the batch, reaching over 100 μs at B=4096 under EP =64 
+
+(Fig. 5(b)), and skew in expert selection leaves the load uneven across ranks [17], [29]. The attainable batch size is nonetheless bounded by memory capacity, since the aggregate KV cache of the batch must share the HBM with the model weights. 
+
+(O4 ) The MoE layer reaches high efficiency only at a large global batch, which is in turn limited by the HBM capacity remaining for the KV cache. Throughput is therefore bounded by memory capacity rather than by compute. D. Challenges in Prior Approaches 
+
+Offloading the KV cache. Host- or CXL-attached mem-ory [51], [87], [90], [92] expands capacity but leaves the 
+
+location of computation unchanged, forcing a choice between two bottlenecks. Retaining the index keys in HBM avoids traversing the link with the O(L) scan, yet the keys grow with context length and with every concurrent request—they are only 8–33 × smaller than the KV cache per token (Table II)— so HBM capacity still caps the global batch. Offloading them instead places the scan’s O(L) traffic on a link an order of magnitude slower than HBM, and that scan dominates KV-side time ( O3 ). Neither choice removes the bottleneck; it determines only which resource is exhausted first. 
+
+Offloading the KV cache and the computation. The com-putation must therefore move to the data. The host CPU is an inadequate site, as its DRAM bandwidth falls an order of magnitude below HBM’s, whereas PNM and PIM designs place the compute next to the memory arrays [28], [31], [68], [94]. Such designs, however, target dense MHA or GQA, whose decode kernels run at an OI of a few FLOPs/byte, and 1          
+
+> 64
+> 512
+> 4096
+> Decode batch size B
+> 1
+> 10
+> 10 2
+> Operational intensity
+> (FLOPs/byte)
+> 1
+> 64
+> 512
+> 4096
+> Decode batch size B
+> 1
+> 2
+> 5
+> 10
+> 20
+> 50
+> 100
+> Latency (μs)
+> GLM-5.2
+> Dispatch
+> MiniMax-M3
+> Combine
+> DeepSeek-V3.2
+> (a) (b)
+> Fig. 5. (a) OI of the MoE layer across batch sizes, assuming each expert’s weights are read from HBM and tokens are routed uniformly across experts. (b) MoE communication latency across global batch sizes at EP =64 .TABLE III DESIGN REQUIREMENTS FOR RETRIEVAL -BASED SPARSE ATTENTION AT LONG CONTEXT .Requirement Required characteristic
+> R1 : Capacity (O1 ,O2 ,O4 )Capacity per watt an order of magnitude above HBM’s, keeping the batch’s KV cache and index keys resident (78–137 GB per 1M tokens)
+> R2 : Bandwidth (O3 ,O5 )Bandwidth per watt comparable to HBM’s, co-located with the index keys, so that the resident context is scanned within the TBT SLO
+> R3 : Compute (O3 ,O5 )Ridge point above the OI of the indexer scan to avoid a compute bottleneck
+> R4 : Generality (O3 ,O5 )Cores programmable across all operations in Table I, not specialized to a single mechanism, so that current and future algorithms in this domain run without hardware change
+
+size their compute engines accordingly. Retrieval-based sparse attention violates this assumption. First, the OI is higher: MLA reconstructs every head from a single low-rank latent per token, so one byte read feeds the arithmetic of all heads and core attention reaches 114–228 against 16 under GQA, while DSA scores each token over several indexer heads that share one FP8 index key, placing the indexer at 64–128 against 4 under coarse block scoring (Table II). Provisioned for the lower intensity, prior PNM units render the scan compute-bound and become the bottleneck themselves. Second, score functions, selection granularities, and indexer cadences differ across models and change with every generation (Table I), which no fixed enumeration of function units can cover. 
+
+(O5 ) Retrieval-based sparse attention still calls for near-memory processing, but it changes what such a design must provide: the compute must remain colocated with the KV cache and index keys, sustain a higher OI than prior designs assume, and accommodate operations that vary across models. E. Design Requirements 
+
+Observations O1 –O5 yield four requirements, summarized in Table III. Because datacenters provision serving systems under a fixed power budget, the first two are stated per watt. No existing platform exhibits all four: GPU and PIM systems satisfy R2 and R3 but not R1, host- and CXL-based expansion satisfies R1 but not R2, and SPNM fails R4 by construction. 4GPU node  KARAT die                         
+
+> GPNM
+> cor e
+> Mem.
+> ctrl. …
+> …
+> …
+> xPU
+> HBM
+> HBM
+> …
+> …
+> …
+> Switch Switch
+> GPU devices
+> GPU
+> HBM HBM
+> Host
+> CPU
+> KARAT devices
+> Proposed decode -phase cluster
+> xPU
+> HBM
+> HBM
+> …
+> …
+> Switch
+> …
+> KARAT
+> controller
+> LPDDR LPDDR
+> Host
+> CPU
+> GPNM
+> core
+> Mem.
+> ctrl.
+> GPU pool KARAT pool
+> …
+> …
+> KARAT
+> node
+> KARAT
+> node
+> KARAT
+> node
+> GPU
+> node
+> GPU
+> node
+> GPU
+> node
+> Interconnect
+> KARAT node
+> L2 L2
+> Network -on -Chip
+> Protocol
+> controller & port
+> …
+> Q, K, V, Index
+> projection
+> Gather &Attend
+> Output
+> projection
+> Add & norm
+> Add & norm
+> Operations on GPU devices
+> Operations on KARAT devices
+> Attention
+> block
+> Indexer
+> (Score &Select )
+> MoE block
+> (a) (e) (b) (c) (d) (a) (b) (c) (d) (e)
+> Fig. 6. (a-d) Proposed system organization (e) Execution mapping of one decode layer. Colors denote the executing device: projections and MoE run on GPU, while the indexer scan (S CORE , S ELECT ), G ATHER , and A TTEND run on KARAT.
+
+III. S YSTEM DESIGN 
+
+A. Overview 
+
+To meet the requirements of retrieval-based sparse attention, we propose a heterogeneous decode-phase serving system for long-context LLMs (Fig. 6). It scales out over a high-performance network (e.g., CXL [41] and RDMA [23]) con-necting GPU nodes with KARAT nodes, built from KV-cache-resident Accelerator for Retrieval-based AT tention (KARAT) devices with GPNM cores. Requests are served under prefill–decode disaggrega-tion [61], [72], [73]. Prefill runs on dedicated GPU nodes, and the generated KV cache is ingested into KARAT nodes over the network. Decode then partitions work by operation type: KARAT nodes hold the KV cache and index keys and execute the operations that read them (e.g., indexer scan, ATTEND ), while GPU nodes hold the model weights and execute the compute-bound operations (e.g., QKV projection, MoE) (Fig. 6e). A KARAT node comprises many (e.g., 32) devices, each combining a high-capacity memory device (e.g., LPDDR) that stores long-context KV caches with compute units on the KARAT die that execute the indexer scan and attention (Fig. 6c,d). Under a given power constraint, a workload-aware con-figuration search (§III-G) determines the composition ratio between the two node types from the workload characteristics, and KV placement (§III-C) keeps both types utilized within the TBT SLO. Because they execute disjoint operations within a layer, the two node types are pipelined across micro-batches, and we propose two techniques that reduce the resulting bubbles: opportunistic, fine-grained micro-batch scheduling 
+
+(OFMS) hides expert all-to-all communication behind the other micro-batch’s GEMMs, and context-length-aware micro-batch rebalancing (CMR) balances their token counts given the wide variance in context length. 
+
+B. Execution Workflow 
+
+After prefill, only the KV cache of the newly prefilled tokens is transferred to the KARAT nodes, since the context of earlier turns already resides there. Ingestion traffic therefore scales with the number of new tokens, not the full context length. During decode (Fig. 6e), a GPU node first builds the indexer Q and K for the new token (I NDEX -B UILD ) in a kernel fused with the QKV projection. The indexer Q and K are sent to the KARAT nodes first so that S CORE can begin, as the rest of the attention layer depends on its result; the QKV vectors of the new token follow in the background, overlapping with SCORE . The KARAT nodes then select the top-k candidates and gather their KV entries locally (S ELECT , G ATHER ), feed them to A TTEND , and return the attention output to the GPU nodes. The GPU nodes apply the output projection and execute the MoE layer with expert parallelism, dispatching tokens to the experts across GPU nodes and combining their outputs through all-to-all communication to form the layer output. Offloading the attention layer thus requires communication between the two node types, but it consumes only a small fraction of the TBT budget. Per layer and per request, the indexer Q and K amount to 1.3–8.6 KB, the attention Q to 
+
+16 –49 KB, and the attention output to 16 –131 KB, far below the 2.4–4.2 MB that G ATHER moves within a KARAT device. Summed over all layers and charged without any overlap, these transfers take 43 –232 μs per request and decoding step, below 
+
+0.25% of the 100 ms TBT SLO. 
+
+C. Mapping KV Cache to KARAT Devices 
+
+A KARAT node comprises many KARAT devices, each computing only on its local memory, so the placement of a request’s KV cache determines how much traffic crosses the switch. Splitting the O(L) indexer scan across devices is possible, but G ATHER and A TTEND touch only O(k) tokens, so fetching them remotely adds a transfer disproportionate to the short attention itself, and concurrent gathers can congest the switch. We therefore keep each request’s context on a single device and run its indexer there as well. Production stacks already parallelize attention this way, replicating it across data-parallel ranks so that each rank attends over only its own requests’ KV cache while sharding the experts with expert parallelism [17], [42], [98]. KARAT applies the same request-level data parallelism at a finer granularity, where the unit of placement is an individual KARAT device. We allocate the KV cache at page granularity, but with a locality preference: the first page of a request goes to the least-occupied KARAT device, which becomes its home device, and all subsequent pages follow there. Since the per-token index keys are co-located with the KV cache, every stage from SCORE through A TTEND therefore completes on the home device, spilling to another device within the same node only 5if the home device is exhausted—which never occurs in our evaluation, where the per-device capacity is sufficient. 
+
+D. KARAT Device Design 
+
+Three principles follow from R1–R4 and determine the de-sign independently of any specific technology or process. First, because a datacenter operates under a fixed power budget, memory technologies must be compared per watt rather than in absolute capacity or bandwidth. Of the two, capacity/W is the more demanding, since R1 calls for an order of magnitude beyond what HBM provides whereas R2 calls only for parity with it. Second, a device meeting R1 cannot be built as a single large die: the memory types with high capacity/W also demand more die-edge I/O per unit bandwidth, so capacity and bandwidth must be aggregated over many small dies rather than provided by one. Third, the compute engine is sized to the OI of the offloaded operations rather than to peak throughput, and must be programmable across all five of them (R4). Any programmable core type that satisfies the same OI requirement would serve equally well. These principles rest on the design targets of each memory type and therefore persist across generations. The rest of this subsection instantiates them at today’s technology node. Successor devices (e.g., GDDR7, LPDDR6, HBM4) preserve the same relative characteristics and hence the same design. 
+
+Memory device. Table IV compares memory expansion de-vices of comparable generations. DDR5 offers the highest capacity/W but only 0.23 × the bandwidth/W of LPDDR5X, too low for R2, whereas GDDR6 inverts the trade-off at 1.42 ×
+
+the bandwidth/W and 0.07 × the capacity/W. LPDDR5X is the only type that meets both R1 and R2, providing 19 × the capacity/W of HBM3 at 0.8 × its bandwidth/W. Its PHY, how-ever, requires at least 5.9 × more shoreline per unit bandwidth than HBM [14], [53], [85], so a fixed-size die hosts far fewer channels and a drop-in replacement of a GPU’s HBM would reduce both capacity and bandwidth. We instead spread the memory across many smaller dies, whose perimeter shrinks more slowly than their area and which therefore expose more aggregate shoreline for the same total die area. 
+
+Compute provisioning. We build the GPNM cores as acompute engine of GPU SM-like cores [32], [38] and size it to the device’s LPDDR5X-9600 bandwidth of 1.2 TB/s: holding this bandwidth fixed, we sweep the core count and measure indexer scan latency and power (Fig. 7a–b) across target LLMs. Latency improves only up to 18 cores, beyond which additional cores add power and area with little benefit, so we provision 18 cores for the indexer scan and attention operations. Even with these cores and a 15 MB L2 cache— retained from the SM-based baseline we model in §IV-F—the LPDDR5X PHY and memory controllers occupy 166 mm 2, or 58% of the 286 mm 2 die, confirming that the device remains memory-centric. Finally, we configure the PCIe interface as 
+
+×4 and cap the TDP at 175 W, a quarter of the H200’s 700 W, so that four devices fit a single GPU’s power and lane budget. The resulting device pairs 512 GB of LPDDR5X at 1.2 TB/s with a compute engine rated at 250 TFLOPS for FP8 and 
+
+TABLE IV COMPARISON OF MEMORY EXPANSION DEVICES ACROSS MEMORY TECHNOLOGIES , WITH PER -WATT METRICS DERIVED FROM THE SPECIFICATIONS IN [70]. V ALUES ARE NORMALIZED TO THE 
+
+LPDDR5X-BASED DEVICE .                                 
+
+> DDR5 GDDR6 HBM3 LPDDR5X ∗
+> Capacity (GB) 512 32 80 512 BW (GB/s) 89.6 1536 4198.4 1126 Normalized power 0.35 0.96 3.00 1.00 Normalized capacity/W 2.86 0.07 0.05 1.00 Normalized BW/W 0.23 1.42 1.24 1.00
+> ∗LPDDR5X-8533; the KARAT device uses LPDDR5X-9600 at 1.2 TB/s. 750
+> 1000
+> 1250
+> Latency
+> (μs)
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2
+> (a) 10 14 18 22 26
+> GPNM cores
+> 100
+> 120
+> 140
+> Power
+> (W)
+> (b) 14128 10 3
+> Ridge point (FLOPs/byte)
+> 0.1
+> 1
+> 10
+> Capacity per watt (GB/W)
+> Indexer OI
+> (4-128)
+> Filled:General-purpose
+> Hollow:Fixed-function
+> GPU
+> HBM-PIM
+> Low-compute
+> PNM
+> Proposed (c)
+
+Fig. 7. Compute provisioning for the KARAT device. Indexer scan (a) latency per layer and (b) power as the GPNM core count varies, for the three models of Table II at batch size 256 with 16K context per request (4M tokens in total); the dashed line marks the selected 18 cores. (c) Capacity per watt versus ridge point across accelerator classes. Shading marks the indexer OI range, which a design’s ridge point must exceed to avoid a compute bottleneck (R3);KARAT meets all three: sufficient capacity per watt (R1) with general-purpose cores (R4). §IV-F describes the area and power models. 
+
+125 TFLOPS for BF16. At FP8, the precision in which index keys are stored [16], [25], its ridge point of 208 FLOPS/byte lies above the 4–128 OI range of the indexer scan, so the cores do not become the bottleneck (R3), and KARAT is the only class in Fig. 7c that meets all four requirements. 
+
+KARAT node design. Each KARAT node comprises 32 KARAT devices, a PCIe/CXL switch, and a host CPU, provi-sioned to match both the accelerator TDP and the aggregate memory bandwidth of an 8-GPU node (Table V). Under equal power and bandwidth, it holds 14 × more memory at roughly half the BF16 throughput—a trade that favors the offloaded operations, which are memory bandwidth- and capacity-bound. Each node connects to the GPU pool through scalable interconnect, and its host CPU manages task schedul-ing and execution within the node. 
+
+E. Opportunistic, Fine-grained Micro-batch Scheduling 
+
+While micro-batching and pipelining overlap GPU exe-cution with KARAT execution, significant pipeline bubbles can still arise on the GPUs because of the communication phases interleaved between GPU kernels within a micro-batch. Prior micro-batching approaches for offloading the attention 
+
+TABLE V COMPARISON OF EXAMPLE GPU AND KARAT NODES . T HE HOST CPU IS IDENTICAL FOR BOTH NODE TYPE AND OMITTED FOR BREVITY .           
+
+> GPU node KARAT node Devices 8 GPUs 32 KARAT devices Power (kW) 5.6 (8 ×0.7) 5.6 (32 ×0.175) Memory capacity (TB) 1.13 (8 ×0.141) 16 (32 ×0.5) Memory bandwidth (TB/s) 38.4 (8 ×4.8) 38.4 (32 ×1.2) BF16 TFLOPS 7912 (8 ×989) 4000 (32 ×125)
+
+6layer [31], [94], [101] partition the operations of an LLM into two sets of successive kernels, one compute-bound and the other memory-bound. The memory-bound kernels run on the memory-side compute units, while the GPU executes the compute-bound sequence—output projection, FFN/MoE, and QKV projection. We refer to this approach as static, coarse-grained micro-batch scheduling (SCMS). A key limitation of SCMS is that, when expert parallelism spans multiple nodes, the communication for dispatching and combining leaves the GPUs idle for a substantial fraction of the time (Fig. 8a). Moreover, this communication latency grows with the batch size, which itself scales with total system memory capacity (§II-C). The idle time is especially waste-ful when the KARAT device finishes A TTEND early—either because severe expert skew prolongs the MoE stage on the GPU, or because the current attention layer has no indexer as a result of cross-layer index reuse [25]. To overcome this limitation, we propose opportunistic, fine-grained micro-batch scheduling (OFMS), illustrated in Fig. 8b. As soon as A TTEND completes for a micro-batch (μB0) and its output reaches the GPUs, we launch its output projection, provided the GPUs are idle waiting on the MoE combining of the other micro-batch (μB1). Its MoE dispatch then follows immediately, overlapping with the QKV projection that fol-lows the earlier combining (μB1). GPU idle time is thereby substantially reduced. Opportunistic overlapping is not always possible (Fig. 8c): under a long context, the indexer scan and A TTEND may be slow enough that the output of μB0 does not arrive before the QKV projection of μB1 begins. OFMS therefore reorders only when the opportunity actually exists and otherwise falls back to the SCMS order, adapting to the runtime latency of each operation rather than committing to a fixed pattern in advance. It thus does not perform worse than SCMS, and our evaluation shows that this flexibility improves performance across a range of LLMs and workloads. OFMS can be implemented in a fully decentralized manner. Each data-parallel rank schedules its own micro-batches, and within a rank each worker (a GPU or a KARAT) dispatches operations from its own queue, switching micro-batches only when the current operation blocks on a transfer. No global scheduler or shared state is needed, since each decision inspects only the local queue head. Nor does the schedule add any cross-rank synchronization beyond the all-to-all dispatch and combine that expert parallelism already performs. 
+
+F. Context-length-aware Micro-batch Rebalancing 
+
+Each batch is split into two micro-batches that pipeline the GPU and the KARAT devices. On the KARAT devices, the execution time of a micro-batch scales with its aggregate context length, so an imbalance in aggregate context length between the two micro-batches lengthens the interval during which the GPU waits for the longer one. Prior approaches [31], [65], [101] balance the micro-batches by request count and overlook the aggregate context length; moreover, they do not revise the partition, since newly admitted requests are MoE                       
+
+> MoE
+> GPU DP0,EP0
+> GPU DP1,EP1
+> Attn
+> Attn
+> Indexer
+> Indexer
+> KARAT DP0
+> KARAT DP1
+> Network Dsp
+> Oproj
+> Oproj
+> MoE
+> MoE
+> Cmb
+> QKV
+> QKV
+> Cmb
+> Oproj
+> Oproj
+> Dsp
+> Attn
+> Attn
+> Indexer
+> Indexer
+> Time
+> GPU DP0,EP0
+> GPU DP1,EP1
+> QKV
+> Attn
+> Attn
+> Indexer
+> Indexer
+> KARAT DP0
+> KARAT DP1
+> Network
+> Oproj QKV
+> Time
+> GPU DP0,EP0
+> GPU DP1,EP1
+> QKV
+> QKV
+> KARAT DP0
+> KARAT DP1
+> Network Dsp
+> Oproj
+> Oproj
+> MoE
+> MoE
+> Cmb
+> QKV
+> QKV
+> Cmb
+> Time
+> Attn
+> Attn
+> Indexer
+> Reduced
+> latency
+> μB0 μB1 Cmb Combine Dsp Dispatch
+> Oproj
+> Oproj
+> Oproj
+> Attn Indexer
+> Dsp
+> QKV Oproj QKV Oproj
+> Dsp
+> MoE
+> Cmb Dsp
+> MoE
+> MoE
+> Cmb
+> MoE
+> MoE
+> Attn
+> Attn
+> Indexer
+> Indexer
+> Attn Indexer
+> MoE
+> MoE
+> GPU→ KARAT KARAT →GPU
+> Scheduling
+> granularit y
+
+0
+
+> Indexer
+
+(a) Baseline SCMS, GPU-bound scenario MoE                       
+
+> MoE
+> GPU DP0,EP0
+> GPU DP1,EP1
+> Attn
+> Attn
+> Indexer
+> Indexer
+> KARAT DP0
+> KARAT DP1
+> Network Dsp
+> Oproj
+> Oproj
+> MoE
+> MoE
+> Cmb
+> QKV
+> QKV
+> Cmb
+> Oproj
+> Oproj
+> Dsp
+> Attn
+> Attn
+> Indexer
+> Indexer
+> Time
+> GPU DP0,EP0
+> GPU DP1,EP1
+> QKV
+> Attn
+> Attn
+> Indexer
+> Indexer
+> KARAT DP0
+> KARAT DP1
+> Network
+> Oproj QKV
+> Time
+> GPU DP0,EP0
+> GPU DP1,EP1
+> QKV
+> QKV
+> KARAT DP0
+> KARAT DP1
+> Network Dsp
+> Oproj
+> Oproj
+> MoE
+> MoE
+> Cmb
+> QKV
+> QKV
+> Cmb
+> Time
+> Attn
+> Attn
+> Indexer
+> Reduced
+> latency
+> μB0 μB1 Cmb Combine Dsp Dispatch
+> Oproj
+> Oproj
+> Oproj
+> Attn Indexer
+> Dsp
+> QKV Oproj QKV Oproj
+> Dsp
+> MoE
+> Cmb Dsp
+> MoE
+> MoE
+> Cmb
+> MoE
+> MoE
+> Attn
+> Attn
+> Indexer
+> Indexer
+> Attn Indexer
+> MoE
+> MoE
+> GPU→ KARAT KARAT →GPU
+> Scheduling
+> granularit y
+
+0
+
+> Indexer
+
+(b) Proposed OFMS, GPU-bound scenario MoE                       
+
+> MoE
+> GPU DP0,EP0
+> GPU DP1,EP1
+> Attn
+> Attn
+> Indexer
+> Indexer
+> KARAT DP0
+> KARAT DP1
+> Network Dsp
+> Oproj
+> Oproj
+> MoE
+> MoE
+> Cmb
+> QKV
+> QKV
+> Cmb
+> Oproj
+> Oproj
+> Dsp
+> Attn
+> Attn
+> Indexer
+> Indexer
+> Time
+> GPU DP0,EP0
+> GPU DP1,EP1
+> QKV
+> Attn
+> Attn
+> Indexer
+> Indexer
+> KARAT DP0
+> KARAT DP1
+> Network
+> Oproj QKV
+> Time
+> GPU DP0,EP0
+> GPU DP1,EP1
+> QKV
+> QKV
+> KARAT DP0
+> KARAT DP1
+> Network Dsp
+> Oproj
+> Oproj
+> MoE
+> MoE
+> Cmb
+> QKV
+> QKV
+> Cmb
+> Time
+> Attn
+> Attn
+> Indexer
+> Reduced
+> latency
+> μB0 μB1 Cmb Combine Dsp Dispatch
+> Oproj
+> Oproj
+> Oproj
+> Attn Indexer
+> Dsp
+> QKV Oproj QKV Oproj
+> Dsp
+> MoE
+> Cmb Dsp
+> MoE
+> MoE
+> Cmb
+> MoE
+> MoE
+> Attn
+> Attn
+> Indexer
+> Indexer
+> Attn Indexer
+> MoE
+> MoE
+> GPU→ KARAT KARAT →GPU
+> Scheduling
+> granularit y
+
+0
+
+> Indexer
+
+(c) Proposed OFMS, KARAT-bound scenario 
+
+Fig. 8. Timeline showing different micro-batch scheduling approaches with two micro-batches (μB0, μB1). 
+
+Algorithm 1 CMR. M : the two micro-batches; D: KARAT devices; Rd: requests whose KV resides on d; L(r): context length of r; |m|: number of requests in m; ℓ(m, d ) =P
+
+r∈m∩Rd L(r).
+
+1: m ← ∅ ∀ m ∈ M ▷ empty every micro-batch 
+
+2: for all d ∈ D do 
+
+3: for all r ∈ SORT DESC (Rd, L ) do ▷ decreasing ctx. len. 
+
+4: m∗ ← arg min m∈M
+
+ ℓ(m, d ), |m|
+
+5: m∗ ← m∗ ∪ { r}
+
+6: end for 
+
+7: end for 
+
+appended to the existing composition. The wide variance in context length across requests can therefore leave the two micro-batches unbalanced. We propose context-length-aware micro-batch rebalancing 
+
+(CMR), which repartitions the requests across the two micro-batches whenever a request finishes or is admitted. Let Rd
+
+denote the requests whose KV cache resides on KARAT device d, let L(r) denote the context length of request r,and let ℓ(m, d ) = P
+
+r∈m∩Rd L(r) denote the aggregate context length that micro-batch m places on d. Algorithm 1 empties every micro-batch (line 1) and partitions each Rd from scratch in order of decreasing context length (line 3), assigning each request to the micro-batch of smallest ℓ(m, d ) (line 4); ties are resolved by micro-batch size |m|. CMR reassigns every request rather than only the newly admitted one, which corrects imbalance that has already accumulated. CMR incurs little overhead. It moves no data between KARAT devices, since it changes only the micro-batch a request belongs to and not the device that holds its KV cache. Its computation is one sort of Rd per device on each rebalance. Between rebalances, ℓ(m, d ) drifts by at most the difference in request count on d, negligible relative to contexts of hundreds of thousands of tokens, so no further trigger is needed. 7G. Workload-Aware System Configuration Search 
+
+A KARAT system is heterogeneous: GPU and KARAT nodes have distinct characteristics, so combining them in the right proportion is essential. The best proportion also depends on the model and on the degrees of parallelism it admits, which affect performance substantially. To explore this design space, we search for the system configuration that maximizes throughput under iso-power and SLO constraints, using a workload profile and a measured operation-latency lookup table (LUT) for the model. The search space consists of (i) the ratio of GPU to KARAT nodes, (ii) the expert parallelism degree, and (iii) the attention tensor parallelism degree. For each configuration, we compute the throughput at the largest batch size that meets the SLO constraint. The space is discrete and contains only hundreds of points, so an exhaustive grid search completes in minutes. IV. E VALUATION 
+
+A. Methodology 
+
+System configuration. We evaluated the decode pool un-der prefill–decode disaggregation, where the two pools were provisioned independently, as in deployment practice [61], [72], [73], [99]. All workloads ran at 8-node scale; node and device configurations were as given in Tables VI and V. The baseline used 64 H200 GPUs (8 nodes × 8 GPUs), and for every other system under comparison we chose, among all valid node-type combinations, the configuration whose aggregate TDP was closest to that of the baseline. Both node types provided 400 GB/s of aggregate per-node inter-node bandwidth, matching DGX H200 [58]. For each system, we then selected the expert-parallel (EP) and tensor-parallel (TP) degrees per model and workload profile using the search method in §III-G, following industry practice [59], [62], [89]. 
+
+Baselines. The baselines cover the alternatives examined in §II-D. GPU-only serves all layers on H200 GPUs, so the KV cache and index keys must fit in HBM. HiSparse [87] adds capacity by offloading the KV cache to host DRAM (2 TB DDR5 per GPU node) and caching the selected entries in HBM; we assumed its reported maximum hit rate of 95% and charged transfers at data size over PCIe bandwidth, both of which favor it. Duplex [94] and AttAcc [68] place special-purpose compute in memory, the former by adding PIM units to the GPU and the latter as a PIM-based heterogeneous system. Neither supports MLA, so AttAcc appears only for MiniMax-M3, and Duplex accelerates only the MoE layers on the two MLA models. SPNM [37], [70] places special-purpose compute in LPDDR5X-based CXL memory; we enabled its micro-batching wherever it improved throughput. Table VI lists the parameters we used. For training-free sparse attention, we evaluated one method from each selection family in Table I: page-based Quest [83], clustering-based STARC [20], and hash-based MagicPIG [12]. MagicPIG targets the CPU, but the GPU outperformed it at this scale, so we used the GPU. When an evaluated device could not execute an operation required by a workload, we ran that operation on the GPU.                              
+
+> TABLE VI EVALUATED DEVICE CONFIGURATION .Component Configuration H200 GPU [1] 132 SMs @ 1.98 GHz, 141 GB HBM3e @ 4.8 TB/s, PCIe5/CXL ×16 (64 GB/s), TDP: 700 W Duplex [94] H200 + Logic-PIMs ( ×4 internal BW, 153 TFLOPS), TDP: 1000W AttAcc [68] 80-channel HBM3-PIMs with 3.35TB/s, 67.2GB ∗
+> PCIe5/CXL ×4 (16 GB/s), TDP: 120W SPNM [37], [70] 8 TFLOPS (BF16) @ 1 GHz LPDDR5X (1.2TB/s, 512GB from 64ch) PCIe5/CXL ×4 (16 GB/s), TDP: 150W KARAT 18 GPNM cores @ 1.83 GHz, 250 / 125 TFLOPS (FP8 / BF16), 15 MB L2 cache LPDDR5X (1.2TB/s, 512GB from 64ch) PCIe5/CXL ×4 (16 GB/s), TDP: 175W
+> ∗The AttAcc work [68] did not address the capacity impact of PIM, but we assume the HBM DRAM die remains the same to preserve yield while bank area is reduced to accommodate PIM units with a 14.59% area overhead. Assuming the banks occupy 90% of the die (as TSVs use ∼10% [69]), the memory capacity is reduced by 16% from the original 80 GB HBM3.
+> TABLE VII WORKLOAD CHARACTERISTICS .Workload Avg. turns Avg. ctx. Peak ctx. Pref./Dec. Reuse SWE-pro 30 63K 295K 324/263 97% SWE-chat 39 81K 1.06M 387/47 97% KVCT 48 144K 894K 647/218 94%
+> Real agentic traces: SWE-pro [18] is a Codex trace [34]; SWE-chat [10] and KVCT [22] from Claude Opus. Ctx. is the context length in tokens, Pref./Dec. the median prefill and decode tokens per turn, and Reuse the fraction of KV cache read from earlier turns.
+
+Models. We evaluated three state-of-the-art models with model-native sparse attention, one from each mechanism fam-ily classified in §II-B: GLM-5.2 [25], MiniMax-M3 [43], and DeepSeek-V3.2 [16] (Table II). Weights are FP8 for DeepSeek-V3.2 and BF16 for the other two, and the KV cache is BF16 throughout. Index keys follow each indexer’s defini-tion: FP8 for the two DSA models and BF16 for MiniMax-M3. For training-free sparse attention, we used LLaMA3-70B [26] in BF16 as the base model. 
+
+Workloads. We used three real agentic traces (Table VII): SWE-Bench-Pro (SWE-Pro) [18], SWE-chat [10], and KV-cache-tester (KVCT) [22]. Each run is closed-loop at a fixed concurrency N : N sessions are in flight at all times, a session issues its next turn only after the previous one completes, and a session that ends is immediately replaced by a new one drawn from the trace with replacement, so the workload follows the trace distribution regardless of run length. The initial N sessions start at a random turn to avoid a cold-start transient, while replacements start at their first turn. We swept 
+
+N and report the highest decode throughput (tokens/s) after warm-up that meets a 100 ms P99 TBT SLO, normalized by TDP as system power cannot be equalized. 
+
+Simulator. We used an in-house event-driven simulator for LLM serving, built following the approach of LLMServ-ingSim [13]. The simulator obtained the latency of each operation from a lookup table populated by offline profiling. We profiled H200 operation latencies on real hardware. For KARAT we used an H200 MIG 1g.35gb instance [63], which provides the same memory bandwidth, and scaled the 8SWE-pro                
+
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> GMEAN
+> 0
+> 1
+> 2
+> 3
+> 4
+> Norm. throughput/TDP
+> (tokens/s/W)
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2 Quest STARC MagicPIG LLaMA3-70B
+> 1.09
+> 1.12
+> 1.19
+> 2.23
+> 6.1 4.8 4.5
+> Model-native sparse attention Training-free sparse attention (LLaMA3-70B) Dense attention
+> GPU-only (=1) HiSparse Duplex AttAcc SPNM Proposed
+
+Fig. 9. Throughput per TDP under a 100 ms P99 TBT SLO, normalized to GPU-only for the same model and trace. Model-native sparse attention uses GLM-5.2, MiniMax-M3, and DeepSeek-V3.2; training-free and dense attention use LLaMA3-70B. Bars above the axis limit are clipped and labeled. AttAcc 
+
+does not support MLA, so it appears only for MiniMax-M3 among the model-native models and is excluded from the geometric mean. 
+
+SM count [60]. We modeled communication latency with ASTRA-sim [84], assuming CXL-switched inter-node links with a 600 ns round-trip latency [45], [100]. For MoE layers, we assigned tokens to experts by uniform sampling; §IV-D examines the effect of skew. For prior work, we used the simulators released by the respective authors: AttAcc [78], 
+
+Duplex and SPNM [79], and STARC [19]. Each run spanned 250K generated tokens or 300 s of simulated time, whichever occurred first, and we excluded the first 20% as warmup. 
+
+B. Performance Results 
+
+Model-native sparse attention. KARAT reached the highest throughput per TDP on every model and trace, 2.09 –6.13 ×
+
+that of GPU-only (Fig. 9). The gain came from larger batches: offloading the KV cache and index keys to KARAT devices freed GPU HBM, so more sessions ran concurrently and the MoE and dense FC layers operated at a larger batch (Fig. 10). The speedup grew with context length, from 2.09 –2.42 × on SWE-pro to 2.98 –6.13 × on KVCT, whose sessions are the longest. KARAT outperformed HiSparse by 1.14 –2.18 ×. The gap was narrowest on GLM-5.2, whose cross-layer index reuse fixes the selection for four layers at a time, letting the host-side gather overlap with compute; on the other two models the gather follows the indexer in every layer and cannot be hidden. KARAT also outperformed Duplex by 1.61 –4.83 ×.
+
+Duplex adds PIM compute to the GPU but no capacity, so its concurrency stayed at the GPU-only level, and its PIM units are provisioned for an OI of 8, below the core attention of all three models ( 16 to 228 ). AttAcc supports only MiniMax-M3, where KARAT led by 2.46 –9.03 ×. Its 2.2 TB capacity per node is well below the 16 TB of a KARAT node, so concurrency fell as context grew, and its PIM compute is likewise provisioned for low OI. SPNM has the same LPDDR5X capacity as KARAT, but fell below GPU-only on GLM-5.2 and DeepSeek-V3.2 ( 0.14 –0.57 ×). Its 8 TFLOPS slowed down the indexer scan of OI 64 or 128. On MiniMax-M3, whose indexer runs at OI 4, it reached 1.50 –2.42 ×, and KARAT led by 1.23 –
+
+1.39 ×. The SPNM results show that increasing capacity is not sufficient on its own. A device must satisfy both the capacity and the compute throughput the workload demands. 
+
+Training-free sparse attention. KARAT supported all three SELECT variations and improved over GPU-only by 1.36 –GPU-only          
+
+> HiSparse
+> Duplex
+> SPNM
+> w/o OFMS
+> KARAT
+> GPU-only
+> HiSparse
+> Duplex
+> AttAcc
+> SPNM
+> w/o OFMS
+> KARAT
+> GPU-only
+> HiSparse
+> Duplex
+> SPNM
+> w/o OFMS
+> KARAT 0
+> 25
+> 50
+> 75
+> 100
+> Iteration time
+> breakdown
+> (%)
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2
+> Dense FC MoE Attend Indexer Disp Comb KV transfer Stall
+> 244
+> 1.1k
+> 294
+> 888
+> 3.9k
+> 4.1k
+> 293
+> 673
+> 251
+> 164
+> 2.5k
+> 4.1k
+> 3.9k
+> 338
+> 1.3k
+> 353
+> 726
+> 3.5k
+> 4.8k
+
+Fig. 10. Decode iteration time breakdown on the KVCT trace at the highest-throughput operating point of each configuration under the 100 ms P99 TBT SLO. Numbers above the bars give the decode concurrency ( k = 10 3). 
+
+3.21 ×. The other platforms fell back to the GPU for operations they cannot perform, which left their PIM and PNM units underutilized. The S CORE operations of Quest and STARC are dot products followed by ranking, which SPNM supports, and only the periodic re-clustering of STARC falls back to the GPU. SPNM therefore achieved 2.00 –4.80 × speedups on these two methods, above KARAT. MagicPIG instead hashes each query with LSH, looks up the matching buckets, and samples from them. SPNM can perform none of these, so all of its selection ran on the GPU, and KARAT achieved the highest improvement of 2.09 –3.21 ×.
+
+Dense attention. For dense attention, KARAT achieved a 
+
+1.24 –1.32 × speedup. AttAcc was highest at 1.79 –2.05 ×,as dense attention is the low-OI GEMV it was built for, and Duplex and SPNM achieved 1.38 –1.46 × and 1.43 –1.47 ×,respectively. HiSparse instead slowed down to 0.12 –0.13 ×,because without sparsity every token crosses the host link. 
+
+Summary. Across all workloads and traces, KARAT achieved a geometric mean speedup of 2.23 × in throughput per TDP over GPU-only . SPNM , Duplex , and HiSparse achieved 1.19 ×,
+
+1.12 ×, and 1.09 ×, respectively. SPNM has the same LPDDR5X capacity as KARAT, so KARAT’s 1.87 × advantage comes from the compute placed next to that capacity. 
+
+C. Iteration Time Breakdown 
+
+Fig. 10 breaks down decode time on the KVCT trace at the highest-throughput operating point under the SLO, with the sustained concurrency above each bar. GPU-only sustained 
+
+253 –339 sessions, and the dense FC and MoE layers accounted for 58 –74% of the iteration, as a small batch cannot amortize 930         
+
+> 60
+> 90
+> Utilization
+> (%)
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2
+> GPU-only GPUs KARATs
+> 0.5
+> 1.0
+> Norm.
+> K tokens/s
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> SWE-pro
+> SWE-chat
+> KVCT
+> GMEAN
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2
+> 0.84
+> 0.95
+> 1.00
+> w/o OFMS w/o CMR Proposed
+
+Fig. 11. Performance impact of disabling OFMS and CMR. GPU-only     
+
+> HiSparse
+> Proposed
+> GPU-only
+> HiSparse
+> Proposed
+> GPU-only
+> HiSparse
+> Proposed
+> 0
+> 1
+> 2
+> 3
+> Norm.
+> throughput/TDP
+> (tokens/s/W)
+> GLM-5.2 MiniMax-M3 DeepSeek-V3.2
+> Uniform Skew Skew + EPLB
+
+Fig. 12. Normalized throughput per TDP at each configuration’s best-throughput operating point. Each bar is the geometric mean over three agentic traces. 
+
+their weight reads. KARAT sustained 4,017 –5,055 sessions, and those layers fell to 29 –42% . The gain therefore came from serving more sessions at once. 
+
+SPNM sustained 733 –2,539 sessions despite having the same LPDDR5X capacity as KARAT. The indexer and stall time together accounted for 33 –65% of its iteration, and the indexer alone for 42% on DeepSeek-V3.2, whose indexer runs at an OI of 128. The resulting iteration time leaves no room for a larger batch under the TBT SLO, so its capacity cannot be translated into concurrency. 
+
+Duplex offloaded the MoE layers to its PIM units, but its concurrency remained at 254 –354 sessions, as it adds no capacity. AttAcc sustained only 164 sessions on MiniMax-M3, fewer than GPU-only . HiSparse sustained 674 –1,340 sessions, held below KARAT by host memory capacity. 
+
+D. Ablation and Sensitivity Analysis 
+
+Scheduling. Disabling OFMS, which reverts the schedule to the static, coarse-grained order of §III-E, reduced throughput by 16% in geometric mean (Fig. 11). It also increased stall time (Fig. 10), and the throughput loss was largest where that increase was largest. On DeepSeek-V3.2 with KVCT, stall time grew from 4% of the iteration to 23% and throughput fell to 0.67 ×. Disabling CMR reduced throughput by 5% in geometric mean, most pronounced on DeepSeek-V3.2 with KVCT at 21% , and the effect scales with the variance of context length within a micro-batch. Both mechanisms raised the utilization of the GPU and the KARAT devices together. Disabling OFMS reduced GPU utilization by 8.5–10 .4% and KARAT utilization by 9.4–13 .6% , and disabling CMR reduced them by at most 7.2% and 6.3% , respectively. 
+
+Expert load skew. So far we assumed uniform expert routing. We now evaluated KARAT under the routing distribution mea-sured on the coding workload of a public trace dataset [93], the most skewed workload in that dataset (Fig. 12). Skewed rout-ing lowered throughput for every configuration, and KARAT still outperformed GPU-only by 2.4–3.9× and HiSparse by 
+
+1.2–1.8×. The Expert Parallelism Load Balancer (EPLB) [16] replicates the popular experts and places one redundant ex-pert per EP rank. It restored KARAT and HiSparse to ×0.25 ×0.5 ×2     
+
+> Link bandwidth
+> 0.0
+> 0.5
+> 1.0
+> Norm. tokens/s
+> 0.74
+> 0.92
+> 0.97
+> 1.02
+> 0.68
+> 0.96
+> 1.04
+> ×10 ×100
+> Link latency
+> 0.96
+> 0.94
+> GLM
+> MiniMax
+> DeepSeek
+> GMEAN
+> 0.0
+> 0.5
+> 1.0
+> Norm. tokens/s
+> 0.83
+> 0.71
+> 0.67
+> 0.73
+> 1.02
+> 1.01
+> 1.08
+> 1.04
+> 10 GPNM cores 26 GPNM cores
+> 18 GPNM cores (default)
+> GLM-5.2
+> DeepSeek-V3.2
+> MiniMax-M3
+> (a) (b) (c)
+
+Fig. 13. Sensitivity of KARAT to (a) GPU–KARAT link bandwidth, (b) GPU–KARAT link latency, and (c) KARAT core count, across three models and the geometric mean of the three agentic traces. Throughput is normalized to the default configuration. 8                                                      
+
+> 16
+> 32
+> 64
+> MiniMax
+> MoE EP
+> 1.37 2.03 1.65 0.16
+> 2.47 1.66 0.48
+> 1.68 0.77
+> 0.93
+> SWE-pro
+> 1.30 1.91 1.34 0.16
+> 1.99 1.34 0.37
+> 1.35 0.60
+> 0.72
+> SWE-chat
+> 1.10 1.20 0.81 0.13
+> 1.24 0.82 0.22
+> 0.83 0.35
+> 0.42
+> KVCT
+> 0.13
+> 1.30
+> 2.47
+> 16
+> 32
+> 64
+> GLM
+> MoE EP
+> 1.27 2.07 0.07
+> 2.58 0.44
+> 0.75
+> 1.27 2.07 0.07
+> 2.58 0.37
+> 0.57
+> 1.20 1.94 0.05
+> 2.48 0.19
+> 0.32
+> 0.05
+> 1.31
+> 2.58
+> Tokens/s/W
+> 8
+> 224 16
+> 192 32
+> 128 64
+> 0
+> 8
+> 16
+> 32
+> 64
+> DeepSeek
+> MoE EP
+> 0.86 1.59 2.21 0.29
+> 1.74 2.28 0.80
+> 2.28 1.16
+> 1.31
+> 8
+> 224 16
+> 192 32
+> 128 64
+> 0
+> 0.86 1.59 1.95 0.23
+> 1.74 1.96 0.61
+> 1.96 0.96
+> 1.07
+> 8
+> 224 16
+> 192 32
+> 128 64
+> 0
+> 0.84 1.41 1.34 0.14
+> 1.68 1.38 0.35
+> 1.38 0.52
+> 0.60
+> 0.14
+> 1.21
+> 2.28
+> # of GPUs / # of KARATs
+
+Fig. 14. Iso-power (44.8 kW) design space exploration over the GPU-to-KARAT device split (x-axis) and the MoE EP degree (y-axis). Cells report decode tokens/s/W under a 100 ms TBT SLO on a per-panel color scale, with the red box marking the optimum. The rightmost column (64/0) is the all-GPU baseline, and all other cells offload the indexer scan and attention to KARAT. GLM-5.2 omits EP 8, as its weights exceed HBM. 
+
+their throughput under uniform routing on all three models. 
+
+GPU-only recovered only on DeepSeek-V3.2 and reached 
+
+0.75 × on MiniMax-M3. On GLM-5.2 it dropped further, from 
+
+0.80 × under skewed routing to 0.72 ×, because the redundant experts consume the HBM capacity that GPU-only lacks. 
+
+Link and core count. We swept the GPU–KARAT link and the KARAT core count around the default configuration (Fig. 13). For the link, we varied only the bandwidth and la-tency of the transfers between the GPU nodes and the KARAT nodes, leaving the expert all-to-all at its default setting, so that the sweep only affects the path KARAT introduces. Halving the bandwidth cost at most 4% of the throughput, and doubling it resulted in a gain of at most 4% . Quartering it cost 8–
+
+32% . Raising the latency by 10 × had a negligible effect, and raising it by 100 × cost at most 6% of the throughput. Adding 8 cores to the default of 18 resulted in a 3.8% throughput gain in geometric mean, and DeepSeek-V3.2 gained the most, at 8% , as it runs at the highest OI (Table II). Reducing the core count by 8 cost 27% of the throughput in geometric mean, as 10 cores cannot sustain the retrieval indexer at its OI. The resources within the device are therefore provisioned to match the intensity of the operations it runs. 
+
+E. System Design Space Exploration 
+
+We searched a grid of four GPU-to-KARAT device count splits and four MoE EP degrees for each model and workload under a 44.8 kW iso-power budget and the 100 ms TBT SLO, following §III-G (Fig. 14). The all-GPU column reached its 10 highest throughput per TDP at EP 64 on every model and workload, as distributing the expert weights across more GPUs is the only way to free HBM for the KV cache. Once KARAT devices hold the KV cache, the best-performing configuration moved to EP 16–32, where the expert all-to-all carries less data, and delivered 1.7–7.8× the throughput per TDP of the all-GPU column. On DeepSeek-V3.2 the best configuration also shifted toward more KARAT devices as the average context length grew, from 32 GPUs with 128 KARAT devices on SWE-pro and SWE-chat, whose average contexts are 63K and 81K, to 16 GPUs with 192 KARAT devices on KVCT at 144K. The other two models kept the same split across all three workloads. 
+
+F. KARAT Device Area and Power Estimation 
+
+Area. We estimated the area of the KARAT device from the GH100 die breakdown [49], assuming the same 4 nm process. The 18 KARAT cores (SMs) occupy 86.2 mm 2 at 4.79 mm 2
+
+each, the 15 MB L2 cache 31.2 mm 2, and the PCIe PHY 2.85 mm 2. We estimated the LPDDR5X PHY and memory controller at 166 mm 2 from a die shot [71]. The device totals 286 mm 2, 35% of the 814 mm 2 GH100 die, of which the LPDDR5X PHY and memory controller account for 58% .
+
+Power. We measured the dynamic power of the attention and retrieval indexer kernels on an H200 MIG 1g.35gb 
+
+instance with no other instance active, reading the power with nvidia-smi and taking the difference between load and idle. We then replaced the HBM3e energy with LPDDR5X energy using the measured memory traffic, the HBM energy breakdown [64], the LPDDR5X JEDEC specification [36], and product data [54]. The LPDDR5X PHY adds ∼63% to the energy per accessed bit [40]. For static power, we scaled the measured H200 idle power by the die area ratio without subtracting any H200-specific block, yielding an upper bound. The maximum power we measured was 147.7 W, and we conservatively assume 175 W TDP, a quarter of the H200 TDP. V. R ELATED WORK 
+
+A. LLM Serving Systems 
+
+Prefill–decode disaggregation provisions the two phases on separate pools [72], [99], and DynamoLLM [82] further provisions them by request length class using an output-length predictor [74]; KARAT targets the decode pool, where the capacity limit binds. For MoE models, expert parallelism shards the experts across devices: DeepEP [96] optimizes the all-to-all dispatch and combine, MegaScale-Infer [101] disaggregates the attention and MoE layers into separate pools, and serving frameworks run attention data-parallel while the experts stay expert-parallel [2], [42], [98]. These systems partition work across homogeneous GPU pools, so every pool carries the same balance of memory and compute, and the KV cache and index keys compete with the model weights for HBM capacity. 
+
+B. Sparse Attention Algorithms 
+
+Sparse attention reduces the work of a decoding step by attending to a subset of the context. Eviction-based methods bound the footprint by discarding KV pairs [46], [86], [95], whereas retrieval-based methods retain the full cache and select the relevant tokens with an indexer at every step. The indexers differ in score function, selection granularity, and cadence (Table I). Training-free methods score pages with representative keys [83], cluster the keys [11], [20], or hash them [12]; MagicPIG and RetroInfer run the indexer on the CPU, whose bandwidth and compute limit the O(L) scan. Model-native designs train the indexer with the model [16], [25], [43] and differ from one another in all three axes. Further variants keep appearing, including block attention trained into the model [24], [50], switchable dense–sparse attention [97], and cross-layer index reuse [9], [25], so new models keep changing the operations that a serving system runs. 
+
+C. Offloading the KV Cache 
+
+LMCache [3] and Mooncake [73] place the KV cache in host DRAM, whose capacity is bounded by the number of DIMM slots, and HiSparse [87] adds a hot buffer in HBM to reduce the resulting transfers. CXL-attached memory expands capacity further at low latency [45], [52], and several systems place the KV cache there [51], [90], [92], [100], while Strata [88] extends the hierarchy to storage and LIA [39] moves model parameters instead. These systems add capacity but leave the computation on the GPU, so the O(L) index scan and the gather of the selected entries cross a bandwidth-and latency-limited link on every decoding step. 
+
+D. Hardware Architecture for LLM Decode 
+
+Since decode is memory-bound, many architectures place compute near memory. AttAcc [68] offloads attention to HBM-PIM beside a GPU, NeuPIMs [31] beside an NPU, and CHIME [48] offloads it to DIMM-PIM; NeuPIMs also interleaves sub-batches so that the two device types run con-currently. Duplex [94] raises the logic-die operational intensity to serve GQA attention and MoE, and IANUS [81] and CENT [27] distribute the model across PIM and PNM devices. All are provisioned for the low operational intensity of dense MHA and GQA, below the intensity of MLA and of the retrieval indexer (Table II). Those built on HBM or GDDR also provide far less capacity per watt than LPDDR (§III-D), and PIM designs give up part of the array to logic, reducing usable capacity [44]. LPDDR-based PNM and PIM designs instead attach large capacity to enable larger batches and longer contexts [70]. Meridian [47] uses LPDDR-based PIM to decompose doc-ument attention for RAG, and HybridSpec [33] splits the draft and target models across a hybrid-bonding stack and LPDDR5X for speculative decoding. M 2NDP [28] makes the compute general-purpose, but provisions far less of it than the retrieval indexer requires. Beyond LPDDR, Raptor [56] stacks logic on DRAM to stream the KV cache, and SHyLA [30] stores it in a 3D-stacked NVM–DRAM hybrid. Stratum [67] 11 pairs GPUs with near-memory processing on monolithic 3D DRAM and tiers expert weights by predicted usage, targeting the MoE layers rather than the KV cache. Hybe [55] pairs GPUs with NPUs sized to saturate their memory bandwidth, running prefill on the GPUs and decode on the NPUs. Some designs run the token selection in the memory device, each specialized to a single algorithm. SPNM designs select token pages in a CXL device [37], STARC [20] selects clusters with PIM, and LongSight [75] selects by dot-product top-
+
+k on a compute-enabled CXL expander [76]. HILOS [35] runs attention on near-storage accelerators, but targets of-fline inference. None of these provides compute that is both general-purpose and sized to the intensity of a retrieval in-dexer. KARAT places general-purpose compute next to large LPDDR5X capacity, sized to the operational intensity of the operations it runs, so the indexers that models define execute where the KV cache and index keys reside. VI. C ONCLUSION 
+
+In this work, we presented a heterogeneous decode-phase serving system for million-token contexts in LLMs that use retrieval-based sparse attention. Its GPU nodes hold the model weights and run the projections and MoE layers, while KARAT nodes hold the KV cache and index keys and run every operation that reads them. A KARAT device combines large LPDDR capacity with general-purpose compute sized for the retrieval indexer. To reduce pipeline bubbles between the two device types, Opportunistic, Fine-grained Micro-batch Scheduling (OFMS) hides the expert all-to-all behind the GEMMs of the other micro-batch. Context-length-aware Micro-batch Rebalancing (CMR) then equalizes the token counts of the two micro-batches despite the variance in context length. Across three state-of-the-art models and real agentic traces, our system improves throughput per TDP by 2.09 –
+
+6.13 × over a GPU-only baseline, and it runs training-free sparse attention methods without hardware change, improving each by 1.36 –3.21 ×. Because the KARAT compute is not tied to one algorithm, the same device can support the sparse attention mechanisms of later model generations. REFERENCES [1] “Nvidia h200 sxm 141 gb,” NVIDIA. [Online]. Available: https: //www.nvidia.com/en-us/data-center/h200/ [2] “TensorRT-LLM,” NVIDIA. [Online]. Available: https://github.com/ NVIDIA/TensorRT-LLM. [3] “Lmcache: Turboboosting vllm with 7x faster access to 100x more kv caches,” [Online]. Available: https://blog.lmcache.ai/2024-09-17-release/, September 2024. [4] “Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities,” Google DeepMind, 2025. [Online]. Available: https://storage. googleapis.com/deepmind-media/gemini/gemini_v2_5_report.pdf [5] “Openai models,” 2025, accessed: 2025-07-13. [Online]. Available: https://platform.openai.com/docs/models [6] A. Agrawal et al. , “Taming throughput-latency tradeoff in llm inference with sarathi-serve,” in Proceedings of the 18th USENIX Conference on Operating Systems Design and Implementation , ser. OSDI’24. USA: USENIX Association, 2024. [7] Anthropic, “Claude Opus 5,” https://www.anthropic.com/news/claude-opus-5, 2026, large language model. Accessed: Jul. 24, 2026. [8] Anthropic, “Introducing claude opus 4.6,” https://www.anthropic.com/ news/claude-opus-4-6, 2026, large language model. Accessed via An-thropic API, Jul. 2026. [9] Y. Bai et al. , “Indexcache: Accelerating sparse attention via cross-layer index reuse,” arXiv preprint arXiv:2603.12201 , 2026. [10] J. Baumann et al. , “Swe-chat: Coding agent interactions from real users in the wild,” arXiv preprint arXiv:2604.20779 , 2026. [Online]. Available: https://arxiv.org/pdf/2604.20779 [11] Y. Chen et al. , “Retroinfer: A vector-storage approach for scalable long-context LLM inference,” CoRR , vol. abs/2505.02922, 2025. [Online]. Available: https://doi.org/10.48550/arXiv.2505.02922 [12] Z. Chen et al. , “Magicpig: LSH sampling for efficient LLM generation,” in The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net, 2025. [Online]. Available: https://openreview.net/forum?id=ALzTQUgW8a [13] J. Cho et al. , “Llmservingsim: A hw/sw co-simulation infrastructure for llm inference serving at scale,” in 2024 IEEE International Symposium on Workload Characterization (IISWC) , 2024, pp. 15–29. [14] Y. Choi et al. , “37.3 a 2nm all-digital 14.4gb/s/pin lpddr6 phy with quarter-rate clocking architecture and multi-level fifo-based speculative dfe,” in 2026 IEEE International Solid-State Circuits Conference (ISSCC) , vol. 69, 2026, pp. 628–630. [15] DeepSeek-AI, “Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning,” 2025. [Online]. Available: https: //arxiv.org/abs/2501.12948 [16] DeepSeek-AI, “Deepseek-v3.2: Pushing the frontier of open large language models,” 2025. [17] DeepSeek-AI et al. , “Deepseek-v3 technical report,” CoRR , vol. abs/2412.19437, 2024. [Online]. Available: https://doi.org/10.48550/ arXiv.2412.19437 [18] X. Deng et al. , “Swe-bench pro: Can ai agents solve long-horizon software engineering tasks?” 2025. [Online]. Available: https://arxiv.org/abs/2509.16941 [19] EPIC Lab, Rensselaer Polytechnic Institute, “STARC,” https://github. com/EPIC-RPI/STARC, 2025, accessed: 2026-08-01. [20] Z. Fan et al. , “Starc: Selective token access with remapping and clustering for efficient llm decoding on pim systems,” in Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2,ser. ASPLOS ’26, 2026, p. 1863–1879. [Online]. Available: https://doi.org/10.1145/3779212.3790226 [21] A. Firoozshahian et al. , “Mtia: First generation silicon targeting meta’s recommendation systems,” in Proceedings of the 50th Annual International Symposium on Computer Architecture , ser. ISCA ’23, 2023. [Online]. Available: https://doi.org/10.1145/3579371.3589348 [22] C. Fox, “kv-cache-tester: Inference server cache performance test-ing suite,” https://github.com/callanjfox/kv-cache-tester, 2025, gitHub repository. Accessed: 2026-07-26. [23] A. Gangidi et al. , “Rdma over ethernet for distributed training at meta scale,” in Proceedings of the ACM SIGCOMM 2024 Conference ,ser. ACM SIGCOMM ’24, 2024, p. 57–70. [Online]. Available: https://doi.org/10.1145/3651890.3672233 [24] Y. Gao et al. , “Seerattention: Self-distilled attention gating for efficient long-context prefilling,” in The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [Online]. Available: https://openreview.net/forum?id=Nf8yfPDFTl [25] GLM-5-Team et al. , “Glm-5: from vibe coding to agentic engineering,” 2026. [Online]. Available: https://arxiv.org/abs/2602.15763 [26] A. Grattafiori et al. , “The llama 3 herd of models,” 2024. [Online]. Available: https://arxiv.org/abs/2407.21783 [27] Y. Gu et al. , “Pim is all you need: A cxl-enabled gpu-free system for large language model inference,” in Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2, ser. ASPLOS ’25, 2025, p. 862–881. [Online]. Available: https://doi.org/10.1145/3676641.3716267 [28] H. Ham et al. , “Low-overhead general-purpose near-data processing in cxl memory expanders,” in 2024 57th IEEE/ACM International Symposium on Microarchitecture (MICRO) , 2024, pp. 594–611. [Online]. Available: https://doi.org/10.1109/MICRO61859.2024.00051 [29] J. He et al. , “Fastermoe: modeling and optimizing training of large-scale dynamic pre-trained models,” in Proceedings of the 27th ACM SIGPLAN Symposium on Principles and Practice of Parallel 
+
+12 Programming , ser. PPoPP ’22, 2022, p. 120–134. [Online]. Available: https://doi.org/10.1145/3503221.3508418 [30] L. He et al. , “Shyla: 3d-stacked nvm-dram hybrid llm-inference ar-chitecture exploiting data and memory heterogeneity,” in Proceedings of the 2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) . IEEE, 2026, pp. 654–670. [31] G. Heo et al. , “Neupims: Npu-pim heterogeneous acceleration for batched llm inferencing,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 , ser. ASPLOS ’24, 2024, p. 722–737. [Online]. Available: https://doi.org/10.1145/3620666.3651380 [32] K. Hsieh et al. , “Transparent offloading and mapping (tom): enabling programmer-transparent near-data processing in gpu systems,” in 
+
+Proceedings of the 43rd International Symposium on Computer Architecture , ser. ISCA ’16. IEEE Press, 2016, p. 204–216. [Online]. Available: https://doi.org/10.1109/ISCA.2016.27 [33] Z. Huang et al. , “Hybridspec: Exploiting hybrid-bonding memory to accelerate llm serving through heterogeneous architecture and specu-lative decoding,” in Proceedings of the 2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) . IEEE, 2026, pp. 588–603. [34] Inferact Inc., “codex_swebenchpro_traces,” https://huggingface.co/ datasets/Inferact/codex_swebenchpro_traces, 2026, accessed: 2026-08-01. [35] H. Jang et al. , “A cost-effective near-storage processing solution for offline inference of long-context llms,” in Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 , ser. ASPLOS ’26, 2026, p. 5–24. [Online]. Available: https://doi.org/10.1145/3779212.3790119 [36] JEDEC Solid State Technology Association, Low Power Double Data Rate (LPDDR) 5/5X , JEDEC Solid State Technology Association, Jun. 2023, standard. [37] D. Kim et al. , “Scalable processing-near-memory for 1m-token llm inference: Cxl-enabled kv-cache management beyond gpu limits,” in 
+
+Proceedings of the 2025 International Conference on Parallel Archi-tectures and Compilation Techniques , ser. PACT ’25, 2025. [38] G. Kim et al. , “Toward standardized near-data processing with unrestricted data placement for gpus,” in Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis , ser. SC ’17, 2017. [Online]. Available: https://doi.org/10.1145/3126908.3126965 [39] H. Kim et al. , “Lia: A single-gpu llm inference acceleration with cooperative amx-enabled cpu-gpu computation and cxl offloading,” in Proceedings of the 52nd Annual International Symposium on Computer Architecture , ser. ISCA ’25, 2025, p. 544–558. [Online]. Available: https://doi.org/10.1145/3695053.3731092 [40] J. H. Kim et al. , “Samsung pim/pnm for transfmer based ai : Energy efficiency on pim/pnm cluster,” in 2023 IEEE Hot Chips 35 Symposium (HCS) , 2023, pp. 1–31. [41] M. Kwon et al. , “A silicon-proven unified low-latency CXL controller and port-based routing switch for memory-centric fabrics,” in 2026 ACM/IEEE 53rd Annual International Symposium on Computer Archi-tecture (ISCA) . IEEE, 2026, pp. 688–702. [42] W. Kwon et al. , “Efficient memory management for large language model serving with pagedattention,” in Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles , 2023. [Online]. Available: https://doi.org/10.1145/3600006.3613165 [43] X. Lai et al. , “Minimax sparse attention,” 2026. [Online]. Available: https://arxiv.org/abs/2606.13392 [44] S. Lee et al. , “Hardware architecture and software stack for pim based on commercial dram technology,” in Proceedings of the 48th Annual International Symposium on Computer Architecture ,ser. ISCA ’21. IEEE Press, 2021, p. 43–56. [Online]. Available: https://doi.org/10.1109/ISCA52012.2021.00013 [45] H. Li et al. , “Pond: Cxl-based memory pooling systems for cloud platforms,” in Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 , ser. ASPLOS 2023, 2023, p. 574–587. [Online]. Available: https://doi.org/10.1145/3575693.3578835 [46] Y. Li et al. , “Snapkv: Llm knows what you are looking for before generation,” in Advances in Neural Information Processing Systems , A. Globerson et al. , Eds., vol. 37. Curran Associates, Inc., 2024, pp. 22 947–22 970. [Online]. Available: https://proceedings.neurips.cc/paper_files/paper/ 2024/file/28ab418242603e0f7323e54185d19bde-Paper-Conference.pdf [47] C. Liu et al. , “Meridian: In-memory acceleration for rag with document attention decomposition,” in Proceedings of the 2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) .IEEE, 2026, pp. 387–401. [48] Q. Liu et al. , “Chime: A case for efficient long-context attention-fc disaggregated inference with dimm-pim,” in Proceedings of the 2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) . IEEE, 2026, pp. 620–636. [49] Locuza, “Nvidia’s ad102 officially revealed, how close were the previ-ous estimates?” https://locuza.substack.com/p/nvidias-ad102-officially-revealed, sep 2022, accessed: 2026-07-26. [50] E. Lu et al. , “MoBA: Mixture of block attention for long-context LLMs,” in The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [Online]. Available: https: //openreview.net/forum?id=RlqYCpTu1P [51] R. Ma et al. , “Sac: Disaggregated kv cache system for sparse attention llms with cxl,” 2026. [Online]. Available: https://arxiv.org/abs/2606. 19746 [52] H. A. Maruf et al. , “Tpp: Transparent page placement for cxl-enabled tiered-memory,” in Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 , ser. ASPLOS 2023, 2023, p. 742–755. [Online]. Available: https://doi.org/10.1145/3582016.3582063 [53] Micron Technology, Inc., “HBM3E product brief,” https: //assets.micron.com/adobe/assets/urn:aaid:aem:b710d8f2-7f66-44c1-a234-456e2b986347/renditions/original/as/hbm3e-product-brief.pdf, 2024, form factor 11 mm × 11 mm × 0.72 mm; bandwidth >1.2 TB/s. Accessed: 2026-07-31. [54] Micron Technology, Inc., 315b: x32 Automotive LPDDR5X SDRAM ,rev. g ed., May 2025, production Data Sheet. [55] S. Moon et al. , “Hybe: Gpu-npu hybrid system for efficient llm inference with million-token context window,” in Proceedings of the 52nd Annual International Symposium on Computer Architecture ,ser. ISCA ’25, 2025, p. 808–820. [Online]. Available: https: //doi.org/10.1145/3695053.3731051 [56] P. J. Nair et al. , “Early silicon of raptor: The first 3d-dram accelerator for generative inference,” in Proceedings of the 2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) .IEEE, 2026, pp. 2632–2647. [57] NVIDIA, “NVIDIA DGX B200 datasheet,” https://resources.nvidia. com/en-us-dgx-systems/dgx-b200-datasheet, 2024. [58] NVIDIA, “NVIDIA DGX H200 datasheet,” https://resources.nvidia. com/en-us-dgx-systems/dgx-h200-datasheet, 2024. [59] NVIDIA, “SLA-based planner,” NVIDIA Dynamo Documenta-tion, https://docs.nvidia.com/dynamo/v-0-8-1/components/planner/sla-based-planner, 2026, accessed: 2026-08-01. [60] NVIDIA Corporation, “Multi-process service: Appendix: Tools and in-terface reference,” https://docs.nvidia.com/deploy/mps/appendix-tools-and-interface-reference.html, 2026, accessed: 2026-08-01. [61] NVIDIA Corporation. (2026) Overall architecture — NVIDIA Dynamo documentation. [Online]. Available: https://docs.nvidia.com/ dynamo/v1.3.0/design-docs/overall-architecture [62] NVIDIA Corporation, “Planner design,” NVIDIA Dynamo Documentation, Design Docs — Component Design. https://docs.nvidia.com/dynamo/v1.3.0/design-docs/component-design/planner-design, 2026, v1.3.0 (stable). Accessed: 2026-08-01. [63] NVIDIA Corporation, “Supported MIG profiles — NVIDIA multi-instance GPU user guide,” https://docs.nvidia.com/datacenter/tesla/ mig-user-guide/supported-mig-profiles.html#id7, 2026, table 11: GPU Instance Profiles on H200, v610. Accessed: 2026-08-01. [64] M. O’Connor et al. , “Fine-grained dram: energy-efficient dram for extreme bandwidth systems,” in Proceedings of the 50th Annual IEEE/ACM International Symposium on Microarchitecture ,ser. MICRO-50 ’17, 2017, p. 41–54. [Online]. Available: https: //doi.org/10.1145/3123939.3124545 [65] H. Oh et al. , “Exegpt: Constraint-aware resource scheduling for llm inference,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 , ser. ASPLOS ’24, 2024, p. 369–384. [Online]. Available: https://doi.org/10.1145/3620665.3640383 [66] OpenAI, “ChatGPT (GPT-5),” https://chat.openai.com/, 2026, large language model. Accessed: Jul. 15, 2026. 
+
+13 [67] Y. Pan et al. , “Stratum: System-hardware co-design with tiered monolithic 3d-stackable dram for efficient moe serving,” in 
+
+Proceedings of the 58th IEEE/ACM International Symposium on Microarchitecture , ser. MICRO ’25, 2025, p. 1–17. [Online]. Available: https://doi.org/10.1145/3725843.3756043 [68] J. Park et al. , “Attacc! unleashing the power of pim for batched transformer-based generative model inference,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2, ser. ASPLOS ’24, 2024, p. 103–119. [Online]. Available: https://doi.org/10.1145/3620665.3640422 [69] M.-J. Park et al. , “A 192-gb 12-high 896-gb/s hbm3 dram with a tsv auto-calibration scheme and machine-learning-based layout opti-mization,” in 2022 IEEE International Solid-State Circuits Conference (ISSCC) , vol. 65, 2022, pp. 444–446. [70] S.-S. Park et al. , “An lpddr-based cxl-pnm platform for tco-efficient inference of transformer-based large language models,” in 
+
+2024 IEEE International Symposium on High-Performance Computer Architecture (HPCA) , 2024, pp. 970–982. [Online]. Available: https://doi.org/10.1109/HPCA57654.2024.00078 [71] D. Patel, “Apple m2 die shot and architecture analysis – big cost increase and a15 based ip,” https://semianalysis.com/2022/06/10/apple-m2-die-shot-and-architecture, jun 2022, accessed: 2025-11-04. [72] P. Patel et al. , “Splitwise: Efficient generative llm inference using phase splitting,” in 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA) , 2024, pp. 118–132. [Online]. Available: https://doi.org/10.1109/ISCA59077.2024.00019 [73] R. Qin et al. , “Mooncake: A kvcache-centric disaggregated architecture for llm serving,” ACM Trans. Storage , Nov. 2025, just Accepted. [Online]. Available: https://doi.org/10.1145/3773772 [74] H. Qiu et al. , “Efficient interactive LLM serving with proxy model-based sequence length prediction,” CoRR , vol. abs/2404.08509, 2024. [Online]. Available: https://doi.org/10.48550/arXiv.2404.08509 [75] D. Quinn et al. , “Longsight: Compute-enabled memory to accelerate large-context llms via sparse attention,” in Proceedings of the 58th IEEE/ACM International Symposium on Microarchitecture ,ser. MICRO ’25, 2025, p. 34–48. [Online]. Available: https: //doi.org/10.1145/3725843.3756062 [76] D. Quinn et al. , “Drex: Accurate and scalable dense retrieval acceleration via algorithmic-hardware codesign,” in Proceedings of the 52nd Annual International Symposium on Computer Architecture ,ser. ISCA ’25, 2025, p. 1108–1124. [Online]. Available: https: //doi.org/10.1145/3695053.3731079 [77] L. Ribar et al. , “Sparq attention: bandwidth-efficient llm inference,” in Proceedings of the 41st International Conference on Machine Learning , ser. ICML’24. JMLR.org, 2024. [78] SCALE Lab, Seoul National University, “AttAcc simulator,” https:// github.com/scale-snu/attacc_simulator, 2024, accessed: 2026-08-01. [79] SCALE Lab, Seoul National University, “LLMSimulator,” https:// github.com/scale-snu/LLMSimulator, 2024, accessed: 2026-08-01. [80] T. Schick et al. , “Toolformer: Language models can teach themselves to use tools,” in Advances in Neural Information Processing Systems , A. Oh et al. , Eds., vol. 36. Curran Associates, Inc., 2023, pp. 68 539–68 551. [Online]. Available: https://proceedings.neurips.cc/paper_files/paper/ 2023/file/d842425e4bf79ba039352da0f658a906-Paper-Conference.pdf [81] M. Seo et al. , “Ianus: Integrated accelerator based on npu-pim unified memory system,” in Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 , ser. ASPLOS ’24, 2024, p. 545–560. [Online]. Available: https://doi.org/10.1145/3620666.3651324 [82] J. Stojkovic et al. , “Dynamollm: Designing llm inference clusters for performance and energy efficiency,” in 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) ,2025, pp. 1348–1362. [Online]. Available: https://doi.org/10.1109/ HPCA61900.2025.00102 [83] J. Tang et al. , “Quest: query-aware sparsity for efficient long-context llm inference,” in Proceedings of the 41st International Conference on Machine Learning , ser. ICML’24. JMLR.org, 2024. [84] W. Won et al. , “Astra-sim2.0: Modeling hierarchical networks and disaggregated systems for large-model training at scale,” in 2023 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS) , 2023, pp. 283–294. [85] H. Wu et al. , “Memexplorer: Navigating the heterogeneous memory design space for agentic inference npus,” 2026. [Online]. Available: https://arxiv.org/abs/2604.16007 [86] G. Xiao et al. , “Efficient streaming language models with attention sinks,” arXiv , 2023. [87] Z. Xie, Z. Huang, and T. Huang, “Hisparse: Turbocharging sparse attention with hierarchical memory,” https://www.lmsys.org/blog/2026-04-10-sglang-hisparse/, Apr. 2026, lMSYS Org Blog. Accessed: 2026-07-26. [88] Z. Xie et al. , “Strata: Hierarchical context caching for long context language model serving,” CoRR , vol. abs/2508.18572, 2025. [Online]. Available: https://doi.org/10.48550/arXiv.2508.18572 [89] T. Xu et al. , “AIConfigurator: Lightning-fast configuration optimization for multi-framework LLM serving,” arXiv preprint arXiv:2601.06288 ,2026. [Online]. Available: https://arxiv.org/abs/2601.06288 [90] X. Yang et al. , “Beluga: A cxl-based memory architecture for scalable and efficient llm kvcache management,” Proc. ACM Manag. Data , vol. 4, no. 1, Apr. 2026. [Online]. Available: https://doi.org/10.1145/3786627 [91] S. Yao et al. , “ReAct: Synergizing reasoning and acting in language models,” in International Conference on Learning Representations (ICLR) , 2023. [92] D. Yoon et al. , “Tract: Disaggregated llm serving with cxl shared memory kv cache at rack-scale,” 2025. [Online]. Available: https://arxiv.org/abs/2512.18194 [93] Z. Yu et al. , “Patterns behind chaos: Forecasting data movement for efficient large-scale moe llm inference,” in Proceedings of the 2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) . IEEE, 2026, pp. 68–84. [94] S. Yun et al. , “Duplex: A device for large language models with mixture of experts, grouped query attention, and continuous batching,” in 2024 57th IEEE/ACM International Symposium on Microarchitecture (MICRO) , 2024, pp. 1429–1443. [Online]. Available: https://doi.org/10.1109/MICRO61859.2024.00105 [95] Z. Zhang et al. , “H2o: heavy-hitter oracle for efficient generative inference of large language models,” in Proceedings of the 37th International Conference on Neural Information Processing Systems ,ser. NIPS ’23. Red Hook, NY, USA: Curran Associates Inc., 2023. [96] C. Zhao et al. , “Deepep: an efficient expert-parallel communication library,” https://github.com/deepseek-ai/DeepEP, 2025. [97] W. Zhao et al. , “InfLLM-v2: Dense-sparse switchable attention for seamless short-to-long adaptation,” in The Fourteenth International Conference on Learning Representations , 2026. [Online]. Available: https://openreview.net/forum?id=ZzF9V0H6Vi [98] L. Zheng et al. , “Sglang: efficient execution of structured language model programs,” in Proceedings of the 38th International Conference on Neural Information Processing Systems , ser. NIPS ’24. Red Hook, NY, USA: Curran Associates Inc., 2024. [99] Y. Zhong et al. , “Distserve: disaggregating prefill and decoding for goodput-optimized large language model serving,” ser. OSDI’24. USA: USENIX Association, 2024. [100] Y. Zhong et al. , “Octopus: Enhancing CXL memory pods via sparse topology,” in 23rd USENIX Symposium on Networked Systems Design and Implementation (NSDI 26) . Renton, WA: USENIX Association, May 2026, pp. 1303–1322. [Online]. Available: https://www.usenix.org/conference/nsdi26/presentation/zhong [101] R. Zhu et al. , “Megascale-infer: Efficient mixture-of-experts model serving with disaggregated expert parallelism,” in Proceedings of the ACM SIGCOMM 2025 Conference , ser. SIGCOMM ’25, 2025, p. 592–608. [Online]. Available: https://doi.org/10.1145/3718958. 3750506 
+
+14
