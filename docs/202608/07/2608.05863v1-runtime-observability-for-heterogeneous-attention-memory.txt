@@ -1,0 +1,743 @@
+Title: Runtime Observability for Heterogeneous Attention Memory
+
+URL Source: https://arxiv.org/pdf/2608.05863v1
+
+Published Time: Fri, 07 Aug 2026 00:49:40 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# Runtime Observability for Heterogeneous Attention Memory 
+
+Fanzhe Wei Metask Lab 
+
+whyer1@gmail.com 
+
+Li Liu Metask Lab 
+
+muriel092611@gmail.com 
+
+Ziyang Wang Metask Lab 
+
+ziyang9986@gmail.com 
+
+Chenyu Wang Metask Lab 
+
+cnados@gmail.com 
+
+Abstract 
+
+Modern models no longer keep a plain KV cache: latent caches, learned sparse selectors and recurrent states each carry the model’s memory in a different form, and each fails differently under compression. We give a runtime observability contract that covers all four memory classes with three operators ( update /select /read ), instantiate it on six model configurations across five architecture families, and compose the per-stage bounds into an executable request-level risk ledger. Contracts carry their error metric as a type—composition is only defined when metrics match, and this check rejected our own first composed chain; the repaired chain crosses metrics through two proved bridges, and whatever no formal system can certify is measured instead, dropping the composed tier to empirical automatically : every claim is certified, partially certified, or empirical, composition inherits the weakest tier, and the tier is decided by the machine, not by wording. Replayed over 12 .4M entry reads and run under eight-way concurrency with per-request budgets and fail-closed identity attribution, the ledger quantifies the honest trade-off on today’s witness and holds its risk budget with zero violations. A fused always-on probe observes a declared one-layer subset under CUDA graphs inside the serving noise floor. Applied to a served DeepSeek-V4 stack with a packed compressed-KV prototype, the same machinery localizes a silent corruption to a precise structural boundary —exact in the eviction-free, identity-isolated regime, with every observed failure in an eviction or slot-reuse regime—through a machine-adjudicated discrimination campaign whose calculus rejected two of our own confounded inferences along the way. All artifacts, guards, and the Lean development are released at https://github.com/metask-ai/witprobe-attention-memory ; every number in this paper regenerates from the shipped artifacts by one command. 
+
+# 1 Introduction 
+
+On 2026-06-25 a silent corruption in a hierarchical cache took down agentic traffic on one of our production hosts. Nothing in the serving stack was in a position to notice: the cache was struc-turally valid, the model kept generating, and the failure surfaced only as degraded task success far downstream. That incident is the motivation for this paper. A compressed or shared attention memory is state that the system trusts without verifying, and the trust is currently blind. The obvious response—“check the KV cache”—no longer names a single object. Contemporary architectures keep their attention memory in at least four different forms: dense per-token key/value tensors; a latent cache decompressed on read; a learned selector that picks a sparse subset of entries; and a recurrent state carried forward rather than stored. They fail differently, they admit different guarantees, and a bound proved for one says nothing about another. We make three contributions. 1arXiv:2608.05863v1 [cs.AI] 6 Aug 2026 dense KV      
+
+> latent KV (MLA)
+> sparse selector
+> recurrent state
+> attention memory
+> four classes, one algebra
+> update
+> select
+> read
+> operators
+> per-stage local contracts
+> typed error contract wrong metric composition rejected at elaboration
+> request-level risk ledger anytime-valid e-process
+> runtime observe / fallback resident probes, quality oracle
+> verification
+> machine-checked →observed
+> certified partially certified empirical tier decided by the machine, not prose
+
+Figure 1: WitCert in one view. Four attention-memory classes, three operators, typed per-stage contracts, a request-level risk ledger, and fail-closed runtime observation. Colors mark certification tiers, decided by machine-checked artifacts ( §2.3), not narrative. 
+
+A contract for attention memory. We write any attention memory as three operators— update, select, read—and give each stage a local contract eout ≤ a e in + b with an explicit failure budget δ (§2). Supporting a new architecture becomes a proof obligation rather than a new bespoke tool. 
+
+Composition with a machine-decidable strength. Local contracts compose by affine composition and a union bound. The contribution is not the algebra, which is elementary, but that the platform computes the composition from live probe readings and labels every number certified, partially certified or empirical. Composition inherits the weakest tier, so “end-to-end certified” is a statement the system refuses to print unless every stage earns it. This caught a live error in our own chain: an early version used the true residual as the storage bound, a quantity that requires an uncompressed reference and therefore cannot be computed at runtime at all. 
+
+Cross-architecture evidence with an always-on cost. We instantiate the platform on six models across five architecture families ( §4, §5), report per-stage readings with their calibers, and measure the cost of leaving the probes on under concurrency. 
+
+Artifacts. The measurement mathematics, the acceptance gates, every frozen run arti-fact behind every number in this paper, the figure and claim generators with their guards, and the complete Lean development (including the experiment-adjudication calculus) are released as 
+
+witprobe-attention-memory (https://github.com/metask-ai/witprobe-attention-memory )under Apache-2.0; every number regenerates from the shipped artifacts by one command, and the claim guard fails the build on any mismatch. The architecture-specific probe-injection implemen-tation is not part of the release ( §6). 
+
+# 2 Attention Memory Contracts 
+
+2.1 Three operators 
+
+Write the memory at step t as mt, and let 
+
+mt+1 = Ut(mt, x t) update / write (1) 
+
+It = St(qt, m t) select (possibly the identity) (2) 
+
+yt = Rt(qt, m t, I t) read (3) 2Compression or corruption replaces mt by ˆmt; the goal is to bound ∥yt − ˆyt∥ from locally com-putable witnesses. The four memory objects are instances: a dense KV cache appends and selects everything; a latent cache appends a compressed representation and reconstructs on read; a sparse selector adds a non-trivial S; a recurrent state makes U a contraction rather than an append. 
+
+2.2 Local contracts and composition 
+
+Definition 1 (Contract) . A stage exposes (a, b, δ ) with eout ≤ a e in +b holding except with probability 
+
+δ.
+
+Series composition and the request-level budget are (a2, b 2) ◦ (a1, b 1) = ( a2a1, a 2b1 + b2), P 
+
+> i
+
+δi ≤ δreq . (4) Both are elementary. What is not elementary in practice is that each a, b and δ must be computable from quantities the serving stack actually has , and that the resulting number must carry an honest strength label. 
+
+2.3 Three tiers, decided by the machine 
+
+• certified — a sound upper bound exists and is not saturated; 
+
+• partially certified — the bound holds only on a decidable subset, e.g. rank-prefix stability holds only for rows whose margin exceeds 2 ε;
+
+• empirical — an observation with no bound attached. Every metric the platform emits is registered against one tier together with the reason it earns that tier, and an unregistered metric is a hard error rather than a silent demotion. Composition takes the weakest tier of its stages. This is what makes the distinction operational rather than rhetorical: a chain containing one empirical stage cannot be reported as certified, whatever the accompanying prose says. 
+
+# 3 Local Contracts 
+
+3.1 Pooling is an attenuator, not an error source 
+
+Block-pooled architectures form one stored entry from B consecutive tokens with gate weights w,P 
+
+> j
+
+wj = 1, w ≥ 0. If the tokens carry errors ∆ j then ∆ c = P 
+
+> j
+
+wj ∆j and: 
+
+Lemma 1 (Pooling, two calibers) . With ein := ( P 
+
+> j
+
+∥∆j ∥2)1/2, ∥∆c∥ ≤ ∥ w∥2 ein by Cauchy– Schwarz, so a = ∥w∥2 ≤ 1. With ein := max j ∥∆j ∥, convexity gives a = 1 with no assumption at all. 
+
+Both calibers must be reported: the ℓ2 form is tighter but presumes an ℓ2 aggregation of the incoming error, and quoting it alone suggests the attenuation is unconditional. Note that pooling is part of U and acts on uncompressed inputs, so it is not an error source; it governs how token-level errors upstream of it propagate. Placing it inside the baseline chain, as we initially did, yields a bound that is both looser and semantically wrong. 33.2 Selection is additive, not amplifying 
+
+Lemma 2 (Rank-prefix selection) . Regard the attention distribution as supported on the full key set and zero outside the selected set. With I the original selection and ˆI the perturbed one, 
+
+TV( p, ˆp) ≤ 12
+
+ P  
+
+> i∈I\ˆI
+
+pi
+
+| {z }
+
+> mout
+
++ P  
+
+> i∈ˆI\I
+
+ˆpi
+
+| {z }
+
+> min
+
+
+
++ 12
+
+P  
+
+> i∈I∩ˆI
+
+|pi − ˆpi|, (5) 
+
+hence (aS , b S ) =  1, 12 (mout + min ).
+
+The selection stage therefore adds a bias equal to half the swapped attention mass and does not amplify upstream error. This reframes a negative result: asking whether the entire top-k set is preserved is the wrong question, because strict set certification is almost never attainable ( §5), whereas the swapped mass is small and directly measurable. 
+
+3.3 A sampling sentinel with a detection-latency guarantee 
+
+A sentinel that draws r uniform slots with replacement per round (matching the implementation’s 
+
+randint ) from M slots of which B are corrupted misses everything in one round, and over n
+
+independent rounds, with probability 
+
+q =
+
+
+
+1 − BM
+
+r
+
+, Pr[missed after n rounds] = q n. (6) (Sampling without replacement would give the smaller hypergeometric q; modelling the implemen-tation one actually runs is the point.) 
+
+Lemma 3 (Detection latency) . For target confidence 1 − δ, detection of at least one corrupted slot is guaranteed within n(δ) = ⌈log δ/ log q⌉ rounds. 
+
+This converts an anecdotal demo into a monitoring guarantee with a tunable budget, and it explains an observation that would otherwise look like a capability limit ( §5). 
+
+# 4 Platform 
+
+The implementation separates four concerns: a registry declaring where to inject for each architec-ture; adapters that extract the tensors and build the validity mask; meters holding the mathematics, which are architecture-independent; and a runtime that keys every accumulator by (owner, layer, path) and always emits a coverage record. Injection is anchored on exact upstream source blocks with an asserted hit count, and reverts surgically so that two adapters may share a file. Acceptance is a fixed order—coverage, then magnitude, then soundness—and a failure at any step invalidates the numbers that follow. This is not a style preference. All three checks correspond to failure modes we hit in which the experiment terminated normally and produced plausible output: a probe whose per-layer state overwrote itself, a probe that read uninitialised device memory beyond a kernel’s valid range, and a probe attached to a write path the model never takes. Each produced a clean exit and a wrong number. The platform currently registers six adapters over eleven injection points, covering the four memory objects. 4Model Family Probe class Layers Key reading Qwen2.5-7B GQA KV 28/28 residual 0 .80%, conserv. 3 .25 ×                               
+
+> Llama-3.1-8B GQA KV 32/32 residual 1 .02%, conserv. 3 .77 ×
+> DeepSeek-V2-Lite MLA LatentKV 27/27 residual 0 .877%, conserv. 2 .69 ×
+> GLM-5.2-W4AFP8 MLA+DSA LatentKV 78/78 residual 0 .551%, conserv. 2 .95 ×
+> GLM-5.2-W4AFP8 MLA+DSA SparseSelector 21/21 top-1 certified 99 .26% V4-Flash-FP8 MLA+entry LatentKV 43/43 residual 0 .628%, conserv. 3 .51 ×
+> V4-Flash-FP8 MLA+entry SparseSelector 21/21 top-1 certified 99 .40% Kimi-Linear-48B KDA+MLA RecurrentState 20/20 ¯a∈[0 .530 ,0.936]
+
+Table 1: Coverage. Eight probe rows over six models and five architecture families, all past the acceptance gate (coverage, magnitude, soundness); failing rows are not reported. 
+
+# 5 Evaluation 
+
+5.1 Setup 
+
+All serving experiments run on a single node with 8 ×H200 (143 GB) GPUs on sglang 0.5.13.post1. The large-model experiments serve DeepSeek-V4-Flash-FP8 at tp=8/ep=8 with a 65,536-token context; overhead and graph-safety experiments use Qwen2.5-7B-Instruct on one GPU, where a serving stack restarts in minutes rather than tens of minutes. Regression runs for smaller models use a separate RTX 4090 machine (sglang 0.5.9). Probes are injected into unmodified serving code by a line-anchored source injector with hit-count assertions, byte-identical restore verified against SHA-256 baselines, and a fixed acceptance order—coverage, then magnitude sanity, then soundness self-checks—that must pass before any number is read. Unless stated otherwise probes sample one call in 8 with a 256-row cap per call, and probe measurements that need host-side I/O run with CUDA graphs disabled; the graph-enabled configuration is evaluated separately in §5.12. Every reported number is frozen from a probe artifact by a canon generator, and a claim guard fails the build if the manuscript and the artifacts disagree; the guard checks numeric strings, not semantics, so calibers travel with the numbers in the artifacts themselves. 
+
+5.2 Coverage 
+
+Table 1 summarises the coverage: 8 rows / 6 models across five families; two models were onboarded without writing any model-specific code (DeepSeek-V2-Lite needed only the first step of the onboarding recipe). 
+
+5.3 Per-stage readings 
+
+Latent memory. On the small proxy the latent meter is validated against per-cell ground truth over 4 ,032 cells with 0 /4,032 Tier-A violations, and the dithered Tier-B coverage is 98 .9% at 
+
+τ = 0 .2. In production, GLM-5.2’s own fp8 storage residual is 0 .93% of the latent norm, and our secondary int8 quantisation of the same latents measures 0 .551% over all 78 layers. Latent norms are strongly heterogeneous across depth—a factor of 493 × between the largest and smallest—which is the empirical basis for treating layers non-uniformly. 
+
+Sparse selection. Strict certification of the entire selected set is essentially unattainable: 0.05% on GLM’s token-level top-2048. The rank-prefix view is the opposite: top-1 stability is certified for 99 .26% of rows on GLM and 99 .40% on V4’s page-level top-512, with zero flips inside 5the certified region. The two are not directly comparable—one selects tokens and the other pages— so only the qualitative shape transfers. 
+
+Pooling. V4-Flash uses two pooling granularities in the same model, block 4 and block 128, over 21 and 20 layers respectively; since 1 /block differs by 32 ×, raw concentration statistics cannot be compared across them and we report normalised quantities. The normalised concentration at block 4 is 0 .1551, i.e. close to uniform. 
+
+Recurrent state. We report observation only. The per-layer mean contraction is ¯ a ∈
+
+[0 .530 , 0.936], all below one, but the mean is the wrong statistic: long-run behaviour is governed by P 
+
+> t
+
+log at, and by Jensen’s inequality 
+
+E[log a] ≤ log ¯ a. (7) Measured, E[log a] has median −0.5912 against log ¯ a = −0.2282, so the mean caliber understates 
+
+the contraction by 2 .6×; the corresponding error half-life is 1 .17 steps rather than 3 .04. A residual gap remains: between 0 .0 and 28 .7% of samples per layer have a ≥ 0.999, and our aggregate does not retain channel identity, so an aggregate E[log a] < 0 does not imply per-channel contraction. We therefore do not claim a certificate here. 
+
+5.4 Composition: the type checker rejected our own chain 
+
+Our first composed number added the storage stage’s bound to the selection stage’s bS by (4) and reported the result. That composition is illegal, and an earlier version of this paper contained it. The storage bound is a relative witness on cache entries—a dimensionless ratio—while bS is total variation on an attention distribution, a probability mass; a2b1 + b2 presumes b1 is already denominated in the output metric of stage two, and here it is not. We caught this by making the metric part of the contract’s type : each contract declares an input and an output metric, composition is defined only when they coincide, and the same rule is enforced twice—at runtime, where the checker rejects the chain construction, and in Lean, where the ill-typed composition fails elaboration and the failure itself is pinned as a build assertion. Neither the tier system nor the numeric claim guard had caught it; both operate on values, and the values were individually correct. The retracted numbers appear nowhere else in this paper, and the guard now forbids them. The repaired chain crosses between metrics through two proved bridges. The score bridge is Cauchy–Schwarz: a perturbation ∆ k of a cache entry moves the attention score by at most 
+
+∆(scale · ⟨ q, k ⟩) ≤ scale · ∥ q∥ · ∥ ∆k∥. (8) Its coefficient is a runtime quantity, so the probe now collects it: across 43 layers and 8 ranks of V4-Flash, scale · max ∥q∥ = 1 .0034—queries pass through RMSNorm, so the bridge barely amplifies, and the bound is dominated by the witness W itself (per-layer max up to 0 .700). The distribution bridge instantiates our machine-checked e-form theorem: a score perturbation of at most ε moves the softmax distribution by at most TV ≤ 12
+
+ e2ε − 1 (9) in total variation. Both directions of enforcement carry the theorem name in the contract’s proof field. Review of the repaired chain caught a second mislabel, and we keep it on the record because it is the failure mode the type system cannot see: a hand-written metric annotation that is simply wrong. Our selection bound bS is computed from the softmax of indexer logits, so its unit is selector-score mass, not attention mass; we had typed it as attention-TV by fiat. Retyping it 6correctly makes the checker refuse to add bS to the storage term—the missing piece is an empirical 
+
+stability bridge from selector scores to realised attention mass, which no amount of formalisation can conjure. The two are therefore reported separately and never summed. What remains in the chain is the window-storage term, and its pairing is exact: the fused kernel that produces q also stores the window keys q attends to. It gives a per-layer attention-TV bound 
+
+of 0 .786 under the all-rank worst caliber (sampled-max coefficients; 29 /43 layers below the trivial 1.0) and a diagnostic reading of 0 .647 (median) under mean coefficients—the latter has no bound semantics, since a mean coefficient is not an upper bound, and we no longer call it one—for the comparison in which window entries are perturbed and selected pages are treated as exact—the quantisation of the compressed pages themselves is not yet witnessed, and the softmax bridge needs the ℓ∞ over all logits, so we state that scope rather than claim past it. Summed over all 43 layers the budget is 36 .3—vacuous, and reported as such; the sum is an aggregate over distinct per-layer distributions, not an end-to-end output distance, and no bridge across depth is claimed. Both scope restrictions were then discharged by measurement rather than by more formalism: with every term witnessed on the 21 sparse-selection layers the full chain gives a worst-caliber per-layer TV bound of 1 .473 (median), and the missing selector-to-attention bridge is replaced by a paired measurement—the ratio of attention mass to selector-score mass is 0 .87 (median; converted with the tail value 2 .18)—so the selection term crosses into attention units at tier empirical , and the composed tier drops with it, automatically. The full accounting, including why these numbers are larger than the retracted ones (they pay the full price of soundness), is Appendix H. 
+
+5.5 An executable request-level ledger 
+
+The per-stage contracts become operational through a request-level risk ledger with three rules: empirical objects never enter the certified ledger (they either fall back or degrade the request’s verdict); deterministic certificates—runtime checks whose premises the machine can decide—enter at δ = 0; and probabilistic certificates draw from a telescoping budget 
+
+δi = δreq 
+
+(i+1)( i+2) , X
+
+> i≥0
+
+δi < δ req , (10) so the guarantee holds at every request length without knowing the length in advance. The budget rules are machine-checked theorems ( ledger sound , telescope sum , two layer budget le ; Fig-ure 2 shows the telescoping spend); the exclusion rule is not a theorem but an API discipline, enforced by the ledger implementation and locked by regression tests. The guarantee this machin-ery is built to deliver is the first tier of request-level claims: every read that uses a compressed result carries a valid local certificate, with failure probability at most δreq . What this paper demonstrates is deliberately less, in two stages. An offline replay estimates the coverage of a prospective per-entry certified fallback policy over probe-sampled reads. An online shadow ledger then closes four of the six gaps between replay and execution: ledgers are instantiated per request with real request boundaries, every selected-page entry read at every decode step of every sparse-selection layer is checked online (198 ,163 ,408 entry events over 24 serial requests), and each request ends with its own verdict—median per-request retention 0 .334 at the same threshold, with a hypothetical page-in of 5.4 GiB per request pricing what real fallback would move. Certificate granularity decides whether any of this is useful. Our first replay certified whole decode steps against the step’s worst sampled entry; one large-witness entry then forced the entire step to fall back, and coverage was 0% at every useful threshold. Local fallback must be local: certifying entries makes the per-step TV bound hold by construction, and replaying 12 .4M entry 70 5 10 15 20 25 30 35 40      
+
+> certified probabilistic event iwithin a request
+> 0.000
+> 0.002
+> 0.004
+> 0.006
+> 0.008
+> 0.010
+> failure budget
+> req
+> per-event spend
+> i=req /(( i+1)( i+2))
+> cumulative spend:
+> sound at any length,
+> never exceeds req
+> the telescoping request budget
+
+Figure 2: The telescoping request budget. Per-event spends δi = δreq /(( i+1)( i+2)) (orange) and their cumulative sum (teal) never reach δreq (dashed): sound at unknown request length—the analytic content of telescope sum , drawn at the implementation’s δreq = 0 .01. reads across the 21 sparse-selection layers gives the trade-off curve—80 .1% compressed-entry reten-tion at a vacuous per-step bound of 1 .54, or TV ≤ 0.86 at 29 .3% retention (we say retention rather than certified coverage: quoting the retained fraction alone would hide that its per-step bound is vacuous). On the int8 re-quantisation witness the distribution is concentrated with no heavy tail to cut, so a non-vacuous bound and 80% retention cannot hold simultaneously: the witness, not the calculus, is the binding constraint. In this offline replay all certificates are deterministic and zero budget is spent (Σ δ = 0); the write-time experiment below spends the probabilistic budget for real. The final two pieces touch the numeric path, and a controlled experiment lands both at write granularity—with one correction a stability control forced on our own earlier reading. Compression is made real by FP8 mantissa masking (a genuine coarsening of every stored window entry’s value grid, though the byte count is unchanged: this is precision coarsening, not physical compression), and the per-entry certificate decides, entry by entry, whether the coarsened bytes are written or the exact bytes are kept: fallback executes in the numeric path with zero page-in by construction. The policy accepts 48 .0% of entries for masking (a policy acceptance rate, not a retained-bytes figure). Probabilistic budget is spent with pre-authorization semantics: a prior radius authorizes an entry before any random bits are drawn, a write-side audit counts realized violations (0 of 147 ,208 authorized entries), and the price of authorizing before the draw is quantified rather than hidden (6 .2× fewer entries than post-hoc gating accepts; mechanics in Appendix F). The read-side per-request ledger and the write-side policy run in the same serving process over the same requests, and the loop now closes on the same physical entries : the certified write acts on the compressed-page pool—the buffer the read-side ledger dequantizes—and a per-slot status map (unwritten / masked / kept-exact) links every policy decision to its later reads. Over eight serial user requests, 3 ,936 ,205 of 7 ,750 ,144 read-side entry checks landed on slots the policy had masked, with zero reads of unwritten slots. Slot reuse is handled by owner-tagged slot state (with a per-rewrite generation counter): the compressed pool has no separate free path, so a reused slot is necessarily rewritten through the certified writer before it can be read again—the status map stays fresh by construction—and each write records the writing request’s UID. Under real reuse pressure (11 ,763 owner-change events from serial page recycling) the per-request closure stays exact: distinct prompts read zero foreign-owned entries, while a deliberately repeated prompt reads 94% of its en-tries from the prefix cache (974 ,386 of the run’s 1 ,063 ,892 foreign-owned reads; the remainder trace to server warmup batches that carry no request identity) and every one is attributed to its writing 8unwritten        
+
+> masked
+> δispent by owner
+> kept-exact
+> δ= 0
+> restored-exact
+> original bytes back
+> certified write: policy accepts
+> policy rejects / unattributable batch
+> realized witness >radius
+> ⇒audit restores, in-hook
+> slot reuse ⇒rewrite through certified writer (new owner UID, generation +1)
+
+Figure 3: The ledger’s slot-state machine. Admission into masked is probabilistic (it spends the owner’s δi); enforcement is deterministic—a violating entry is restored to exact bytes in the same hook call, before any shared read. Reused slots re-enter only through the certified writer, with fresh owner and generation. request rather than miscounted into the reader’s closure (write-side δ is charged to the owner; read-side checks are deterministic, so sharing does not disturb budget semantics). Four runtime invariants make shared-read semantics fail-closed rather than observational (Figure 3)—write-audit before any shared read, explicit slot state, on-the-spot byte restoration (admission is probabilistic ,enforcement is deterministic ), and once-per-write budget spend ( shared read sound ); the precise statements are Appendix F. Mid-request eviction workloads remain uncovered. Request identity is a never-reused monotone UID detected on the write path itself, so account boundaries coincide with true request boundaries; each request carries an independent telescoping budget (the eight user accounts each stay under budget, maximum spend Σ δ = 0 .009982 ≤ δreq = 0 .01), and the stochastic-rounding stream is per-(nonce, UID, layer, counter) and rank-invariant across the eight replicas (mechanics in Appendix F). Pre-draw authorization audited 0 violations in 120 ,661 autho-rized entries on this pool. Concurrency is covered by per-row identity: within a mixed batch every entry is attributed to its request via the compressor’s plan alignment (decode plans are batch-row-aligned; prefill plans are per-query-token, segmented by the prefix sum of extend lengths), each ac-count keeps its own budget counter and random stream, and under eight simultaneously-submitted requests every account independently satisfies its budget (maximum spend Σ δ = 0 .009984 ≤ δreq )with the owner ledger reporting zero foreign-owned reads across 8 ,228 ,864 checks. That owner ledger doubles as a runtime guard on attribution itself: its first concurrent run flagged 3 .4% foreign reads and traced them to a namespace collision between the two compressed-pool families—invisible under serial traffic, where a single active request masks ownership churn—which is precisely the class of accounting error a purely serial evaluation cannot surface. On output quality we report the control first: greedy decoding across two independent server restarts with no intervention already disagrees on 2 of 8 diverse prompts. Against that stability floor, the policy and dithered arms’ output differences from baseline are at or near the floor at n=8 and cannot be resolved; the mask-everything control still diverges grossly, so the intervention is real, and we describe the gated arms as consistent with a protective effect rather than demonstrating one. We use the word executable for exactly this scope— write-time policy with pre-authorized probabilistic budget, plus read-side per-request accounting in the same run—and quality claims stay at the eight-prompt directional level. 
+
+5.6 Upgrading the certified object 
+
+The witness being the binding constraint, we changed the certified object itself: from a worst-case norm to the exact conditional distribution of stochastic rounding. An offline adjudication 9over raw captured traces (queries, entry bytes and scales for all 43 layers; 64 rounding realizations per entry as ground truth) compared four certificate families against pre-registered gates. The centred bound—softmax is shift-invariant, so only the oscillation of the score error matters, and the two-point extremal argument gives the sharp constant TV ≤ tanh  osc /4 (11) —moves non-vacuous layers from 0 /43 to 43 /43 on this object. Tightness is measured against the matching realized object per rounding realization (a review corrected our first metric, which divided a centred bound by an uncentred realization): the centred oscillation bound sits 5 .2× above realized oscillation, and the exact-MGF per-entry radius 2 .1× above realized |∆s| under a joint 
+
+δ/E budget, against 15 .8× for the current-form witness bound. Three of our own bugs were caught by the adjudicator’s soundness self-check (radii must never be beaten by realizations): a two-sided Chernoff combined with min instead of max; a deterministic shift from top-of-range clamping that is not random at all; and a zero-weight branch producing log 0 that a clamp silently turned into fake perfection. One gate failed and is honoured: no family reaches τ =0 .2 retention at two-bit coarsening, so the heavy fused-kernel stage is skipped by the pre-registered rule. Deployed at write time—where the pre-quantization value is in hand, so the rounding position θ
+
+costs no metadata—true stochastic rounding (conditionally exact-zero mean) with a variance-aware two-point bounded-difference radius —exact two-point variance θ(1 −θ)∆ 2 and exact clamp shift, composed through Jensen and a Hoeffding tail. All three components of this radius are machine-checked on the finite product space with the constants the implementation uses—no measure theory anywhere, because the randomness is finitely many discrete draws: tail: F ′′ = θ(1 − θ)E1E2
+
+g2 ≤ 14 two-point Hoeffding, sub-Gaussian ∆ 2/4 (12) witness: bounded-difference MGF on the band witness finite-Ω McDiarmid, by induction (13) mean: E X
+
+> b
+
+∥db∥ ≤ X
+
+> b
+
+qP 
+
+> c
+
+θ(1 − θ)∆ 2  
+
+> crecursive Jensen step
+
+(14) The radius raises the pre-authorization rate at the same threshold from 7 .8% to 67 .5% (8 .7×), with 0 of 1 ,276 ,631 authorized entries violating their radius. For the budget, a finite-Ω Ville inequality— provable by a three-line induction on hitting probabilities, with no measure theory, because the randomness is finitely many discrete draws—gives an anytime-valid e-process, and we now run one 
+
+on the same object as the ledger : each authorized entry contributes 
+
+ge = exp  λe(We − me) − λ2
+
+> e
+
+Ce/8, λe = 4 κ/ pCe, κ = 0 .5 pre-registered , (15) built from its realized witness We against its pre-draw mean term me; the supermartingale condition 
+
+E[ge | F ] ≤ 1 is itself machine-checked (it composes the McDiarmid MGF bound with the mean-term lemma). The sentinel runs at two scopes: per-request accounts, and a global process that never resets across requests—the continuously-running, whole-service form. Over 120 ,661 authorized-entry factors spanning all requests, the global process never approaches its crossing threshold: sup 
+
+> t
+
+log Mt = −0.82 ≪ ln(1 /δ e) = 4 .61 (16) (final value −76 ,819; we report the post-update maximum rather than the initialization value, which would overstate the evidence): an anytime-valid check that the stochastic-rounding radius assumptions are not contradicted by live traffic. Its semantics are model validation—a drift sentinel 10 prior 
+
+> radius
+> finite-product
+> radius
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> pre-authorization rate (%)
+
+8.7 × 
+
+> 7.8%
+
+67.5%              
+
+> 0 / 1, 276, 631 authorized entries violate their radius
+> authorization coverage
+> 020 40 60 80 100
+> compression retention (%)
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> per-step attention-TV bound  vacuous region (bound >1)
+> bound-first
+> TV 0.86
+> keep 29.3%
+> retention-first
+> TV 1.54
+> keep 80.1%
+> req = 0.01 ,max request spend 0.009984
+> ledger working points
+
+Figure 4: The certified object, quantitatively. Left: the finite-product radius lifts pre-authorization coverage from 7 .8% to 67 .5% at the same threshold (0 of 1 ,276 ,631 authorized en-tries violate). Right: the ledger’s two working points—retention-first keeps 80 .1% but its per-step bound (1 .54) is vacuous; bound-first certifies TV ≤ 0.86 at 29 .3% retention. Max request spend 0.009984 ≤ δreq = 0 .01. on the same entries at the same instants—complementing, not replacing, the per-entry union budget that authorization consumes. Separately, on the two-sided cumulative object with 33 ,407 events the e-process radius is 390 × tighter than summing telescoped per-event radii; the two certify different failure events (“any per-entry radius is beaten” versus the signed cumulative sum), and we report that magnitude comparison under that explicit caveat. The unfused write-path implementation costs 1 .20 × in per-request wall clock (graphs-off measurement caliber, serial requests); the fused-kernel stage that would reduce it was skipped by the pre-registered gate, and physical bytes are unchanged throughout—precision coarsening is not physical compression. 
+
+5.7 Case study: certificate-guided low-bit format exploration 
+
+A boundary-discovery exercise drove an aggressive low-bit format study on V4-Flash’s compressed pools (block-Hadamard INT6/INT4, a fused unpack kernel 3 × faster than the production FP8 dequantizer, a real packed pool in serving); the instrument falsified two of our own design assump-tions and scoped precisely what a served consumption claim would require. The full account is Appendix D; its open item—served packed consumption—is what §5.9 then closes and stresses. 
+
+5.8 Closing the boundary: generation staleness, not quantization 
+
+The scoped follow-up closed the boundary, and the closure is itself a result about what the type system must carry: a 95-point retrieval collapse that radix caching had been masking was dis-criminated down to generation staleness —slot reuse with no invalidation call anywhere in the codebase—rather than quantization (the quantizer’s intrinsic relative error is 0 .0245, unreachable from the observed readings), and unconditional write-site invalidation restored accuracy with a two-sided causal confirmation (1 .000 vs. 0 .200 under 4-way concurrency, six machine-checked criteria). 11 logical slot        
+
+> allocator coordinate
+> physical ring slot
+> FP8 staging window
+> packed archive
+> INT6, logical-keyed
+> attention kernel
+> decode consumption
+> write translation finalize logical-id read
+> exact — ring ≥live work-ing set, no eviction, identity isolation: 1 .000 across three independent 12-doc rounds
+> degraded — eviction or cross-request slot reuse: drops to 0 .500 with every va-lidity flag green; write chain and reader math exonerated, micro-mediator open
+> truncated — non-resident reads folded to the skip sen-tinel: honest omission, not recovery; heals or harms de-pending on eviction timing vs. prefill
+
+Figure 5: Compressed-entry lifecycle and runtime regimes. The exact regime is certified; degradation correlates with eviction and slot reuse while the write chain and audited readers are exonerated (mediator open, §5.9); the sentinel fold is a timing-dependent mitigation. The con-tract lesson: a replaced KV representation redefines coordinate, generation, and materialization semantics—all three belong in the runtime contract. The full discrimination narrative is Appendix G. Two lessons feed back into the contract layer. First, the observation site is part of a metric’s type. The write-site shadow check—mathematically identical to the decode-side one—had zero discriminative power for this failure (0 .967 vs. 1 .008 across fix/control arms) because the pool has two writers and the site compares a decode-time snapshot against a write-time source: a cross-generation comparison by construction. The same metric at the consumption point (what the kernel is about to read, sampled 1 /32, before any refill) separates the arms by 36 ×: 0 .0246—matching the 0 .0245 intrinsic within half a percent, reproduced across six independent runs—against 0 .882. A bridge between metrics must therefore check not only units but where the quantity is measured. Second, (slot , generation) is a contract premise , not a logging field: the refinement obligation is that a consumed entry’s generation equals the generation at authorization, and write-site invalidation is its enforcement half. The claims withheld above were then partially discharged—served consumption at par-ity, structural pool replacement quality-neutral, mechanism-level memory reduction with mea-sured/accounting agreement of 1 .7%—with one explicitly not discharged: the ring-staged con-figuration degraded retrieval while every fail-loud surface stayed green (the full discharge ledger, including the out-of-bounds addressing finding, is Appendix E). Both open items were subsequently discharged, and §5.9 records the closure and its caliber. 
+
+5.9 Serving the packed format: from diagnosis to consumption 
+
+The preceding subsection ended with two open claims—the ring lifecycle unproven, the 4 × pool untouched. The diagnostic ring chain and the physical pool-integration gates are now closed by machine-gated runs (per-(layer, slot, epoch) coverage with zero out-of-generation reads across eight ranks; an end-to-end packed INT6 replacement of the 4 × pool with measured 2 ,108 MiB/GPU HBM reduction against a tensor-derived byte model; in-graph packed consumption at exact retrieval parity), while eviction-safe production consumption remains open. What turned a quality regression into a structural boundary was a machine-adjudicated discrimination campaign—every comparison a controlled pair, every verdict a run artifact, two of our own confounded inferences rejected by the adjudication calculus on the way. Its shape: a per-pool dissociation pinned the harm to the 4 × ring’s eviction (dose-linked, reproduced across rounds); write-side forensics (16 ,942 ,020 bake-versus-store row checks, zero mismatches) exonerated the write chain; content oracles judged against calibrated 12 0 200 400 600 800 1000  
+
+> 4 × -ring evictions during run
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> retrieval accuracy
+> certified regime
+> (zero eviction,
+> identity-isolated)
+> consistent with one common
+> dose--response curve; no treatment
+> shift detectable at this sample size
+> degradation tracks eviction dose; no detectable treatment shift
+> confounded (both pools evict)
+> attributable rounds (untreated)
+> dose-stratified W4 controls
+> honest-truncation arms
+
+Figure 6: Eviction dose governs quality. Historical attributable rounds (gray; open = dose-confounded, context only), dose-stratified twelve-document controls (teal), and honest-truncation arms (orange) are consistent with one common dose–response relationship; no treatment shift is detectable at the present sample size. The zero-eviction cluster is the certified regime. Every point is read from its run artifact. repeat-pair noise floors proved the persistent stores and the entire prefill computation arm-invariant; and an intervention that folds non-resident reads to the kernel’s skip sentinel restores the eviction microcosm from 0 .500 to 1 .000 under matched eviction and call counts—honest truncation, effective but timing-sensitive, a mitigation rather than a repair. At twelve-document concurrency, eviction dose itself is scheduling-stochastic, and the truncated and untreated arms are consistent with one common dose–response relationship—no treatment shift is detectable at the present sample size (a quick regression reads +3 .35pp with an interval spanning zero)— so the certified operating point is structural, not parametric (Figure 5, and quantitatively Figure 6: thirty-two runs from three series are consistent with one common dose–response relationship). The exclusion list is now long and two-sided: beyond the write chain and the persistent stores, a materialized reference reader— the instrument-verified dequantization path with reference attention mathematics, executed 1 ,430 times in a matched arm—reproduces the same 0 .500, so the production kernel’s inline unpack and the reader mathematics are exonerated as well. What remains is a stable structural association— every observed failure occurs in an eviction or slot-reuse regime, while eviction alone does not force failure (one 91-eviction control run scores 1 .000)— whose microscopic mediator is open, with the remaining candidate surface in selection metadata, index semantics, or their timing state; we record it as an open question rather than narrate beyond the evidence. The full round-by-round adjudication log, with every number read mechanically from run artifacts, is Appendix A. What is proven and production-relevant is unchanged: the zero-eviction, identity-isolated configuration is exact across three independent twelve-document rounds, and it is the only configuration this campaign certifies. 
+
+5.10 Path-contract evaluation 
+
+Bringing a replaced KV representation into a production stack is not one compatibility question but six, and the value of a runtime contract is that it answers each with a different failure type. 13 Path Capt. Id/gen Packed Evict Xfer Qual. Verdict CUDA graphs ✓ ✓ ✓ △ — △ partial                                    
+
+> TP repeat ✓✓✓——✓pass
+> Radix cache ✓×—×—×fail-m
+> MTP (spec. decode) ✓✓✓✓∗—✓pass
+> PD disagg. ✓✓×—××partial
+> HiSparse ——————blocked
+
+Table 2: Path-contract matrix , generated from run artifacts. Cells mark which contract layer each path violates ( △ = holds at a stated caliber; — = n/a or unmeasurable; ∗ = zero-eviction caliber, machine-annotated); per-verdict evidence in §5.10. We evaluated the packed stage against six serving paths and report a five-level taxonomy (Table 2) —pass / fail-method / blocked-upstream / partial / not-measured —generated mechan-ically from the run artifacts rather than summarized by hand. The matrix carries the per-dimension verdicts; prose here keeps only what each row teaches (per-path evidence and cal-iber in Appendix B). CUDA-graph serving is exact at the eviction-free caliber and caliber-limited beyond it (0 .75 at twelve-document concurrency); radix prefix caching fails with the method repro-ducibly (0 .667 vs. 1 .000 native, two independent rounds), so the installer refuses the combination loudly; speculative decoding passes on a two-seed zero-eviction rerun (1 .000 on both arms, both seeds) after the adjudication chain attributed its historical residual to the eviction mechanism. Prefill/decode disaggregation yields the sharpest lesson: the native arm passes exactly (1 .000; the needle lives in the prefill worker’s context, so a correct decode-side answer certifies a real KV trans-fer), while the packed arm returns 0 .000 with zero transport or server errors—transfer completed, kernels ran, service stayed up—because the transfer engine moves bytes by the pool-layout contract that the packed stage redefines. A run can be structurally green and semantically wrong; that is precisely the gap a runtime quality oracle exists to close. The same oracle then sharpened the eviction-free claim itself: in a matched benchmark round at the working-set-ring caliber, a retrieval battery run after a 32-request load scored 0 .917 with zero evictions—the missed document answered with another request’s needle code, because freed logical slots were reused while their ring pages stayed resident, so the ring served the previous owner’s rows without any eviction. Zero eviction is therefore necessary but not sufficient; eviction and cross-request slot reuse are two triggers of one structural exposure; the sentinel-fold intervention removes the exposed reads at microcosm scale (a timing-sensitive mitigation, §5.9), and eviction-safe consumption with a verified mediator account remains future work. The remaining path (hierarchical sparsity) is blocked upstream: the unmodified baseline crashes identically with and without graphs, so the path is unmeasurable in this build; the crash trace is preserved as an incident artifact so the classification is auditable rather than asserted. On cost we claim nothing yet: the staged consumer serves at 0 .884 × native throughput and 1 .131 × cost per output token in its unoptimized materialize-per-call form, and the fused-kernel arm’s 0 .238 × / 4 .201 × figures include per-call host-side auditing scaffolding that production operation would remove; these are upper bounds on overhead, not a benefit statement. On quality at the same caliber, a teacher-forced paired perplexity round (24 natural+code docu-ments, 98 ,568 tokens, tp4-matched arms, with bidirectional path-activation evidence: the packed arm records 1 ,112/1 ,040 packed consumptions on the two pools; the base arm carries no packed switches, adapters, or consumption counters, with absence recorded in its manifest) reads 1 .3496 vs. 1 .3495 ( −0.00%; successive matched pairs read +0 .05% and −0.002%, within run-to-run jitter): the packed consumption path is perplexity-neutral, so the cost story is not hiding a quality tax. 14 100 30 10 3 1 0     
+
+> throughput change (%, symlog)
+> 0.94% fused 1/28, graphs on
+> 10.16% fused 28/28, graphs on
+> 3.90% sampled 1/64, graphs off
+> 19.60% sampled 1/16, graphs off
+> 113.24% serial, full, sampling
+> noise floor
+> throughput cost
+> fused 1/28
+> graphs on
+> sampled 1/64
+> graphs off
+> sampled 1/16
+> graphs off
+> 0
+> +10
+> +100
+> TTFT P99 change (%, symlog)
+> 0.14%
+> +10.50%
+> +140.80%
+> tail latency cost
+
+Figure 7: Resident probe cost. Under CUDA graphs the fused meter at one of 28 layers costs 
+
+−0.94% throughput ( −0.14% TTFT P99), inside the noise floor; full coverage ( −10 .16%) remains a diagnostic mode. Graphs-off sampling points shown for caliber. The matched final-table round quantifies the unoptimized path end to end at the working-set-ring caliber: 26 .8 versus 173 .4 output tokens/s against the native arm on a 32-request benchmark, with the enlarged rings erasing the memory saving at this caliber—an honest cost statement, with the benefit claim still withheld until eviction-safe consumption is demonstrated. 
+
+5.11 Corruption sentinel 
+
+Over 144 baseline verification passes we observed zero false alarms; this is not a false-positive rate of zero, and by (1 − p)n ≤ e−np (17) the one-sided 95% upper bound on the rate is 2 .06%. In the injection experiment, 2 of 4 corrupted slots were located. Lemma 3 explains why this is expected rather than a limitation—with one correction this revision makes explicit: the implementation samples with replacement, so the model must too, and our earlier hypergeometric analysis was optimistic about the implementation it described. With replacement, an effective post-injection window of n ≈ 17 rounds sampling 128 of 1024 slots gives a per-block detection probability of 0 .881, and the probability of finding at most two of four is 0 .072. Detection latency is a budget, not a capability: reaching 99% confidence for a single corrupted slot takes 148 /74 /37 /19 rounds at r = 32 /64 /128 /256. 
+
+5.12 Overhead 
+
+Three calibers are necessary, and the always-on claim rests on the last. Serially, with one request in flight and CUDA graphs disabled, the probes cost +113 .24% at full sampling—the worst-case amplification, with no other work to hide host-side cost behind. Under concurrency the picture separates by sampling rate: at one sample per 64 calls the cost is −3.9% throughput and +10 .5% TTFT P99, both inside the per-setting measurement noise, whereas one sample per 16 calls costs 
+
+−19 .6% and +140 .8%, clearly outside it. Two methodological points follow. The noise floor must be computed per setting; taking a global maximum would classify the 16-sample degradation as noise. And tail latency, not throughput, is the criterion for always-on operation: the two settings are indistinguishable on throughput alone. The third caliber is graphs enabled , and it is the configuration that justifies the word always-on: instrumenting one declared layer with the fused Triton meter costs −0.94% throughput and −0.14% 15 Claim Evidence Strength Not yet shown Request-level risk budget Lean-checked ledger + 8-request serving replay certified cross-layer error propagation Eviction-free packed consumption three independent 12-doc rounds, exact empirical exactness eviction / slot-reuse safety Ring write/finalize/recycle chain machine-adjudicated concurrent gate, zero violations diagnostic chain non-resident recovery Low-overhead resident probe graph-on serving benchmark one layer of 28 full-coverage always-on 
+
+Table 3: Claim boundaries. What is asserted, on what evidence, at which tier, and what is explicitly not asserted; each row’s numbers appear in the text with their calibers. TTFT P99 against an identical probe-off baseline, both inside the per-concurrency noise floor, with replay-time accumulation and declared-versus-observed coverage verified by the acceptance gate. How this configuration was reached—including the failure of call-rate sampling under graph capture and the acceptance-gate hole it exposed—is Appendix C; full-coverage instrumentation under graphs remains a diagnostic mode at −10 .16%. 
+
+# 6 Limitations 
+
+The sampled-probe overhead measurements of Section 5 are taken with CUDA graphs disabled, so their absolute latencies do not represent graph-enabled production and only the relative deltas are meaningful; the graph-enabled caliber is measured separately ( §5.12) and carries its own scope. The probe itself, however, does run under graph capture, and we state precisely what we verified, because “the server starts” is far too weak a test: graph replay executes no Python at all, so a probe whose accumulation quietly stopped would look identical to one that worked. Liveness under capture is verified by exact count arithmetic (host and device counters grow by precisely the predicted call and replay totals), and the eight silent-corruption trap classes this took—four on the probe side, four rediscovered on the packed write side, each invalidating capture rather than crashing—are catalogued with their regression tests in Appendix C. The path-contract matrix of §5.10 is likewise a bounded claim: one model, one serving stack version, small retrieval batteries, largely single-seed; it demonstrates the taxonomy —which paths fail, in which of five distinct ways—not production coverage, and no end-to-end cost benefit is claimed anywhere in this paper. The always-on result of §5.10 (one declared layer, fused meter, −0.94%/ −0.14%, Figure 7) took two changes—replay-constant sampling decisions and a fused Triton meter 24 .2× cheaper per invocation (9 .3e − 07 max relative error against the reference)—whose engineering account, including why naive sampling silently vanishes from captured graphs and how a lifetime-coverage gate passed on a dead probe, is Appendix C. We state the scope precisely: what is demonstrated is always-on observation of a declared subset , not of every layer. Full 28-layer coverage under graphs still costs −10 .16% throughput even fused, which is far outside the noise floor, so contract readings that need every layer remain a diagnostic mode rather than a resident one. The storage term is now denominated in total variation with both window and compressed-page entries witnessed on the sparse-selection layers, and the selection term crosses metrics through a measured ratio; two gaps remain open, and we name them. The page side is now witnessed on every layer that has one: of the 43 layers, 21 select over 4 ×-compressed pages, 20 attend densely over 128 ×-compressed pages (no indexer, hence no selection term), and the first two are uncompressed by architecture; 16 the coarse-compression pages turn out to carry a witness about half the size of the sparse-selection pages’ (0 .523 vs. 1 .045 max), and their median worst-caliber per-layer TV bound is 0 .976 against the sparse-selection layers’ 1 .339: the harder-compressed layers are, counterintuitively, the easier ones to certify. And the per-layer TV bounds do not compose across layers—each layer’s attention is a different distribution, and we claim no inter-layer bridge—so the request-level number is an aggregate budget, and a vacuous one. The empirical bridge ratio is measured on truncation sets and applied to perturbation swap sets, a homogeneity assumption the tier system prices in by holding the composed chain at empirical . The recurrent-state aggregate does not retain channel identity, as noted. The sentinel guarantee assumes corrupted slots are independent of the sampling. Finally, six evaluated model configurations from one serving stack are not a substitute for independent replication. The release boundary is stated plainly: the public repository reproduces every number, figure and theorem from shipped artifacts and sources, while the architecture-specific injection implementation (hook anchors, adapters, kernels) remains private—serving-level reruns therefore require the platform, and the paper’s verifiable surface is the artifact-and-guard chain, not a rerun claim. 
+
+# 7 Related Work 
+
+Runtime certificates for compressed attention. Prior work bounds the distortion intro-duced by KV-cache quantisation—per-channel and outlier-aware schemes such as KIVI [1] and KVQuant [2]—and uses the bound to gate or repair at decode time. That line fixes the memory object—a dense post-RoPE KV cache—and derives one bound for it. Our concern is orthogonal: we do not propose a tighter bound for that object, we ask what remains true when the object itself changes, and what has to be supplied for a new object to be admitted. 
+
+Compression for latent and sparse architectures. Latent caches (MLA [3]), learned sparse selectors [4], pooled hierarchies and linear-attention states [5], and token-selection or evic-tion schemes (H2O [6], SnapKV [7], attention sinks [10], GEAR [11]) each report end-task scores computed offline against an uncompressed reference—exactly the quantity a serving system does not have; an early version of our own composition used that true residual as a bound before the tier registry rejected it as unavailable at runtime. 
+
+Systems observability. Production serving stacks such as vLLM [8] and SGLang [9] expose throughput, latency and memory, and hierarchical caches expose hit rates; none of these observes whether the retained state is still faithful. The incident that motivates §1 was invisible to all of them. The sentinel of Lemma 3 is deliberately in the shape systems people already use—a sampled check with a stated detection latency and a tunable budget—rather than a new guarantee requiring a new abstraction. 
+
+Anytime-valid inference and concentration. The per-entry radius is classical concentra-tion [12, 13] deployed prospectively (declared before the draw, funded by a budget that telescopes soundly at unknown length), and the drift sentinel is an e-process [16, 14, 15]. Our contribution on this axis is not a new inequality but a serving-system instantiation in which every constant matches the implementation and the whole chain is machine-checked in Lean/mathlib [18] over a finite product space, with no measure-theoretic axioms beyond the standard three. 
+
+Runtime verification. Monitoring executions against formal specifications is a mature field [17]; the usual setting is discrete properties over event traces. Our monitors are numerical— error radii, budgets, supermartingales—and the “specification” is a probability statement whose side conditions (identity resolution, write-audit ordering, per-event accounting) are enforced fail-closed and surfaced as all-zero gate criteria. The concurrency guard that exposed a slot-namespace 17 collision is, in runtime-verification terms, a monitored invariant doing exactly what monitors are for. 
+
+Error propagation. The composition rule (4) is affine composition with a union bound, and the recurrent case is a discrete Gr¨ onwall inequality; we claim no novelty in either. The contribution is that heterogeneous memory stages are expressed in one form, that the coefficients are computed from live telemetry rather than assumed, and that the strength of the composed statement is decided by the machine. 
+
+# 8 Conclusion 
+
+Heterogeneous attention memory breaks the implicit assumption behind existing KV-cache certifi-cates: that there is one memory object to bound. We proposed typed observability contracts—per-stage error bounds whose metric is part of the type, composed only when metrics match, with proof obligations carried by name and tiers decided by the machine—and instantiated them across latent caches, sparse selectors, pooled hierarchies and recurrent states on production serving stacks. The type discipline did real work: it rejected our own first composed bound, forced two bridge theorems and one paired measurement into existence, and priced every unprovable step into an explicit tier instead of a hedged sentence. On the systems side, capture-time layer selection plus a fused meter make declared-subset observation affordable under CUDA graphs, and an entry-level certificate ledger with local fallback turns the per-stage bounds into a request-level risk budget—sound at unknown length, with empirical objects excluded by construction, executed so far at write-time policy granularity with read-side shadow accounting. Applied to a served DeepSeek-V4 stack, the same machinery turned a silent quality regression into a precise structural boundary—exact in the eviction-free, identity-isolated regime, every observed failure in an eviction or slot-reuse regime— with the microscopic mediator honestly recorded as open after a machine-adjudicated campaign exhausted every instrumented channel; the contract lesson, that a replaced memory representation redefines coordinate, generation and materialization semantics, is the paper’s most transferable sys-tems finding. What the calculus still cannot do is cross layers: per-layer distributions are distinct objects, and no inter-layer bridge is claimed. That boundary is not a rhetorical limitation; it is the next theorem the type system is waiting for. 
+
+# References       
+
+> [1] Z. Liu et al. KIVI: A tuning-free asymmetric 2bit quantization for KV cache. ICML , 2024. [2] C. Hooper et al. KVQuant: Towards 10 million context length LLM inference with KV cache quantiza-tion. NeurIPS , 2024. [3] DeepSeek-AI. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv:2405.04434, 2024. [4] J. Yuan et al. Native sparse attention: Hardware-aligned and natively trainable sparse attention. arXiv:2502.11089, 2025. [5] S. Yang et al. Gated linear attention transformers with hardware-efficient training. ICML , 2024. [6] Z. Zhang et al. H2O: Heavy-hitter oracle for efficient generative inference of large language models.
+> NeurIPS , 2023. [7] Y. Li et al. SnapKV: LLM knows what you are looking for before generation. NeurIPS , 2024. [8] W. Kwon et al. Efficient memory management for large language model serving with PagedAttention.
+> SOSP , 2023.
+
+18 [9] L. Zheng et al. SGLang: Efficient execution of structured language model programs. NeurIPS , 2024. [10] G. Xiao et al. Efficient streaming language models with attention sinks. ICLR , 2024. [11] H. Kang et al. GEAR: An efficient KV cache compression recipe for near-lossless generative inference of LLM. arXiv:2403.05527, 2024. [12] W. Hoeffding. Probability inequalities for sums of bounded random variables. J. Amer. Statist. Assoc. ,58:13–30, 1963. [13] C. McDiarmid. On the method of bounded differences. In Surveys in Combinatorics , 148–188. Cambridge Univ. Press, 1989. [14] J. Ville. ´Etude critique de la notion de collectif . Gauthier-Villars, 1939. [15] S. R. Howard, A. Ramdas, J. McAuliffe, J. Sekhon. Time-uniform Chernoff bounds via nonnegative supermartingales. Probability Surveys , 17:257–317, 2020. [16] A. Ramdas, P. Gr¨ unwald, V. Vovk, G. Shafer. Game-theoretic statistics and safe anytime-valid inference.   
+
+> Statistical Science , 38(4):576–601, 2023. [17] M. Leucker, C. Schallhart. A brief account of runtime verification. J. Logic and Algebraic Programming ,78(5):293–303, 2009. [18] The mathlib Community. The Lean mathematical library. CPP , 2020.
+
+# A The discrimination campaign, round by round 
+
+This appendix preserves the full adjudication log summarized in §5.9. Every number is read me-chanically from the corresponding run artifact; nothing here is narrated from memory. First, the ring write/finalize/recycle chain passed a machine-adjudicated concurrent gate: aper-(layer, logical-slot, write-epoch) coverage ledger checked every decoded slot reference against the generation that produced it, across both arms and all eight ranks under full-ring pressure, with zero out-of-generation reads—a diagnostic-chain claim (ring →finalize →scratch-decode book-keeping), not a claim about the packed read path itself. Second, packed data is now consumed 
+
+in serving rather than merely audited: a non-fused reference consumer classifies every referenced slot as ring-resident, packed-final, or fail-loud, and under an evict-invalidates-coverage semantics it re-materialized 26 ,440 rows from packed INT4 while both arms held exact retrieval parity (the three-way identity resident +packed +failed +skip = total holding per rank, tolerance zero). Third, the 4 × pool—the 32 × memory bulk deferred above—was replaced end-to-end with a packed INT6 truth source under the same machinery: the formal gate (nine criteria including a client-abort perturbation arm) passed with measured HBM reduction of 2 ,108 MiB per GPU against a tensor-derived byte model (all inputs read from live storage sizes, not derived calibers), and the 128 ×
+
+single-layer staging variant measured a median 316 MiB per GPU net against its own byte model. Finally, the consumption chain was brought inside CUDA graphs: with both graph modes enabled, the packed-kernel wrapper recorded 5 ,576 packed invocations (2 ,720 INT4 from the 128 × pool, 2,856 INT6 from the 4 × pool) at exact retrieval parity on both arms—a capture-time and eager-path call count, since graph replay executes recorded kernels without re-entering host counters; that the replayed graphs contain the packed branch follows from these being the branches taken at capture. The scope of that last claim is deliberately narrow—six needle documents, one seed, one hardware configuration, radix caching off, fixed ring sizes. Of the kernel invocations, 272 fell back to the native path; pointer-classified attribution later showed every fallback call carries no compression cache at all (it is not a compressed-pool read), so the fallback count is a call-mix figure, not a coverage gap. The narrowness matters: a twelve-document probe of the same configuration 19 0.5 0.6 0.7 0.8 0.9 1.0 1.1           
+
+> needle retrieval accuracy (12 documents)
+> serial (W1), ring 513
+> W4, both rings 513
+> W4, both rings 1025
+> W4, both rings 513 (control)
+> W4, evict 128x only
+> W4, evict 4x only
+> W4, evict 128x only (rep 2)
+> W4, evict 4x only (rep 2)
+> W4, evict 128x only (rep 3)
+> W4, evict 4x only (rep 3)
+> 1.000 (no eviction)
+> 0.750 (431 evictions)
+> 1.000 (no eviction)
+> 0.833 (512 evictions)
+> 1.000 (256 evictions)
+> 0.667 (353 evictions)
+> 1.000 (224 evictions)
+> 0.750 (289 evictions)
+> 1.000 (188 evictions)
+> 0.917 (227 evictions)
+> no pool evicts
+> only 128x evicts
+> only 4x evicts
+> both evict
+
+Figure A.1: Nine-round controlled ablation. Green: no pool evicts (exact). Blue: only the 128 × ring evicts (exact in all three repetitions). Red: only the 4 × ring evicts (degraded, with run-to-run drift under identical configuration). Corruption tracks 4 ×-ring eviction dose; every point is read from its run artifact. (no speculation) subsequently scored 0 .750 with mid-depth misses that also recur under speculative decoding—a systematic residual that the six-document battery had been masking. A nine-round controlled-ablation chain then localized the defect (Figure A.1), and we report the chain because each round eliminated a hypothesis by construction. A zero-eviction ring restores exactness under full four-way concurrency (1 .000, against 0 .833 for the same round’s small-ring control), and the serial run that first suggested a concurrency skew turns out to have evicted nothing at all—“serial is clean” was a confound, and the invariant across all rounds is that corruption appears exactly when pages of in-flight requests are evicted. A per-pool dissociation pins the pool: evicting only the 128 × ring is exact (reproduced three times), evicting only the 4 × ring degrades to 0 .667. The write side is exonerated by row-level forensics: 16 ,942 ,020 bake-versus-store checks across both pools found zero ownership mismatches, and an in-graph counter of finalizations touching freed pages read zero. The consumer was then found by a two-step probe. Coordinate-domain instru-mentation showed that the compressed-context (“extra”) reads address the ring-registered buffers in cache-wide coordinates—observed indices reach 66 × the 4 × ring’s row count—and a contri-bution ablation that zeroes this path’s top-k lengths collapses retrieval to 0 .000 against a 0 .667 in-band control (the arms differ in downstream eviction counts, so this is a necessary-channel local-ization, not a dose-matched effect size): the reads are essential , and their data is whatever eviction leaves behind, which is why corruption tracks eviction dose rather than any timing discipline (two fence designs and an aged-reuse quarantine, all mechanically effective, all failed to help). The in-graph claim above is therefore a six-document, eviction-free-regime claim; a ring sized to the live working set is the demonstrated clean configuration. A prefill-side materialization adapter was then trialled by forcing the sparse-prefill branch, whose dequant anchor carries the translation-and-materialization shims: the corrected reads executed at scale (8 ,023 ,680 row translations, zero orphans) yet quality did not recover under eviction—correct addressing of the prefill phase is not 20 the harmful mediator. The consumer was finally pinned on the decode side by closing the state space. A content oracle over the 4 × pool’s written entries (an L1-norm ordered-multiset metric, judged only against a same-configuration repeat pair’s calibrated noise floor) found the corrupt and healthy arms’ persistent contents statistically identical (median relative difference 0 .0026 against a 0 .0021 floor); the same instrument over the sliding-window pool—whose rows are a function of the prefill residual stream—likewise read at its floor (median 0 .0016 against a 0 .0010 floor), so the entire prefill computation is arm-invariant and the harm is confined to decode-time consump-tion. The read-side coordinate exposure is then arithmetic: compressed-context reads index the backing stores by logical slot (the read-side translation counter reads zero across all rounds, and the observed index bound exceeds the small ring’s physical capacity), while ring writes land at 
+
+translated physical slots. An intervention isolates an effective lever: folding reads of non-resident (evicted) and out-of-range entries to the kernel’s skip sentinel—honest truncation rather than silent consumption—restores the eviction microcosm from 0 .500 to 1 .000 against a knob-isolated control with matched eviction and call counts, the cleanest premise set in the adjudication chain. Scope is stated with the full honesty the campaign earned. The truncation lever is timing-sensitive: when eviction overlaps the prefill window the same truncation costs the needle’s context and the mi-crocosm fails at 0 .500, so this is a mitigation, not a repair. At the twelve-document concurrent scale a four-pair dose-stratified design plus a control-variance baseline shows eviction dose itself is scheduling-stochastic (a same-configuration control pair spans 0 .667–1 .000), and at matched dose the truncated and untreated arms sit on one dose–response curve: truncation and corruption are quality-equivalent harms on this retrieval task. Deepest of all, after nine further instrumented rounds—selection streams judged against a repeat-pair noise floor, served-content ledgers, archive-completeness audits at eviction time, key-space provenance—every measured quantity is arm-equal to its calibrated floor, the archive is complete and correctly keyed, and the quality split persists; the microscopic final mile of the harm mechanism is therefore recorded as an open question rather than narrated beyond the evidence. Postscript (the rounds after the digest was frozen). Four further adjudications sharpened the exclusion list. A repeat of the intervention pair with early-landing evic-tions failed at 0 .500 in both arms, establishing the truncation lever’s timing sensitivity. A key-space provenance oracle proved the packed archive logically keyed (readback matches the archive at INT6 quantization scale, 0 .092 maximum relative difference, against 1 .33 for the physical-key hypothe-sis). An eviction-time archive-completeness audit read 0 .0216 mean relative difference (0 .028 max, zero unwritten rows) between the evicted pages’ archive and the ring’s final values—the archive is complete. Finally, a materialized reference reader (the instrument-verified dequantization path plus reference attention mathematics, 1 ,430 calls in a matched arm) reproduced the control’s 0 .500 exactly, exonerating the production kernel’s inline unpack and the reader mathematics; selection streams judged against a repeat-pair noise floor showed top-k scrambling is run-to-run nondeter-minism, quality-irrelevant in clean pairs. Every one of these instruments narrowed the mediator’s possible location; none found it. The claim in the main text is calibrated accordingly. 
+
+# B Per-path evidence and caliber 
+
+CUDA-graph serving: in-graph packed consumption is exact at the six-document eviction-free cal-iber (1 .000 /1.000); the twelve-document concurrent probe sits at 0 .75 under the eviction mechanism of §5.9, so the path’s claim is caliber-limited rather than unconditional. Repeat-run answer stabil-ity passes (1 .000 /1.000 across a same-config serial repeat pair; text-level determinism is explicitly not claimed, as the upstream deterministic-inference mode does not support this attention back-end). Radix prefix caching fails reproducibly with the method—the second round after the read 21 path was fully wired, excluding an instrumentation confound; lifting this requires prefix-reuse– aware generation semantics. Speculative decoding: its translation chain closed first (the fail-loud counters that once fired stay zero); an earlier cross-commit comparison suggesting nondeterminism was methodologically invalid, and a same-source rerun showed the misses recur without specula-tion; the two-seed rerun at the working-set-ring caliber is zero-eviction, machine-annotated in the artifact—each round its own dual-arm control. 
+
+# C Always-on probes under CUDA graphs: the engineering ac-count 
+
+Under a graph-enabled run, the host-side call counter grew by 168, exactly the prefill calls (6 re-quests × 28 layers), while the device-side accumulators grew by 43176, exactly the 43008 decode replays plus those same prefill calls; the counts were unchanged after an idle interval, ruling out a lagging flush. Since replay runs no Python, that growth can only come from probe operations captured into the graph. Four changes were necessary to get there, each worth stating because each is a silent-corruption trap rather than a crash: accumulators including counters must be device-resident tensors, since a host-side count would freeze at capture while the sums kept grow-ing, inflating every mean; the sampling path must avoid RNG, which invalidates capture; flushing must be deferred outside the capture window, since reading accumulators back is a device syn-chronisation; and persistent accumulators must not be allocated during capture, because serving captures one graph per batch size and an accumulator allocated inside one graph’s memory pool is invalid from another. The packed-consumption runs of §5.9 rediscovered the same trap classes on the write side—a call-site argument evaluated before its guard, a lazily built device constant, a Python boolean scalar assigned into a device tensor, a data-dependent boolean-mask index—each invalidating capture rather than crashing, and each now a regression test. Running under graphs is not the same as running always-on under graphs, and getting there took two changes rather than one. At full rate the naive cost is prohibitive: on a single-GPU Qwen2.5-7B serving stack with graphs enabled, throughput falls −52 .8% and TTFT P99 rises +138 .6% against an identical probe-off baseline. The obvious remedy—sample one call in N , which is what makes the probe affordable with graphs disabled—does not transfer, because the sampling test is a Python branch and Python runs only at capture. Its value at that instant decides whether a given graph contains probe operations at all, so N stops meaning “one call in N ” and starts meaning “these graphs, never those”. Measured at N = 64 under graphs, the accumulators grew by 0 across an entire workload while the overhead was correspondingly nil—a probe that is not in the graph is indeed free. Worse, that run passed our acceptance gate, which saw all 28 layers covered by samples left over from start-up, before graph capture began. Coverage over the run’s lifetime is not liveness during the run. We therefore added a device-side execution counter, incremented in place and hence captured into the graph, and a gate check requiring it to exceed the host-side call count; the element counts already collected cannot serve this purpose, since they cannot distinguish one call sampling many rows from many replays sampling one row each. The first change is to make the sampling decision depend only on quantities that are constant across replays. A layer index is such a quantity, and selecting instrumented layers by index behaves as intended: at every stride we tried, replay accumulation is present and the observed layers match the declared set exactly. It is not sufficient on its own. Cost tracks the number of instrumented call sites and the number of kernels each site issues, and the two scale close to linearly and multiply: halving the quantiser work at a fixed two layers cuts the throughput cost by 1 .72 ×, and going from two instrumented layers to one at a fixed single quantiser cuts it by a further 1 .97 ×, reaching −2.26% 22 throughput and +1 .32% TTFT P99—still outside the noise floor. Sampling less cannot remove a per-execution constant, so the second change attacks the constant itself. We fuse the witness meter into a single Triton kernel that loads the sampled rows once, performs the per-band quantisation and both norms in registers, and folds the result into the accumulators, replacing several dozen kernel launches with one. It agrees with the reference implementation to a maximum relative error of 9 .3e − 07 on every statistic, with violation counts and sample counts exactly equal—the violation count is a soundness self-check and is not allowed to be approximate—and a single invocation costs 12 .3 us, or 24 .2× less than the unfused single-quantiser path. At equal, full 28-layer coverage the fused meter is 5 .2× cheaper than the unfused one. With both changes, one configuration meets all three conditions we set in advance: instru-menting one layer in twenty-eight with the fused meter costs −0.94% throughput and −0.14% TTFT P99, both inside the per-concurrency noise floor, while replay accumulation is present and the observed coverage matches the declared single layer. We state the scope precisely: what is demonstrated is always-on observation of a declared subset , not of every layer. 
+
+# D Certificate-guided low-bit format exploration 
+
+As a boundary-discovery exercise—not a completed compression system—we used the instrument to drive an aggressive low-bit format study on V4-Flash’s compressed pools. The witness ladder selected block-Hadamard INT6 for the memory-dominant 4 × pool and INT4 for the 128 × pool on hidden requests (naive INT4 rejected: 2% coverage, 15 × the INT8 control’s score-shift proxy), a fused unpack kernel measured 3 × faster than the production FP8 dequantizer (bit-exact, tensor-core inverse Hadamard), and a real 360 B/token packed pool—36 .5 → 22 .5 MiB for 64Ki tokens as a standalone allocation, a format-level figure we do not conflate with serving-process memory—ran in serving with 12 ,960 read-back checks, zero unwritten slots, and 10 .2% mean relative error. The instrument then falsified two of our own design assumptions: entry slots evolve progressively, so write-time packing reads a non-final state (changing only the packing instant moved the discrepancy 18 ×); and the apparent Python read path is not the production consumer—decode reads FP8 pages inside the FlashMLA kernel, so three instrumented probes of the swap path never fired. We therefore claim format, kernel, pool, and write-side lifecycle as validated, and explicitly do 
+
+not claim served INT4 consumption, HBM reduction in the serving process, throughput or quality effects: those require a packed-input FlashMLA variant, which the instrument has now precisely scoped. The residual rel max ≈ 4.9 traces to re-reads of still-evolving slots, not quantization failure (the near-zero-norm hypothesis was tested and rejected). 
+
+# E The staged-ring discharge ledger 
+
+The claims withheld above can now be partially discharged. Served consumption holds: with invalidation in place the packed pools serve the retrieval task at parity (1 .000, 20 /20, zero request errors). Structural pool replacement holds: swapping the 128 × pool to the packed object at the canonical address (twenty layers remapped, installation attested per rank) is quality-neutral (acc 1 .000, decode-side fidelity unchanged). Physical memory reduction holds at mechanism level: shrinking the FP8 staging pool to a 257-page window ring freed 2 ,988 MiB of measured device memory across eight GPUs against an accounting estimate of 3 ,040 MiB—an aggregate agreement of 1 .7%, though the per-GPU deltas are non-uniform (566 on rank 0, 346 elsewhere), so we claim aggregate agreement only. We state the caliber plainly: the 128 × pool is ∼0.3% of process memory, and the 32 ×-larger 4 × pool, where the same construction must be repeated for material savings, 23 remains future work. One claim is explicitly not discharged: the ring-staged configuration initially degraded retrieval to 0 .500 vs. 1 .000 while every fail-loud surface stayed green—and the artifact carried no internal counters (an evidence-chain gap we record rather than paper over), so only the HTTP-level zero-error figure is attested. A scoped intervention later identified an addressing defect as a major cause (the production decode kernel indexing the 257-page ring with 20 ,413-page logical slot ids—an out-of-bounds silent read); at that stage, whether the write/finalize/recycle chain was itself loss-free remained open pending a port-separated re-run with poisoned-scratch instrumentation, and the stage stood as memory-mechanism evidence only. 
+
+# F Ledger enforcement mechanics 
+
+Probabilistic budget is spent with pre-authorization semantics: before any random bits are drawn, a prior radius ue (a mean term plus a p2Σ s2 
+
+> c
+
+ln( n/δ i) tail computed from the stored exponents alone) authorizes an entry only if ue clears the threshold; unauthorized entries fall back without drawing. Each δi from the telescoping sequence is thereby bound to a concrete event—some authorized entry’s realized witness exceeding its pre-declared radius—and a write-side audit counts realized violations: 0 of 147 ,208 authorized entries violated their radius, validating the conditional-rate semantics at runtime (Σ δ = 0 .0099997 < δ req over 33 ,407 events, with the moment-condition assumption logged with per-event counts). The price of authorizing before the draw is quantified rather than hidden: the prior radius authorizes 6 .2× fewer entries than post-hoc deterministic gating accepts (7 .8% vs. 48 .0%). Four runtime invariants make this shared-read semantics fail-closed rather than observational: the write-time audit completes inside the same hook call, before any shared read; every slot carries an explicit state (unwritten / masked / kept-exact / restored-exact); a violating entry has its original bytes restored on the spot, so the served value respects the declared radius deterministically —“zero violations” is enforced, not merely observed; and an immutable write event spends its δ
+
+exactly once however many requests later read it, which is the content of a machine-checked lemma (shared read sound : the union bound ranges over write events, never over readers). Identity resolution itself is fail-closed: a batch whose per-entry request attribution cannot be established keeps exact bytes, spends no probabilistic budget, and increments a counter that the acceptance gate requires to be zero—the gate is a machine-decidable conjunction of twelve all-zero criteria (including missing-data checks: all eight replica snapshots present, sentinel factors nonempty) carried by the adjudication script’s exit code. The restore step upgrades the online semantics, and we state it precisely to avoid a reading we do not claim: admission is probabilistic , enforcement is deterministic . The request-level δ bounds the probability of unexpected restoration events —an authorized entry’s realized witness exceeding its pre-declared radius, forcing the audit to restore exact bytes—not the probability of serving an out-of-bound value: the served value respects its declared radius always, by the write-audit and restore invariants above. Shared readers inherit that deterministic guarantee and never multiply the originating write event’s risk. Request identity is a monotone logical UID that is never reused: the boundary is detected on the write path itself , at the non-extend-to-extend transition that opens every request’s prefill, so it precedes that request’s first write and account boundaries coincide with true request boundaries (a fallback on sequence-length drops covers read-only deployments; the reuse-with-longer-prompt case the fallback alone would miss is pinned by a unit test). Each request carries an independent 
+
+telescoping budget: the eight user-request accounts—reported separately from one server-warmup account—each stay under budget with maximum spend Σ δ = 0 .009982 ≤ δreq = 0 .01, and per-request event counters restart from δ1 = δreq /2 (the earlier implementation let one global counter 24 starve later requests). The stochastic-rounding seed is the quadruple (server nonce, request UID, layer, event counter): distinct requests never share a random stream, so conditional randomness holds under adaptive traffic, while the quadruple is rank-invariant—the eight tensor-parallel replicas realize the same draw, agree field-for-field in their accounts, and δ is spent once per logical event, an empirically checked coupling rather than an assumption. 
+
+# G The generation-staleness discrimination 
+
+The scoped follow-up closed the boundary, and the closure is itself a result about what the type system must carry. A long-context retrieval task (needle-in-haystack, exact match, matched five-arm control) first exposed a 95-point collapse that radix caching had been masking: the packed arm scored 0 .800 with the cache on—a cache-hit figure, not a quality figure—and 0 .050 with it off, while the FP8 baseline held 1 .000 on both sides. A freshness discriminator (identical arms differing only in a re-pack-on-every-read diagnostic, both write- and read-path execution counters required to be nonzero) recovered 0 .050 vs. 1 .000: generation consistency, not quantization, was the active hypothesis. Offline round-trips of the production pack path on real entries pinned the quantizer’s intrinsic relative error at 0 .0245 (kernel, pool path, and overwrite all agreeing; maximum 0 .0304; the RoPE segment exactly zero), so the rel > 1 values observed in serving were not achievable by the quantizer on this data at all—they were reads of a previous generation . The mechanism: slot reuse by the allocator with no invalidation call anywhere in the codebase, so a “written” flag conflated has ever been packed with current generation . Unconditional write-site invalidation (a boolean scatter plus a generation increment, placed before any sampling gate) restored task accuracy, and a second causal confirmation with the diagnostic disabled—arms differing only in the invalidation switch, with two-sided evidence (the fix arm’s invalidation counter positive, the control arm’s exactly zero)—returned invalidation confirmed on six machine-checked criteria: 1.000 vs. 0 .200 under 4-way concurrency. 
+
+# H The repaired chain, fully accounted 
+
+Both scope restrictions were then discharged by measurement rather than by more formalism. The probe now witnesses the compressed-page entries the selector chooses (their witness is larger than the window’s, max 1 .040 against 0 .700, so treating pages as exact had been the optimistic side), and on the 21 sparse-selection layers where every term is witnessed the full chain gives a worst-caliber per-layer TV bound of 1 .473 (median; 4 /21 layers below 1 .0) and a mean-coefficient diagnostic reading of 0 .992 (median)—the diagnostic has no bound semantics. For the selection term, the missing selector-to-attention bridge is replaced by a paired measurement on identical candidate sets: the ratio of attention-mass omitted to selector-mass omitted is 0 .87 (median; tail to 2 .18, and we convert with the tail value), so bS crosses into attention units as 0 .00444 at tier empirical —and the composed tier drops to empirical with it, automatically. The same measurement separates two quantities our first analysis conflated: the top-512 truncation itself leaves 0 .379 (median) of the hypothetical full-compressed attention mass unattended, but that is the architecture’s designed sparsity, not an error—the model’s ideal reference includes the truncation, and only perturbation-induced changes of the selection belong in the error chain. These numbers are larger than the retracted ones because they are denominated in a real metric and pay the full price of soundness: Cauchy–Schwarz assumes the perturbation aligns with the query, and the witness overstates the residual by construction. A bound that got smaller by adding incompatible units was not a bound. The self-checks remain 0 throughout, and the sensitivity ordering says where tightening pays: 25 the witness W first, the alignment worst case second; bS = 0 .00203, in its own units, is not the bottleneck. 
+
+# I Machine-checked theorem statements 
+
+Compiled, not transcribed. Every theorem name cited in the body ( ledger sound , telescope sum ,
+
+shared read sound , the bridge and e-process lemmas, . . . ) resolves to a statement below. This sec-tion is compiled from the Lean development shipped in the released repository ( witprobe-atten-tion-memory ): formal/Export.lean walks the environment, prints each theorem’s elaborated 
+
+type with Lean’s own pretty-printer, and lists the axioms each proof actually depends on via 
+
+collectAxioms ; non-ASCII symbols are mechanically transliterated for the pdflatex toolchain. Nothing here is transcribed by hand, so a statement that is not proved cannot appear. The con-tract calculus proves 14 core theorems—the results cited in the body—plus 53 supporting lemmas listed compactly so the axiom audit covers the whole development; every proof depends only on 
+
+propext , Classical.choice and Quot.sound , and none on sorryAx . The whole development re-verifies independently: clone https://github.com/metask-ai/witprobe-attention-memory and run cd formal && bash check all.sh , which rebuilds every proof and re-runs the axiom audit from scratch; the file:line references below resolve in that repository. 
+
+conditional (adaptive) union bound over first-failure events Name: 
+
+WitCert.Calculus.Budget.conditional union le ; source: formal/WitCert/Contract.lean:143 ;
+
+axioms: propext, Classical.choice, Quot.sound .            
+
+> forall {Omega : Type u_1} [inst : MeasurableSpace Omega] (mu : MeasureTheory.Measure Omega) (E : Nat -> Set Omega) (delta : Nat -> ENNReal), (forall (i : Nat), mu (E i \ Union jin Finset.range i, E j) <= delta i) -> forall (n : Nat), mu (Union iin Finset.range n, E i) <= Sum iin Finset.range n, delta i
+
+coverage confidence: (1-p)ˆn ¡= eˆ {-np }; zero observed violations is not zero rate 
+
+Name: WitCert.Calculus.Ledger.coverage confidence ; source: formal/WitCert/Ledger.lean:89 ;
+
+axioms: propext, Classical.choice, Quot.sound .  
+
+> forall {p : R}, 0 <= p -> p <= 1 -> forall (n : Nat), (1 - p) ^ n <= Real.exp (-(n * p))
+
+request-level ledger: conditional union bound + budget sequence, sound at every length Name: WitCert.Calculus.Ledger.ledger sound ; source: formal/WitCert/Ledger.lean:66 ;
+
+axioms: propext, Classical.choice, Quot.sound .             
+
+> forall {Omega : Type u_1} [inst : MeasurableSpace Omega] (mu : MeasureTheory.Measure Omega) (E : Nat -> Set Omega) (deltaseq : Nat -> ENNReal) (deltareq : ENNReal), (forall (i : Nat), mu (E i \ Union jin Finset.range i, E j) <= deltaseq i) -> (forall (n : Nat), Sum iin Finset.range n, deltaseq i <= deltareq) -> forall (n : Nat), mu (Union iin Finset.range n, E i) <= deltareq
+
+refinement interface: any CertifiedEventStream satisfies the ledger guarantee Name: 
+
+WitCert.Calculus.Ledger.stream sound ; source: formal/WitCert/Ledger.lean:204 ; axioms: 
+
+propext, Classical.choice, Quot.sound .   
+
+> forall {Omega : Type u_2} [inst : MeasurableSpace Omega] {mu : MeasureTheory.Measure Omega} (s : WitCert.Calculus.Ledger.CertifiedEventStream Omega mu) (n : Nat), mu (Union iin Finset.range n, s.E i) <= s.budget
+
+26 telescoping budget weights 1/((i+1)(i+2)): unknown-length budget sums to 1-1/(n+1) Name: WitCert.Calculus.Ledger.telescope sum ; source: 
+
+formal/WitCert/Ledger.lean:37 ; axioms: propext, Classical.choice, Quot.sound .
+
+forall (n : Nat), Sum i in Finset.range n, WitCert.Calculus.Ledger.w i = 1 - 1 / (n + 1) 
+
+two-layer budget: deterministic events at delta=0, probabilistic on telescoping counters Name: WitCert.Calculus.Ledger.two layer budget le ; source: 
+
+formal/WitCert/Ledger.lean:144 ; axioms: propext, Classical.choice, Quot.sound .
+
+forall (delta : R), 0 <= delta -> forall (f : Nat -> Option Nat), (forall (i k : Nat), f i = some k -> k = WitCert.Calculus.Ledger.probCount f i) -> forall (n : Nat), (Sum i in Finset.range n, match f i with | none => 0 | some k => ENNReal.ofReal (delta * WitCert.Calculus.Ledger.w k)) <= ENNReal.ofReal delta 
+
+unknown-length budgeting costs at most sqrt(2) in sub-Gaussian radius vs uniform split Name: WitCert.Calculus.Ledger.unknown length price ; source: 
+
+formal/WitCert/Ledger.lean:112 ; axioms: propext, Classical.choice, Quot.sound .
+
+forall {delta : R}, 0 < delta -> delta <= 1 / 2 -> forall {N i : Nat}, 1 <= i -> i <= N -> Real.log (i * (i + 1) / delta) <= 2 * Real.log (N / delta) 
+
+e-process: product of conditionally mean-¡=1 factors gives anytime-valid risk ¡= delta Name: WitCert.Calculus.Ville.eprocess ville ; source: formal/WitCert/Ville.lean:127 ;
+
+axioms: propext, Quot.sound, Classical.choice .
+
+forall {sigma : Type u_1} [inst : Fintype sigma] (D : WitCert.Calculus.Ville.Draw sigma) (g : List sigma -> sigma -> R) {delta : R}, 0 < delta -> delta <= 1 -> (forall (h : List sigma) (x : sigma), 0 <= g h x) -> (forall (h : List sigma), Sum x : sigma, D.p x * g h x <= 1) -> forall (T : Nat), WitCert.Calculus.Ville.hitProb D (WitCert.Calculus.Ville.prodProcess g) (1 / delta) T [] <= delta 
+
+finite-Omega Ville inequality: P(sup M ¿= c) ¡= M0/c, elementary induction, no measure theory Name: WitCert.Calculus.Ville.ville ; source: formal/WitCert/Ville.lean:65 ;
+
+axioms: propext, Quot.sound, Classical.choice .
+
+forall {sigma : Type u_1} [inst : Fintype sigma] (D : WitCert.Calculus.Ville.Draw sigma) (M : List sigma -> R) {c : R}, 0 < c -> (forall (h : List sigma), 0 <= M h) -> (forall (h : List sigma), Sum x : sigma, D.p x * M (x :: h) <= M h) -> forall (T : Nat) (h : List sigma), WitCert.Calculus.Ville.hitProb D M c T h <= M h / c 
+
+bridge contract semantics: cross-metric composition needs a proved bridge Name: 
+
+WitCert.Calculus.bridge sound ; source: formal/WitCert/Contract.lean:118 ; axioms: propext, Classical.choice, Quot.sound .
+
+forall {alpha : Type} {m m’ : WitCert.Calculus.ErrMetric alpha} (B : WitCert.Calculus.Bridge m m’) (x x’ : alpha), m’.d x x’ <= B.toContract.a * m.d x x’ + B.toContract.b 
+
+27 typed contract composition: metrics must match by construction Name: 
+
+WitCert.Calculus.comp sound ; source: formal/WitCert/Contract.lean:93 ; axioms: propext, Classical.choice, Quot.sound . 
+
+> forall {alpha beta ? : Type} {malpha : WitCert.Calculus.ErrMetric alpha} {mbeta : WitCert.Calculus.ErrMetric beta} {m? : WitCert.Calculus.ErrMetric ?} (C2 : WitCert.Calculus.Contract mbeta m?) (C1 : WitCert.Calculus.Contract malpha mbeta) (x x’ : alpha), m?.d (C2.exact (C1.exact x)) (C2.approx (C1.approx x’)) <= C2.a * C1.a * malpha.d x x’ + (C2.a * C1.b + C2.b)
+
+witness-to-score bridge: —Delta(scale*q*k)— ¡= scale*——q——*——Deltak—— (Cauchy-Schwarz) Name: WitCert.Calculus.score bridge ; source: 
+
+formal/WitCert/Bridges.lean:35 ; axioms: propext, Classical.choice, Quot.sound .     
+
+> forall {d : Nat} (q k k’ : Fin d -> R) (scale : R), 0 <= scale -> |scale * Sum i : Fin d, q i * k i - scale * Sum i : Fin d, q i * k’ i| <= scale * sqrt (Sum i : Fin d, q i ^ 2) * sqrt (Sum i : Fin d, (k i - k’ i) ^ 2)
+
+affine form of the score-to-TV bridge: TV ¡= eˆ {2eps0 }*eps for eps ¡= eps0 Name: 
+
+WitCert.Calculus.softmax tv affine ; source: formal/WitCert/Bridges.lean:159 ; axioms: propext, Quot.sound, Classical.choice .  
+
+> forall {iota : Type u_1} [inst : Fintype iota] [inst_1 : Nonempty iota] (s s’ : iota -> R) (eps eps0 : R), 0 <= eps -> eps <= eps0 -> (forall (t : iota), |s t - s’ t| <= eps) -> WitCert.TV (WitCert.Calculus.softmax s’) (WitCert.Calculus.softmax s) <= Real.exp (2 * eps0) * eps
+
+score-to-TV bridge: ——Deltas——inf ¡= eps ==¿ TV ¡= 1/2(eˆ {2eps }-1), instantiating paper 1’s tv le eform Name: WitCert.Calculus.softmax tv bridge ; source: 
+
+formal/WitCert/Bridges.lean:92 ; axioms: propext, Quot.sound, Classical.choice .  
+
+> forall {iota : Type u_1} [inst : Fintype iota] [inst_1 : Nonempty iota] (s s’ : iota -> R) (eps : R), 0 <= eps -> (forall (t : iota), |s t - s’ t| <= eps) -> WitCert.TV (WitCert.Calculus.softmax s’) (WitCert.Calculus.softmax s) <= 1 / 2 * (Real.exp eps ^ 2 - 1)
+
+Supporting lemmas (axiom-audit completeness only) 
+
+Budget.conditional union le of marginal (WitCert/Contract.lean:173 ); 
+
+Ledger.telescope budget le (WitCert/Ledger.lean:73 ); Ledger.telescope sum le one 
+
+(WitCert/Ledger.lean:51 ); Ledger.w nonneg (WitCert/Ledger.lean:34 ); 
+
+McDiarmid.BddDiffAt.c nonneg (WitCert/McDiarmid.lean:72 ); McDiarmid.addF nonneg 
+
+(WitCert/McDiarmid.lean:443 ); McDiarmid.band mean le (WitCert/McDiarmid.lean:515 ); 
+
+McDiarmid.condE add (WitCert/McDiarmid.lean:387 ); McDiarmid.condE addF 
+
+(WitCert/McDiarmid.lean:452 ); McDiarmid.condE bdd diff (WitCert/McDiarmid.lean:79 ); 
+
+McDiarmid.condE congr (WitCert/McDiarmid.lean:408 ); McDiarmid.condE const mul 
+
+(WitCert/McDiarmid.lean:51 ); McDiarmid.condE exp le (WitCert/McDiarmid.lean:201 ); 
+
+McDiarmid.condE finset sum (WitCert/McDiarmid.lean:414 ); McDiarmid.condE mono 
+
+(WitCert/McDiarmid.lean:41 ); McDiarmid.condE nonneg (WitCert/McDiarmid.lean:399 ); 
+
+McDiarmid.condE sq le (WitCert/McDiarmid.lean:495 ); McDiarmid.eprocess factor mean le one 
+
+(WitCert/McDiarmid.lean:556 ); McDiarmid.mcdiarmid (WitCert/McDiarmid.lean:310 ); 
+
+McDiarmid.mcdiarmid radius (WitCert/McDiarmid.lean:359 ); McDiarmid.sum exp le of mean zero 
+
+28 (WitCert/McDiarmid.lean:107 ); McDiarmid.witness mean le (WitCert/McDiarmid.lean:542 ); 
+
+Radius.det shift sound (WitCert/Radius.lean:226 ); Radius.g pos (WitCert/Radius.lean:47 ); 
+
+Radius.g zero (WitCert/Radius.lean:54 ); Radius.hasDerivAt g (WitCert/Radius.lean:56 ); 
+
+Radius.hasDerivAt gd (WitCert/Radius.lean:66 ); Radius.hasDerivAt phi 
+
+(WitCert/Radius.lean:81 ); Radius.log two point mgf le (WitCert/Radius.lean:145 ); 
+
+Radius.phi deriv le quarter (WitCert/Radius.lean:100 ); Radius.phi deriv nonneg 
+
+(WitCert/Radius.lean:94 ); Radius.phi le quarter mul (WitCert/Radius.lean:111 ); 
+
+Radius.phi zero (WitCert/Radius.lean:79 ); Radius.quarter mul le phi 
+
+(WitCert/Radius.lean:128 ); Radius.second deriv num eq (WitCert/Radius.lean:89 ); 
+
+Radius.sq sum weighted le (WitCert/Radius.lean:212 ); Radius.sr mgf le 
+
+(WitCert/Radius.lean:190 ); Radius.two point mgf le (WitCert/Radius.lean:184 ); 
+
+Radius.two point variance (WitCert/Radius.lean:204 ); SharedRead.probE mono event 
+
+(WitCert/SharedRead.lean:59 ); SharedRead.probE union le (WitCert/SharedRead.lean:48 ); 
+
+SharedRead.shared read sound (WitCert/SharedRead.lean:79 ); Ville.hitProb nonneg 
+
+(WitCert/Ville.lean:45 ); Ville.prodProcess supermartingale (WitCert/Ville.lean:106 ); 
+
+exp sub one le mul exp (WitCert/Bridges.lean:128 ); pool linf (WitCert/Contract.lean:189 ); 
+
+rank prefix stable (WitCert/Contract.lean:208 ); sentinel rounds (WitCert/Contract.lean:225 ); 
+
+softmax nonneg (WitCert/Bridges.lean:66 ); softmax sum (WitCert/Bridges.lean:72 ); softmax tilt 
+
+(WitCert/Bridges.lean:78 ); sum exp pos (WitCert/Bridges.lean:69 ); tv affine relax 
+
+(WitCert/Bridges.lean:143 ). 
+
+29

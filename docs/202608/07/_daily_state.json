@@ -1,9 +1,9 @@
 {
   "date": "20260807",
   "date_label": "",
-  "generated_at": "2026-08-07 00:58:28 UTC",
+  "generated_at": "2026-08-07 21:04:06 UTC",
   "recommend_exists": true,
-  "run_count": 1,
+  "run_count": 2,
   "papers": [
     {
       "paper_id": "2608.04074v1",
@@ -17,9 +17,9 @@
         }
       ],
       "score": 9.0,
-      "evidence": "使用保注意力变换的KV缓存向量量化，解决带宽受限解码",
+      "evidence": "基于注意力保持变换的KV缓存向量量化；为带宽受限解码减小缓存大小",
       "first_seen_at": "2026-08-07 00:58:28 UTC",
-      "updated_at": "2026-08-07 00:58:28 UTC"
+      "updated_at": "2026-08-07 21:04:06 UTC"
     },
     {
       "paper_id": "2608.04771v1",
@@ -33,9 +33,41 @@
         }
       ],
       "score": 9.0,
-      "evidence": "提出奖励协调的KV缓存压缩，根据推理状态对上下文丢失的容忍度自适应压缩，兼顾内存与准确率。",
+      "evidence": "面向大推理模型提出奖励协调的KV缓存压缩方法，兼顾推理效率与性能",
       "first_seen_at": "2026-08-07 00:58:28 UTC",
-      "updated_at": "2026-08-07 00:58:28 UTC"
+      "updated_at": "2026-08-07 21:04:06 UTC"
+    },
+    {
+      "paper_id": "2608.05326v1",
+      "route": "202608/07/2608.05326v1-qevict-recoverable-quantized-kv-eviction-for-attention-drift-robust-long-context-decoding",
+      "title": "QEvict: Recoverable Quantized KV Eviction for Attention-Drift-Robust Long-Context Decoding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "直接提出可恢复量化KV淘汰方法，减少KV缓存内存占用",
+      "first_seen_at": "2026-08-07 21:04:06 UTC",
+      "updated_at": "2026-08-07 21:04:06 UTC"
+    },
+    {
+      "paper_id": "2608.01034v2",
+      "route": "202608/07/2608.01034v2-optgear-technical-report",
+      "title": "Opt.Gear Technical Report",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "混合架构通过卷积键值门控混合器与局部-全局注意力降低长上下文KV缓存内存",
+      "first_seen_at": "2026-08-07 00:58:28 UTC",
+      "updated_at": "2026-08-07 21:04:06 UTC"
     },
     {
       "paper_id": "2608.04405v1",
@@ -49,14 +81,14 @@
         }
       ],
       "score": 7.0,
-      "evidence": "利用二元主成分的无训练哈希稀疏注意力，作用于KV缓存",
+      "evidence": "面向长上下文解码KV缓存高效处理的哈希稀疏注意力方法",
       "first_seen_at": "2026-08-07 00:58:28 UTC",
-      "updated_at": "2026-08-07 00:58:28 UTC"
+      "updated_at": "2026-08-07 21:04:06 UTC"
     },
     {
-      "paper_id": "2608.01034v2",
-      "route": "202608/07/2608.01034v2-optgear-technical-report",
-      "title": "Opt.Gear Technical Report",
+      "paper_id": "2608.05863v1",
+      "route": "202608/07/2608.05863v1-runtime-observability-for-heterogeneous-attention-memory",
+      "title": "Runtime Observability for Heterogeneous Attention Memory",
       "section": "quick",
       "tags": [
         {
@@ -65,9 +97,9 @@
         }
       ],
       "score": 6.0,
-      "evidence": "混合架构设计以减少长上下文KV缓存内存",
-      "first_seen_at": "2026-08-07 00:58:28 UTC",
-      "updated_at": "2026-08-07 00:58:28 UTC"
+      "evidence": "为包含KV缓存的异构注意力内存提供运行时可观测性契约",
+      "first_seen_at": "2026-08-07 21:04:06 UTC",
+      "updated_at": "2026-08-07 21:04:06 UTC"
     }
   ]
 }
