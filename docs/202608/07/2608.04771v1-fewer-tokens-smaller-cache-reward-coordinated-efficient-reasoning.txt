@@ -1,0 +1,527 @@
+Title: Fewer Tokens, Smaller Cache: Reward-Coordinated Efficient Reasoning
+
+URL Source: https://arxiv.org/pdf/2608.04771v1
+
+Published Time: Thu, 06 Aug 2026 01:08:10 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# Fewer Tokens, Smaller Cache: Reward-Coordinated Efficient Reasoning 
+
+Qiyuan Zhu 1∗, Dezhi Li 1∗, Pengyu Cheng 2∗, Tianle Chen 2, Jiacheng Wang 2, Ruijie Shen 3,Hao Gu 1, Sida Lin 1, Zirui Liu 4, Jiacheng Liu 1†, Sirui Han 1†
+
+> 1
+
+HKUST, 2XJTU, 3TSE, 4PKU 
+
+Abstract 
+
+Large Reasoning Models (LRMs) excel on complex tasks through long chain-of-thought (CoT) reasoning, but their lengthy intermediate steps cause severe overthinking that in-flates inference cost. KV-cache compression is a common solution, yet existing reasoning-oriented methods apply a uni-form policy across the trajectory and judge compression only by what it removes from the cache. Two observations point the other way. First, a reasoning state’s tolerance to context loss varies along the trajectory, and process reward tracks it: delet-ing tokens at high-reward steps preserves accuracy far better than deleting the same budget at random. Second, compres-sion is not free on the generation side, since a smaller cache leads the model to generate more tokens, partly canceling the saving. Together these motivate coordinating both sides under a single process reward. We propose ReCo (Reward-Coordinated Compression), a step-wise framework in which a lightweight process-reward estimator scores each completed step and drives three components: (1) reward-adaptive KV-cache compression that shrinks the retained cache harder at high-reward steps and less at low-reward ones, (2) a reward-banded penalty on reflection tokens that curbs redundant gen-eration, and (3) confidence-based early stopping that triggers when the reasoning is reliable. Across three reasoning models and six benchmarks, ReCo reduces generated tokens by 37% –
+
+65% and end-to-end latency by 2.08 ×–2.35 × over Full CoT, all while largely preserving accuracy. 
+
+1 Introduction 
+
+Large Reasoning Models (LRMs), such as OpenAI-o1 (Jaech et al. 2024), DeepSeek-R1 (Guo et al. 2025), and Gem-ini (Comanici et al. 2025), have recently achieved remark-able progress across a wide range of domains, demonstrat-ing strong capabilities on complex tasks such as mathemati-cal reasoning, code generation, and scientific problem solv-ing (Zhu et al. 2026; Xu et al. 2026; Cao et al. 2025, 2026; Gu et al. 2026). However, such capabilities are largely driven by long chain-of-thought (CoT) reasoning, where the model produces lengthy intermediate steps before arriving at a final answer. While effective on hard problems, this paradigm fre-quently causes models to overthink (Chen et al. 2024): they generate excessively long reasoning chains even for simple inputs, incurring token overhead, increased latency, and high computational cost. A common strategy for mitigating these inference costs is 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 2000 3000 4000 5000 6000 7000 8000 9000          
+
+> Average Response Length
+> 50
+> 52
+> 54
+> 56
+> 58
+> 60
+> Average Accuracy (%)
+> Better
+> SnapKV
+> R-KV
+> RPC
+> SAT
+> Dynasor
+> ReCo (Ours)
+> 20 25 30 35 40 45 50
+> Average per-problem latency (s)
+> ReCo
+> SAT
+> Dynasor
+> RPC
+> R-KV
+> SnapKV
+> Full CoT
+> 2.35 ×
+> 1.05 ×
+> 22.35
+> 23.54
+> 24.56
+> 43.42
+> 45.58
+> 47.36
+> 52.58
+
+Figure 1: Introduction overview on DeepSeek-R1-Distill-Qwen-7B. Top: accuracy vs. average response length; ReCo is the most accurate compressed method while generating far fewer tokens. Bottom: per-problem latency; ReCo is the fastest overall, cutting latency by 2.35 × over Full CoT. KV-cache compression, since the key-value (KV) cache ac-cumulated during autoregressive decoding dominates both memory footprint and per-token attention cost (Li et al. 2024a; Shi et al. 2024; Hu et al. 2026). Classical meth-ods evict cache entries deemed unimportant by attention scores (e.g., SnapKV (Li et al. 2024b) and PyramidKV (Cai et al. 2024)), merge redundant entries into representative ones (Zhang et al. 2024), or quantize them into low-bit for-mats (Hooper et al. 2024). These methods, however, were designed primarily for long-context settings, where the cache is dominated by a long static prompt that can be pruned once after prefilling; in reasoning, by contrast, the cache is domi-arXiv:2608.04771v1 [cs.AI] 5 Aug 2026 low high mid 
+
+Pipeline Overview    
+
+> query
+> Step 1
+> Generate c!
+> Reward 𝑣 !
+
+\𝚗 \𝚗 
+
+> whether
+> stopping ？
+> ✅
+
+🤔 
+
+> ❌
+> Final
+> answer
+> Next
+> step
+
+Core Components                   
+
+> KV Cache
+> Retention ratio
+> Reflection control
+> Reward penalty
+> 𝛽 !
+> Early stopping checking
+> <high_state >
+> Inserting prompt
+> " I have finished thinking.''
+> Probe answer a
+> Eval PPL
+> PPL(a)
+> 𝑃𝑃𝐿 𝑎 ≤𝜏 "Final
+> answer
+> yes
+> Next
+> step
+> KV Compression
+> 𝑣 #$% 𝑣 #&' 𝑣 !
+> 𝑣 #$% 𝑣 #&' 𝑣 $
+> 𝜆 (
+> 𝜆 !=𝜆 −𝛿 𝑣 !−𝑣 ̅
+> 𝑣 "#$ −𝑣 "%&
+> ,
+> Compression:
+
+…           
+
+> Past cache(selected) Window(keep)
+> Step i
+> Generate 𝑐 +
+> Reward 𝑣 (
+> Step i+1
+> Generate 𝑐 +,!
+> Reward 𝑉 ()!
+> Step 2
+> Generate 𝑐 -
+> Reward 𝑣 *
+
+## …… 
+
+> Attention
+> score
+> low
+> mid
+> high
+
+𝑣 ! 
+
+> 𝑣 !
+> Step
+> Persistent high
+> Exit Cue
+
+×2  
+
+> 𝑥 "𝑥 #
+
+… 𝑥 ! 𝑥 !$"      
+
+> no
+> 𝛽 !penalty 𝛽 (penalty
+> logits
+> Other tokens reflection tokens
+> Original
+> After
+> penalty
+> 𝑣 ̅
+
+Figure 2: Overview of ReCo . After each step ci, a process reward vi drives three components: ❶ KV Compression sets a reward-modulated retention ratio, shrinking the cache harder at high-reward steps; ❷ Reflection Control maps vi to a reward-banded logit penalty βi on reflection tokens; and ❸ Early Stopping halts once answer perplexity satisfies PPL( a) ≤ τp.nated by the model’s own growing chain of thought, whose content must keep supporting the very generation that pro-duces it. Recent work has begun to adapt KV compression to this reasoning setting (Cai et al. 2026; Song et al. 2026), yet it still applies a uniform compression policy across the entire trajectory, ignoring that reasoning steps differ in how much they can afford to be compressed. More fundamentally, they weigh compression only by what it removes from the cache, and leave unexamined whether discarding context affects the reasoning the model has yet to generate. A closer look at these gaps reveals two observations. First, compression tolerance varies along the reasoning trajectory. 
+
+A process reward, which scores how promising and on-track the current path is, reliably tracks it: at high-scoring steps the reasoning state is on-track and withstands aggressive pruning of its context, whereas a low-scoring state is still exploring and fragile, so deleting tokens from high-reward steps consistently outperforms deleting the same budget at random (Sec. 2.1). Second, the saving from KV compression is partly offset by longer generation : at a fixed compression rate the average output length exceeds the full-cache baseline, and on MATH-500 up to 79 .8% of problems generate more tokens once the cache is compressed (Sec. 2.2). Together these show that, on reasoning models, compression must respect how the reasoning trajectory varies from step to step, and it cannot be decoupled from generation length: shrinking the cache while the output grows can erode the savings. 
+
+Concretely, we propose ReCo (Re ward-Co ordinated Compression), a framework that improves KV-cache com-pression and resolves its length inflation on reasoning mod-els by coordinating it with generation control (Figure 2). As each step completes, a lightweight 30 M process-reward es-timator assigns it a scalar reward reflecting how promising and on-track the current reasoning path is, and this single reward drives three coordinated components. (1) KV-cache compression maps the reward to a step-dependent retention ratio for the accumulated cache, shrinking the whole cache harder when the latest step scores high and less when it scores low, replacing the uniform policy of prior reasoning-oriented KV methods. (2) Reflection control maps the same reward to a reward-banded logit penalty on self-reflection tokens that steers the model toward more concise reasoning when the step scores highly, curbing the length inflation that would otherwise erode the compression saving. (3) Early stopping ,triggered by persistently high reward, terminates the chain of thought once an answer-confidence probe judges the model ready to commit. Because all three share the same per-step reward, they stay consistent, spending compute where rea-soning is still productive and withholding it where the model has already settled. Across three reasoning models and six benchmarks, ReCo cuts the average generated tokens by 37% –65% and low-ers end-to-end latency by 2.08 ×–2.35 × over full-cache CoT, with minimal accuracy loss. Under matched settings, it at-tains the smallest accuracy drop among all compressed meth-ods: cache-only baselines lose far more accuracy and, con-sistent with the length-inflation effect above, often generate 
+
+more tokens than the full-cache model, whereas length-only baselines reach a comparable speedup only by sacrificing accuracy. Our contributions are summarized as follows: 
+
+• We argue that, on reasoning models, KV-cache compres-sion is insufficient on its own and should be coupled with generation control: compressing the cache alone can back-fire by lengthening the very reasoning it is meant to make cheaper, so the two are better governed jointly. 
+
+• We show that process reward provides a reliable step-wise signal of compression tolerance, telling when the state can run on a smaller cache and when it needs more context, in contrast to the uniform policies of existing KV compression methods. 
+
+• We design a reward-coordinated, step-wise framework that unifies KV-cache compression, reflection control, and early stopping under one signal, reducing both to-ken count and latency while preserving accuracy across three models and six benchmarks. 
+
+2 Motivation and Observation 
+
+2.1 Higher Process Reward, Higher Compression Tolerance 
+
+Reasoning steps leave the model in distinct states (Chen et al. 2026): at some the path is already settled, at others it is still being worked out, so compression should adapt to the state the trajectory is in rather than treat every step alike (steps split at newline tokens, see Sec. 3.1). To test whether process reward captures this, we score trajectories from DeepSeek-R1-Distill-Qwen-7B and DeepSeek-R1-Distill-Llama-8B on GSM8K and MATH-500 with Skywork-o1-Open-PRM-7B (He et al. 2024), and compare two deletions that remove the same number of tokens: reward-guided, dropping 70% of tokens within the top-50% high-reward steps, versus random, removing the same amount from 50% of randomly chosen steps. As Figure 3(a) shows, concentrating deletion on high-reward steps consistently outperforms random step selec-tion across both models and datasets, by 4.0/3.5 points on GSM8K/MATH-500 for Llama-8B and a larger 6.5/5.9 for Qwen-7B. Since both settings remove the same number of tokens, the only difference is the state of the steps that bear the loss. We attribute this to what the reward measures: how likely the current reasoning state lies on a reliable path, not how indispensable its tokens are. High-reward steps are on-track and consistent with their context, so removing tokens loses less information, whereas low-reward steps are where the model is still exploring, so each token carries more informa-tion and removing it more easily breaks the chain. Higher process reward thus marks a reasoning state that tol-erates more disruption to its context: the same removal loses less information and hence costs less accuracy. We call this its compression tolerance : the reward decides how much context the current state can afford to lose. Here that loss is deleting tokens within steps; in ReCo it is a smaller retained cache (Sec. 3.2). 
+
+2.2 KV Cache Compression Can Induce Longer Reasoning 
+
+KV cache compression reduces inference cost by shrinking the retained context. For reasoning models, however, this saving is not free: compressing the cache can lengthen the subsequent reasoning, so the model may spend more tokens generating than it saves on the cache. Figure 3(b) illustrates this effect on MATH-500 under R-KV (Cai et al. 2026) at a 25% compression rate. Relative to the full cache, R-KV raises the average generation length from 3268 .7 to 4538 .1 tokens ( +38 .8% ) on DeepSeek-R1-Distill-Qwen-7B, and from 4409 .8 to 7891 .7 tokens (+79 .0% ) on DeepSeek-R1-Distill-Llama-8B, matching the R-KV rows of Table 1. Thus, while KV compression lowers the per-token attention cost, the extra tokens it induces partly cancel this saving. 
+
+Moreover, this is a pervasive per-problem phenomenon, not a few outliers. Figure 3(c) reports the fraction of MATH-500 problems whose compressed output exceeds the full-cache output across compression rates. The ratio peaks at 
+
+79 .8% (399 /500 problems) at a 25% compression rate and stays above 50% over the whole 15 –40% range, confirming that length inflation is systematic. On reasoning models, therefore, KV compression should not be treated as a pure cache problem, but coupled with generation control to account for its effect on output length, exactly what our method does. 
+
+3 Methodology 
+
+We propose ReCo (Figure 2), which operates at the granu-larity of reasoning steps: after each step, it scores the current reasoning state with a single lightweight reward and uses that score to drive KV-cache compression (Sec. 3.2), reflection control, and early stopping (Sec. 3.3). 
+
+3.1 Preliminary 
+
+We begin by describing how the reasoning trajectory is par-titioned into steps and how the per-step reward signal is ob-tained, which together form the basis for all three components of ReCo. 
+
+Reasoning steps as the unit of control. For a query q, the LRM M produces a reasoning trajectory C before emitting the final answer. Following (Huang et al. 2026), we define reasoning steps by splitting C at newline tokens ( \n ), and write C = {c1, . . . , c T }, where ci ∼ M (· | q, c <i ) denotes the autoregressive generation of the i-th step. Since a com-pleted step typically corresponds to a semantically coherent reasoning unit, it provides a natural online decision point: given the partial trajectory c≤i, our framework determines how to compress the accumulated KV cache and how to control the subsequent generation. 
+
+Reward signal. After each completed step ci, we assign a scalar reward vi ∈ [0 , 1] to the current reasoning trajectory 
+
+c≤i, estimating the likelihood of eventually reaching a correct answer. For lightweight online, per-step use, we adopt Pi-lot (Huang et al. 2026), a compact 30 M-parameter estimator distilled from Skywork-o1-Open-PRM-7B, the same PRM GSM8K MATH-500            
+
+> 40
+> 50
+> 60
+> 70
+> Accuracy (%)
+> 66.5
+> 52.5
+> 70.5
+> 56.0
+> +4.0
+> +3.5
+> DS-Llama-8B
+> GSM8K MATH-500
+> 50.0
+> 43.3
+> 56.5
+> 49.2
+> +6.5
+> +5.9
+> DS-Qwen-7B
+> Random drop Reward-guided
+> DS-Qwen-7B DS-Llama-8B
+> 0
+> 2K
+> 4K
+> 6K
+> 8K
+> 3268.7
+> 4409.8 4538.1
+> 7891.7
+> +38.8%
+> +79.0%
+> Full Cache R-KV
+> 15% 20% 25% 30% 35% 40%
+> Compression Ratio (%)
+> 150
+> 200
+> 250
+> 300
+> 350
+> 400
+> Problems Longer than Full Cache
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Ratio (%)
+> (a) Process reward identifies compressible steps. (b) R-KV lengthens MATH-500 outputs. (c) Length inflation is pervasive.
+
+Figure 3: Motivating observations for reward-guided KV-cache compression and generation control. (a) Deleting tokens from high-reward steps preserves accuracy better than deleting the same budget from randomly chosen steps, indicating that process reward tracks compression tolerance. (b) Cache compression can backfire and lengthen generation on MATH-500. (c) Over half of MATH-500 problems generate longer outputs once compressed, and this holds across compression rates. behind our observation in Sec. 2.1, giving vi = Pilot( c≤i).Trained to match this teacher, Pilot retains its step-level dis-criminability while staying light enough to score every step online, so motivation and method share one reward family rather than two unrelated scorers. This score is the unified sig-nal in ReCo that guides how the next step ci+1 is produced, coordinating both KV-cache compression and generation-side control. 
+
+3.2 Reward-Adaptive KV Compression 
+
+This component compresses the accumulated KV cache pe-riodically as reasoning proceeds, under one guiding princi-ple: the step reward decides how much context to keep . As established in Sec. 2.1, a high-reward state tolerates more disruption to its context. Inspired by this, ReCo compresses while decoding, pruning more aggressively when the reward is high and retaining more when it is low. We therefore let the reward vi of the just-completed step set the retention ratio 
+
+λi for the whole accumulated cache, refreshing this ratio at every step rather than following a fixed, uniform schedule. 
+
+Reward-driven retention. Whenever the cache has grown by S tokens since the last compression, i.e., L − Li−1 ≥ S
+
+with L the current cache length and Li−1 that after the previ-ous compression ( L0 being the prompt length), we compress the L cached tokens down to mi = λiL. The ratio λi is where the reward takes control: a high reward marks a reliable rea-soning state, so the accumulated context can tolerate more aggressive pruning, while a low reward marks a step that is still exploring, where the reasoning is fragile and more of the cache should be retained. We thus compare the latest reward against the trajectory’s own reward statistics, compressing harder when it is above average and retaining more when below: 
+
+λi = λ|{z} 
+
+> base ratio
+
+− δ vi − ¯vvmax − vmin 
+
+| {z }
+
+> reward adjustment
+
+, (1) where ¯v, vmin , vmax are the mean, minimum, and maximum step rewards in the current trajectory, λ is the base ratio, and 
+
+δ bounds the adjustment so that λi ∈ [λ − δ, λ + δ]. This normalization turns the raw reward into a within-trajectory relative position, so λi depends on whether a step is high or low for that trajectory rather than on its absolute reward value. In effect, the latest step’s reward sets a single retention level for the whole cache: when the current reasoning state scores high, we shrink the accumulated cache more aggres-sively; when it scores low, we retain more of it. This level is refreshed with the latest reward every S generated tokens at negligible overhead. 
+
+Attention-guided selection. Within the reward-allocated budget mi, we retain the tokens most relevant to the ongoing reasoning, scored by the attention they attract from the w
+
+most recent tokens: 
+
+sj =
+
+> L
+
+X
+
+> t=L−w+1
+
+softmax j
+
+ q⊤ 
+
+> t
+
+kj
+
+, (2) where qt and kj are the query and key of tokens t and j.The mi highest-scoring tokens are kept, with the latest w
+
+tokens always retained as the query window; since sj is re-computed at each compression, tokens no longer attended to are evicted automatically. This yields a clean division of labor: the reward decides how much survives each compres-sion, and attention only decides what survives within that allowance. 
+
+3.3 Reward-Adaptive Generation Control 
+
+Compressing the cache alone is insufficient on its own: as shown in Sec. 2.2, compressing the cache tends to lengthen the subsequent reasoning, and the added generation partly cancels the savings. ReCo therefore also governs the tokens still to be generated, reusing the same per-step reward vi that drives compression. 
+
+Reward-banded reflection penalty. Long reasoning traces spend many tokens on explicit self-reflection, opening new branches with reflection tokens such as “Wait”, “Hmm”, and “Alternatively”, which drives much of the overthinking on easy or already-settled steps (Wang et al. 2025; Lotfi et al. 2026). Rather than injecting instructions or fixing a global budget, we suppress this directly at the decoding level . We curate a set R of such reflection tokens (with their tokenizer variants) and penalize these reflection tokens during decod-ing, with the penalty strength set by the just-completed step’s reward, using two thresholds τℓ < τ h that split the reward into three bands: no penalty in the lowest, a half penalty in the middle, and the full penalty β in the highest: 
+
+βi =
+
+
+
+0, vi ≤ τℓ,β/ 2, τℓ < v i < τ h,β, vi ≥ τh,β > 0. (3) While generating the (i+1) -th step, we subtract the band penalty from the logit of every reflection token u ∈ R at each position t,
+
+˜zt(u) = 
+
+(zt(u) − βi, u ∈ R ,zt(u), u / ∈ R , (4) then sample from softmax(˜ zt). The penalty is monotone in the reward: a low-reward step reflects and explores freely (βi = 0 ), a mid-reward step is mildly discouraged, and a high-reward step, likely on a reliable track, is strongly sup-pressed so the model drives toward its conclusion instead of re-opening branches. Acting purely on logits, this adds no tokens and no extra forward pass. 
+
+Early stopping via answer confidence. Additional rea-soning helps only while the model is uncertain; once it is confident, further steps burn tokens without changing an an-swer it has settled on. A persistent high-reward state signals such a trajectory, but reward alone cannot decide whether to 
+
+commit : it scores each reasoning step , not confidence in the 
+
+final answer . We therefore add a confidence probe: once the reward stays in the top band ( vi ≥ τh) for two consecutive steps, we insert a closing prompt ( “Okay, I think I have fin-ished thinking.” ) that exits the thinking phase and elicits a tentative answer a = ( x1, . . . , x n), whose perplexity 
+
+PPL( a) = exp − 1
+
+n
+
+> n
+
+X
+
+> t=1
+
+log p(xt | x<t )
+
+!
+
+(5) measures how confident the model is in that answer. We stop and commit when 
+
+PPL( a) ≤ τp, (6) and otherwise discard the probe and resume reasoning. Re-ward and perplexity are complementary, reward certifies that the trajectory is sound, while perplexity gauges confidence in the answer , and coupling them helps in two ways a per-plexity threshold alone cannot. It suppresses confident-but-wrong stops, since a fluent answer can have low perplexity even when the reasoning never converged; and it confines the probe, which costs an extra generation, to already-promising trajectories rather than running it at every step. 
+
+4 Experiments 
+
+4.1 Experimental Setup 
+
+Models and datasets. We evaluate on three reasoning models across two families and scales: DeepSeek-R1-Distill-Qwen-7B, DeepSeek-R1-Distill-Llama-8B (Guo et al. 2025), and Qwen3-8B (Yang et al. 2025a). We benchmark on six datasets from grade-school arithmetic to competition level: five math datasets, GSM8K (Cobbe et al. 2021), MATH-500 (Hendrycks et al. 2021), AMC2023, AIME24, AIME25, and the scientific GPQA (Rein et al. 2023). 
+
+Baselines. We compare against representative methods from both sides of reasoning efficiency. (i) Full CoT, the uncompressed model that keeps the full KV cache without length control, serving as the accuracy reference. (ii) KV-cache compression: SnapKV (Li et al. 2024b), R-KV (Cai et al. 2026), and RPC (Song et al. 2026), which evict cache entries but do not control generation length. (iii) Generation-length and early-exit methods: SAT (Huang et al. 2026), which shortens reasoning via prompt-based control, and Dy-nasor (Fu et al. 2025), which early-stops decoding; both keep the full cache. Each addressing only the cache or only the gen-eration, these baselines let us isolate the benefit of our joint, reward-coordinated design. 
+
+Implementation details. All experiments are conducted on a single NVIDIA H20 GPU. For KV-cache compression, we set the base retention ratio to λ = 0 .25 , the reward-adjustment range to δ = 0 .1, and the attention window to 
+
+w = 32 ; all KV-cache baselines use a comparable ratio of 
+
+0.25 . For generation control, we set the state thresholds to 
+
+τℓ = 0 .4 and τh = 0 .8, and the early-stopping perplexity threshold to τp = 1 .1. For a fair comparison, SAT and Dy-nasor are tuned to a comparable level of acceleration. 
+
+4.2 Main Results 
+
+Tables 1 and 2 report accuracy, average generated tokens, and end-to-end latency across three models. We highlight three observations, one per metric. 
+
+ReCo best preserves accuracy under compression. 
+
+ReCo stays closest to Full CoT: its average accuracy is 60 .2% 
+
+vs. 62 .8% on Llama-8B, 60 .0% vs. 61 .9% on Qwen-7B, and 
+
+69 .6% vs. 72 .3% on Qwen3-8B, the smallest gap among all compressed methods. KV compression baselines fall much further behind (e.g. SnapKV to 37 .5% and R-KV to 48 .1% on Llama-8B), and the gap widens on the hardest benchmarks: on AIME25, ReCo retains 33 .3% on Llama-8B while every KV baseline collapses to ≤ 20% . Compressing the cache without accounting for the role of each step disrupts the con-text most at the fragile, information-dense states that com-plex reasoning depends on, whereas ReCo’s reward-guided retention holds back compression exactly when the state is fragile. 
+
+ReCo reduces tokens without inflation, unlike cache-only compression. ReCo uses 37% , 65% , and 46% fewer tokens than Full CoT on Llama-8B, Qwen-7B, and Qwen3-8B, at-taining the shortest average length on the latter two. In sharp contrast, the cache-only methods SnapKV, R-KV, and RPC all increase token count (e.g. 7,078 → 11 ,266 under SnapKV on Llama-8B), directly corroborating the length-inflation ef-fect of Sec. 2.2. Length-only methods (SAT, Dynasor) can emit even fewer tokens on some sets, but only by sacrific-ing accuracy (e.g. Dynasor drops to 82 .3% on Llama-8B GSM8K, below Full CoT’s 89 .8% ). Coupling compression with generation control lets ReCo cut tokens aggressively while staying close to Full CoT accuracy. 
+
+ReCo delivers strong speedups without trading away ac-curacy. Reducing both the per-token attention cost and the generation length, ReCo reaches 2.08 ×, 2.35 ×, and 2.18 ×Method Accuracy (%) ↑ Average Tokens ↓ Latency (s) ↓ Speedup ↑
+
+GSM8K MATH500 AMC AIME24 AIME25 GPQA Avg. GSM8K MATH500 AMC AIME24 AIME25 GPQA Avg. 
+
+DeepSeek-R1-Distill-Llama-8B 
+
+Full CoT 89.8 83.8 82.5 46.7 40.0 33.8 62.8 1201.2 4409.8 4986.6 11169.7 9329.3 11372.5 7078.2 56.01 1.00 ×
+
+SnapKV 87.0 59.6 17.5 13.3 20.0 27.3 37.5 1696.8 7584.7 14695.7 14211.4 15216.1 14189.8 11265.8 49.07 1.14 ×
+
+R-KV 88.9 61.0 65.0 26.7 16.7 30.3 48.1 1551.3 7891.7 8098.3 13227.6 13091.4 14933.9 9799.0 51.56 1.09 ×
+
+RPC 90.5 80.4 70.0 20.0 16.7 38.9 52.8 1262.6 5627.7 8443.0 15074.7 14259.4 11551.6 9369.8 41.99 1.33 ×
+
+SAT 87.1 79.2 75.0 40.0 36.7 30.8 58.1 248.6 2063.3 3724.3 8161.8 6354.1 5038.0 4265.0 28.29 1.98 ×
+
+Dynasor 82.3 80.2 80.0 33.3 30.0 40.4 57.7 688.5 2615.7 4029.6 8788.2 9806.5 3869.5 4966.3 30.18 1.86 ×
+
+ReCo (Ours) 89.9 80.6 80.0 43.3 33.3 33.8 60.2 765.1 2713.9 2692.6 5345.3 8551.6 6875.7 4490.7 26.88 2.08 ×
+
+DeepSeek-R1-Distill-Qwen-7B 
+
+Full CoT 88.1 87.8 80.0 43.3 33.3 38.9 61.9 1067.6 3268.7 4293.6 9783.7 8168.2 8939.6 5920.2 52.58 1.00 ×
+
+SnapKV 87.7 76.0 65.0 23.3 13.3 44.4 51.6 1863.9 3987.9 14070.2 8945.8 14853.6 9644.6 8894.3 47.36 1.11 ×
+
+R-KV 87.5 89.0 60.0 20.0 16.7 26.8 50.0 2123.3 4538.1 7473.6 9751.2 12520.8 13415.6 8303.8 45.58 1.15 ×
+
+RPC 83.4 67.6 60.0 20.0 23.3 43.9 49.7 2446.3 6817.6 9476.8 11400.1 12382.4 11711.5 9039.1 43.42 1.21 ×
+
+SAT 79.5 80.2 77.5 53.3 20.0 36.9 57.9 188.0 2165.2 3424.6 8750.3 8692.1 3916.1 4522.7 23.54 2.23 ×
+
+Dynasor 83.6 75.0 72.5 36.7 26.7 35.4 55.0 363.8 1403.0 2850.2 6680.9 8428.3 1347.9 3512.4 24.56 2.14 ×
+
+ReCo (Ours) 89.1 78.8 80.0 40.0 30.0 41.9 60.0 451.2 1484.8 2175.5 2997.5 3440.2 1853.5 2067.1 22.35 2.35 ×
+
+Table 1: Main results on DeepSeek-R1-Distill-Llama-8B and DeepSeek-R1-Distill-Qwen-7B across six benchmarks. All reported numbers are averaged over three independent runs. “Avg.” averages over the six datasets. Latency is per-problem end-to-end wall-clock time (s) measured on a single NVIDIA H20 GPU, including Pilot scoring and the confidence probe for ReCo; speedup is relative to Full CoT.                                                                                   
+
+> Method Accuracy (%) ↑Avg. Tokens ↓Lat. ↓Sp. ↑
+> GSM8K GPQA AIME24 Avg. GSM8K GPQA AIME24 Avg.
+> Qwen3-8B
+> Full CoT 96.1 64.1 56.7 72.3 1268 8164 10932 6788 114.89 1.00x SnapKV 92.4 39.9 23.3 51.9 1960 12384 14217 9520 70.69 1.63x R-KV 93.4 46.5 30.0 56.6 2237 13878 14999 10371 104.89 1.10x RPC 91.9 42.9 63.3 66.0 2479 14690 12891 10020 96.03 1.20x SAT 93.0 52.0 56.7 67.2 885 5646 9496 5343 64.99 1.77x Dynasor 93.3 59.6 50.0 67.6 1114 4037 9230 4794 60.67 1.89x
+> ReCo 95.3 60.1 53.3 69.6 1046 5382 4530 3652 52.60 2.18x
+
+Table 2: Results on Qwen3-8B. Metrics follow Table 1. speedup over Full CoT on Llama-8B, Qwen-7B, and Qwen3-8B. Cache-only baselines gain only modest speedups ( 1.09 –
+
+1.33 × on Llama-8B), since their inflated generation cancels much of the per-token attention saving. Length-only meth-ods (SAT, Dynasor), tuned to a comparable level of acceler-ation, reach similar latency but only by trading away accu-racy (e.g. SAT at 58 .1% vs. ReCo at 60 .2% on Llama-8B). These results validate our central claim: coordinating cache compression and generation control under a single reward reduces both token count and latency while preserving rea-soning quality, a balance that handling either alone cannot achieve. 1
+
+4.3 Ablation Studies and Analysis 
+
+The three components are complementary. Figure 4 keeps only one component at a time. No single variant matches ReCo’s accuracy–cost balance. “KV Comp.” alone leaves generation unconstrained and is the most expensive on hard problems ( 12 .8k tokens on AIME25 vs. ReCo’s 
+
+8.6k), echoing the length inflation of Sec. 2.2. “Refl. Ctrl.” and “Early Stop” curb tokens but, lacking reward-guided retention, lose accuracy on the harder sets. ReCo is best on all three, AIME25 ( 33 .3% ), AMC ( 80 .0% ), MATH500 (80 .6% ), showing the components are complementary, not 
+
+> 1
+
+ReCo’s own components add only a small fraction of end-to-end inference time: Pilot scoring 0.60% , KV compression 0.11% ,the reflection penalty 1.24% , and early stopping 1.98% on average. 20 40 60 80        
+
+> AIME25
+> 33.3 30.0 26.7 30.0
+> AMC
+> 80.0 72.5 77.5 75.0
+> MATH500
+> 80.6 79.8 79.0 78.0
+> Accuracy (%)
+
+(a) Accuracy  
+
+> 04,000 8,000 12,000
+> AIME25
+> 8.6k 12.8k 5.2k 6.5k
+> AMC
+> 2.7k 5.6k 2.1k 1.4k
+> MATH500
+> 2.7k 4.5k 2.0k 1.8k
+> Average Tokens
+
+(b) Average Tokens    
+
+> ReCo (Ours) KV Comp. Refl. Ctrl. Early Stop
+
+Figure 4: Component ablation on DeepSeek-R1-Distill-Llama-8B: (a) accuracy (%) and (b) average tokens. redundant. Intuitively, reward-guided compression decides 
+
+what to keep, while reflection control and early stopping decide how far to reason; removing either half breaks the accuracy–cost trade-off that the full framework maintains. 
+
+Sensitivity to the base retention ratio. Row (a) of Fig-ure 5 sweeps the base retention ratio from 15% to 35% 
+
+(δ = 0 .10 ). Aggressive pruning both destabilizes accuracy (at 15% , AIME25 falls to 20 .0% , AMC to 65 .0% ) and, as our analysis reveals, inflates tokens (AIME25 rises from 7.8k at 
+
+35% to 9.2k at 15% ), exactly the length-inflation failure mode of Sec. 2.2. Accuracy stabilizes over 25 –35% ; we adopt the more aggressive 25% , which already delivers high accuracy (a) Compression Rate                                 
+
+> 020 40 60 80
+> 15% 20% 25% 30% 35%
+> 04,000 8,000
+> 15% 20% 25% 30% 35%
+> Accuracy (%) Average Tokens
+> (b) Adjustment Range δ
+> 020 40 60 80
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> 04,000 8,000
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> Accuracy (%) Average Tokens
+> (c) Early-stop Threshold
+> 020 40 60 80
+> 1.05 1.10 1.15 1.20
+> 04,000 8,000
+> 1.05 1.10 1.15 1.20
+> Accuracy (%) Average Tokens
+> AIME25 AMC MATH500
+
+Figure 5: Hyper-parameter sensitivity of ReCo (Llama-8B). (80 .6% MATH500, 80 .0% AMC) at the lowest per-token attention cost in this stable range. 
+
+Sensitivity to the reward-adjustment range. Row (b) fixes λ = 0 .25 and varies δ from 0.00 to 0.12 . At δ = 0 .00 
+
+the policy is uniform and reward-agnostic, and is consis-tently among the weakest ( 65 .0% on AMC), direct support for our motivation that reward-guided allocation beats treat-ing all steps alike. Accuracy peaks at δ = 0 .10 (80 .0% AMC, 
+
+80 .6% MATH500, 33 .3% AIME25), which we adopt as a ro-bust default. 
+
+Sensitivity to the early-stopping threshold. Row (c) varies τp from 1.05 to 1.20 , trading length for accuracy: a stricter threshold preserves accuracy but emits more tokens, a looser one halts earlier at some accuracy risk (MATH500 drops 80 .6% → 68 .4% from 1.10 to 1.20 ). τp = 1 .10 is best on all three sets ( 33 .3% AIME25, 80 .0% AMC, 80 .6% 
+
+MATH500) while already saving many tokens. We use one configuration ( λ = 0 .25 , δ = 0 .10 , τp = 1 .10 ) for all models and datasets, without per-task tuning. 
+
+Method Full-CoT R-KV SAT ReCo Max Memory (GB) 28.78 20.70 26.90 17.92 
+
+Table 3: Peak GPU memory on AIME25 (Llama-8B). 
+
+Peak memory usage. Table 3 reports the maximum GPU memory on AIME25 with DeepSeek-R1-Distill-Llama-8B. ReCo uses 17 .92 GB, a 37 .7% reduction over full cache (28 .78 GB) and below both R-KV ( 20 .7 GB) and SAT (26 .9 GB). A KV-only compressor like R-KV still trails ReCo because its inflated outputs enlarge the very cache it tries to shrink; by coupling compression with generation control, ReCo attains the lowest footprint. 
+
+5 Related Work 
+
+Efficient Reasoning. Long CoT boosts LRMs but inflates to-ken and compute cost (Feng et al. 2025; Qu et al. 2025; Yue et al. 2025). Prior work spans length-aware RL, fine-tuning, or distillation for compact reasoning (Yeo et al. 2025; Cheng et al. 2026; Luo et al. 2026b; Zeng et al. 2025; Ning et al. 2025; Tang et al. 2026; Luo et al. 2026a; Aggarwal and Welleck 2025), inference-time prompting or explicit token budgets (Han et al. 2025b; Huang et al. 2026; Renze and Guven 2024; Nayab et al. 2024), early stopping (Yang et al. 2025b; Qiao et al. 2025; Wang et al. 2025), and model rout-ing (Ong et al. 2024; Chen et al. 2025; Song et al. 2025). Yet these methods typically retrain the reasoning model or touch only the generated text, leaving the KV cache untouched. ReCo needs no training of the reasoning model and no per-task prompt engineering, only a 30 M step-level reward esti-mator, allocates per step under a single process reward, and controls cache and length jointly. 
+
+KV Cache Compression. The KV cache is a major latency and memory bottleneck in LLM inference (Li et al. 2024a; Shi et al. 2024), addressed by token eviction (Li et al. 2024b; Cai et al. 2024; Feng et al. 2026; Yang et al. 2026), merg-ing (Zhang et al. 2024; Wang et al. 2024; Wan et al. 2024), quantization (Hooper et al. 2024; Zandieh et al. 2025; Han et al. 2025a), and low-rank decomposition (Chang et al. 2024, 2025), but they assume a static prompt pruned once after prefilling. Recently adapted to reasoning, where the cache instead grows with the chain of thought, R-KV (Cai et al. 2026) and RPC (Song et al. 2026) use heuristic eviction that ignores step importance and acts on the cache alone, so length inflation erodes the saving. ReCo instead ranks re-tention by per-step process reward and couples compression with generation control. 
+
+6 Conclusion 
+
+We presented ReCo, a step-wise framework that coordinates KV-cache compression with generation control under a sin-gle per-step process reward. Our analysis shows that reason-ing states differ in how much compression they tolerate and that compressing the cache alone often lengthens the sub-sequent reasoning, so the extra generation cancels much of the intended saving. By governing the cache and the reason-ing length jointly, ReCo cuts token count and latency across three reasoning models and six benchmarks, and lowers peak memory, while staying close to full-cache accuracy, indicat-ing that KV compression is better coupled with generation control. References 
+
+Aggarwal, P.; and Welleck, S. 2025. L1: Controlling how long a reasoning model thinks with reinforcement learning. 
+
+arXiv preprint arXiv:2503.04697 .Cai, Z.; Xiao, W.; Sun, H.; Zhang, Y.; Wan, K.; Li, Y.; Zhou, Y.; Chang, L.-W.; Gu, J.; Dong, Z.; et al. 2026. R-kv: Redundancy-aware kv cache compression for reasoning models. Advances in neural information processing systems ,38: 60980–61005. Cai, Z.; Zhang, Y.; Gao, B.; Liu, Y.; Li, Y.; Liu, T.; Lu, K.; Xiong, W.; Dong, Y.; Hu, J.; et al. 2024. Pyramidkv: Dy-namic kv cache compression based on pyramidal information funneling. arXiv preprint arXiv:2406.02069 .Cao, C.; Li, M.; Dai, J.; Yang, J.; Zhao, Z.; Zhang, S.; Shi, W.; Liu, C.; Han, S.; and Guo, Y. 2025. Towards advanced math-ematical reasoning for LLMs via first-order logic theorem proving. In Proceedings of the 2025 Conference on Empiri-cal Methods in Natural Language Processing , 12440–12460. Cao, C.; Yang, J.; Li, H.; Pan, K.; Zhao, Z.; Chen, Z.; Tian, Y.; Wu, L.; He, C.; Han, S.; et al. 2026. Pushing the Boundaries of Natural Reasoning: Interleaved Bonus from Formal-Logic Verification. arXiv preprint arXiv:2601.22642 .Chang, C.-C.; Lin, C.-Y.; Akhauri, Y.; Lin, W.-C.; Wu, K.-C.; Ceze, L.; and Abdelfattah, M. S. 2025. xkv: Cross-layer svd for kv-cache compression. arXiv preprint arXiv:2503.18893 .Chang, C.-C.; Lin, W.-C.; Lin, C.-Y.; Chen, C.-Y.; Hu, Y.-F.; Wang, P.-S.; Huang, N.-C.; Ceze, L.; Abdelfattah, M. S.; and Wu, K.-C. 2024. Palu: Compressing kv-cache with low-rank projection. arXiv preprint arXiv:2407.21118 .Chen, T.; Cheng, P.; Zhu, Q.; Wang, J.; Liu, B.; Gu, H.; Shen, R.; Hou, X.; Han, S.; and Liu, J. 2026. Adaptive spatial and temporal redundancy optimization for efficient reasoning in large language models. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 24647–24662. Chen, X.; Xu, J.; Liang, T.; He, Z.; Pang, J.; Yu, D.; Song, L.; Liu, Q.; Zhou, M.; Zhang, Z.; et al. 2024. Do not think that much for 2+ 3=? on the overthinking of o1-like llms. arXiv preprint arXiv:2412.21187 .Chen, Z.; Wei, Z.; Bai, Y.; Xiong, X.; and Wu, J. 2025. Tagrouter: Learning route to llms through tags for open-domain text generation tasks. In Findings of the Association for Computational Linguistics: ACL 2025 , 21539–21564. Cheng, Z.; Chen, D.; Fu, M.; and Zhou, T. 2026. Optimizing length compression in large reasoning models. In Proceed-ings of the 64th Annual Meeting of the Association for Com-putational Linguistics (Volume 1: Long Papers) , 3232–3250. Cobbe, K.; Kosaraju, V.; Bavarian, M.; Chen, M.; Jun, H.; Kaiser, L.; Plappert, M.; Tworek, J.; Hilton, J.; Nakano, R.; et al. 2021. Training verifiers to solve math word problems. 
+
+arXiv preprint arXiv:2110.14168 .Comanici, G.; Bieber, E.; Schaekermann, M.; Pasupat, I.; Sachdeva, N.; Dhillon, I.; Blistein, M.; Ram, O.; Zhang, D.; Rosen, E.; et al. 2025. Gemini 2.5: Pushing the fron-tier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 .Feng, S.; Fang, G.; Ma, X.; and Wang, X. 2025. Efficient rea-soning models: A survey. arXiv preprint arXiv:2504.10903 .Feng, Y.; Lv, J.; Cao, Y.; Xie, X.; and Zhou, S. K. 2026. Ada-kv: Optimizing kv cache eviction by adaptive budget allocation for efficient llm inference. Advances in Neural Information Processing Systems , 38: 113152–113188. Fu, Y.; Chen, J.; Zhuang, Y.; Fu, Z.; Stoica, I.; and Zhang, H. 2025. Reasoning without self-doubt: More efficient chain-of-thought through certainty probing. In ICLR 2025 Workshop on Foundation Models in the Wild .Gu, H.; Wang, H.; Liu, J.; Li, L.; Zhu, Q.; Liu, B.; Xu, B.; Wang, L.; Yang, X.; Lin, S.; et al. 2026. Qarl: Rollout-aligned quantization-aware rl for fast and stable training un-der training–inference mismatch. In Findings of the Asso-ciation for Computational Linguistics: ACL 2026 , 17051– 17064. Guo, D.; Yang, D.; Zhang, H.; Song, J.; Wang, P.; Zhu, Q.; Xu, R.; Zhang, R.; Ma, S.; Bi, X.; et al. 2025. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 .Han, I.; Kacham, P.; Karbasi, A.; Mirrokni, V.; and Zandieh, A. 2025a. Polarquant: Quantizing kv caches with polar trans-formation. arXiv preprint arXiv:2502.02617 .Han, T.; Wang, Z.; Fang, C.; Zhao, S.; Ma, S.; and Chen, Z. 2025b. Token-budget-aware llm reasoning. In Findings of the Association for Computational Linguistics: ACL 2025 ,24842–24855. He, J.; Wei, T.; Yan, R.; Liu, J.; Wang, C.; Gan, Y.; Tu, S.; Liu, C. Y.; Zeng, L.; Wang, X.; Wang, B.; Li, Y.; Zhang, F.; Xu, J.; An, B.; Liu, Y.; and Zhou, Y. 2024. Skywork-o1 Open Series. Hendrycks, D.; Burns, C.; Kadavath, S.; Arora, A.; Basart, S.; Tang, E.; Song, D.; and Steinhardt, J. 2021. Measuring mathematical problem solving with the math dataset. arXiv preprint arXiv:2103.03874 .Hooper, C.; Kim, S.; Mohammadzadeh, H.; Mahoney, M. W.; Shao, Y. S.; Keutzer, K.; and Gholami, A. 2024. Kvquant: To-wards 10 million context length llm inference with kv cache quantization. Advances in Neural Information Processing Systems , 37: 1270–1303. Hu, X.; Wei, X.; Gu, H.; Zhang, M.; Liang, T.; Li, H.; Zhu, L.; Wang, Y.; Han, S.; Bai, Y.; et al. 2026. Hierarchical Sparse Attention Done Right: Toward Infinite Context Modeling. 
+
+arXiv preprint arXiv:2607.02980 .Huang, W.; Bai, X.; Chen, K.; Chen, X.; Chen, Y.; Guan, W.; and Zhang, M. 2026. Sat: Balancing reasoning accuracy and efficiency with stepwise adaptive thinking. In Proceedings of the 64th Annual Meeting of the Association for Computa-tional Linguistics (Volume 1: Long Papers) , 43384–43402. Jaech, A.; Kalai, A.; Lerer, A.; Richardson, A.; El-Kishky, A.; Low, A.; Helyar, A.; Madry, A.; Beutel, A.; Carney, A.; et al. 2024. Openai o1 system card. arXiv preprint arXiv:2412.16720 .Li, H.; Li, Y.; Tian, A.; Tang, T.; Xu, Z.; Chen, X.; Hu, N.; Dong, W.; Li, Q.; and Chen, L. 2024a. A survey on large language model acceleration based on kv cache management. 
+
+arXiv preprint arXiv:2412.19442 .Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024b. Snapkv: Llm knows what you are looking for before generation. 
+
+Advances in Neural Information Processing Systems , 37: 22947–22970. Lotfi, S.; Kirichenko, P.; Li, S.; and Liu, Z. 2026. Quantized Reasoning Models Think They Need to Think Longer, but They Do Not. arXiv preprint arXiv:2606.00206 .Luo, H.; He, H.; Wang, Y.; Liu, S.; Li, W.; Cao, X.; Tao, D.; Tan, N.; and Shen, L. 2026a. O1-pruner: Length-harmonizing fine-tuning for o1-like reasoning pruning. In 
+
+Findings of the Association for Computational Linguistics: ACL 2026 , 14242–14257. Luo, H.; He, H.; Wang, Y.; Yang, J.; Liu, R.; Tan, N.; Cao, X.; Tao, D.; and Shen, L. 2026b. Ada-r1: Hybrid-cot via bi-level adaptive reasoning optimization. Advances in Neural Information Processing Systems , 38: 59353–59377. Nayab, S.; Rossolini, G.; Simoni, M.; Saracino, A.; Buttazzo, G.; Manes, N.; and Giacomelli, F. 2024. Concise thoughts: Impact of output length on llm reasoning and cost. arXiv preprint arXiv:2407.19825 .Ning, Y.; Li, W.; Fang, J.; Tan, N.; and Liu, H. 2025. Not all thoughts are generated equal: Efficient llm reason-ing via multi-turn reinforcement learning. arXiv preprint arXiv:2505.11827 .Ong, I.; Almahairi, A.; Wu, V.; Chiang, W.-L.; Wu, T.; Gon-zalez, J. E.; Kadous, M. W.; and Stoica, I. 2024. Routellm: Learning to route llms with preference data. arXiv preprint arXiv:2406.18665 .Qiao, Z.; Deng, Y.; Zeng, J.; Wang, D.; Wei, L.; Wang, G.; Meng, F.; Zhou, J.; Ren, J.; and Zhang, Y. 2025. Concise: Confidence-guided compression in step-by-step efficient rea-soning. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 8021–8040. Qu, X.; Li, Y.; Su, Z.-C.; Sun, W.; Yan, J.; Liu, D.; Cui, G.; Liu, D.; Liang, S.; He, J.; et al. 2025. A survey of efficient rea-soning for large reasoning models: Language, multimodality, and beyond. arXiv preprint arXiv:2503.21614 .Rein, D.; Hou, B. L.; Stickland, A. C.; Petty, J.; Pang, R. Y.; Dirani, J.; Michael, J.; and Bowman, S. R. 2023. Gpqa: A graduate-level google-proof q&a benchmark. arXiv preprint arXiv:2311.12022 .Renze, M.; and Guven, E. 2024. The benefits of a concise chain of thought on problem-solving in large language mod-els. arXiv preprint arXiv:2401.05618 .Shi, L.; Zhang, H.; Yao, Y.; Li, Z.; and Zhao, H. 2024. Keep the cost down: A review on methods to optimize LLM’s KV-cache consumption. arXiv preprint arXiv:2407.18003 .Song, J.; Jo, D.; Kim, Y.; et al. 2026. Reasoning path com-pression: Compressing generation trajectories for efficient llm reasoning. Advances in Neural Information Processing Systems , 38: 139724–139755. Song, W.; Huang, Z.; Cheng, C.; Gao, W.; Xu, B.; Zhao, G.; Wang, F.; and Wu, R. 2025. Irt-router: Effective and inter-pretable multi-llm routing via item response theory. In Pro-ceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 15629– 15644. Tang, Y.; Jia, B.; Huang, W.; Zhang, L.; Xie, J.; Li, W.; Li, W.; Hu, J.; Ji, X. C. R.; and Lin, S. 2026. Towards Efficient Large Language Reasoning Models via Extreme-Ratio Chain-of-Thought Compression. arXiv preprint arXiv:2602.08324 .Wan, Z.; Wu, X.; Zhang, Y.; Xin, Y.; Tao, C.; Zhu, Z.; Wang, X.; Luo, S.; Xiong, J.; and Zhang, M. 2024. D2o: Dynamic discriminative operations for efficient generative inference of large language models. arXiv preprint arXiv:2406.13035 , 2. Wang, C.; Feng, Y.; Chen, D.; Chu, Z.; Krishna, R.; and Zhou, T. 2025. Wait, we don’t need to" wait"! removing thinking tokens improves reasoning efficiency. arXiv preprint arXiv:2506.08343 , 3. Wang, Z.; Jin, B.; Yu, Z.; and Zhang, M. 2024. Model tells you where to merge: Adaptive kv cache merging for llms on long-context tasks. arXiv preprint arXiv:2407.08454 .Xu, J.; Zhu, Q.; Wu, Y.; Wang, Z.; Zhang, D.; Tian, M.; Duan, Y.; Li, S.; Wei, J.; Han, S.; et al. 2026. NanoResearch: Co-Evolving Skills, Memory, and Policy for Personalized Research Automation. arXiv preprint arXiv:2605.10813 .Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.; Huang, C.; Lv, C.; et al. 2025a. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Yang, C.; Si, Q.; Duan, Y.; Zhu, Z.; Zhu, C.; Li, Q.; Chen, M.; Lin, Z.; and Wang, W. 2025b. Dynamic early exit in reasoning models. arXiv preprint arXiv:2504.15895 .Yang, X.; Gu, H.; Xu, B.; Li, L.; Liu, B.; Liu, J.; Zhu, Q.; Guo, Y.; and Han, S. 2026. IndexMem: Learned KV-Cache Eviction with Latent Memory for Long-Context LLM Infer-ence. arXiv preprint arXiv:2605.25475 .Yeo, E.; Tong, Y.; Niu, M.; Neubig, G.; and Yue, X. 2025. Demystifying long chain-of-thought reasoning in llms. arXiv preprint arXiv:2502.03373 .Yue, L.; Du, Y.; Wang, Y.; Gao, W.; Yao, F.; Wang, L.; Liu, Y.; Xu, Z.; Liu, Q.; Di, S.; et al. 2025. Don’t Overthink It: A Survey of Efficient R1-style Large Reasoning Models. arXiv preprint arXiv:2508.02120 .Zandieh, A.; Daliri, M.; Hadian, M.; and Mirrokni, V. 2025. Turboquant: Online vector quantization with near-optimal distortion rate. arXiv preprint arXiv:2504.19874 .Zeng, Z.; Huang, X.; Li, B.; Zhang, H.; and Deng, Z. 2025. Done is better than perfect: Unlocking efficient reason-ing by structured multi-turn decomposition. arXiv preprint arXiv:2505.19788 .Zhang, Y.; Du, Y.; Luo, G.; Zhong, Y.; Zhang, Z.; Liu, S.; and Ji, R. 2024. Cam: Cache merging for memory-efficient llms inference. In Forty-first international conference on machine learning .Zhu, Q.; Li, D.; Li, L.; Qin, X.; Li, W.; Gu, H.; Xu, H.; Han, S.; and Guo, Y. 2026. Outlier matters: Efficient long-to-short reasoning via outlier-guided model merging. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, 35213–35221.

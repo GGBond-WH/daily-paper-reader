@@ -1,0 +1,184 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-07T00:53:22.113293+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 2,
+    "deep_cap": 6,
+    "deep_selected": 2,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2608.04074v1",
+      "source": "arxiv",
+      "title": "Spend Bits Where Queries Look: KV Cache Vector Quantization with Attention-Preserving Transforms",
+      "abstract": "Long-context LLM decoding reads the key-value (KV) cache at every step. Loading it takes longer than computing attention over it, so throughput is bandwidth-bound. Hence, reducing the cache size can raise both decoding speed and serving capacity. The challenge is to reduce cache size while preserving the attention products, keeping reconstruction cheap, and using a fixed per-token bit count. At two bits per element, the most competitive methods rely on orthogonal transforms. However, existing techniques are either data-oblivious or use the query statistics without deriving the transform from a distortion criterion. Moreover, they rely on transforms built on top of random or Hadamard rotations, which equalize variances across entries rather than compacting energy, and fixed-width scalar quantizers, which are suboptimal at low rates. In this paper, we formulate KV cache quantization as a transform coding problem in which distortion is the error in the attention products. We derive closed-form optimal transforms for keys and values from calibration statistics, under a high-resolution model. We show that the optimal key transform is not orthogonal and satisfies a generalized Parseval relation: the attention-aware distortion becomes mean-squared error (MSE) in the transform domain. Thus, we can use MSE-optimal vector quantizers applied directly to the transformed key coefficients. To meet the fixed-width layout requirement, we show that grouping coefficients into equal-volume partitions makes equal-size codebooks attain the variable-rate optimum under the same high-resolution model. At two bits per element, our method, termed NOVA-KV, recovers most of the long-context retrieval accuracy lost by scalar quantization methods at comparable throughput.",
+      "authors": [
+        "Samuel Fernández-Menduiña",
+        "Amir Ziashahabi",
+        "Eduardo Pavez",
+        "Antonio Ortega",
+        "Salman Avestimehr"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.IT",
+        "eess.SP"
+      ],
+      "published": "2026-08-04T16:10:59+00:00",
+      "link": "https://arxiv.org/pdf/2608.04074v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV cache vector quantization with attention-preserving transforms for bandwidth-bound decoding",
+      "llm_evidence_cn": "使用保注意力变换的KV缓存向量量化，解决带宽受限解码",
+      "llm_evidence": "使用保注意力变换的KV缓存向量量化，解决带宽受限解码",
+      "canonical_evidence": "使用保注意力变换的KV缓存向量量化，解决带宽受限解码",
+      "llm_tldr_en": "This paper introduces KV cache vector quantization with attention-preserving transforms and fixed per-token bit counts, reducing cache size to speed up bandwidth-bound long-context decoding while keeping reconstruction cheap.",
+      "llm_tldr_cn": "长上下文LLM解码每步都会读取KV缓存，加载比计算更耗时，因此吞吐受带宽限制；缩小缓存大小可直接提高解码速度和服务容量。论文提出在固定每令牌比特数下，用基于失真准则推导的正交变换对KV缓存进行向量量化，保持注意力乘积并降低重建代价。与随机或Hadamard旋转等数据无关方法相比，该方法更有效地分配量化比特，在2比特量级下显著改善压缩质量，从而提升长上下文解码性能。",
+      "llm_tldr": "长上下文LLM解码每步都会读取KV缓存，加载比计算更耗时，因此吞吐受带宽限制；缩小缓存大小可直接提高解码速度和服务容量。论文提出在固定每令牌比特数下，用基于失真准则推导的正交变换对KV缓存进行向量量化，保持注意力乘积并降低重建代价。与随机或Hadamard旋转等数据无关方法相比，该方法更有效地分配量化比特，在2比特量级下显著改善压缩质量，从而提升长上下文解码性能。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.04771v1",
+      "source": "arxiv",
+      "title": "Fewer Tokens, Smaller Cache: Reward-Coordinated Efficient Reasoning",
+      "abstract": "Large Reasoning Models (LRMs) excel on complex tasks through long chain-of-thought (CoT) reasoning, but their lengthy intermediate steps cause severe overthinking that inflates inference cost. KV-cache compression is a common solution, yet existing reasoning-oriented methods apply a uniform policy across the trajectory and judge compression only by what it removes from the cache. Two observations point the other way. First, a reasoning state's tolerance to context loss varies along the trajectory, and process reward tracks it: deleting tokens at high-reward steps preserves accuracy far better than deleting the same budget at random. Second, compression is not free on the generation side, since a smaller cache leads the model to generate more tokens, partly canceling the saving. Together these motivate coordinating both sides under a single process reward. We propose ReCo (Reward-Coordinated Compression), a step-wise framework in which a lightweight process-reward estimator scores each completed step and drives three components: (1) reward-adaptive KV-cache compression that shrinks the retained cache harder at high-reward steps and less at low-reward ones, (2) a reward-banded penalty on reflection tokens that curbs redundant generation, and (3) confidence-based early stopping that triggers when the reasoning is reliable. Across three reasoning models and six benchmarks, ReCo reduces generated tokens by 37%-65% and end-to-end latency by 2.08x-2.35x over Full CoT, all while largely preserving accuracy.",
+      "authors": [
+        "Qiyuan Zhu",
+        "Dezhi Li",
+        "Pengyu Cheng",
+        "Tianle Chen",
+        "Jiacheng Wang",
+        "Ruijie Shen",
+        "Hao Gu",
+        "Sida Lin",
+        "Zirui Liu",
+        "Jiacheng Liu",
+        "Sirui Han"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-08-05T12:36:28+00:00",
+      "link": "https://arxiv.org/pdf/2608.04771v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Reward-coordinated KV-cache compression that adapts to reasoning state tolerance.",
+      "llm_evidence_cn": "提出奖励协调的KV缓存压缩，根据推理状态对上下文丢失的容忍度自适应压缩，兼顾内存与准确率。",
+      "llm_evidence": "提出奖励协调的KV缓存压缩，根据推理状态对上下文丢失的容忍度自适应压缩，兼顾内存与准确率。",
+      "canonical_evidence": "提出奖励协调的KV缓存压缩，根据推理状态对上下文丢失的容忍度自适应压缩，兼顾内存与准确率。",
+      "llm_tldr_en": "Large reasoning models overthink and inflate inference cost. This paper finds that pruning tokens at high-process-reward steps preserves accuracy better than random deletion, and that a smaller cache may trigger extra generation. Reward-coordinated compression reduces cache size while keeping reasoning efficient.",
+      "llm_tldr_cn": "针对大型推理模型通过长思维链导致过度思考、推理成本高的问题，本文提出奖励协调的KV缓存压缩方法。观察发现推理轨迹各步骤对上下文丢失的容忍度不同，过程奖励可以反映这一点，在高奖励步骤删除token比随机删除更能保持准确率；同时压缩会促使模型生成更多token，需整体协调。实验表明该方法能在有效减小缓存占用和推理成本的同时维持推理性能。",
+      "llm_tldr": "针对大型推理模型通过长思维链导致过度思考、推理成本高的问题，本文提出奖励协调的KV缓存压缩方法。观察发现推理轨迹各步骤对上下文丢失的容忍度不同，过程奖励可以反映这一点，在高奖励步骤删除token比随机删除更能保持准确率；同时压缩会促使模型生成更多token，需整体协调。实验表明该方法能在有效减小缓存占用和推理成本的同时维持推理性能。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2608.04405v1",
+      "source": "arxiv",
+      "title": "Training-Free Hashing-Based Attention via Binary Principal Components",
+      "abstract": "Long-context large language models (LLMs) are increasingly deployed in real-world applications, yet self-attention remains a major efficiency bottleneck -- especially during decoding -- due to the necessity of repeatedly processing ever-growing key-value (KV) caches. Existing sparse attention reduce computation by attending to fewer KV pairs, but often suffer from substantial accuracy degradation, require additional training, or rely on expensive hashing. In this work, we present BinaryPC, a training-free, data-aware hashing-based sparse attention for long-context LLMs. BinaryPC constructs compact binary hash codes and corresponding hash function by computing binary principal components of data. Unlike Locality-Sensitive Hashing (LSH) with data-independent random projections or learned non-linear hashing methods, BinaryPC constructs binary codes that explicitly preserve the structural information of data without requiring gradient-based training. Comprehensive experiments across multiple model families and long-context benchmarks show that BinaryPC preserves accuracy relative to full attention while achieving superior performance among sparse and hashing-based baselines. On modern GPUs, BinaryPC improves end-to-end decoding throughput by 3.56$\\times$ over the FlashAttention kernel. Our code is available at https://github.com/yudaohai666/BPC.",
+      "authors": [
+        "Daohai Yu",
+        "Zhanpeng Zeng",
+        "Keyu Chen",
+        "Wenhao Li",
+        "Zhifeng Shen",
+        "Luxi Lin",
+        "Ruizhi Qiao",
+        "Xing Sun",
+        "Rongrong Ji"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.CL"
+      ],
+      "published": "2026-08-05T03:19:21+00:00",
+      "link": "https://arxiv.org/pdf/2608.04405v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Training-free hashing-based sparse attention over KV caches using binary principal components",
+      "llm_evidence_cn": "利用二元主成分的无训练哈希稀疏注意力，作用于KV缓存",
+      "llm_evidence": "利用二元主成分的无训练哈希稀疏注意力，作用于KV缓存",
+      "canonical_evidence": "利用二元主成分的无训练哈希稀疏注意力，作用于KV缓存",
+      "llm_tldr_en": "BinaryPC is a training-free, data-aware hashing-based sparse attention for long-context LLMs that constructs compact binary hash codes via binary principal components, attending to fewer KV pairs while avoiding accuracy drops and expensive hashing.",
+      "llm_tldr_cn": "长上下文LLM解码需反复处理不断增长的KV缓存，自我注意力成为效率瓶颈。现有稀疏注意力虽减少计算，但常伴有精度下降、需要额外训练或依赖昂贵哈希。BinaryPC通过计算数据的二元主成分来构造紧凑的二元哈希码和哈希函数，实现训练无关且数据感知的哈希稀疏注意力。相比数据无关的局部敏感哈希，该方法在保持精度的同时降低计算和存储开销，为长上下文解码中的KV缓存访问加速提供了高效选择。",
+      "llm_tldr": "长上下文LLM解码需反复处理不断增长的KV缓存，自我注意力成为效率瓶颈。现有稀疏注意力虽减少计算，但常伴有精度下降、需要额外训练或依赖昂贵哈希。BinaryPC通过计算数据的二元主成分来构造紧凑的二元哈希码和哈希函数，实现训练无关且数据感知的哈希稀疏注意力。相比数据无关的局部敏感哈希，该方法在保持精度的同时降低计算和存储开销，为长上下文解码中的KV缓存访问加速提供了高效选择。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2608.01034v2",
+      "source": "arxiv",
+      "title": "Opt.Gear Technical Report",
+      "abstract": "We introduce OptGear, a foundation model designed for efficient on-device deployment, real-tim inference, and strong task capability. It includes a dense model (1M, 270M, and 1B) with a context length of 64K. We designed a new hybrid architecture that combines a convolutional key-value gated mixer with local-global attention to reduce the KV-cache memory that tends to increase exponentially with long context. This architecture delivers up to X4.9 faster prefill and decoding speeds on the NPUs compared to models of a similar scale models. From a 2T tokens candidate corpus, OptGear is trained on a curated 0.5T tokens subset without knowledge distillation. This is the most data-efficient of the existing foundation models. All models are released with open weights and deployment binaries for ONNX, Qualcomm NPU, and Apple ANE making OptGear a practical base for edge applications that need fast, memory-efficient inference and strong task capabilities. Furthermore, to expand the ecosystem of on-device generative language models, we are introducing the OptGear-1M that can be deployed on Micro-Controller Units (MCUs), a Tiny Language Model (TLM). OptGear-1M is the first generative language model to achieve 20 TPS with W4A32 quantization on the ARM Cortex-M7 CPU of the STM32H747I-DISCO.",
+      "authors": [
+        "Juneyoung Park",
+        "Youngwook Kwon"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-08-02T06:43:25+00:00",
+      "link": "https://arxiv.org/pdf/2608.01034v2",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Hybrid architecture reduces KV-cache memory for long context",
+      "llm_evidence_cn": "混合架构设计以减少长上下文KV缓存内存",
+      "llm_evidence": "混合架构设计以减少长上下文KV缓存内存",
+      "canonical_evidence": "混合架构设计以减少长上下文KV缓存内存",
+      "llm_tldr_en": "OptGear is a foundation model family with a hybrid architecture combining convolutional key-value gated mixer and local-global attention to reduce KV-cache memory, achieving up to 4.9x faster prefill and decode on NPUs.",
+      "llm_tldr_cn": "端侧部署大模型需要长上下文能力，但KV缓存内存会随序列长度指数增长。OptGear采用混合架构，将卷积键值门控混合器与局部-全局注意力结合，从模型设计上减少KV缓存占用。在NPU上相比同规模模型获得最高4.9倍的预填充和解码加速，并以0.5T数据训练达到高数据效率。该技术报告还提供开放权重与ONNX、Quantized等部署二进制，支持实际应用，为端侧高效推理提供新思路。",
+      "llm_tldr": "端侧部署大模型需要长上下文能力，但KV缓存内存会随序列长度指数增长。OptGear采用混合架构，将卷积键值门控混合器与局部-全局注意力结合，从模型设计上减少KV缓存占用。在NPU上相比同规模模型获得最高4.9倍的预填充和解码加速，并以0.5T数据训练达到高数据效率。该技术报告还提供开放权重与ONNX、Quantized等部署二进制，支持实际应用，为端侧高效推理提供新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

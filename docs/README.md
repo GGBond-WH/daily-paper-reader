@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-05</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-05 22:06:01 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-07 00:58:28 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦KV缓存压缩与量化，另涉LLM性能建模和边缘内存优化。最值得精读的两篇高分为INT2量化结合输出感知旋转，以及锚残差KV缓存压缩，均直指推理显存瓶颈。建议优先复现这两项方法，速读内容作为性能调优与边缘部署的辅助参考。</p>
+<p>今日精读速读共4篇论文，核心聚焦KV Cache压缩与高效推理，2篇精读均获9分。最值得关注的是《Spend Bits Where Queries Look》用注意力保持变换做量化，以及《Fewer Tokens, Smaller Cache》通过奖励协调减少推理开销。建议普通读者优先从KV Cache量化入手，兼顾压缩率与注意力质量。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Output-Aware Rotation for INT2 KV-Cache Quantization">Output-Aware Rotation for INT2 KV-Cache Quantization</span></li><li><span class="dpr-home-dashboard-paper-title" title="AnchorKV: Anchor-Residual KV Cache Compression">AnchorKV: Anchor-Residual KV Cache Compression</span></li><li><span class="dpr-home-dashboard-paper-title" title="SAKI: Score-Aware Low-Rank Key Indexing for Long-Context KV Retrieval">SAKI: Score-Aware Low-Rank Key Indexing for Long-Context KV Retrieval</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Spend Bits Where Queries Look: KV Cache Vector Quantization with Attention-Preserving Transforms">Spend Bits Where Queries Look: KV Cache Vector Quantization with Attention-Preserving Transforms</span></li><li><span class="dpr-home-dashboard-paper-title" title="Fewer Tokens, Smaller Cache: Reward-Coordinated Efficient Reasoning">Fewer Tokens, Smaller Cache: Reward-Coordinated Efficient Reasoning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>7</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SLIM: Saturation-Aware Lightweight Performance Modeling for LLM Serving">SLIM: Saturation-Aware Lightweight Performance Modeling for LLM Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Structured Memory for Edge Language Models: Persistent Context and Corpus Retrieval via O(1) SSM State Injection">Structured Memory for Edge Language Models: Persistent Context and Corpus Retrieval via O(1) SSM State Injection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Maglev: Sliding Recurrent Memory">Maglev: Sliding Recurrent Memory</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Training-Free Hashing-Based Attention via Binary Principal Components">Training-Free Hashing-Based Attention via Binary Principal Components</span></li><li><span class="dpr-home-dashboard-paper-title" title="Opt.Gear Technical Report">Opt.Gear Technical Report</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
 </div>
 
