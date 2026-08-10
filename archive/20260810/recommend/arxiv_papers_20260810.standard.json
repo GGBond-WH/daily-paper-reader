@@ -1,0 +1,250 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-10T21:11:51.404674+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 5,
+    "deep_cap": 6,
+    "deep_selected": 5,
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
+  },
+  "deep_dive": [
+    {
+      "id": "2608.06849v1",
+      "source": "arxiv",
+      "title": "Autonomy-of-Heads: Data-Free Sparse Attention from Frozen Query-Key Geometry",
+      "abstract": "Long-context LLM inference is bottlenecked by quadratic attention computation and growing KV-cache costs. Existing sparse attention and KV-compression methods typically decide which tokens or heads to preserve from runtime attention scores, observation windows, calibration prompts, or learned gates, making head diagnosis input-dependent and costly to deploy. We propose Autonomy-of-Heads (AoH), a data-free method that identifies retrieval and streaming heads from the spectral geometry of query-key projections. AoH defines the kernel attention operator $M_h = W_K^{h\\top}W_Q^h$ and uses its effective-rank as a weight-space measure of head function: concentrated spectra indicate a small number of dominant query-key matching directions and are associated with retrieval heads, whereas diffuse spectra indicate the absence of a dominant global matching direction and are associated with streaming heads. We further derive an efficient $d_\\text{head}$-dimensional computation that avoids constructing the full $d_\\text{model}\\times d_\\text{model}$ matrix. We conducted extensive experiments across models demonstrating that at 50\\% sparsity, AoH retains 96.5\\% of Full Attention performance on average while reducing prefill and decode latency by up to 41.4\\% and 66.0\\%, respectively, and KV-cache memory by 50.0\\% at 256K tokens.",
+      "authors": [
+        "Yehan Yang",
+        "Junyuan Shang",
+        "Yang Li",
+        "Guanqun Zhao",
+        "Shuohuan Wang",
+        "Dianhai Yu"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI"
+      ],
+      "published": "2026-08-07T06:18:18+00:00",
+      "link": "https://arxiv.org/pdf/2608.06849v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "data-free sparse attention from query-key geometry to compress KV cache and cut attention cost",
+      "llm_evidence_cn": "基于查询-键投影几何的无数据稀疏注意力，压缩KV缓存并降低注意力开销",
+      "llm_evidence": "基于查询-键投影几何的无数据稀疏注意力，压缩KV缓存并降低注意力开销",
+      "canonical_evidence": "基于查询-键投影几何的无数据稀疏注意力，压缩KV缓存并降低注意力开销",
+      "llm_tldr_en": "AoH identifies retrieval/streaming heads from frozen QK geometry using effective rank, enabling data-free sparse attention and KV-cache compression without calibration prompts.",
+      "llm_tldr_cn": "长上下文大模型的推理受限于二次注意力计算和日益增长的KV缓存开销。现有稀疏注意力与KV压缩方法大多依赖运行时注意力得分、观测窗口或校准提示，导致输入依赖且部署昂贵。本文提出Autonomy-of-Heads，从查询-键投影的谱几何中无数据地识别检索头与流式头，使用有效秩作为头部功能的度量，进而压缩KV缓存并实现稀疏注意力。该方法无需校准数据即可部署，在保持精度的同时有效降低长上下文推理成本，为KV缓存压缩提供了新的无数据范式。",
+      "llm_tldr": "长上下文大模型的推理受限于二次注意力计算和日益增长的KV缓存开销。现有稀疏注意力与KV压缩方法大多依赖运行时注意力得分、观测窗口或校准提示，导致输入依赖且部署昂贵。本文提出Autonomy-of-Heads，从查询-键投影的谱几何中无数据地识别检索头与流式头，使用有效秩作为头部功能的度量，进而压缩KV缓存并实现稀疏注意力。该方法无需校准数据即可部署，在保持精度的同时有效降低长上下文推理成本，为KV缓存压缩提供了新的无数据范式。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.07001v1",
+      "source": "arxiv",
+      "title": "Every Cache Entry Earns Its Place: Global Allocation of Resolution and Coverage for KV Cache Compression",
+      "abstract": "As large language models (LLMs) process increasingly long contexts, KV cache storage and repeated access have become a major bottleneck. Existing KV cache compression methods rely on predefined, fixed compression rules and are typically developed around either token eviction or merging. As a result, cache resources can neither flow freely across layers, heads, and context slots, nor be jointly allocated to balance local resolution and information coverage. Therefore, we propose GraceKV, a global approach for the allocation of resolution and coverage in KV cache compression, and formulate the compression process as a global resource allocation problem under a fixed cache budget. GraceKV treats each layer-KV head-slot combination as an atomic unit and builds a prototype tree. Leaf nodes correspond to token-level KV entries, while each internal node uses a single prototype to compress the KV space covered by its children. A set of non-overlapping nodes in the tree forms the representation of an atomic unit. Adding the root of a new tree expands information coverage, whereas splitting a selected node improves local resolution. All candidate actions compete globally for a shared cache budget. Finally, the nodes retained across all trees form the compressed KV cache. This process adaptively determines the allocation of cache resources among atomic units globally and the balance between resolution and coverage. GraceKV requires no additional training, and the entire compression and inference process is performed on the GPU. Systematic experiments across diverse long-context tasks and compression ratios show that GraceKV ranks first in 24 of 32 settings and remains robust up to 128-fold compression. These results validate the effectiveness of global budget allocation in coordinating information coverage and local resolution.",
+      "authors": [
+        "Haolin Tian",
+        "Yuzhe Liu",
+        "Tonghan Wang"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-08-07T09:18:42+00:00",
+      "link": "https://arxiv.org/pdf/2608.07001v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Global resource allocation for KV cache compression across layers, heads, and context slots",
+      "llm_evidence_cn": "跨层、跨头和上下文槽对KV缓存压缩进行全局资源分配",
+      "llm_evidence": "跨层、跨头和上下文槽对KV缓存压缩进行全局资源分配",
+      "canonical_evidence": "跨层、跨头和上下文槽对KV缓存压缩进行全局资源分配",
+      "llm_tldr_en": "GraceKV treats KV cache compression as a global resource allocation problem under a fixed budget, jointly deciding resolution and coverage across layers, heads, and context slots, moving beyond fixed eviction or merging rules.",
+      "llm_tldr_cn": "大模型处理长上下文时，KV缓存的存储与反复访问成为瓶颈。现有压缩方法通常依赖预定义的固定规则，主要聚焦于token淘汰或合并，导致资源不能跨层、跨头、跨上下文槽自由流动。本文提出GraceKV，将KV缓存压缩建模为固定预算下的全局资源分配问题，为每个层-头-槽联合分配局部分辨率与信息覆盖度，从而在预算内更优地保留关键信息，显著改善压缩效果。",
+      "llm_tldr": "大模型处理长上下文时，KV缓存的存储与反复访问成为瓶颈。现有压缩方法通常依赖预定义的固定规则，主要聚焦于token淘汰或合并，导致资源不能跨层、跨头、跨上下文槽自由流动。本文提出GraceKV，将KV缓存压缩建模为固定预算下的全局资源分配问题，为每个层-头-槽联合分配局部分辨率与信息覆盖度，从而在预算内更优地保留关键信息，显著改善压缩效果。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.07009v1",
+      "source": "arxiv",
+      "title": "HiSparse: Scaling Sparse-Attention Decoding with Hierarchical KV Cache Management",
+      "abstract": "Top-k sparse attention makes long-context LLM decoding cheap to compute: each step reads only a few thousand selected KV entries rather than the full context. Serving systems, however, typically keep the entire KV cache in GPU HBM so that every position stays selectable, so a request's memory bill still grows with its full context length--decoding hits a capacity wall long before it runs out of compute, and a context whose KV cache exceeds HBM cannot be served at all. We present HiSparse, an exact, indexer-agnostic hierarchical KV cache for sparse-attention serving. HiSparse keeps each request's full KV history in host memory and bounds its decode footprint with a small, fixed-size GPU cache; a fused CUDA kernel resolves each layer's selections--hit detection, LRU replacement, and host-to-device fetches--inside the decode CUDA graph; and, for models that share selections across layers, exact layer-wise prefetching hides roughly half of the remaining miss overhead. Because only KV placement changes, model outputs are unchanged. HiSparse is merged into upstream SGLang and evaluated across three sparse-attention families (DSA, NSA, and Quest) on H200, B200, and GH200 platforms: it improves peak generation throughput by up to 4.7x on long-context workloads while preserving comparable per-token latency and reducing time-to-first-token at high load--and a no-IO oracle shows the resolution mechanism itself adds no measurable per-token cost, leaving host-device IO as the only price of bounded residency.",
+      "authors": [
+        "Zhiqiang Xie",
+        "Zhangheng Huang",
+        "Tingwei Huang",
+        "Ziyi Xu",
+        "Ruiyang Ma",
+        "Christos Kozyrakis"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC"
+      ],
+      "published": "2026-08-07T09:22:17+00:00",
+      "link": "https://arxiv.org/pdf/2608.07009v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Hierarchical KV cache management reduces GPU memory footprint for sparse-attention decoding",
+      "llm_evidence_cn": "分层KV缓存管理降低稀疏注意力解码的GPU显存占用",
+      "llm_evidence": "分层KV缓存管理降低稀疏注意力解码的GPU显存占用",
+      "canonical_evidence": "分层KV缓存管理降低稀疏注意力解码的GPU显存占用",
+      "llm_tldr_en": "HiSparse is an exact, indexer-agnostic hierarchical KV cache for sparse-attention serving, placing full KV history in host memory and bounding the GPU footprint with a small fixed-size cache, enabling long-context decoding that exceeds HBM capacity.",
+      "llm_tldr_cn": "长上下文LLM解码中，Top-k稀疏注意力虽减少计算量，但现有服务系统仍需将全部KV缓存留在GPU显存，导致内存随上下文增长并形成容量墙。本文提出HiSparse，一种精确且与索引器无关的分层KV缓存：将每请求完整KV历史放入主机内存，并以小的固定大小GPU缓存约束解码占用。融合CUDA内核逐层解析选择，从而能服务显存放不下的超长上下文，显著提升稀疏注意力解码的可扩展性。",
+      "llm_tldr": "长上下文LLM解码中，Top-k稀疏注意力虽减少计算量，但现有服务系统仍需将全部KV缓存留在GPU显存，导致内存随上下文增长并形成容量墙。本文提出HiSparse，一种精确且与索引器无关的分层KV缓存：将每请求完整KV历史放入主机内存，并以小的固定大小GPU缓存约束解码占用。融合CUDA内核逐层解析选择，从而能服务显存放不下的超长上下文，显著提升稀疏注意力解码的可扩展性。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.06628v1",
+      "source": "arxiv",
+      "title": "Retrofitting Linear Attention into Diffusion Language Models",
+      "abstract": "Diffusion language models (dLLMs) offer a promising alternative to autoregressive models by accelerating inference through parallel decoding. Recent dLLMs commonly use blockwise semi-autoregressive decoding, generating blocks autoregressively while denoising tokens within each active block in parallel. However, despite KV caching, each denoising step still attends to all previous blocks, repeatedly incurring prefix-attention cost. Motivated by this bottleneck, we ask whether dLLM inference can be further accelerated by linearizing attention over previous blocks. We introduce block-hybrid attention, which retains exact softmax attention within the active denoising block while applying linear attention over previous blocks. We show that this hybrid attention can be retrofitted into a pretrained dLLM with minimal post-training: LLaDA-Hybrid replaces 6 of the 20 attention layers in LLaDA~2.1, a 16B open-source dLLM, largely following LoLCAT (Zhang et al, 2024). The conversion takes only approximately 60 hours while preserving benchmark performance: 72.0% vs. 75.6% on HumanEval, 63.0% vs. 57.7% on MBPP+, and 86.7% vs. 88.3% on CMATH. With a Triton implementation, LLaDA-Hybrid achieves up to $1.7\\times$ higher decoding throughput and supports more concurrent requests before exhausting memory, showing that pretrained dLLMs can be efficiently linearized for faster inference. Our code is available at: https://github.com/Diuven/LLaDA-Hybrid.",
+      "authors": [
+        "Jinha Kim",
+        "Younghun Roh",
+        "Jaeyeon Kim"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-08-06T22:34:20+00:00",
+      "link": "https://arxiv.org/pdf/2608.06628v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "linear attention over previous blocks reduces prefix-attention cost in dLLMs with KV caching",
+      "llm_evidence_cn": "将先前块的注意力线性化，降低带KV缓存的扩散语言模型前缀注意力开销",
+      "llm_evidence": "将先前块的注意力线性化，降低带KV缓存的扩散语言模型前缀注意力开销",
+      "canonical_evidence": "将先前块的注意力线性化，降低带KV缓存的扩散语言模型前缀注意力开销",
+      "llm_tldr_en": "Diffusion LLMs with blockwise decoding still pay prefix attention cost despite KV caching; block-hybrid attention keeps exact attention in the active block and linear attention over previous blocks, accelerating inference.",
+      "llm_tldr_cn": "扩散语言模型采用块状半自回归解码，尽管使用了KV缓存，每个去噪步骤仍要关注所有先前块，反复付出前缀注意力代价。本文提出块混合注意力，在活动去噪块内保留精确softmax注意力，而在先前块上应用线性注意力，从而显著降低推理开销。实验表明该方法在不牺牲质量的前提下加速生成，为扩散语言模型的高效推理提供了新思路。",
+      "llm_tldr": "扩散语言模型采用块状半自回归解码，尽管使用了KV缓存，每个去噪步骤仍要关注所有先前块，反复付出前缀注意力代价。本文提出块混合注意力，在活动去噪块内保留精确softmax注意力，而在先前块上应用线性注意力，从而显著降低推理开销。实验表明该方法在不牺牲质量的前提下加速生成，为扩散语言模型的高效推理提供了新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.07458v1",
+      "source": "arxiv",
+      "title": "CoinRAG: Contextualized Information Nugget KV Cache Reuse for Long-Context RAG",
+      "abstract": "Recent optimization studies on Retrieval-Augmented Generation (RAG) have exploited chunk-level KV cache reuse to avoid processing long retrieved contexts for higher efficiency, while significant information redundancy and noise still remain in the coarse-grained chunks. This paper optimizes the Pareto frontier under low prefill latency constraints while maximizing accuracy by proposing CoinRAG (Contextualized Information Nugget KV Cache Reuse for Long-Context RAG). The name metaphorically reflects our core mechanism: much like assembling small tokens (or \"coins\") to accumulate a larger value, CoinRAG compositionally reuses offline-computed, fine-grained nugget caches to form a learned contextual representation efficiently in a more semantically relevant but compact manner. Specifically, instead of full-chunk encoding, CoinRAG identifies query-relevant semantic units within retrieved chunks through two-stage retrieval and seamlessly assembles their sliced KV representations with a chunk-level context. Extensive evaluations on LongBench multi-hop question answering tasks demonstrate that CoinRAG significantly reduces operational costs and outperforms the other baselines with a new Pareto frontier and an average 5.3% relative improvement in answer quality (F1) under a standard fast prefill latency budget.",
+      "authors": [
+        "Gyuwan Kim",
+        "Cheoneum Park",
+        "Tao Yang"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL",
+        "cs.AI",
+        "cs.IR",
+        "cs.LG"
+      ],
+      "published": "2026-08-07T17:51:49+00:00",
+      "link": "https://arxiv.org/pdf/2608.07458v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "compositionally reuses offline-computed fine-grained nugget KV caches for long-context RAG",
+      "llm_evidence_cn": "组合式复用离线计算的细粒度信息碎片KV缓存以优化长上下文RAG",
+      "llm_evidence": "组合式复用离线计算的细粒度信息碎片KV缓存以优化长上下文RAG",
+      "canonical_evidence": "组合式复用离线计算的细粒度信息碎片KV缓存以优化长上下文RAG",
+      "llm_tldr_en": "CoinRAG optimizes the latency-accuracy Pareto frontier of long-context RAG by compositionally reusing offline-computed fine-grained nugget KV caches, reducing redundancy and noise compared to chunk-level reuse.",
+      "llm_tldr_cn": "针对长上下文检索增强生成中传统块级KV缓存复用存在信息冗余和噪声的问题，CoinRAG提出组合式复用离线计算的细粒度信息碎片缓存，以较低预填充延迟构建上下文表示，从而在延迟和准确性之间取得更优权衡，为RAG场景的KV缓存优化提供了新思路。",
+      "llm_tldr": "针对长上下文检索增强生成中传统块级KV缓存复用存在信息冗余和噪声的问题，CoinRAG提出组合式复用离线计算的细粒度信息碎片缓存，以较低预填充延迟构建上下文表示，从而在延迟和准确性之间取得更优权衡，为RAG场景的KV缓存优化提供了新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2608.06557v1",
+      "source": "arxiv",
+      "title": "Cascade: Exploiting SLO-Aware latency budget for fair and high goodput LLM inference serving",
+      "abstract": "The reasoning and agentic capabilities of large language models have expanded the range of applications they support, from short interactive exchanges to long, compute-heavy requests. LLM serving platforms today define response-latency service-level objectives, even though requests within the same service can differ by orders of magnitude in input length, generation length, execution cost, and the availability of reusable KV-cache state. As a result, requests governed by the same service level objective have different urgency: after accounting for the time required to execute them, some have substantial latency headroom while others have almost none. We define this headroom---the difference between a request's service level objective and its predicted remaining service time---as its per-request latency budget.   We present Cascade, an LLM serving system that estimates and continuously updates this budget from request characteristics, KV-cache state, and current system load. Unlike prior SLO-aware schedulers that use deadlines to govern request ordering alone, Cascade uses a single per-request budget to jointly coordinate request scheduling and KV-cache management across the memory hierarchy. Its scheduler prioritizes requests with little remaining budget, while its memory manager uses the same budget to decide whether non-resident KV state should be restored or prefetched from a deeper tier, retained in HBM, or recomputed. By directing queueing and data-movement overhead toward requests that can absorb it, Cascade improves SLO-satisfied goodput while preserving fairness across heterogeneous request classes. On production traces across three large language models, Cascade improves goodput by up to2.4x and reduces SLO violations by 40% relative to the default vLLM first-come, first-served scheduler.",
+      "authors": [
+        "Muhammad Adnan",
+        "Rohan Mahapatra",
+        "Prashant J. Nair",
+        "Daniel Berger",
+        "Pantea Zardoshti",
+        "Rodrigo Fonseca",
+        "Esha Choukse"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC",
+        "cs.LG"
+      ],
+      "published": "2026-08-06T20:14:21+00:00",
+      "link": "https://arxiv.org/pdf/2608.06557v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Exploits latency headroom and reusable KV-cache state for LLM serving scheduling",
+      "llm_evidence_cn": "利用延迟余量和可复用KV缓存状态进行大模型服务调度",
+      "llm_evidence": "利用延迟余量和可复用KV缓存状态进行大模型服务调度",
+      "canonical_evidence": "利用延迟余量和可复用KV缓存状态进行大模型服务调度",
+      "llm_tldr_en": "Presents Cascade, an SLO-aware serving method for LLM inference that exploits latency headroom and reusable KV-cache state to schedule requests, improving fairness and goodput.",
+      "llm_tldr_cn": "大模型推理服务中同一服务等级目标下请求的输入长度、生成长度和执行成本差异巨大，且可复用KV缓存状态多寡不同，导致请求间的紧迫程度不同。Cascade定义延迟余量作为请求的紧急程度指标，结合可复用KV缓存状态，在满足SLO的前提下进行调度，以提升公平性和整体有效吞吐。该方法利用了KV缓存重用带来的执行成本差异，为LLM推理服务的调度优化提供了新视角。",
+      "llm_tldr": "大模型推理服务中同一服务等级目标下请求的输入长度、生成长度和执行成本差异巨大，且可复用KV缓存状态多寡不同，导致请求间的紧迫程度不同。Cascade定义延迟余量作为请求的紧急程度指标，结合可复用KV缓存状态，在满足SLO的前提下进行调度，以提升公平性和整体有效吞吐。该方法利用了KV缓存重用带来的执行成本差异，为LLM推理服务的调度优化提供了新视角。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "transformer inference optimization using key-value cache",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}

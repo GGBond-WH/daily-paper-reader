@@ -1,0 +1,398 @@
+Title: Retrofitting Linear Attention into Diffusion Language Models
+
+URL Source: https://arxiv.org/pdf/2608.06628v1
+
+Published Time: Mon, 10 Aug 2026 00:15:14 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+Published as a workshop paper at NonAR-LM 
+
+# Retrofitting Linear Attention into Diffusion Language Models 
+
+Jinha Kim ∗
+
+Apple 
+
+Younghun Roh ∗
+
+Google DeepMind 
+
+Jaeyeon Kim 
+
+Harvard University 
+
+## Abstract 
+
+Diffusion language models (dLLMs) offer a promising alternative to au-toregressive models by accelerating inference through parallel decoding. Recent dLLMs commonly use blockwise semi-autoregressive decoding, generating blocks autoregressively while denoising tokens within each active block in parallel. However, despite KV caching, each denoising step still attends to all previous blocks, repeatedly incurring prefix-attention cost. Motivated by this bottleneck, we ask whether dLLM inference can be further accelerated by linearizing attention over previous blocks. We intro-duce block-hybrid attention, which retains exact softmax attention within the active denoising block while applying linear attention over previous blocks. We show that this hybrid attention can be retrofitted into a pre-trained dLLM with minimal post-training: LL ADA-H YBRID replaces 6 of the 20 attention layers in LLaDA 2.1 (Bie et al., 2026), a 16B open-source dLLM, largely following LoLCAT (Zhang et al., 2025). The conversion takes only approximately 60 hours while preserving benchmark performance: 72.0% vs. 75.6% on HumanEval, 63.0% vs. 57.7% on MBPP+, and 86.7% vs. 88.3% on CMATH. With a Triton implementation, LL ADA-H YBRID 
+
+achieves up to 1.7 × higher decoding throughput and supports more concur-rent requests before exhausting memory, showing that pretrained dLLMs can be efficiently linearized for faster inference. Our code is available at: 
+
+https://github.com/Diuven/LLaDA-Hybrid .
+
+## 1 Introduction 
+
+Diffusion language models (dLLMs) have recently emerged as a compelling alternative to autoregressive language models. Unlike autoregressive models, which generate sequences strictly from left to right, dLLMs begin inference from a fully masked sequence and itera-tively reveal tokens at arbitrary positions. Their practical appeal is twofold: having flexibility in the inference order can support globally constrained generation and planning (Trainin et al., 2026; Kim et al., 2025; Ye et al., 2024), and parallel decoding can substantially improve serving throughput, as demonstrated in recent large-scale deployments (Nie et al., 2025; Ye et al., 2025; DeepMind, 2025; Inception Labs et al., 2025). Recent dLLMs commonly adopt blockwise semi-autoregressive decoding: blocks are gen-erated sequentially, whereas tokens within the active block are denoised in parallel. This structure enables KV caching over completed blocks while retaining the throughput benefits of parallel decoding, offering a speed-up over autoregressive language model counterparts. In this work, we ask whether this efficiency advantage can be pushed further by retrofitting 
+
+dLLMs with linear attention (Katharopoulos et al., 2020). Linear attention has been exten-sively studied for large-scale autoregressive models since it makes the per-token attention cost no longer grow with the context length by replacing the softmax attention with a linearized kernel feature map and summarizing the prefix in a fixed-size recurrent state. Applying linear attention to a dLLM, however, is not straightforward: bidirectional depen-dencies alter the hidden states, which in turn change the keys and values, preventing them from being cached. To this end, we propose block-hybrid attention : retaining exact softmax 
+
+> ∗
+
+Work done at MIT 
+
+1arXiv:2608.06628v1 [cs.LG] 6 Aug 2026 Published as a workshop paper at NonAR-LM LLaDA-Hybrid   
+
+> output logits
+> LM head
+> RMSNorm
+
+⋮                           
+
+> Softmax attn Hybrid attn Softmax attn Softmax attn Softmax attn Hybrid attn
+> Embedding
+> masked xt
+> Block-hybrid attention
+> hℓ
+> Wq,Wk,Wv
+> within-block softmax inter-block linear
+> +
+> Wo
+> oℓ
+> Stage 1: Layer-wise Attention Transfer ×N
+> teacher activations ht
+> Wq,Wk,Wv
+> teacher softmax
+> at
+> student hybrid
+> ât
+> φq
+> φk
+> λ
+> Wo
+> ot
+> Wo
+> ot
+> ℓMSE (a t,ât)
+> Training Hybrid Parameters
+> Stage 2: End-to-end Low-Rank Adaptation
+> LM head
+> RMSNorm
+
+⋮               
+
+> Softmax attn Hybrid attn Softmax attn Softmax attn Softmax attn Hybrid attn
+> Embedding
+> masked response tokens from Tülu-3 SFT
+> ×N
+> hℓ
+> Wq,Wk,Wv
+> LoRA
+> attention scores
+> Wo
+> LoRA
+> oℓ
+> ℓCE (masked tokens)
+> LoRA Adaptation
+
+Figure 1: Two-stage post-training. We first replace a subset of attention layers with block-hybrid attention. In Stage 1, each hybrid layer is trained locally to match the corresponding frozen softmax-attention layer using the same corrupted activation input and an MSE attention-transfer loss. In Stage 2, the full hybrid model is adapted on the masked-token diffusion objective with LoRA adapters, while the pretrained backbone remains frozen. attention within the active denoising block and applying linear attention over previously completed blocks. This preserves bidirectional interactions where they are needed while compressing the generated blocks into a fixed-size state. To our knowledge, this is the first 
+
+approach to apply linear attention distillation to a diffusion language model. Empirically, we show that LLaDA 2.1-mini (Bie et al., 2026), a pretrained 16B-scale dLLM, can be retrofitted with hybrid linear attention using only a lightweight post-training budget. Following the recipe of LoLCATs (Zhang et al., 2025), our procedure consists of two stages. Stage 1 freezes the backbone and trains only the kernel feature maps and gates to match the attention output of each replaced layer. Stage 2 attaches LoRA (Hu et al., 2022) and fine-tunes the hybrid model using the standard masked diffusion objective to revive downstream accuracy. The resulting model achieves up to a 1.7× end-to-end speedup over a strong baseline already optimized with the SGLang framework (Zheng et al., 2024), while largely preserving downstream performance. 
+
+## 2 Preliminaries 
+
+In this section, we review diffusion language models and linear attention. 
+
+2.1 Diffusion language models 
+
+Although there are other modeling approaches in discrete diffusion (Sahoo et al., 2025; von R ¨ utte et al., 2025; Schiff et al., 2025), masked diffusion (Sahoo et al., 2024; Gat et al., 2024; Shi et al., 2024) is currently the mainstream approach at scale (DeepMind, 2025; Bie et al., 2026; 2025; Zhu et al., 2025; Ye et al., 2025; Song et al., 2025). LLaDA 2.1 (Bie et al., 2026), which serves as the main large-scale testbed of our paper, is also based on masked diffusion models (MDMs). 
+
+Notation. Suppose our goal is to learn the data distribution x ∼ pdata over length-L
+
+discrete sequences with a vocabulary V. Let xi denote the i-th element of a given sequence 
+
+x = ( x1, . . . , xL) and ∆(V ) indicate the probability simplex over V.
+
+Training. MDMs introduce an auxiliary mask token m and learn, for each masked position, the posterior marginal of the clean token conditioned on a masked sequence. To learn this posterior, at training time, one draws a clean sequence x ∼ pdata and constructs a 2Published as a workshop paper at NonAR-LM partially masked sequence z as follows: Sample n ∼ Unif {0, . . . , L} and replace the tokens at uniformly selected n indices in x with m. Hence, a resulting z has n (randomly drawn) masked indices. 
+
+L(θ) : = Ex,z
+
+"
+
+1
+
+n ∑   
+
+> i:zi=m
+
+− log f i 
+
+> θ
+
+(xi | z)
+
+#
+
+.This masking procedure yields a joint distribution over (x, z), and we refer to its conditional marginal law (xi | z) as the unmasking posterior . This unmasking posterior is the central object in MDMs and is modeled by a neural network fθ , which gets z as input and outputs a |V | × L tensor. Concretely, for each i, f i 
+
+> θ
+
+(· | z) ∈ ∆(V ), models the unmasking posterior 
+
+f i 
+
+> θ
+
+(v | z) ≈ p(xi = v | z). To train the network fθ , we minimize cross-entropy loss summed over all masked indices. 
+
+Inference. MDM inference starts from a length-L masked sequence x1 = ( m, . . . , m) or generally a given prompt x1 = ([ prompt ], m, . . . , m), and proceeds over a monotonically decreasing time grid t0 = 1 > · · · > tN = 0. At each step tℓ, given a partially masked sequence xtℓ ∈ (V ∪ { m})L, we proceed by two steps to attain xtℓ+1 : (a) Choose a subset of masked positions S ⊆ { i | xitℓ = m} and (b) For each i ∈ S , unmask xitℓ to a clean token 
+
+v sampled from v ∼ f i 
+
+> θ
+
+(· | xtℓ ) ∈ ∆(V ). Notably, as the MDM training is any-order, i.e., fθ
+
+predicts the clean token distribution over all masked positions, there is flexibility in the choice of S, which is central to the downstream performance. Although parallel decoding can provide a speed-up, it still requires computing bidirectional attention over the full length-L sequence. This can become a bottleneck, as bidirectional attention makes KV caching invalid. To address this, block diffusion (Arriola et al., 2025), which is commonly adopted in diffusion language models, performs block-by-block autore-gressive inference while applying parallel decoding within each block. This enables KV caching for previous blocks and therefore offers a speed-up. 
+
+2.2 Linear attention 
+
+Softmax attention, the main design component of modern transformers, computes a nor-malized weighted average over all keys and values. For a single head with query q i, keys 
+
+{kj}j≤i, and values {vj}j≤i, causal softmax attention takes the form Attn (qi) = ∑j≤i exp (q⊤ 
+
+> i
+
+kj/√d) vj
+
+∑j≤i exp (q⊤ 
+
+> i
+
+kj/√d) .This operation is expressive and remains effective at scale, but its cost grows with the context length: at inference time, even with KV caching, every new query must be compared against all cached keys. Linear attention (Katharopoulos et al., 2020) bypasses this by replacing the exponential kernel with a feature-map inner product; exp (q⊤k/√d) → ϕ(q)⊤ϕ(k), where 
+
+ϕ(·) ∈ RF denotes a kernel feature map. Under this replacement, the linear attention’s output can be rewritten as LinAttn (qi) = ϕ(qi)⊤ 
+
+∑j≤i ϕ(kj)v⊤
+
+> j
+
+
+
+ϕ(qi)⊤
+
+
+
+∑j≤i ϕ(kj)
+
+ . (1) This yields an efficiency gain since the entire prefix can now be summarized by a fixed-size recurrent state: 
+
+Si : = ∑
+
+> j≤i
+
+ϕ(kj)v⊤ 
+
+> j
+
+, Zi : = ∑
+
+> j≤i
+
+ϕ(kj).After a token is processed, its key/value contribution can be summed into the recurrent state and reused for all future queries. Consequently, linear attention reduces the growing softmax KV cache to a constant-size state per layer and head, replacing sequence-length-dependent attention with a recurrent update. 3Published as a workshop paper at NonAR-LM (a) Causal autoregressive          
+
+> K,V Q
+> (b) Sliding-window Hedgehog
+> K,V Q
+> (c) Full diffusion
+> K,V Q
+> (d) Block-wise diffusion
+> K,V Q
+> (e) Block-hybrid (ours)
+> K,V Q
+> softmax Hedgehog linear masked
+
+Figure 2: Attention-pattern comparison. Each panel shows a 16 × 16 query–key matrix split into four 4 × 4 blocks. Blue is exact softmax, orange is Hedgehog linear attention, and white is masked. LL ADA-H YBRID keeps the block-wise diffusion mask pattern, but uses softmax only within diagonal blocks and a fixed-state Hedgehog read for cross-block context. The formula highlights the same split: within-block softmax in blue, cross-block Hedgehog in orange. Orange cells are conceptual relationships represented by the linear branch, not a materialized dense matrix. 
+
+## 3 Method: Block-hybrid attention 
+
+While dLLMs are typically deployed using block diffusion with KV caching, standard softmax attention still incurs growing memory and computation costs as the sequence length grows. This motivates replacing part of the softmax attention computation with linear attention. Applying linear attention to dLLMs, however, is not straightforward due to their bidirectional nature; constructing a fixed-size recurrent state is therefore not direct. To address this issue, we introduce block-hybrid attention , which separates attention into two components. Within the active block, we retain exact bidirectional softmax attention. Across blocks, we compress all previously committed keys and values into a fixed-size linear-attention state. This construction preserves the blockwise bidirectionality of dLLMs while making the cost of accessing the committed context independent of its length. 
+
+3.1 Block-hybrid attention 
+
+Consider generation over blocks B0, B1, . . . , where the tokens in the current block Bn+1
+
+are denoised jointly and all preceding blocks B≤n have already been committed. For each query in the active block, block-hybrid attention combines two branches: (1) a bidirectional softmax-attention branch over tokens in the active block and (2) a recurrent linear-attention branch summarizing all previously committed blocks. 
+
+Within a block , we compute exact softmax attention among the tokens in Bn+1. Let q, k, v ∈ Rd
+
+denote a query, key, and value for one attention head. For a query q in the active block Bn+1,define the unnormalized attention weight aj = exp (q⊤kj/√d), the within-block numerator and normalizer are sm num (q) = ∑
+
+> j∈B n+1
+
+ajvj, sm den (q) = ∑
+
+> j∈B n+1
+
+aj.Their ratio recovers exact softmax attention restricted to the active block. 
+
+Across blocks , we summarize the keys and values from committed blocks using Hedgehog linear attention (Zhang et al., 2024). In particular, for each query head, we use the learned 4Published as a workshop paper at NonAR-LM positive feature map 
+
+ϕ(x) =  softmax (xW ), softmax (−xW )  ∈ R2F,where W ∈ Rd×F is learned per query head. Following Hedgehog, the positive feature map is designed to approximate the behavior of the softmax attention kernel, while including both xW and −xW improves its ability to represent the sign structure of dot-product similarities. The committed context is represented by two recurrent states. After blocks B≤n have been committed, we define 
+
+Sn = ∑
+
+> m≤n
+
+# ∑
+
+> t∈B m
+
+ϕ(kt)v⊤ 
+
+> t
+
+∈ R2F×d, Zn = ∑
+
+> m≤n
+
+# ∑
+
+> t∈B m
+
+ϕ(kt) ∈ R2F.These states are updated once a block is committed: 
+
+Sn = Sn−1 + ∑
+
+> t∈B n
+
+ϕ(kt)v⊤ 
+
+> t
+
+, Zn = Zn−1 + ∑
+
+> t∈B n
+
+ϕ(kt).A query q in the active block Bn accesses all preceding blocks through lin num (q) = 
+
+ϕ(q)⊤Sn−1 and lin den (q) = ϕ(q)⊤ Zn−1. Crucially, the dimensions of Sn−1 and Zn−1 do not depend on the number of committed tokens. Thus, the time and memory required for a query to access the cross-block context are O(Fd ), independent of sequence length. 
+
+Combining the two branches. We merge the exact within-block branch and the recurrent cross-block branch using a shared normalizer. Let w = σ(α) be a learned scalar gate for each query head. The final attention output is out (q) = w sm num (q) + lin num (q)
+
+w sm den (q) + lin den (q) .The shared denominator balances the attention mass assigned to the active block and the committed context, rather than independently normalizing the two branches and combining their already-normalized outputs. Consequently, block-hybrid attention retains the bidirectional structure of block diffusion while reducing the memory and computation associated with cross-block attention. The only additional parameters in each linearized layer are the per-head feature-map matrices 
+
+W and scalar gates α.
+
+3.2 Retrofitting linear attention 
+
+We now ask how to minimally equip a pretrained model with linear attention. Developing an efficient approach is crucial, as pretraining a linear-attention model from scratch is typically expensive. We adapt the two-stage linearization recipe of LoLCATs (Zhang et al., 2025) to the diffusion and block-hybrid setting. As illustrated in Figure 1, the first stage transfers the behavior of each softmax-attention layer to its block-hybrid replacement, while the second stage corrects the residual mismatch that emerges when the modified layers are composed end to end. 
+
+Stage 1: attention transfer. In the first stage, we freeze the pretrained backbone and optimize only the newly introduced block-hybrid parameters ψ = {W, α}, where W and α are defined in Section 3. The objective is to make each block-hybrid module reproduce the output of the softmax-attention module it replaces. Let ahyb  
+
+> ℓ
+
+(ψ) denote the blended attention output of the block-hybrid module at layer ℓ,measured before the output projection, and let asm  
+
+> ℓ
+
+denote the corresponding output of the frozen softmax teacher. We minimize 
+
+LAT (ψ) = ∑
+
+> ℓ∈S
+
+Ext ahyb  
+
+> ℓ
+
+(ψ) − asm 
+
+> ℓ
+> 22
+
+,5Published as a workshop paper at NonAR-LM where S is the set of linearized layers and xt is sampled from the masked diffusion forward process. We discuss our design choice of S in Section 4. A key component of attention transfer is teacher forcing across layers . Each block-hybrid layer receives the hidden states produced by the original softmax teacher rather than the outputs of preceding linearized layers. Consequently, the loss at layer ℓ isolates the approximation error introduced by that layer. The only trainable parameters are ψ = {W, α}.
+
+Stage 2: end-to-end adaptation. The layer-local attention transfer performed in Stage 1 does not guarantee that the complete hybrid model matches the teacher end to end. To correct the residual cross-layer mismatch, we perform a second stage of end-to-end adaptation using the original diffusion masked-token objective: 
+
+Ldiff = Ex0,t,xt [− log pθ (x0 | xt)] ,with the precise masking and loss conventions inherited from the pretrained dLLM. During this stage, we freeze both the pretrained backbone and the block-hybrid parameters ψ =
+
+{W, α}, and instead attach low-rank adapters (Hu et al., 2022) to the attention and MLP projections and optimize only the adapter parameters. Freezing ψ preserves the attention behavior established in Stage 1. The two stages therefore address complementary sources of error. Attention transfer mini-mizes the local approximation error of each replacement, whereas end-to-end adaptation corrects the distribution shift and error accumulation that arise when all block-hybrid layers operate jointly. 
+
+3.3 Serving 
+
+We implement the block-hybrid module as a single fused Triton kernel within SGLang (Zheng et al., 2024). A single kernel launch computes the within-block softmax branch, the linear readout from the recurrent state, the gated merge, and the causal state update, without writing intermediate results to HBM. The matrix multiplications are mapped to Hopper tensor cores. The recurrent state is stored per query head alongside SGLang’s existing paged KV cache, allowing it to reuse the same slot allocator and continuous-batching scheduler. The key serving property is that this state has a fixed size, independent of the number of tokens it has absorbed. Consequently, the per-request memory usage and per-pass cost of a linearized layer remain constant with respect to sequence length, whereas the teacher’s KV cache grows with every committed token. Under a fixed memory budget, this allows the server to admit substantially more concurrent requests before exhausting available memory. 
+
+## 4 Experiments 
+
+We evaluate whether a pretrained diffusion language model can be partially linearized at low training cost while preserving its generation quality and improving serving efficiency. 
+
+Model and linearization configuration. We retrofit the pretrained 16B LLaDA 2.1-mini (Bie et al., 2026) following the two-stage procedure described in Section 3. Of its 20 attention layers, we linearize a strided subset of six layers with zero-indexed layer indices S =
+
+{0, 4, 8, 12, 16, 18 }. The remaining 14 layers retain standard softmax attention. This 6-of-20 configuration represents a deliberate quality–efficiency trade-off. Linearizing more layers increases the fraction of attention computation whose recurrent state has fixed size, but also introduces additional approximation error. Through careful ablation, we find that our choice yields clear serving gains while largely preserving the quality of the pretrained teacher. We refer to the resulting model as LL ADA-H YBRID .
+
+Training data and optimization. Both retrofitting stages use the public Tulu SFT mix-ture (Lambert et al., 2024), which contains a diverse collection of instruction-following examples. We truncate each example to at most 2,048 tokens and use dynamic batching, such that the number of examples in a batch varies with sequence length. We apply the 6Published as a workshop paper at NonAR-LM masked diffusion corruption only to assistant-response tokens; prompt tokens remain unmasked, matching the conditional-generation setting used at inference time. During Stage 1, we set learning rate decayed from 10 −2 to 5 × 10 −3. Attention transfer processes approximately 17 million tokens and requires approximately 24 hours on two NVIDIA L40S GPUs. During Stage 2, we freeze both the pretrained backbone and the block-hybrid parameters and optimize rank-16 LoRA adapters (Hu et al., 2022) attached to the attention and MLP projections. We use LoRA scaling αLoRA = 8, dropout 0.05, and a learning rate decay from 5 × 10 −5 to 10 −5. The selected checkpoint is reached after approximately 300 optimization steps, corresponding to roughly 5 million tokens and six hours of training on two L40S GPUs. 
+
+Evaluation protocol. For quality evaluation, we compare LL ADA-H YBRID with its LLaDA 2.1-mini teacher using the same no-edit decoding configuration with τ = 0.7. We evaluate on coding, mathematical reasoning, and scientific reasoning benchmarks. For serving evaluation, we measure end-to-end decoding throughput using SGLang con-tinuous batching on a single NVIDIA H200 GPU. We use a pool of 1,024 prompts sampled from Alpaca-cleaned, fix the generation length to 2,048 tokens, and sweep the number of concurrent requests. Additional isolated kernel and memory-scaling measurements are reported in the appendix. 
+
+Quality Retention. Table 1 compares LL ADA-H YBRID with the original softmax-attention teacher. Despite replacing six of the model’s 20 attention layers, the hybrid model largely retains the teacher’s coding and mathematical-reasoning performance. The gaps on Hu-manEval, HumanEval+, and CMATH are between 1.6 and 3.6 percentage points, while performance is maintained on MBPP and improves by 5.3 points on MBPP+. The largest degradation occurs on GPQA-Diamond, where the hybrid model trails the teacher by 8.1 points. These results indicate that a substantial subset of the model’s attention layers can be retrofitted without broadly disrupting its pretrained capabilities, although the most difficult reasoning tasks remain more sensitive to approximation error. Table 1: Accuracy under no-edit decoding ( τ=0.7). Teacher: LLaDA 2.1-mini. Student: LL ADA-H YBRID (6/20 layers linearized). Benchmark Teacher (%) LL ADA-H YBRID (%) HumanEval 75.6 72.0 HumanEval+ 72.0 68.9 MBPP 70.4 70.6 MBPP+ 57.7 63.0 CMATH 88.3 86.7 GPQA-Diamond 38.9 30.8 
+
+End-to-End throughput. Table 2 reports decoding throughput under SGLang continuous batching. LL ADA-H YBRID is faster than the softmax-attention teacher at every tested concurrency level, achieving speedups between 1.50 × and 1.73 ×. The largest improvement occurs at 128 concurrent requests, where throughput increases from 2,310.2 to 3,994.4 tokens per second. The speedup becomes larger as concurrency increases from 16 to 128 requests. This behavior is consistent with the fixed-size recurrent state of the linearized layers: their cross-block attention does not require reading an increasingly large KV cache as generation progresses. At 256 concurrent requests, the speedup remains substantial at 1.60 ×, although both models begin to encounter additional system-level bottlenecks. 
+
+Kernel efficiency and concurrency scaling. The same fixed-state property also reduces the memory required for long-context generation and increases the number of requests 7Published as a workshop paper at NonAR-LM Table 2: Decode throughput (tokens/s, higher is better) under SGLang continuous batching on one H200, generation length 2048, 1024-prompt Alpaca-cleaned pool. Concurrent requests Teacher (tok/s) LL ADA-H YBRID (tok/s) Speedup 16 1845.7 2761.7 1.50 ×
+
+32 2047.5 3101.9 1.51 ×
+
+64 2457.9 4026.4 1.64 ×
+
+128 2310.2 3994.4 1.73 ×
+
+256 2350.3 3767.5 1.60 ×
+
+that can be served under a fixed memory budget. The appendix provides isolated mi-crobenchmarks of the LL ADA-H YBRID attention kernel against SGLang’s radix/paged-KV attention kernel, including kernel latency, memory usage, and the resulting concurrency limits (Table 3,Table 4). 
+
+## 5 Conclusion 
+
+We showed that pretrained diffusion language models can be retrofitted with linear attention without retraining from scratch. Our approach, block-hybrid attention, maintains the bidirectional softmax within each denoising block and deploys a fixed-size recurrent state that summarizes committed blocks. Linearizing 6 of 20 layers in LLaDA 2.1-mini preserves performance on coding, mathematics, and reasoning benchmarks while enabling up to 1.7 ×
+
+higher decoding throughput and greater concurrency under a fixed memory budget. The conversion requires only public instruction data and on the order of 10 7 training tokens, suggesting that linear-attention efficiency can be added to existing dLLMs as an inexpensive post-hoc retrofit. 
+
+Limitations and future work. Our retrofit is intentionally conservative: only 6 layers are linearized, so the remaining layers retain sequence-dependent attention cost and KV memory. More aggressive or adaptive layer selection may yield a better quality–efficiency tradeoff. Our evaluation is currently restricted to moderate generation lengths comparable to those used during retrofitting. Evaluating long-form generation and long-context rea-soning, together with longer-sequence attention transfer or methods specialized for this regime (Zhang et al., 2025; Liu et al., 2025), is an important next step. The current model also assumes a fixed inference block size, motivating training procedures and architectures that remain robust across block sizes. 
+
+## References 
+
+Marianne Arriola, Aaron Gokaslan, Justin T Chiu, Zhihan Yang, Zhixuan Qi, Jiaqi Han, Subham Sekhar Sahoo, and Volodymyr Kuleshov. Block diffusion: Interpolating between autoregressive and diffusion language models. In International Conference on Learning Representations (ICLR) , 2025. Oral. Tiwei Bie, Maosong Cao, Kun Chen, Lun Du, Mingliang Gong, Zhuochen Gong, Yanmei Gu, Jiaqi Hu, Zenan Huang, Zhenzhong Lan, et al. LLaDA2.0: Scaling up diffusion language models to 100B. arXiv preprint arXiv:2512.15745 , 2025. Tiwei Bie, Maosong Cao, Xiang Cao, Bingsen Chen, Fuyuan Chen, Kun Chen, Lun Du, Daozhuo Feng, Haibo Feng, Mingliang Gong, et al. LLaDA2.1: Speeding up text diffusion via token editing. arXiv preprint arXiv:2602.08676 , 2026. Google DeepMind. Gemini diffusion, 2025. URL https://blog.google/technology/ google-deepmind/gemini-diffusion/ .Itai Gat, Tal Remez, Neta Shaul, Felix Kreuk, Ricky TQ Chen, Gabriel Synnaeve, Yossi Adi, and Yaron Lipman. Discrete flow matching. Advances in Neural Information Processing Systems , 37:133345–133385, 2024. 8Published as a workshop paper at NonAR-LM Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In 
+
+International Conference on Learning Representations (ICLR) , 2022. Inception Labs, Samar Khanna, Siddhant Kharbanda, Shufan Li, Harshit Varma, Eric Wang, Sawyer Birnbaum, Ziyang Luo, Yanis Miraoui, Akash Palrecha, Stefano Ermon, Aditya Grover, and Volodymyr Kuleshov. Mercury: Ultra-fast language models based on diffu-sion. arXiv preprint arXiv:2506.17298 , 2025. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and Franc ¸ois Fleuret. Transform-ers are RNNs: Fast autoregressive transformers with linear attention. In International Conference on Machine Learning (ICML) , 2020. Jaeyeon Kim, Kulin Shah, Vasilis Kontonis, Sham Kakade, and Sitan Chen. Train for the worst, plan for the best: Understanding token ordering in masked diffusions. arXiv preprint arXiv:2502.06768 , 2025. Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, et al. T ¨ ULU 3: Pushing frontiers in open language model post-training. arXiv preprint arXiv:2411.15124 , 2024. Zeyu Liu, Souvik Kundu, Lianghao Jiang, Anni Li, Srikanth Ronanki, Sravan Bodapati, Gourav Datta, and Peter A. Beerel. LAWCAT: Efficient distillation from quadratic to linear attention with convolution across tokens for long context modeling. arXiv preprint arXiv:2509.18467 , 2025. Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Large language diffusion models. In International Conference on Machine Learning (ICML) , 2025. Subham Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin Chiu, Alexander Rush, and Volodymyr Kuleshov. Simple and effective masked diffusion language models. Advances in Neural Information Processing Systems , 37:130136–130184, 2024. Subham Sekhar Sahoo, Justin Deschenaux, Aaron Gokaslan, Guanghan Wang, Justin Chiu, and Volodymyr Kuleshov. The diffusion duality. arXiv preprint arXiv:2506.10892 , 2025. Yair Schiff, Subham Sahoo, Hao Phung, Guanghan Wang, Sam Boshar, Hugo Dalla-Torre, Bernardo Almeida, Alexander Rush, Thomas Pierrot, and Volodymyr Kuleshov. Simple guidance mechanisms for discrete diffusion models. In International Conference on Learning Representations , volume 2025, pp. 43776–43821, 2025. Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis Titsias. Simplified and generalized masked diffusion for discrete data. Advances in neural information processing systems , 37:103131–103167, 2024. Yuxuan Song, Zheng Zhang, Cheng Luo, Pengyang Gao, Fan Xia, Hao Luo, Zheng Li, Yuehang Yang, Hongli Yu, Xingwei Qu, et al. Seed diffusion: A large-scale diffusion language model with high-speed inference. arXiv preprint arXiv:2508.02193 , 2025. Itamar Trainin, Shauli Ravfogel, Omri Abend, and Amir Feder. Discrete diffusion models exploit asymmetry to solve lookahead planning tasks. arXiv preprint arXiv:2602.19980 ,2026. Dimitri von R ¨ utte, Janis Fluri, Omead Pooladzandi, Bernhard Sch ¨ olkopf, Thomas Hofmann, and Antonio Orvieto. Scaling behavior of discrete diffusion language models. arXiv preprint arXiv:2512.10858 , 2025. Jiacheng Ye, Jiahui Gao, Shansan Gong, Lin Zheng, Xin Jiang, Zhenguo Li, and Lingpeng Kong. Beyond autoregression: Discrete diffusion for complex reasoning and planning. 
+
+arXiv preprint arXiv:2410.14157 , 2024. 9Published as a workshop paper at NonAR-LM Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Ling-peng Kong. Dream 7B: Diffusion large language models. arXiv preprint arXiv:2508.15487 ,2025. Michael Zhang, Kush Bhatia, Hermann Kumbong, and Christopher R´ e. The hedgehog & the porcupine: Expressive linear attentions with softmax mimicry. In International Conference on Learning Representations (ICLR) , 2024. Michael Zhang, Simran Arora, Rahul Chalamala, Alan Wu, Benjamin Spector, Aaryan Singhal, Krithik Ramesh, and Christopher R´ e. LoLCATs: On low-rank linearizing of large language models. In International Conference on Learning Representations (ICLR) , 2025. Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, Clark Barrett, and Ying Sheng. SGLang: Efficient execution of structured language model programs. In Advances in Neural Information Processing Systems , 2024. Fengqi Zhu, Zebin You, Yipeng Xing, Zenan Huang, Lin Liu, Yihong Zhuang, Guoshan Lu, Kangyu Wang, Xudong Wang, Lanning Wei, et al. LLaDA-MoE: A sparse MoE diffusion language model. arXiv preprint arXiv:2509.24389 , 2025. 
+
+## A Additional Benchmarking 
+
+Standalone attention-kernel microbenchmark. We isolate the per-block attention cost from end-to-end serving (scheduling, KV-cache management, sampling) by microbench-marking a single dLLM-block forward of the attention kernel in isolation on one H200. Each timed call is the latency of generating one 32 -token block for a request that already has P
+
+tokens of context. We compare the softmax attention (SGLang’s radix/paged-KV kernel) against the exact production LL ADA-H YBRID kernel served by SGLang (per-query-head, bf16-WGMMA fused path), reported by batch size in Tables 3 (median of 20 timed iterations). Table 3: Per-block kernel latency on one H200. Teacher uses exact attention over prefix length P; Hybrid reads a fixed-size recurrent state.                                                       
+
+> Batch =8Batch =32 Prefix PTeacher (ms) Hybrid (ms) Speedup Teacher (ms) Hybrid (ms) Speedup 00.090 0.070 1.3 ×0.094 0.101 0.9 ×
+> 256 0.097 0.069 1.4 ×0.147 0.100 1.5 ×
+> 1024 0.136 0.068 2.0 ×0.319 0.103 3.1 ×
+> 4096 0.342 0.069 5.0 ×1.114 0.101 11.0 ×
+> 8192 0.601 0.070 8.6 ×2.150 0.103 20.9 ×
+> 16384 1.108 0.069 16.0 ×4.204 0.101 41.8 ×
+> 32768 2.123 0.069 30.7 ×8.299 0.103 80.6 ×
+
+The teacher kernel scales linearly in P; the retrofit kernel is essentially constant in P (it reads a fixed-size state), so the speedup grows with prefix length bound as in the measured regime; to ∼31 × at batch 8 and ∼81 × at batch 32 for a 32K-token prefix. The hybrid kernel’s latency is also nearly flat in batch size ( ≈0.07 ms at B=8, 0.10 ms at B=32), whereas the teacher’s grows with both P and B.
+
+Protocol. We measure the maximum number of equal-length requests that can be resident concurrently on a single NVIDIA H200. Each request has a 4096-token footprint, constructed as a 4064-token prompt plus one 32-token diffusion block. For a given batch size B, all B
+
+requests are admitted in a single wave and decoded together. We increase B until the run fails with CUDA out-of-memory, and define B⋆ as the largest successful batch size. To make the capacity test tractable, we front-load the sequence length into the prompt. This reproduces the memory footprint of a 4096-token resident request while requiring only 10 Published as a workshop paper at NonAR-LM Table 4: Maximum single-pass concurrent batch on one H200, at a 4096-token per-request footprint. The SGLang static-memory fraction is swept separately for each model and the best successful batch is reported. Model Best mem fraction static Max. batch B⋆
+
+LLaDA 2.1-mini (teacher) 0.85 544 LLaDA-Hybrid 0.82 704 
+
+one diffusion block to be decoded, rather than running all intermediate blocks of a full long generation. Thus, this experiment measures resident memory capacity, not end-to-end generation latency. Because the maximum resident batch depends on the serving runtime’s memory partition between preallocated cache/state storage and temporary execution buffers, we tune this partition separately for each model and report the best attainable B⋆ for that model. In SGLang, this partition is controlled by mem fraction static , which determines the fraction of GPU memory reserved for model weights and the cache/state pool. Reporting the best value per model avoids tying the comparison to an arbitrary memory split. LLaDA-Hybrid supports about 1.3 × as many concurrent requests. Table 5: EvalPlus pass@1 on the full 164-problem HumanEval(+) set, threshold 0.7, no-edit (freeze-linear LoRA, step 200, no dropout): effect of the number of linearized layers. Model HumanEval HumanEval+ Teacher (full softmax) 75.6% 72.0% LL ADA-H YBRID , 6 linear layers (LoRA) 72.6% 67.7% LL ADA-H YBRID , 8 linear layers (LoRA) 68.3% 64.0% 
+
+Architectural Ablation. Teacher is the full-softmax LLaDA 2.1-mini; LL ADA-H YBRID 
+
+variants replace 6 or 8 of the 20 attention layers with per-query-head Hedgehog linear attention (same T ¨ ulu-3 data, same dataloader, freeze-linear LoRA at step 200, no dropout ). Linearizing more layers steadily erodes accuracy—going from 6 to 8 linear layers costs 
+
+∼4 points of HumanEval pass@1—so the production model uses the smallest count that preserves quality. The production checkpoint additionally trains the LoRA with dropout 0.05, which accounts for the small differences from the no-dropout scores reported here. 11

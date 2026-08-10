@@ -1,0 +1,2488 @@
+Title: Every Cache Entry Earns Its Place: Global Allocation of Resolution and Coverage for KV Cache Compression
+
+URL Source: https://arxiv.org/pdf/2608.07001v1
+
+Published Time: Mon, 10 Aug 2026 00:41:41 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+# Every Cache Entry Earns Its Place: Global Allocation of Resolution and Coverage for KV Cache Compression 
+
+# Haolin Tian 1∗, Yuzhe Liu 1∗, Tonghan Wang 1†
+
+> 1
+
+Tsinghua University Beijing, China 
+
+Abstract 
+
+As large language models (LLMs) process increasingly long contexts, KV cache storage and repeated access have become a major bottleneck. Existing KV cache compression methods rely on predefined, fixed compression rules and are typically developed around either token eviction or merging. As a result, cache resources can neither flow freely across layers, heads, and context slots, nor be jointly allocated to balance local resolution and information coverage. Therefore, we propose GraceKV, a global approach for the allocation of resolution and coverage in KV cache compression, and formulates the compression process as a global resource allocation problem under a fixed cache budget. GraceKV treats each layer–KV head–slot combination as an atomic unit and builds a proto-type tree. Leaf nodes correspond to token-level KV entries, while each internal node uses a single prototype to compress the KV space covered by its children. A set of non-overlapping nodes in the tree forms the representation of an atomic unit. Adding the root of a new tree expands information coverage, whereas splitting a selected node improves local resolution. All candidate actions compete globally for a shared cache budget. Finally, the nodes retained across all trees form the compressed KV cache. This process adaptively determines the allocation of cache resources among atomic units globally and the balance between resolution and coverage. GraceKV requires no additional training, and the entire compression and inference process is performed on the GPU. Systematic experiments across diverse long-context tasks and compres-sion ratios show that GraceKV ranks first in 24 of 32 settings and remains robust up to 128 × compression. These results validate the effectiveness of global budget allocation in coor-dinating information coverage and local resolution. 
+
+# Introduction 
+
+Applications such as long-document understanding and com-plex reasoning continually push LLMs to process longer con-texts (Bai et al. 2024; Hsieh et al. 2024; Zhang et al. 2024a). To avoid redundant computation during autoregressive gen-eration, LLMs cache the Key and Value associated with each context token in the KV cache. As context length grows, the storage footprint of the KV cache increases linearly and is repeatedly accessed at every decoding step, leading to con-tinuously growing GPU memory usage and memory-access overhead. These costs have become a major bottleneck lim-iting the efficiency and scalability of long-context inference. 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 
+
+To alleviate this bottleneck, KV cache compression has been widely studied. Existing methods mainly follow two directions: token eviction and KV merging. The former re-tains a subset of tokens according to importance scores and removes the rest, whereas the latter aggregates multiple KV entries into a small number of prototypes, trading lower local representation resolution for broader information coverage (Zhang et al. 2023; Li et al. 2024; Zhang et al. 2024b). More-over, existing methods typically rely on predefined, fixed compression rules. Although subsequent studies introduce adaptivity at the layer or head level, they still require the allocation granularity or local cache quotas to be specified in advance (Ge et al. 2023; Cai et al. 2024; Fu et al. 2025). Consequently, this “first constrain the representation form and local quota, then make compression decisions” paradigm prevents the limited post-compression cache resources from jointly coordinating local resolution and information cover-age, or from flowing freely across layers, attention heads, and context regions. Therefore, enabling limited cache resources to be adaptively allocated to more valuable places, thereby organizing and retaining contextual information more effec-tively, is central to efficient long-context inference. Therefore, we propose GraceKV , a global approach for the allocation of resolution and coverage in KV cache com-pression, and formulate the compression process as a global resource allocation problem under a limited budget. To co-ordinate local resolution and information coverage within a unified representation space, GraceKV first partitions the context into slots through curvature-guided semantic seg-mentation. It then treats each layer-KV head-slot combina-tion as an atomic unit and constructs a progressively refinable prototype tree for each atomic unit. The root uses a single prototype to represent the entire slot, each internal node uses one prototype to compressively represent the contiguous in-terval covered by its subtree, and the leaves correspond to the token-level K/V entries. A set of non-overlapping nodes in the tree thus constitutes a cache representation of the atomic unit at a particular resolution. Based on this representation, GraceKV defines two basic operations: Add admits the root of a new tree to expand information coverage, whereas Split 
+
+refines a selected node to improve local resolution in a cov-ered region. Accordingly, whether a region is covered and, if so, at what resolution it is represented can both be uniformly expressed by a set of nodes in the prototype tree. arXiv:2608.07001v1 [cs.LG] 7 Aug 2026 020 40 60 80 100 1 2-3 4-7 8-15 16-63 low mid high         
+
+> % of cache entries prototype size (tokens per cache entry) (c) Resulution frontier vs. relevance @64x
+> token relevance token relevance 00.01 0.02 0.03 0.04 0.05 04812 16 20 24
+> mean 232 · min 121 · max 410
+> 400 350 300 250 200 150
+> allocated KV entries KV head
+> Layer
+> (b) Allocated KV entries per (layer,KV head) @64x (a) Exact case of MuSiQue, 16.9k-token context @64x
+> dropped
+> Q: “who is one of the members of the music group that performed ‘Good Little Girls’? ” GraceKV: “Aaron Benward” √ Gold answer: “Aaron Benward”
+> Kept as single token merged into coarse prototype
+> Evidence hop 2: bridge entity -> answer (tokens 5995-6082 ) Background region, 5.5k tokens away from any evidence (token 9000-9087) Evidence hop 1: question entity -> bridge entity (tokens 3185-3272 )
+> ... Passage 5: Good Little Girls (song) "Good Little Girls" is the debut song recorded by American country music duo Blue County. It was ... from their debut album Blue County ... ... Passage 12: Blue County was an American country music duo composed of actor-singers Aaron Benward and Scott Reeves. They released ... including the No. 11 "Good Little Girls" ... ... patrons who were harassing her, causing the two to part ways ... serving with the 9th Infantry Division in the Mekong Delta region under Lieutenant Dan Taylor ....
+
+Figure 1: A representative case illustrates GraceKV’s global allocation of cache resources across context regions, layers, and KV heads, preserving high-value evidence at fine resolution while aggressively compressing less relevant content. Within this unified representation space, GraceKV fur-ther performs global resource allocation through a bottom-up 
+
+value flow and a utility-guided budget flow . The value flow starts from token-level contextual values, aggregates them upward along the tree to nodes at different levels, and com-bines them with head sensitivity and the reduction in atten-tion distortion to form the marginal utility of every candidate operation. The budget flow brings all candidate operations across atomic units into a shared global priority queue, where they compete according to marginal utility, directing the lim-ited budget toward operations with higher returns. Together, the two flows determine the final node set of every tree, en-abling globally adaptive allocation of cache resources across layers, KV heads, and context regions while balancing infor-mation coverage and local resolution. To compensate for the underestimation of non-smooth gains caused by greedy allo-cation, GraceKV introduces a budget-aware singleton floor, allowing a small number of high-value tokens to receive ex-act representations while charging their costs to the same budget. Finally, all nodes retained across the prototype trees form the physically compressed KV cache, as illustrated in Fig. 1. GraceKV requires no additional training, and the en-tire compression and inference process runs on GPUs. When the budget is restored to the FullKV scale, GraceKV can exactly recover the original cache. We conduct systematic experiments on LongBench and RULER across question answering, summarization, few-shot learning, aggregation, and retrieval (Bai et al. 2024; Hsieh et al. 2024). GraceKV ranks first in 20 of 24 LongBench settings and achieves the best result in 24 of 32 settings over-all. Its performance remains stable from 4× to 128 × com-pression, while several baselines degrade sharply on specific tasks or under tight budgets. GraceKV also substantially re-duces KV cache memory usage and decode latency. Ablation studies on two backbones further confirm the contribution and consistent effectiveness of its core components across task types and cache budgets. The main contributions are summarized as follows: 
+
+• We formulate KV cache compression as a global resource allocation problem under a limited cache budget and use progressively refinable prototype trees to uniformly rep-resent the information coverage and different resolution levels of atomic units. 
+
+• We propose GraceKV , a global approach for the alloca-tion of resolution and coverage in KV cache compression. GraceKV performs global resource allocation through value and budget flows, requires no additional training, and runs entirely on the GPU. 
+
+• We validate GraceKV across multiple models, long-context tasks, and compression ratios, demonstrating strong performance, robust generalization, and efficiency gains, with ablations confirming each component. 
+
+# Related Work 
+
+We focus on inference-time KV cache compression along the sequence dimension by reducing the number of cached entries. 
+
+Token Eviction. Token eviction retains a subset of the orig-inal KV entries according to importance scores and removes the rest (Zhang et al. 2023; Liu et al. 2023; Adnan et al. 2024). StreamingLLM, H 2O, and SnapKV select cache po-sitions using attention sinks, accumulated attention, and local observation windows, respectively (Xiao et al. 2024; Zhang et al. 2023; Li et al. 2024). D2O performs dynamic compres-sion using layer- and token-level signals, PyramidKV assigns different cache capacities across layers, and ChunkKV uses contiguous semantic chunks as the retention unit (Wan et al. 2024; Cai et al. 2024; Liu et al. 2026). Despite their differ-ent selection strategies and granularities, the resulting cache remains a subset of the original KV entries. Consequently, each position can only be preserved exactly or removed en-tirely, while unselected regions can no longer participate in subsequent attention computation. Curvature-guided Trees Budget flow Value flow Entry in KV Cache  
+
+> curve context Build atomic unit tree Slot1 Slot2
+
+(L2, g2, Slot2) 
+
+11 12 611 12 13 14 4 entries 
+
+## 3 entries    
+
+> (Layer L1, head g1)
+> Candidate operations :
+> (Layer L2, head g2)
+> Candidate operations :
+> Split1 Add2 Split3 Split4 Split6
+
+Rank operations by utility  
+
+> Select
+
+MAX utility Apply (L2, g2, Split6)  
+
+> Update
+
+frontier & budget  
+
+> Delete (L2, g2, Split6)
+
+Repeat until the budget ends  
+
+> Attention Multi-hop
+> relevance
+
+utility    
+
+> Node = weighted KV over span Add Split 26514938710 11 12 13 14 Exact Coarse Drop
+> frontier frontier
+
++ 
+
+> distortion head sensitivity
+
+Figure 2: Overview of GraceKV: a global approach for the allocation of resolution and coverage in KV cache compression. 
+
+KV Merging. KV merging aggregates multiple cache en-tries into fewer representations, preserving partial informa-tion from compressed regions while shortening the cache (Zhang et al. 2024b; Wang et al. 2024; Liu et al. 2025). CaM merges discarded states into retained positions, KVMerger groups entries according to Key similarity and represents each group with a weighted prototype, and AsymKV sepa-rately compresses Keys and Values by exploiting local Key homogeneity and Value heterogeneity (Zhang et al. 2024b; Wang et al. 2024; Cui and Xu 2026). Recent methods fur-ther introduce semantic segmentation and clustering-based merging to improve the semantic integrity of merged repre-sentations (Hu et al. 2025; Wu et al. 2026). Compared with token eviction, merging maintains broader information cov-erage, but fixed compression granularities and rules can lead to the loss of precise information and distortion of attention quality. In addition, some methods rely on CPU storage to recover fine-grained information on demand (Abaskohi et al. 2026; Jie et al. 2025). Such designs do not truly eliminate cache overhead and additionally introduce data transfer, syn-chronization delays, and more complex storage management. 
+
+Cache Allocation. Early methods typically apply uniform compression rules and cache capacities across different lay-ers and attention heads (Xiao et al. 2024; Zhang et al. 2023; Liu et al. 2023; Adnan et al. 2024; Li et al. 2024), ignoring the varying contextual demands of different model compo-nents. PyramidKV and Ada-KV allocate differentiated bud-gets at the layer and head levels, respectively, while D2O and ChunkKV adjust local compression decisions using input-dependent signals and semantic chunks (Cai et al. 2024; Feng et al. 2026; Wan et al. 2024; Liu et al. 2026). These methods gradually relax the uniform-budget assumption, but their allocation remains confined to predefined compression rules and allocation hierarchies. In contrast, GraceKV glob-ally allocates cache resources across layers, KV heads, and context regions, jointly coordinating information coverage and local resolution without requiring additional training. 
+
+# Method 
+
+The overall framework of GraceKV is illustrated in Fig. 2; ad-ditional implementation details are provided in the appendix. 
+
+Problem Formulation 
+
+Consider an autoregressive Transformer with L layers, where each layer contains H query heads and G KV heads. Under grouped-query attention, the g-th KV head is shared by the query-head set H(g). After prefill, the context cache of KV head g at layer l is 
+
+Kl,g , V l,g ∈ RT ×d, (1) where T and d denote the input length and attention-head dimension, respectively. Let Nctx denote the context length between the prompt prefix and the question suffix, and let x denote the target compression ratio. The prefix and suffix are kept intact and excluded from the cache budget. A recent window of length 
+
+r at the end of the context is also kept intact, but its physical entries are counted toward the budget. GraceKV additionally selects a small set of layer-KV head-token singletons outside the recent window, denoted by Efloor , to exactly preserve high-value information. The corresponding budgets are 
+
+Btotal =
+
+ LGN ctx 
+
+x
+
+
+
+, B floor = |E floor | ,Balloc = Btotal − L · G · r − Bfloor .
+
+(2) One budget unit corresponds to one physically stored K/V pair at a particular layer and KV head. The remaining budget 
+
+Balloc is globally allocated to Add and Split operations over the compressible context. The singleton-floor selection pro-cedure is introduced in the section on utility-guided budget flow. GraceKV performs only one standard prefill. During this pass, it collects post-RoPE queries and keys, values, hidden states from sampled layers, head-wise outputs in the question region, and token surprisal. No training or additional model forward pass is required afterward. For each layer-KV head-slot combination, GraceKV rep-resents its cache state using a frontier Fl,g,j composed of non-overlapping tree nodes. After excluding the recent win-dow and singleton floor, all remaining regions are initially uncovered. Let A denote the set of candidate Add and Split operations. The allocation problem is 
+
+max 
+
+> A′⊆A
+
+X
+
+> a∈A ′
+
+∆( a), s.t. X
+
+> a∈A ′
+
+c(a) ≤ Balloc ,
+
+Pred( a) ⊆ A ′, ∀a ∈ A ′.
+
+(3) Here, ∆( a), c(a), and Pred( a) denote the marginal utility, the number of newly added physical KV entries, and the set of prerequisite ancestor operations, respectively. 
+
+Progressively Refinable Prototype Trees 
+
+Curvature-guided semantic slot segmentation. We view normalized hidden states as a trajectory evolving along token positions. For sampled layer l, position i, and window scale 
+
+w, we define 
+
+μ(l,w ) 
+
+> i, −
+
+= 1
+
+w
+
+> w−1
+
+X 
+
+> τ=0
+
+¯h(l) 
+
+> i−τ
+
+, μ (l,w ) 
+
+> i, +
+
+= 1
+
+w
+
+> w
+
+X 
+
+> τ=1
+
+¯h(l) 
+
+> i+τ
+
+,δ(l,w ) 
+
+> i, −
+
+= ¯h(l) 
+
+> i
+
+− μ(l,w ) 
+
+> i, −
+
+, δ (l,w ) 
+
+> i, +
+
+= μ(l,w ) 
+
+> i, +
+
+− ¯h(l) 
+
+> i
+
+,κ(l,w ) 
+
+> i
+
+= 1 − cos 
+
+
+
+δ(l,w ) 
+
+> i, −
+
+, δ (l,w )
+
+> i, +
+
+
+
+.
+
+(4) We stabilize κ(l,w ) 
+
+> i
+
+, the multi-layer and multi-scale curva-ture, using its mean and standard deviation, and then combine it with token surprisal ssurp  
+
+> i
+
+:
+
+κi = Mean l,w κ(l,w ) 
+
+> i
+
+− λstab Std l,w κ(l,w ) 
+
+> i
+
+,bi = zrobust (κi) + λszrobust (ssurp  
+
+> i
+
+) . (5) Here, zrobust denotes robust normalization based on the me-dian absolute deviation. We produce the slot partition S by dynamic programming that maximizes the boundary score conditioned on bi (see Appendix for details) and penalizes the dispersion of adjacent hidden-state differences within each slot S and deviations from the preferred slot length, with constraint nmin ≤ | S| ≤ nmax .
+
+Multi-resolution prototype tree. For each layer l, KV head g, and slot Sj , GraceKV constructs a prototype tree 
+
+Tl,g,j . Each node v corresponds to a continuous interval 
+
+Iv = [ av , b v ). The root, internal nodes, and leaves encode progressively finer representation resolutions. Since post-RoPE keys at different positions lie in different rotated coordinate systems, we first map them into a shared coordinate system and then restore the prototype at a repre-sentative position: 
+
+k◦ 
+
+> t
+
+= RoPE −1(kt, t ), p v = round 
+
+ 1
+
+|Iv |
+
+X
+
+> t∈Iv
+
+t
+
+
+
+,
+
+ekv = RoPE 
+
+ 1
+
+|Iv |
+
+X
+
+> t∈Iv
+
+k◦ 
+
+> t
+
+, p v
+
+
+
+.
+
+(6) The value prototype uses token-value Rtok  
+
+> l,g,t
+
+(defined by Eq. 10) weighting with a 10% uniform base. The nominal multiplicity is further corrected by key coherence: 
+
+βv = 0 .1 Mean t∈Iv Rtok 
+
+> l,g,t
+
+, evv =
+
+P
+
+> t∈Iv
+
+
+
+Rtok  
+
+> l,g,t
+
++ βv
+
+
+
+vt
+
+P
+
+> t∈Iv
+
+
+
+Rtok  
+
+> l,g,t
+
++ βv
+
+ ,
+
+ℏv = ∥Mean t∈Iv k◦ 
+
+> t
+
+∥2
+
+Mean t∈Iv ∥k◦ 
+
+> t
+
+∥2 + ϵ , meff  
+
+> v
+
+= clamp  |Iv | ℏ2 
+
+> v
+
+, 1, |Iv |
+
+(7) Let Qv denote a probe set drawn from the question suffix, the sequence suffix, and high-evidence slots. For probes that can fully observe Iv , let Zq (Iv ) = P 
+
+> t∈Iv
+
+eq⊤kt/√d and 
+
+Mq (Iv ) = P 
+
+> t∈Iv
+
+eq⊤kt/√dvt denote the attention partition and value aggregate of the original interval. We define 
+
+eZq (Iv ) = meff  
+
+> v
+
+exp q⊤ekv
+
+√d
+
+!
+
+,
+
+fMq (Iv ) = eZq (Iv )evv ,Dq (Iv ) = λZ
+
+(Zq − eZq )2
+
+Z2 
+
+> q
+
++ ϵ + λM
+
+∥Mq − fMq ∥22
+
+∥Mq ∥22 + ϵD(Iv ) = Mean q∈Q v
+
+h
+
+Zq (Iv )/ X
+
+> Iv
+
+Zq (Iv ) · Dq (Iv )
+
+i
+
+Ddrop (Iv ) = Mean q∈Q v Zq (Iv )/ X
+
+> Iv
+
+Zq (Iv ).
+
+(8) The attention-mass weighting prevents rarely accessed re-gions from receiving high priority solely because their local approximation errors Dq (Iv ) are large. Each non-leaf node chooses between a curvature-aligned binary split and salient-token extraction. The former creates two continuous subintervals at a high-curvature position and adds one net cache entry. The latter isolates the highest-value token in the interval while preserving the non-empty intervals on both sides. GraceKV constructs a unit-cost score from distortion reduction, boundary reward, and the number of added entries, and selects the higher-scoring construction. 
+
+Bottom-Up Value Flow 
+
+Prototype distortion characterizes whether a region can be represented at low resolution, but it does not indicate whether that region is relevant to the current question. GraceKV therefore estimates input-conditioned task relevance from the same prefill pass and uses it to construct token-level con-text values. Queries from the question suffix and sequence suffix form the probe set U. For a compressible token t, its direct relevance is 
+
+sl,g,t = X
+
+> u∈U
+
+X
+
+> h∈H (g)
+
+"
+
+softmax τ ∈V (u)
+
+ ql,h u
+
+⊤ kl,g τ
+
+√d
+
+!# 
+
+> t
+
+(9) Here, V(u) is the complete visible range of probe u under the causal mask. We normalize sl,g,t and average it across layers and KV heads to obtain a global score bsl,g,t . Tokens covering a high cumulative score form the first-hop seeds. GraceKV then performs hop-wise decayed propagation over token attention graphs from sampled layers. Previously selected seeds are re-moved at each hop, producing the multi-hop relevance score 
+
+bdt. The final token and node values are 
+
+Rtok  
+
+> l,g,t
+
+= (1 − λgraph ) bsl,g,t + λgraph bdt,Rl,g (v) = X
+
+> t∈Iv
+
+Rtok 
+
+> l,g,t
+
+. (10) Node values are aggregated bottom-up from token values. The same value flow can therefore evaluate both whether a coarse region should be covered and whether an already covered region should be further refined. Layer-KV head combinations differ in their effects on model output. Let Uq denote the probes in the question region. We define the static output-projection strength and dynamic head output as 
+
+al,g =
+
+ X
+
+> h∈H (g)
+
+W l,h O
+
+> 2
+> F
+
+
+
+> 1/2
+
+,bl,g = Mean u∈U q
+
+X
+
+> h∈H (g)
+
+W l,h O ol,h u
+
+> 2
+
+, ω l,g = pal,g bl,g .
+
+(11) The normalized ωl,g is shared by all operations of the same KV head as a sensitivity multiplier. 
+
+Utility-Guided Budget Flow 
+
+For an uncovered slot with root rj , Add introduces its root prototype to expand coverage; for a frontier node v, Split replaces it with its children to improve resolution. Their gains and costs are 
+
+∆add (l, g, j ) = ωl,g Rl,g (rj ) Ddrop (Irj ) − D(Irj ) ,
+
+∆split (l, g, v ) = ωl,g Rl,g (v)
+
+D(Iv ) − X
+
+> u∈child( v)
+
+D(Iu)
+
+ ,cadd = 1 , csplit (v) = |child( v)| − 1.
+
+(12) Step-wise marginal allocation may underestimate non-smooth gains toward high-value leaves. GraceKV therefore exactly preserves Efloor with original K/V singletons before global competition; its cost is included in Bfloor and excluded from subsequent Add–Split allocation. All remaining operations enter the same max-priority queue according to their marginal utility per unit cost: 
+
+U (a) = ∆( a)
+
+c(a) . (13) An operation is queued only after its prerequisites are com-pleted. The allocator repeatedly executes the operation with the highest utility until Balloc is exhausted or none remains. The retained frontier nodes and singleton floor form a physical ragged cache for GPU decoding. When x = 1 , all trees expand to token-level leaves, exactly recovering FullKV. 
+
+# Experiments 
+
+Experimental Setup 
+
+Models and Datasets. We evaluate GraceKV on two repre-sentative long-context benchmarks, LongBench and RULER (Bai et al. 2024; Hsieh et al. 2024), covering six subtasks in total, and conduct experiments across multiple back-bones. The main results are reported on Qwen2.5-7B-Instruct (Qwen et al. 2025), while the ablation study additionally in-cludes Llama-3.1-8B-Instruct (Grattafiori et al. 2024). Re-sults on further backbones are provided in the appendix. 
+
+Baselines. We compare GraceKV with FullKV and eight representative KV cache compression methods(Zhang et al. 2023; Xiao et al. 2024; Zhang et al. 2024b; Li et al. 2024; Feng et al. 2026; Wan et al. 2024; Cai et al. 2024; Liu et al. 2026). All methods are evaluated under a unified framework, following the commonly used protocols of the correspond-ing benchmarks and using identical cache budgets at each compression ratio. 
+
+Evaluation Metrics. We adopt the official metric for each subtask. For readability, all reported scores in the main paper are multiplied by 100. As a supplement, more implementation and experimental setup details are provided in the appendix. 
+
+RULER (Aggregation, Set Recall ×100 )Method 4K 2K 1K 512 FullKV 84.67 H2O (Zhang et al. 2023) 82.00 79.00 77.33 72.00 StreamingLLM (Xiao et al. 2024) 81.33 74.33 64.67 52.67 CaM (Zhang et al. 2024b) 85.67 85.00 80.33 76.67 
+
+SnapKV (Li et al. 2024) 72.67 67.67 62.67 60.00 Ada-SnapKV (Feng et al. 2026) 72.67 67.00 63.00 61.33 D2O (Wan et al. 2024) 85.00 84.00 76.67 74.33 PyramidKV (Cai et al. 2024) 70.33 64.67 62.67 59.67 ChunkKV (Liu et al. 2026) 82.00 75.33 69.00 64.33 
+
+GraceKV (Ours) 82.33 76.67 70.67 65.00 
+
+RULER (Retrieval, Set Recall ×100 )Method 4K 2K 1K 512 FullKV 87.00 H2O (Zhang et al. 2023) 8.75 2.00 0.00 0.00 StreamingLLM (Xiao et al. 2024) 22.50 13.25 6.25 2.75 CaM (Zhang et al. 2024b) 10.25 1.75 0.00 0.00 SnapKV (Li et al. 2024) 87.00 85.75 85.75 75.00 Ada-SnapKV (Feng et al. 2026) 87.00 86.00 85.50 70.00 D2O (Wan et al. 2024) 11.25 1.50 0.00 0.00 PyramidKV (Cai et al. 2024) 86.00 85.25 81.00 60.00 ChunkKV (Liu et al. 2026) 86.25 86.25 86.00 75.50 
+
+GraceKV (Ours) 87.25 86.75 86.25 76.50 
+
+Table 1: Performance comparison on RULER under different KV cache budgets. The best and second-best compressed-cache results are highlighted in bold and underlined. LongBench (Single-Document QA, F1 ×100 ) LongBench (Multi-Document QA, F1 ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×                                                                                                                                                                                                                                           
+
+> FullKV 43.95 29.86 H2O (Zhang et al. 2023) 39.67 36.84 35.28 31.60 27.86 25.27 26.80 25.36 25.57 24.18 22.08 20.95 StreamingLLM (Xiao et al. 2024) 31.47 28.86 27.63 26.05 23.69 22.98 22.65 20.10 18.18 17.11 17.17 16.40 CaM (Zhang et al. 2024b) 39.32 36.93 34.07 29.93 25.60 23.96 26.92 25.52 25.78 23.78 23.28 20.15 SnapKV (Li et al. 2024) 42.30 39.11 36.00 34.04 27.91 25.08 29.82 29.14 28.43 26.86 25.06 24.65 Ada-SnapKV (Feng et al. 2026) 42.62 39.91 37.09 34.75 29.25 25.15 29.87 28.92 27.87 27.20 24.87 23.88 D2O (Wan et al. 2024) 39.33 36.22 34.28 30.49 26.73 24.48 25.70 25.68 25.40 24.57 22.53 20.29 PyramidKV (Cai et al. 2024) 42.21 38.81 35.85 33.76 26.55 23.86 29.37 29.57 27.54 25.78 23.87 23.48 ChunkKV (Liu et al. 2026) 42.13 40.32 36.89 33.80 30.22 24.94 29.50 30.44 28.40 26.77 25.92 24.20
+> GraceKV (Ours) 42.97 41.58 38.45 35.57 31.49 25.81 30.18 29.90 28.78 28.18 27.09 25.19 LongBench (Summarization, Rouge-L ×100 )LongBench (Few-Shot, Rouge-L ×100 )Method 4×8×16 ×32 ×64 ×128 ×4×8×16 ×32 ×64 ×128 ×
+> FullKV 15.97 36.23 H2O (Zhang et al. 2023) 14.59 14.25 13.63 12.99 11.71 10.79 35.13 34.44 33.71 33.10 32.85 32.43 StreamingLLM (Xiao et al. 2024) 14.48 13.52 12.99 12.55 12.05 11.81 34.59 34.47 33.18 33.02 32.80 32.31 CaM (Zhang et al. 2024b) 15.50 14.74 13.87 12.98 11.94 10.93 34.99 34.63 33.79 33.20 32.81 32.79 SnapKV (Li et al. 2024) 14.81 14.24 13.68 13.03 12.40 11.69 34.96 34.51 33.40 33.14 32.76 32.66 Ada-SnapKV (Feng et al. 2026) 14.80 14.23 13.68 13.09 12.38 11.66 35.16 34.27 33.56 33.42 32.57 32.06 D2O (Wan et al. 2024) 14.90 14.43 13.90 13.15 11.78 11.21 34.80 34.32 33.78 33.65 33.05 32.76 PyramidKV (Cai et al. 2024) 14.49 13.81 13.37 12.97 12.09 11.53 34.98 33.90 33.49 33.20 33.05 32.17 ChunkKV (Liu et al. 2026) 14.75 14.24 13.79 13.16 12.35 11.65 34.59 33.86 33.52 33.40 32.68 32.22
+> GraceKV (Ours) 15.03 14.51 14.04 13.48 12.58 11.88 35.82 34.77 33.92 33.80 33.18 32.83
+
+Table 2: Performance comparison on LongBench under different KV cache compression ratios. The best and second-best compressed-cache results are highlighted in bold and underlined. 
+
+Main Results 
+
+The main results are shown in Tables 1 and 2. 
+
+GraceKV consistently achieves the strongest overall per-formance. GraceKV obtains the best results in most task and budget settings. On LongBench, GraceKV ranks first in 21 out of 24 settings and second in the remaining four. Together with RULER, GraceKV achieves the best result in 25 out of 32 settings. These results show that, under the same cache-entry budget, GraceKV organizes and preserves contextual information more effectively than representative token eviction, KV merging, and locally adaptive methods. 
+
+GraceKV generalizes robustly across tasks and compres-sion ratios. The advantage of GraceKV does not depend on a specific dataset, task type, or cache budget. It remains leading or competitive across single-document question an-swering, multi-document question answering, summariza-tion, few-shot learning, and precise retrieval. It also consis-tently ranks among the top two across all LongBench settings from 4× to 128 × compression. As the cache budget becomes increasingly constrained, GraceKV exhibits a smooth perfor-mance degradation, whereas some baselines deteriorate sub-stantially on specific tasks or under high compression ratios. This indicates that global resource allocation can adapt to different contextual requirements and reduce dependence on particular datasets or compression ratios. 
+
+Fixed compression strategies exhibit strong task depen-dence. The relative rankings of different baselines vary substantially across tasks, indicating that a fixed compres-sion strategy cannot easily accommodate different informa-tion requirements. This phenomenon is particularly evident on RULER. Methods that emphasize merging and broad in-formation coverage generally perform better on Aggregation, but degrade considerably on Retrieval, which requires precise localization of the original information. In contrast, methods that preserve more original token entries are more effec-tive for Retrieval, but do not necessarily maintain the same advantage on Aggregation. GraceKV achieves more stable performance across the two tasks. This further demonstrates that jointly coordinating information coverage and local res-olution across layers, KV heads, and context regions helps mitigate the task bias introduced by fixed compression rules. 
+
+Fine-grained Analysis 
+
+Ablation Study. Table 3 analyzes the contribution of each GraceKV component under two backbone models and two cache budgets. Overall, removing any component leads to performance degradation in most settings. Multi-Resolution and Global Allocation have the most pronounced effects, in-dicating that progressive representation and global budget allocation are key designs of GraceKV, while the remaining components also contribute under different settings. Single-document question answering is more sensitive to these com-ponents than summarization, suggesting that precise evi-LongBench (Single-Document QA, F1 ×100 )Model Full w/o MH w/o SF w/o CS w/o MR w/o GA                                                                     
+
+> 8×64 ×8×64 ×8×64 ×8×64 ×8×64 ×8×64 ×
+> Qwen2.5-7B-Instruct(Qwen et al. 2025) 41.58 31.49 −0.57 −0.37 −1.14 −1.45 −0.43 −0.93 −2.53 −2.37 −2.25 −1.98
+> Llama-3.1-8B-Instruct(Grattafiori et al. 2024) 43.79 33.00 +0 .30 −1.07 −0.32 −0.77 −0.13 −0.49 −2.40 −1.40 −1.01 −1.57
+> LongBench (Summarization, Rouge-L ×100 )Model Full w/o MH w/o SF w/o CS w/o MR w/o GA
+> 8×64 ×8×64 ×8×64 ×8×64 ×8×64 ×8×64 ×
+> Qwen2.5-7B-Instruct(Qwen et al. 2025) 14.51 12.58 −0.02 −0.01 −0.01 +0 .08 −0.27 −0.14 −0.21 −0.15 −0.12 −0.21
+> Llama-3.1-8B-Instruct(Grattafiori et al. 2024) 14.88 12.94 −0.14 +0 .03 −0.07 +0 .05 −0.07 −0.16 −0.18 −0.21 −0.19 −0.14
+
+Table 3: Ablation study on LongBench using two backbone models. Full reports the absolute performance of the complete GraceKV, while the remaining variants report performance changes ( ∆) relative to Full. MH, SF, CS, MR, and GA denote Multi-hop, Singleton Floor, Curvature Segmentation, Multi-Resolution, and Global Allocation. 0500 1000 1500 2000 6k 12k 18k 24k 30k 
+
+(a) KV cache memory vs. context length KV cache memory (MB) Context length (tokens)     
+
+> 1.77 GB 463 MB 137 MB 246 MB
+> FullKV Ours (4x) Ours (8x) Ours (16x)
+> 20 24 28 32 36 40 6k 12k 18k 24k 30k
+
+(b) Decode latency vs. context length Decode latency (ms / token) Context length (tokens) 
+
+> 1.7x slower
+> Ours (4x) Ours (8x) FullKV Ours (16x)
+
+Figure 3: KV cache efficiency across context lengths. dence localization and cross-region association rely more heavily on fine-grained representation and resource alloca-tion. In contrast, the relatively small variations on summa-rization suggest that tasks dominated by distributed contex-tual information are more tolerant to local changes in cache representation and allocation. The two backbone models ex-hibit similar overall trends, indicating that these observations are not limited to a specific model. 
+
+Efficiency and Scalability. As shown in Figure 3, GraceKV substantially reduces cache memory usage and ac-cess overhead during inference. However, constructing the unified prototype-tree representation introduces a one-time overhead after prefill. Across all evaluated tasks, this stage takes approximately 2 seconds on average and incurs about 8% additional peak memory overhead. Our current imple-mentation primarily focuses on the resource allocation al-gorithm itself and has not yet applied specialized low-level or hardware-specific optimizations to tree construction. This overhead could be further reduced through parallel tree con-struction and operator fusion. 
+
+Hyperparameter Study. We further study four key hy-perparameters that directly affect the resource allocation be-havior of GraceKV, including the singleton-floor budget, the multi-hop value weight λgraph , the target slot length, and the distortion weight ratio λZ : λM . They respectively con-trol budget allocation, the integration of direct relevance and multi-hop dependencies, the granularity of prototype trees, and the utility estimation of candidate operations. Complete results are provided in the appendix. GraceKV remains sta-ble over a broad range around the default configuration. In particular, performance degrades when the singleton-floor ratio becomes too small, suggesting that greedy allocation may underestimate the non-smooth gains of high-value to-kens and supporting the necessity of the singleton floor. 
+
+# Limitations 
+
+Achieving globally optimal allocation requires searching an exponentially large space, making it difficult to satisfy the la-tency requirements of online inference. GraceKV therefore adopts global greedy allocation and uses the singleton floor to mitigate the underestimation of non-smooth gains, thereby approximating the globally optimal solution. However, this strategy still cannot guarantee global optimality in the combi-natorial optimization sense. In addition, prototype-tree con-struction introduces one-time latency and peak memory over-head, which could be further reduced through low-level and hardware-specific optimizations. References 
+
+Abaskohi, A.; Carenini, G.; West, P.; and He, Y. 2026. SeKV: Resolution-Adaptive KV Cache with Hierarchical Semantic Memory for Long-Context LLM Inference. arXiv preprint arXiv:2606.31145 .Adnan, M.; Arunkumar, A.; Jain, G.; Nair, P. J.; Solovey-chik, I.; and Kamath, P. 2024. Keyformer: Kv cache re-duction through key tokens selection for efficient generative inference. Proceedings of Machine Learning and Systems ,6: 114–127. Bai, Y.; Lv, X.; Zhang, J.; Lyu, H.; Tang, J.; Huang, Z.; Du, Z.; Liu, X.; Zeng, A.; Hou, L.; Dong, Y.; Tang, J.; and Li, J. 2024. LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding. In Ku, L.-W.; Martins, A.; and Srikumar, V., eds., Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 3119–3137. Bangkok, Thailand: Association for Computational Linguistics. Cai, Z.; Zhang, Y.; Gao, B.; Liu, Y.; Li, Y.; Liu, T.; Lu, K.; Xiong, W.; Dong, Y.; Hu, J.; et al. 2024. Pyramidkv: Dy-namic kv cache compression based on pyramidal information funneling. arXiv preprint arXiv:2406.02069 .Cui, W.; and Xu, M. 2026. Homogeneous keys, heteroge-neous values: Exploiting local kv cache asymmetry for long-context llms. Advances in Neural Information Processing Systems , 38: 81628–81650. Feng, Y.; Lv, J.; Cao, Y.; Xie, X.; and Zhou, S. K. 2026. Ada-kv: Optimizing kv cache eviction by adaptive budget allocation for efficient llm inference. Advances in Neural Information Processing Systems , 38: 113152–113188. Fu, Y.; Cai, Z.; Asi, A.; Xiong, W.; Dong, Y.; and Xiao, W. 2025. Not all heads matter: A head-level kv cache com-pression method with integrated retrieval and reasoning. In 
+
+International Conference on Learning Representations , vol-ume 2025, 99269–99290. Ge, S.; Zhang, Y.; Liu, L.; Zhang, M.; Han, J.; and Gao, J. 2023. Model tells you what to discard: Adaptive kv cache compression for llms. arXiv preprint arXiv:2310.01801 .Grattafiori, A.; Dubey, A.; Jauhri, A.; Pandey, A.; Kadian, A.; Al-Dahle, A.; Letman, A.; Mathur, A.; Schelten, A.; Vaughan, A.; Yang, A.; Fan, A.; Goyal, A.; Hartshorn, A.; Yang, A.; Mitra, A.; Sravankumar, A.; Korenev, A.; Hinsvark, A.; Rao, A.; Zhang, A.; Rodriguez, A.; Gregerson, A.; Spataru, A.; Roziere, B.; Biron, B.; Tang, B.; Chern, B.; Caucheteux, C.; Nayak, C.; Bi, C.; Marra, C.; McConnell, C.; Keller, C.; Touret, C.; Wu, C.; Wong, C.; Ferrer, C. C.; Niko-laidis, C.; Allonsius, D.; Song, D.; Pintz, D.; Livshits, D.; Wyatt, D.; Esiobu, D.; Choudhary, D.; Mahajan, D.; Garcia-Olano, D.; Perino, D.; Hupkes, D.; Lakomkin, E.; AlBadawy, E.; Lobanova, E.; Dinan, E.; Smith, E. M.; Radenovic, F.; Guzmán, F.; Zhang, F.; Synnaeve, G.; Lee, G.; Anderson, G. L.; Thattai, G.; Nail, G.; Mialon, G.; Pang, G.; Cucurell, G.; Nguyen, H.; Korevaar, H.; Xu, H.; Touvron, H.; Zarov, I.; Ibarra, I. A.; Kloumann, I.; Misra, I.; Evtimov, I.; Zhang, J.; Copet, J.; Lee, J.; Geffert, J.; Vranes, J.; Park, J.; Ma-hadeokar, J.; Shah, J.; van der Linde, J.; Billock, J.; Hong, J.; Lee, J.; Fu, J.; Chi, J.; Huang, J.; Liu, J.; Wang, J.; Yu, J.; Bitton, J.; Spisak, J.; Park, J.; Rocca, J.; Johnstun, J.; Saxe, J.; Jia, J.; Alwala, K. V.; Prasad, K.; Upasani, K.; Plawiak, K.; Li, K.; Heafield, K.; Stone, K.; El-Arini, K.; Iyer, K.; Ma-lik, K.; Chiu, K.; Bhalla, K.; Lakhotia, K.; Rantala-Yeary, L.; van der Maaten, L.; Chen, L.; Tan, L.; Jenkins, L.; Martin, L.; Madaan, L.; Malo, L.; Blecher, L.; Landzaat, L.; de Oliveira, L.; Muzzi, M.; Pasupuleti, M.; Singh, M.; Paluri, M.; Kardas, M.; Tsimpoukelli, M.; Oldham, M.; Rita, M.; Pavlova, M.; Kambadur, M.; Lewis, M.; Si, M.; Singh, M. K.; Hassan, M.; Goyal, N.; Torabi, N.; Bashlykov, N.; Bogoychev, N.; Chat-terji, N.; Zhang, N.; Duchenne, O.; Çelebi, O.; Alrassy, P.; Zhang, P.; Li, P.; Vasic, P.; Weng, P.; Bhargava, P.; Dubal, P.; Krishnan, P.; Koura, P. S.; Xu, P.; He, Q.; Dong, Q.; Srinivasan, R.; Ganapathy, R.; Calderer, R.; Cabral, R. S.; Stojnic, R.; Raileanu, R.; Maheswari, R.; Girdhar, R.; Pa-tel, R.; Sauvestre, R.; Polidoro, R.; Sumbaly, R.; Taylor, R.; Silva, R.; Hou, R.; Wang, R.; Hosseini, S.; Chennabasappa, S.; Singh, S.; Bell, S.; Kim, S. S.; Edunov, S.; Nie, S.; Narang, S.; Raparthy, S.; Shen, S.; Wan, S.; Bhosale, S.; Zhang, S.; Vandenhende, S.; Batra, S.; Whitman, S.; Sootla, S.; Col-lot, S.; Gururangan, S.; Borodinsky, S.; Herman, T.; Fowler, T.; Sheasha, T.; Georgiou, T.; Scialom, T.; Speckbacher, T.; Mihaylov, T.; Xiao, T.; Karn, U.; Goswami, V.; Gupta, V.; Ramanathan, V.; Kerkez, V.; Gonguet, V.; Do, V.; Vogeti, V.; Albiero, V.; Petrovic, V.; Chu, W.; Xiong, W.; Fu, W.; Meers, W.; Martinet, X.; Wang, X.; Wang, X.; Tan, X. E.; Xia, X.; Xie, X.; Jia, X.; Wang, X.; Goldschlag, Y.; Gaur, Y.; Babaei, Y.; Wen, Y.; Song, Y.; Zhang, Y.; Li, Y.; Mao, Y.; Coudert, Z. D.; Yan, Z.; Chen, Z.; Papakipos, Z.; Singh, A.; Srivastava, A.; Jain, A.; Kelsey, A.; Shajnfeld, A.; Gangidi, A.; Victo-ria, A.; Goldstand, A.; Menon, A.; Sharma, A.; Boesenberg, A.; Baevski, A.; Feinstein, A.; Kallet, A.; Sangani, A.; Teo, A.; Yunus, A.; Lupu, A.; Alvarado, A.; Caples, A.; Gu, A.; Ho, A.; Poulton, A.; Ryan, A.; Ramchandani, A.; Dong, A.; Franco, A.; Goyal, A.; Saraf, A.; Chowdhury, A.; Gabriel, A.; Bharambe, A.; Eisenman, A.; Yazdan, A.; James, B.; Maurer, B.; Leonhardi, B.; Huang, B.; Loyd, B.; Paola, B. D.; Paran-jape, B.; Liu, B.; Wu, B.; Ni, B.; Hancock, B.; Wasti, B.; Spence, B.; Stojkovic, B.; Gamido, B.; Montalvo, B.; Parker, C.; Burton, C.; Mejia, C.; Liu, C.; Wang, C.; Kim, C.; Zhou, C.; Hu, C.; Chu, C.-H.; Cai, C.; Tindal, C.; Feichtenhofer, C.; Gao, C.; Civin, D.; Beaty, D.; Kreymer, D.; Li, D.; Adkins, D.; Xu, D.; Testuggine, D.; David, D.; Parikh, D.; Liskovich, D.; Foss, D.; Wang, D.; Le, D.; Holland, D.; Dowling, E.; Jamil, E.; Montgomery, E.; Presani, E.; Hahn, E.; Wood, E.; Le, E.-T.; Brinkman, E.; Arcaute, E.; Dunbar, E.; Smothers, E.; Sun, F.; Kreuk, F.; Tian, F.; Kokkinos, F.; Ozgenel, F.; Caggioni, F.; Kanayet, F.; Seide, F.; Florez, G. M.; Schwarz, G.; Badeer, G.; Swee, G.; Halpern, G.; Herman, G.; Sizov, G.; Guangyi; Zhang; Lakshminarayanan, G.; Inan, H.; Shojanaz-eri, H.; Zou, H.; Wang, H.; Zha, H.; Habeeb, H.; Rudolph, H.; Suk, H.; Aspegren, H.; Goldman, H.; Zhan, H.; Damlaj, I.; Molybog, I.; Tufanov, I.; Leontiadis, I.; Veliche, I.-E.; Gat, I.; Weissman, J.; Geboski, J.; Kohli, J.; Lam, J.; Asher, J.; Gaya, J.-B.; Marcus, J.; Tang, J.; Chan, J.; Zhen, J.; Reizen-stein, J.; Teboul, J.; Zhong, J.; Jin, J.; Yang, J.; Cummings, J.; Carvill, J.; Shepard, J.; McPhie, J.; Torres, J.; Ginsburg, J.; Wang, J.; Wu, K.; U, K. H.; Saxena, K.; Khandelwal, K.; Zand, K.; Matosich, K.; Veeraraghavan, K.; Michelena, K.; Li, K.; Jagadeesh, K.; Huang, K.; Chawla, K.; Huang, K.; Chen, L.; Garg, L.; A, L.; Silva, L.; Bell, L.; Zhang, L.; Guo, L.; Yu, L.; Moshkovich, L.; Wehrstedt, L.; Khabsa, M.; Avalani, M.; Bhatt, M.; Mankus, M.; Hasson, M.; Lennie, M.; Reso, M.; Groshev, M.; Naumov, M.; Lathi, M.; Ke-neally, M.; Liu, M.; Seltzer, M. L.; Valko, M.; Restrepo, M.; Patel, M.; Vyatskov, M.; Samvelyan, M.; Clark, M.; Macey, M.; Wang, M.; Hermoso, M. J.; Metanat, M.; Rastegari, M.; Bansal, M.; Santhanam, N.; Parks, N.; White, N.; Bawa, N.; Singhal, N.; Egebo, N.; Usunier, N.; Mehta, N.; Laptev, N. P.; Dong, N.; Cheng, N.; Chernoguz, O.; Hart, O.; Salpekar, O.; Kalinli, O.; Kent, P.; Parekh, P.; Saab, P.; Balaji, P.; Rittner, P.; Bontrager, P.; Roux, P.; Dollar, P.; Zvyagina, P.; Ratanchan-dani, P.; Yuvraj, P.; Liang, Q.; Alao, R.; Rodriguez, R.; Ayub, R.; Murthy, R.; Nayani, R.; Mitra, R.; Parthasarathy, R.; Li, R.; Hogan, R.; Battey, R.; Wang, R.; Howes, R.; Rinott, R.; Mehta, S.; Siby, S.; Bondu, S. J.; Datta, S.; Chugh, S.; Hunt, S.; Dhillon, S.; Sidorov, S.; Pan, S.; Mahajan, S.; Verma, S.; Yamamoto, S.; Ramaswamy, S.; Lindsay, S.; Lindsay, S.; Feng, S.; Lin, S.; Zha, S. C.; Patil, S.; Shankar, S.; Zhang, S.; Zhang, S.; Wang, S.; Agarwal, S.; Sajuyigbe, S.; Chintala, S.; Max, S.; Chen, S.; Kehoe, S.; Satterfield, S.; Govindaprasad, S.; Gupta, S.; Deng, S.; Cho, S.; Virk, S.; Subramanian, S.; Choudhury, S.; Goldman, S.; Remez, T.; Glaser, T.; Best, T.; Koehler, T.; Robinson, T.; Li, T.; Zhang, T.; Matthews, T.; Chou, T.; Shaked, T.; Vontimitta, V.; Ajayi, V.; Montanez, V.; Mohan, V.; Kumar, V. S.; Mangla, V.; Ionescu, V.; Poenaru, V.; Mihailescu, V. T.; Ivanov, V.; Li, W.; Wang, W.; Jiang, W.; Bouaziz, W.; Constable, W.; Tang, X.; Wu, X.; Wang, X.; Wu, X.; Gao, X.; Kleinman, Y.; Chen, Y.; Hu, Y.; Jia, Y.; Qi, Y.; Li, Y.; Zhang, Y.; Zhang, Y.; Adi, Y.; Nam, Y.; Yu; Wang; Zhao, Y.; Hao, Y.; Qian, Y.; Li, Y.; He, Y.; Rait, Z.; DeVito, Z.; Rosnbrick, Z.; Wen, Z.; Yang, Z.; Zhao, Z.; and Ma, Z. 2024. The Llama 3 Herd of Models. arXiv:2407.21783. Hsieh, C.-P.; Sun, S.; Kriman, S.; Acharya, S.; Rekesh, D.; Jia, F.; Zhang, Y.; and Ginsburg, B. 2024. RULER: What’s the real context size of your long-context language models? 
+
+arXiv preprint arXiv:2404.06654 .Hu, J.; Wang, S.; He, Y.; Gong, P.; Yi, J.; Zhang, J.; Bai, Y.; Chen, R.; Zhang, G.; Li, C.; et al. 2025. Efficient long-context llm inference via kv cache clustering. arXiv preprint arXiv:2506.11418 .Jie, S.; Tang, Y.; Han, K.; Deng, Z.-H.; and Han, J. 2025. SpeCache: Speculative Key-Value Caching for Efficient Gen-eration of LLMs. arXiv preprint arXiv:2503.16163 .Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems , 37: 22947–22970. Liu, X.; Tang, Z.; Dong, P.; Li, Z.; Li, B.; Hu, X.; and Chu, X. 2026. Chunkkv: Semantic-preserving kv cache compression for efficient long-context llm inference. Advances in Neural Information Processing Systems , 38: 28728–28778. Liu, X.; Wang, X.; Liu, P.; and Tang, G. 2025. Zsmerge: Zero-shot kv cache compression for memory-efficient long-context llms. arXiv preprint arXiv:2503.10714 .Liu, Z.; Desai, A.; Liao, F.; Wang, W.; Xie, V.; Xu, Z.; Kyril-lidis, A.; and Shrivastava, A. 2023. Scissorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Information Processing Systems , 36: 52342–52364. Qwen; :; Yang, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Li, C.; Liu, D.; Huang, F.; Wei, H.; Lin, H.; Yang, J.; Tu, J.; Zhang, J.; Yang, J.; Yang, J.; Zhou, J.; Lin, J.; Dang, K.; Lu, K.; Bao, K.; Yang, K.; Yu, L.; Li, M.; Xue, M.; Zhang, P.; Zhu, Q.; Men, R.; Lin, R.; Li, T.; Tang, T.; Xia, T.; Ren, X.; Ren, X.; Fan, Y.; Su, Y.; Zhang, Y.; Wan, Y.; Liu, Y.; Cui, Z.; Zhang, Z.; and Qiu, Z. 2025. Qwen2.5 Technical Report. arXiv:2412.15115. Wan, Z.; Wu, X.; Zhang, Y.; Xin, Y.; Tao, C.; Zhu, Z.; Wang, X.; Luo, S.; Xiong, J.; and Zhang, M. 2024. D2o: Dynamic discriminative operations for efficient generative inference of large language models. arXiv preprint arXiv:2406.13035 , 2. Wang, Z.; Jin, B.; Yu, Z.; and Zhang, M. 2024. Model tells you where to merge: Adaptive kv cache merging for llms on long-context tasks. arXiv preprint arXiv:2407.08454 .Wu, S.; Lin, H.; Chen, S.; Lu, T.; Zeng, Y.; Zhan, S.; Zheng, H.-T.; and Kim, H.-G. 2026. Semanticache: Efficient kv cache compression via semantic chunking and clustered merging. In ICASSP 2026-2026 IEEE International Confer-ence on Acoustics, Speech and Signal Processing (ICASSP) ,19562–19566. IEEE. Xiao, G.; Tian, Y.; Chen, B.; Han, S.; and Lewis, M. 2024. Efficient streaming language models with attention sinks. In International Conference on Learning Representations ,volume 2024, 21875–21895. Zhang, X.; Chen, Y.; Hu, S.; Xu, Z.; Chen, J.; Hao, M.; Han, X.; Thai, Z.; Wang, S.; Liu, Z.; and Sun, M. 2024a. ∞Bench: Extending Long Context Evaluation Beyond 100K Tokens. In Ku, L.-W.; Martins, A.; and Srikumar, V., eds., Proceedings of the 62nd Annual Meeting of the Association for Computa-tional Linguistics (Volume 1: Long Papers) , 15262–15277. Bangkok, Thailand: Association for Computational Linguis-tics. Zhang, Y.; Du, Y.; Luo, G.; Zhong, Y.; Zhang, Z.; Liu, S.; and Ji, R. 2024b. Cam: Cache merging for memory-efficient llms inference. In Forty-first international conference on machine learning .Zhang, Z.; Sheng, Y.; Zhou, T.; Chen, T.; Zheng, L.; Cai, R.; Song, Z.; Tian, Y.; Ré, C.; Barrett, C.; et al. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Process-ing Systems , 36: 34661–34710. A Complete Method Specification 
+
+This section presents the complete specification of GraceKV. To eliminate implementation ambiguities arising from the space constraints of the main paper, we start from the fea-tures collected during a single prefill pass and describe, in order, context partitioning, prototype-tree construction, the bottom-up value flow, and the top-down budget flow. Un-less otherwise specified, all positional indices refer to ab-solute token positions in the complete input sequence, and one cache-budget unit corresponds to one physically stored key–value pair. 
+
+A.1 Overview and Notation 
+
+Consider an autoregressive Transformer with L layers. Each layer contains H query heads and G KV heads. Under grouped-query attention (GQA), the g-th KV head is shared by the query-head set H(g) ⊆ { 1, . . . , H }. Let d denote the dimension of one attention head and T denote the total length of the prefill input. After one standard prefill pass, the cache of KV head g at layer l is 
+
+Kl,g , V l,g ∈ RT ×d,l ∈ { 1, . . . , L }, g ∈ { 1, . . . , G }. (14) Here, kl,g t ∈ Rd and vl,g t ∈ Rd denote the post-RoPE key and value at position t, respectively, while ql,h t ∈ Rd denotes the post-RoPE query of query head h at layer l and position 
+
+t. When (l, g ) is fixed and no ambiguity arises, we omit the superscript (l, g ) of the keys and values below. The complete input is divided into a prompt prefix, a long context, and a question suffix. Let cs and ce denote the start and end positions of the context, respectively. The context interval and its length are 
+
+Cctx = [ cs, c e), Nctx = ce − cs. (15) Given a target compression ratio x ≥ 1, the total physical entry budget for the contextual cache is 
+
+Btotal =
+
+ LGN ctx 
+
+x
+
+
+
+. (16) The prompt prefix [0 , c s) and the question and template suf-fix [ce, T ) are always preserved in full and are excluded from the budget in Eq. (16). A recent window of length r at the end of the context is also preserved. It does not participate in compression decisions, but its LGr physical entries are counted toward the context budget. We use r = 32 by de-fault. Only when the total budget cannot accommodate this window is r adaptively shortened, with a minimum length of 4. The positions that participate in tree construction and budget competition are therefore 
+
+C = [ cs, c e − r), Nc = |C| = Nctx − r. (17) GraceKV performs only one standard prefill pass, during which it collects: (i) post-RoPE queries, keys, and values from all layers; (ii) residual hidden states from several sam-pled layers; (iii) per-query-head attention outputs in the ques-tion region; and (iv) token-wise surprisal obtained from the prefill logits. Let Lseg ⊆ { 1, . . . , L } denote the sampled lay-ers used for context segmentation and Lgraph ⊆ { 1, . . . , L }
+
+denote the sampled layers used for multi-hop propagation. By default, the segmentation layers are located at relative network depths 0.33 , 0.50 , and 0.67 , while the propagation layers are located at depths 0.50 and 0.75 . All these features are obtained from the same forward pass. No training or additional model forward pass is required afterward. GraceKV constructs one tree for every layer–KV-head– slot triple and represents the corresponding cache state using a tree frontier. Let S = {Sj }Jj=1 be a contiguous partition of 
+
+C, where J is the number of slots. The prototype tree of layer 
+
+l, KV head g, and slot j is denoted by Tl,g,j , with root node 
+
+rl,g,j . A tree node v corresponds to a contiguous interval 
+
+Iv = [ av , b v ) ⊆ Sj . The current frontier Fl,g,j is a set of tree nodes whose intervals do not overlap. An empty frontier means that the entire slot is physically dropped. A frontier containing only the root represents the entire slot with one coarse prototype. Expanding frontier nodes increases local resolution, while a single-token leaf stores the original K/V pair exactly. GraceKV additionally selects a small number of high-value layer–KV-head–token triples outside the recent win-dow as exact singleton anchors. Realizing an anchor may also materialize prerequisite root and internal frontier en-tries. We denote the complete set of physical cache entries reserved by this stage by Efloor ; it contains the exact single-ton leaves and all prerequisite frontier entries that remain in the cache. Shared entries created by multiple floor paths are included only once. Since every element corresponds to one physically stored key–value pair, the singleton-floor budget is 
+
+Bfloor = |E floor |. After accounting for the recent window and the singleton floor, the budget available for free competition is 
+
+Bfree = Btotal − LGr − Bfloor . (18) The algorithm always checks 
+
+LGr + Bfloor + Bused ≤ Btotal , (19) where Bused is the budget already consumed by free compe-tition. The resulting cache is therefore physically compressed rather than simulated through an attention mask. 
+
+A.2 Context Partition and Atomic Units 
+
+Curvature-guided slot partitioning. To make merged in-tervals internally coherent, we view normalized residual hid-den states as a trajectory evolving along token positions. For segmentation layer l ∈ L seg , position i ∈ C , and window scale w ∈ W , let κ(l,w ) 
+
+> i
+
+denote the cosine turning magnitude between the local trajectory increments on the two sides of position i. Here, W is the multi-scale window set, and Lseg 
+
+was defined in Section A.1. A larger κ(l,w ) 
+
+> i
+
+indicates that po-sition i is more likely to form a structural boundary. GraceKV stabilizes curvature across layers and scales and combines it with token surprisal to obtain the boundary score: 
+
+κi = Mean l,w κ(l,w ) 
+
+> i
+
+− λstab Std l,w κ(l,w ) 
+
+> i
+
+,bi = zrobust (κi) + λszrobust 
+
+ ssurp 
+
+> i
+
+. (20) Here, κi is the stabilized curvature, λstab controls the cross-layer and cross-scale stability penalty, 
+
+ssurp  
+
+> i
+
+= − log p(yi | y<i ) (21) is the surprisal of input token yi, zrobust (·) denotes robust normalization based on the median absolute deviation, λs is the surprisal weight, and bi is the reward for introducing a boundary before position i.A length-constrained dynamic program combines the boundary rewards, the dispersion of hidden-state differences within each slot, and deviations from the preferred slot length. It produces the contiguous partition 
+
+S∗ = {Sj = [ aj , b j )}Jj=1 ,
+
+> J
+
+[
+
+> j=1
+
+Sj = C, Sj ∩ Sj′ = ∅ (j̸ = j′),nmin ≤ | Sj | ≤ nmax . (22) Here, J is the number of slots, aj and bj are the left and right endpoints of slot j, and nmin and nmax are the minimum and maximum permitted slot lengths. We use nmin = 16 ,
+
+nmax = 128 , and a target length of 64 by default. Complete definitions of the curvature, robust boundary score, within-slot dispersion, and dynamic-programming recurrence are provided in Section B ( Further Analysis of Curvature-Guided Slot Segmentation ). This partition determines only the con-tiguous structural ranges covered by the tree roots; it does not assign a cache quota to any layer or attention head. 
+
+Atomic decision units. GraceKV constructs an indepen-dent prototype tree Tl,g,j for every (l, g, j ). The complete set of atomic decision units is therefore 
+
+Uatomic =
+
+(l, g, j )
+
+1 ≤ l ≤ L, 
+
+1 ≤ g ≤ G, 
+
+1 ≤ j ≤ J
+
+ . (23) The term “atomic” means that the coverage state and resolu-tion of one unit are fully represented by the frontier of one tree. It does not imply that the unit is assigned a predefined local budget. Candidate operations from different units sub-sequently compete in the same global priority queue. The numbers of entries allocated across layers, KV heads, and slots therefore emerge from input-conditioned marginal util-ities. 
+
+A.3 Progressively Refinable Prototype Trees 
+
+RoPE-consistent key prototypes. For tree node v, let Iv =[av , b v ) and nv = |Iv | = bv −av . Post-RoPE keys at different positions belong to different rotated coordinate systems and cannot be averaged directly in the rotated space. We first inverse-rotate the keys into a shared coordinate system and then apply RoPE again at a representative position: 
+
+k◦ 
+
+> t
+
+= RoPE −1(kt, t ),pv = round 1
+
+nv
+
+X
+
+> t∈Iv
+
+t
+
+!
+
+,
+
+ekv = RoPE 1
+
+nv
+
+X
+
+> t∈Iv
+
+k◦ 
+
+> t
+
+, p v
+
+!
+
+. (24) Here, k◦ 
+
+> t
+
+is the key with its positional rotation removed, pv
+
+is the integer representative position of the node, and ekv is the key prototype written into the compressed cache. 
+
+Value-weighted prototypes and effective multiplicity. 
+
+Let Rtok  
+
+> l,g,t
+
+≥ 0 denote the token value at layer l, KV head g,and position t, which is defined in Section A.4. To prevent low-value tokens from losing all influence on the prototype, we add a 10% uniform base: 
+
+βv = 0 .1 Mean t∈Iv Rtok 
+
+> l,g,t
+
+,wv,t = Rtok  
+
+> l,g,t
+
++ βv ,
+
+evv =
+
+X
+
+> t∈Iv
+
+wv,t vt
+
+X
+
+> t∈Iv
+
+wv,t + ϵ . (25) Here, wv,t is the contribution of position t to node v, and evv
+
+is the value prototype written into the compressed cache. Simply adding log nv to a prototype formed by merging 
+
+nv tokens can amplify a “ghost key” that does not correspond to any key in the original interval. GraceKV therefore cor-rects the multiplicity using the directional coherence of the inverse-rotated keys: 
+
+coh v = ∥Mean t∈Iv k◦ 
+
+> t
+
+∥2
+
+Mean t∈Iv ∥k◦ 
+
+> t
+
+∥2 + ϵ ,meff  
+
+> v
+
+= clamp  nv coh 2 
+
+> v
+
+, 1, n v
+
+ . (26) Here, coh v ∈ [0 , 1] is the key coherence and meff  
+
+> v
+
+is the effective multiplicity. When the key directions are highly consistent, meff  
+
+> v
+
+≈ nv . When they are incoherent, the effec-tive multiplicity is reduced toward 1. During decoding, the attention logit between query q and node v is 
+
+ℓ(q, v ) = q⊤ekv
+
+√d + log meff  
+
+> v
+
+. (27) If all keys within the interval are identical, all values are identical, and the key directions are fully coherent, Eq. (27) exactly recovers the attention partition mass of the original interval. The multiplicity term is therefore the exact limiting form of merging identical entries rather than an arbitrary amplitude correction. 
+
+Prototype distortion. Let Qv denote the distortion-probe set of node v, retaining only probes that can causally observe the entire interval Iv . The set contains up to 32 queries from the end of the question, up to 16 queries from the end of the complete sequence, and two representative queries from each of the eight slots with the highest token evidence. Under GQA, the query heads sharing one KV head are assigned to probes in a round-robin manner so that all heads in H(g) are covered. For q ∈ Q v , define the attention partition and unnormal-ized value aggregate of the original interval as 
+
+Zq (Iv ) = X
+
+> t∈Iv
+
+exp 
+
+ q⊤kt
+
+√d
+
+
+
+,Mq (Iv ) = X
+
+> t∈Iv
+
+exp 
+
+ q⊤kt
+
+√d
+
+
+
+vt. (28) For numerical stability, the implementation subtracts the maximum logit of the same probe from all logits. This shift is applied to both the original entries and the prototype and therefore does not change the relative errors defined below. The corresponding statistics used by the prototype-distortion surrogate are 
+
+eZq (Iv ) = meff  
+
+> v
+
+exp q⊤ekv
+
+√d
+
+!
+
+,
+
+fMq (Iv ) = eZq (Iv )evv . (29) The local distortion under a single probe is 
+
+Dq (Iv ) = λZ
+
+
+
+Zq (Iv ) − eZq (Iv )
+
+2
+
+Zq (Iv )2 + ϵ
+
++ λM
+
+Mq (Iv ) − fMq (Iv ) 22
+
+∥Mq (Iv )∥22 + ϵ . (30) We use λZ = 0 .25 and λM = 0 .75 to control the partition and value-aggregation errors, respectively. Following the no-tation of the main paper, P 
+
+> Iv
+
+Zq (Iv ) denotes the sum of the interval-level partition masses included in the normalization for probe q. The attention-mass-weighted node distortion and the cost of dropping the interval completely are 
+
+D(Iv ) = Mean q∈Q v
+
+"
+
+Zq (Iv )
+
+P 
+
+> Iv
+
+Zq (Iv ) Dq (Iv )
+
+#
+
+,Ddrop (Iv ) = Mean q∈Q v
+
+Zq (Iv )
+
+P 
+
+> Iv
+
+Zq (Iv ) . (31) Here, D(Iv ) measures the cost of representing the interval us-ing its prototype approximation, while Ddrop (Iv ) measures the attention mass lost by removing the interval completely. The attention-mass weight prevents a rarely accessed interval from receiving unreasonably high priority solely because of a large local approximation error. 
+
+Recursive refinement rule. During tree construction, ev-ery non-leaf node compares two candidate refinement forms. The first is a curvature-aligned binary split. Let Xv contain up to the 16 highest-curvature positions inside the interval together with its midpoint. For ξ ∈ X v , define the left and right child intervals as 
+
+IL 
+
+> v
+
+(ξ) = [ av , ξ ), IR 
+
+> v
+
+(ξ) = [ ξ, b v ). (32) The gain and net cost of the binary split are 
+
+Gbin (v, ξ ) = D(Iv ) − D  IL 
+
+> v
+
+(ξ) − D  IR 
+
+> v
+
+(ξ) + λκbκξ ,cbin = 1 , λκ = 0 .05 . (33) Here, bκξ is the curvature normalized within the current node and λκ is the boundary reward. Replacing one parent en-try with two child entries increases the number of physical entries by one. The second form is salient-token extraction. Given an extraction position p ∈ Iv , all nonempty intervals among 
+
+[av , p ), the singleton {p}, and [p + 1 , b v ) form the child set 
+
+Cext (v, p ). The prototype distortion of the singleton is zero. The gain and net cost are 
+
+Gext (v, p ) = D(Iv ) − X
+
+> u∈C ext (v,p )
+
+D(Iu),cext (v, p ) = |C ext (v, p )| − 1. (34) When p lies in the interior of the interval, the operation usually produces three children and has cost 2. When one side is empty because p is adjacent to an interval boundary, the operation degenerates to two children with cost 1. Under normal conditions, p is the token with the highest attention mass in Iv . If the interval contains a floor token that has not yet become a leaf, extraction is enforced, and the highest-value floor token in the interval is selected so that the exact singleton can be reached through a shallow path. The utility per unit cost of the two alternatives is 
+
+ρbin (v) = max 
+
+> ξ∈X v
+
+Gbin (v, ξ )
+
+cbin 
+
+,ρext (v) = Gext (v, p )
+
+cext (v, p ) .
+
+(35) Each node preselects the refinement form with the larger score, and the process recurses until single-token leaves are reached. The tree is generated only once during construction. The budget allocator does not search for split points again and instead directly reads the preselected child nodes and costs. For efficient implementation, nodes at the same depth across different (l, g ) pairs are processed in batches, with each batch divided according to its number of tensor elements to control peak memory under long contexts. 
+
+A.4 Bottom-Up Value Flow 
+
+Prototype distortion answers whether an interval can be rep-resented at low resolution, but not whether the interval is im-portant for the current input. GraceKV therefore constructs token-level task relevance from the same prefill pass and aggregates it upward through the trees. 
+
+Direct relevance. Let U denote the direct-relevance probe set, containing up to 32 positions from the end of the question and up to 16 positions from the end of the complete sequence. For probe position u ∈ U , let V(u) denote its complete visible range under the causal mask. The attention probability from query head h at layer l to shared KV head g is 
+
+πl,h,g u,t =exp 
+
+
+
+(ql,h u )⊤kl,g t /√d
+
+X 
+
+> τ∈V (u)
+
+exp 
+
+
+
+(ql,h u )⊤kl,g τ /√d
+
+ , t ∈ V (u). (36) The softmax denominator covers the complete visible range of the probe, rather than only the compressible interval. The slice t ∈ C is taken only after the attention probabilities have been computed. The direct score and its normalization for each (l, g ) are 
+
+sl,g,t = X
+
+> u∈U
+
+X
+
+> h∈H (g)
+
+πl,h,g u,t ,
+
+bsl,g,t = sl,g,t 
+
+X 
+
+> τ∈C
+
+sl,g,τ + ϵ , t ∈ C . (37) Averaging across layers and KV heads yields the global seed score: 
+
+St = Mean l,g bsl,g,t , bSt = St
+
+X 
+
+> τ∈C
+
+Sτ + ϵ . (38) Tokens are sorted in descending order of bSt and selected until their cumulative mass reaches ηseed = 0 .9, with at most Mseed = 64 tokens. The resulting set is the first-hop seed set U(1) .
+
+Token-to-token multi-hop propagation. Direct relevance primarily captures explicit attention from the question to the context. To recover indirect dependencies among contextual tokens, GraceKV performs Rhop = 2 propagation steps over the sampled layers Lgraph . Let w(k) 
+
+> u
+
+≥ 0 be the normalized weight of seed u ∈ U (k) at hop k, satisfying 
+
+X
+
+> u∈U (k)
+
+w(k) 
+
+> u
+
+= 1 . (39) The propagation score at hop k is 
+
+d(k) 
+
+> t
+
+= X
+
+> l∈L graph
+> G
+
+X
+
+> g=1
+
+X
+
+> h∈H (g)
+
+X
+
+> u∈U (k)
+
+w(k) 
+
+> u
+
+πl,h,g u,t . (40) After evaluating Eq. (40), the scores at the current and pre-vious seed positions are set to zero so that propagation is used only to discover new tokens. The next-hop seeds are then selected according to the current propagation score, and their weights are proportional to the propagated mass from the preceding hop. Using ρ = 0 .5 as the inter-hop decay factor, we aggregate and normalize the multi-hop scores as 
+
+dt =
+
+> Rhop
+
+X
+
+> k=1
+
+ρk−1d(k) 
+
+> t
+
+,
+
+bdt = dt
+
+X 
+
+> τ∈C
+
+dτ + ϵ . (41) Here, dt is the accumulated multi-hop score and bdt is its normalized form over the compressible context. 
+
+Token values and node values. The final token value is a convex combination of direct and multi-hop relevance: 
+
+Rtok  
+
+> l,g,t
+
+= (1 − λgraph )bsl,g,t + λgraph bdt,λgraph = 0 .3,Rl,g (v) = X
+
+> t∈Iv
+
+Rtok 
+
+> l,g,t
+
+. (42) Here, Rl,g (v) is the value of tree node v. Because the child in-tervals are non-overlapping and their union equals the parent interval, every non-leaf node satisfies 
+
+Rl,g (v) = X
+
+> u∈child( v)
+
+Rl,g (u), (43) where child( v) is the child set of v. Equation (43) provides exact bottom-up value conservation. The same token-level value field can therefore price both whether a root should be covered and whether an internal node should be refined. The final method does not multiplicatively modulate token values using surprisal or curvature; these signals are used only for structural partitioning and refinement. 
+
+Layer–KV-head sensitivity. Different layer–KV-head pairs have different effects on the model output. Let W l,h O ∈
+
+RD×d denote the column block of the attention output projec-tion corresponding to query head h at layer l. Let ol,h u ∈ Rd
+
+denote the attention output of query head h at position u
+
+before the output projection, and let Uq denote the probe po-sitions in the question region. We define the static projection strength and the input-conditioned dynamic strength as 
+
+ωstatic  
+
+> l,g
+
+=
+
+ X
+
+> h∈H (g)
+
+W l,h O
+
+> 2
+> F
+
+
+
+> 1/2
+
+,ωinput  
+
+> l,g
+
+= Mean u∈U q
+
+X
+
+> h∈H (g)
+
+W l,h O ol,h u
+
+> 2
+
+,ωraw  
+
+> l,g
+
+=
+
+q
+
+ωstatic  
+
+> l,g
+
+ωinput  
+
+> l,g
+
+. (44) Here, ∥ · ∥ F denotes the Frobenius norm. We then normalize the mean over all (l, g ) pairs to one: 
+
+ωl,g = ωraw 
+
+> l,g
+
+Mean l′,g ′ ωraw  
+
+> l′,g ′
+
++ ϵ . (45) The resulting ωl,g is a sensitivity multiplier shared by all candidate operations associated with that KV head. It does not change the tree structure or impose a separate head-level quota. 
+
+A.5 Utility-Guided Budget Flow 
+
+The value flow aggregates information from tokens toward tree roots, whereas the budget flow starts from uncovered roots and moves through the frontiers toward the leaves. GraceKV first applies a budget-aware exact-singleton floor and then allocates the remaining entries through global com-petition shared by all atomic units. 
+
+Stage I: budget-aware singleton floor. To prevent high-value content such as entity names, label strings, and few-shot answer formats from being blurred by prototypes, GraceKV first applies one-dimensional max pooling with width 7 to the token-value field. Let 
+
+N7(t) = {τ ∈ C | | τ − t| ≤ 3} . (46) The global average token value and the floor score after cross-head consensus mixing are 
+
+Rtok  
+
+> t
+
+= Mean l,g Rtok 
+
+> l,g,t
+
+,fl,g,t = max  
+
+> τ∈N 7(t)
+
+h
+
+(1 − c)Rtok  
+
+> l,g,τ
+
++ cR tok 
+
+> τ
+
+i
+
+, c = 0 .5.
+
+(47) Here, c is the cross-head consensus weight. For every (l, g )
+
+pair, tokens are sorted in descending order of fl,g,t . Only tokens satisfying the quality gate 
+
+fl,g,t ≥ γfloor 
+
+Nc
+
+, γfloor = 1 .2 (48) are retained as candidates, and selection stops before their cumulative original token value exceeds ηfloor = 0 .95 . Thus, heads with flat or weak signals do not mechanically purchase large numbers of singletons, while high-value positions in sharply concentrated distributions can be preserved exactly. Candidate singletons are not locked for free. For a can-didate triple (l, g, t ), the algorithm executes the root Add operation and the necessary Split operations along the tree containing t until {t} becomes a frontier leaf. Every opera-tion on this path is charged according to the number of newly created physical entries. The total floor cost satisfies 
+
+Bfloor ≤ ⌊ αB base ⌋ , Bbase = Btotal −LGr, α = 0 .6.
+
+(49) Here, Bbase is the base allocatable budget after the recent window has been removed, and α is the global hard cap on the floor fraction. If the total path cost of the initial candidates from all heads exceeds this cap, the number of candidates assigned to each head is reduced in proportion to its origi-nal candidate count. A head with at least one token passing Eq. (48) is still assigned at least one candidate. The imple-mentation additionally imposes a per-head used-cost cap to prevent any single head from exhausting the floor budget. A candidate is accepted only when its complete path remains feasible under Eq. (49); the floor is therefore not disabled for an entire layer when the budget becomes tight. The complete set of physical entries reserved by the floor stage is denoted by Efloor . Each accepted candidate con-tributes an exact singleton anchor that directly stores the orig-inal (kl,g t , v l,g t ), uses representative position t, and has effec-tive multiplicity 1, such that log meff = 0 . Root and internal frontier nodes created along an accepted floor path remain part of the corresponding cache state and also belong to Efloor .Entries shared by multiple paths are included only once. Con-sequently, Bfloor = |E floor |, and the free-competition budget 
+
+Bfree is then computed according to Eq. (18). 
+
+Stage II: unified competition for coverage and resolution. 
+
+Free competition contains only two primitive operations. If slot Sj is uncovered, Add (l, g, j ) introduces root prototype 
+
+rl,g,j to cover the entire slot. If v ∈ F l,g,j is an expandable frontier node, Split (l, g, v ) replaces v with its preselected child set. Their marginal gains are 
+
+∆add (l, g, j ) = ωl,g Rl,g (rl,g,j )
+
+× Ddrop  Irl,g,j 
+
+ − D  Irl,g,j 
+
+ ,
+
+∆split (l, g, v ) = ωl,g Rl,g (v)
+
+×
+
+D(Iv ) − X
+
+> u∈child( v)
+
+D(Iu)
+
+ . (50) Equation (50) combines three sources of information: Rl,g 
+
+represents input-conditioned information value, the reduc-tion in D represents the improvement in representation qual-ity, and ωl,g measures the output sensitivity of the layer– KV-head pair. Add compares complete dropping with rep-resentation by one root prototype and therefore purchases coverage. Split compares a parent prototype with its child prototype set and therefore purchases resolution. The net entry costs of the two operations are 
+
+cadd = 1 , csplit (v) = |child( v)| − 1. (51) For any candidate operation a, let ∆( a) and c(a) denote its marginal gain and net cost, respectively. Its utility per budget unit is 
+
+U (a) = ∆( a)
+
+c(a) . (52) All currently feasible operations enter the same max-priority queue, keyed by Eq. (52). Feasibility requires that: (i) all ancestor operations have already been executed; (ii) the op-eration has not already been executed; and (iii) its cost does not exceed the remaining budget. Formally, let Pred( a) denote the prerequisite operation set of action a, and let A denote the set of all potential Add and Split operations. The allocation objective is 
+
+max 
+
+> A′⊆A
+
+X
+
+> a∈A ′
+
+∆( a),
+
+s.t. X
+
+> a∈A ′
+
+c(a) ≤ Bfree ,
+
+Pred( a) ⊆ A ′, ∀a ∈ A ′. (53) The implemented allocator approximately solves Eq. (53) us-ing greedy marginal utility. At each step, it pops the highest-utility operation whose cost fits the remaining budget. Af-ter execution, it updates the corresponding tree frontier and inserts newly exposed child operations whose prerequisites have been satisfied. If the highest-utility operation is too expensive for the remaining budget, it is skipped and the al-locator continues checking other affordable operations. Al-location terminates when no feasible operation remains or when the budget is exhausted. Since all layers, KV heads, and slots share the same priority queue, GraceKV requires no predefined layer-level budget, head-level budget, or slot-level compression ratio. 
+
+Frontier updates and physical packing. After executing Add, an initially empty frontier Fl,g,j becomes {rl,g,j }. Af-ter executing Split (l, g, v ), the frontier is updated as 
+
+Fl,g,j ← (Fl,g,j \ { v}) ∪ child( v). (54) A slot whose Add operation is never executed retains an empty frontier and is physically dropped for that (l, g ) pair, producing no cache entry. The root represents the coarsest coverage, internal frontier nodes correspond to local merg-ing, and single-token leaves correspond to exact preservation. Token eviction, interval merging, and lossless retention are therefore different frontier states within the same tree rather than three mutually exclusive compression rules. For every (l, g ) pair, all frontier nodes, including those reserved by the singleton-floor stage, and all recent-window singletons are finally written into an independently sized ragged cache. Every non-singleton node stores 
+
+ekv , evv , p v , log meff 
+
+> v
+
+
+
+, (55) where the symbols are defined in Eqs. (24), (25), and (26). Every singleton stores its original K/V pair, its original posi-tion, and a zero multiplicity bias. During decoding, attention is computed using Eq. (27), and every newly generated token is appended to the corresponding ragged cache with effective multiplicity 1.When x = 1 , Eq. (16) provides LGN ctx contextual en-tries. All trees can be expanded to single-token leaves, and the resulting cache matches FullKV entry by entry. Under a restricted budget, roots that are never selected are physi-cally dropped, selected but incompletely expanded intervals are covered by prototypes, and high-value regions receive higher resolution through additional splits or the singleton floor. GraceKV therefore jointly determines information cov-erage and local representation resolution under one shared physical cache budget. 
+
+# B Further Analysis of Curvature-Guided Slot Segmentation 
+
+B.1 Motivation and Novelty 
+
+GraceKV first partitions the long context into a set of con-tiguous slots, based on which it constructs a progressively refinable prototype tree for every layer–KV-head–slot atomic unit. This partition determines not only the intervals covered by the tree roots, but also which tokens may initially share a low-resolution representation. The slot boundaries should therefore be placed near structural transitions in the contex-tual representation, rather than being determined solely by a predefined uniform length. Uniform segmentation is simple, but it may separate re-gions whose representations evolve continuously or place representationally heterogeneous neighboring regions in the same slot. The former produces unnecessary tree roots and cache entries, whereas the latter requires a coarse prototype to approximate multiple incompatible representation patterns, increasing the distortion introduced by KV merging. Explicit punctuation and document delimiters provide another pos-sible partition signal, but they depend strongly on the input format and do not directly indicate whether the model’s in-ternal representation has changed. Token surprisal primarily reflects local prediction difficulty or rarity and likewise does not necessarily correspond to a structural boundary. We instead view the hidden states of consecutive to-kens as a discrete trajectory in the representation space and identify candidate boundaries from changes in its di-rection. Intuitively, when neighboring hidden states evolve smoothly along similar directions, they are more likely to admit a shared low-resolution prototype. When the trajec-tory changes direction sharply, merging across that posi-tion is more likely to mix different representation structures. GraceKV therefore uses multi-layer, multi-scale hidden-state curvature as its primary structural signal and token surprisal only as an auxiliary signal for local information transitions. To the best of our knowledge, GraceKV is the first KV cache compression method to use multi-layer, multi-scale hidden-state trajectory curvature to construct contiguous tex-tual slots for multi-resolution KV cache compression. This claim concerns the specific structural role of curvature in constructing the shared slot partition, rather than the broader use of curvature for language-model analysis or token com-pression. GraceKV constructs a single context partition shared by all layers and KV heads: 
+
+S = {S1, S 2, . . . , S J } . (56) After obtaining these shared slot boundaries, GraceKV inde-pendently constructs a prototype tree Tl,g,j for every layer l,KV head g, and slot Sj . This design separates the global structural partition of the context from the head-specific cache representation. All atomic units share the same con-tiguous regions, while their prototype trees and final repre-sentation resolutions remain specific to their own K/V states, estimated distortions, and task-conditioned values. 
+
+B.2 Multi-Layer, Multi-Scale Curvature 
+
+Hidden-state trajectory. Consider an input sequence of length T processed by a Transformer with L layers. During the standard prefill pass, GraceKV collects the input residual stream of several sampled Transformer blocks. For sampled layer l and token position i, let 
+
+h(l) 
+
+> i
+
+∈ RD (57) denote the residual hidden state before the block-level input normalization and self-attention computation, where D is the hidden dimension. The sampled layer set is defined by relative model depths: 
+
+Lseg = Unique 
+
+ min( ⌊ρL ⌋ , L − 1) 
+
+| ρ ∈ { 0.33 , 0.50 , 0.67 }
+
+
+
+.
+
+(58) The same rule is applied to all supported backbones, allow-ing the segmentation procedure to adapt automatically to different numbers of Transformer layers. We first apply L2 normalization: 
+
+¯h(l) 
+
+> i
+
+= h(l)
+
+> i
+
+max 
+
+
+
+h(l) 
+
+> i2
+
+, ε 
+
+ , ε = 10 −6. (59) This normalization suppresses variations in hidden-state magnitude and makes the curvature primarily reflect changes in trajectory direction. Single-layer, single-scale curvature. For sampled layer l,position i, and window size w, we compute the local means on the two sides of position i:
+
+μ(l,w ) 
+
+> i, −
+
+= 1
+
+w
+
+> w−1
+
+X 
+
+> τ=0
+
+¯h(l) 
+
+> i−τ
+
+, μ(l,w ) 
+
+> i, +
+
+= 1
+
+w
+
+> w
+
+X 
+
+> τ=1
+
+¯h(l) 
+
+> i+τ
+
+. (60) The left window includes the current position i, whereas the right window starts from i + 1 . We then define the incoming and outgoing local directions as 
+
+δ(l,w ) 
+
+> i, −
+
+= ¯h(l) 
+
+> i
+
+− μ(l,w ) 
+
+> i, −
+
+, δ(l,w ) 
+
+> i, +
+
+= μ(l,w ) 
+
+> i, +
+
+− ¯h(l) 
+
+> i
+
+. (61) Their normalized forms are 
+
+u(l,w ) 
+
+> i, −
+
+= δ(l,w )
+
+> i, −
+
+max 
+
+
+
+δ(l,w ) 
+
+> i, −2
+
+, ε 
+
+ , (62) and 
+
+u(l,w ) 
+
+> i, +
+
+= δ(l,w )
+
+> i, +
+
+max 
+
+
+
+δ(l,w ) 
+
+> i, +2
+
+, ε 
+
+ . (63) The discrete trajectory curvature at position i is defined as 
+
+κ(l,w ) 
+
+> i
+
+= 1 −
+
+D
+
+u(l,w ) 
+
+> i, −
+
+, u (l,w )
+
+> i, +
+
+E
+
+. (64) When the incoming and outgoing directions are similar, their inner product approaches one and the curvature approaches zero, indicating a locally smooth trajectory. A larger curva-ture indicates a stronger directional transition. The default set of window scales is 
+
+W = {4, 8, 16 }. (65) For scale w, curvature is evaluated only at positions satisfying 
+
+w ≤ i < T − w. (66) At positions that do not admit complete windows on both sides, the curvature at that scale is set to zero rather than using padding or shortened windows. If T < 2w + 1 , the curvature for that scale is zero at all positions. 
+
+Multi-layer, multi-scale stabilization. Curvature from a single layer or window scale can be sensitive to local noise. GraceKV therefore aggregates curvature over both represen-tation depths and neighborhood sizes. Define 
+
+Ki =
+
+n
+
+κ(l,w ) 
+
+> i
+
+l ∈ L seg , w ∈ W 
+
+o
+
+. (67) The stabilized curvature is 
+
+κi = Mean ( Ki) − λstab Std ( Ki) , (68) where the standard deviation is computed as a population standard deviation and 
+
+λstab = 0 .25 (69) by default. The mean term preserves transitions that are consistently visible across layers and scales, while the standard-deviation penalty suppresses peaks that appear only at a particular layer or neighborhood size. Consequently, a position receives a large final curvature only when it represents a relatively stable transition across multiple representation depths and local contexts. 
+
+Auxiliary surprisal signal. Curvature measures direc-tional changes in the internal representation, but some lo-cal information transitions may not produce equally strong geometric changes at all sampled layers. We therefore incor-porate token surprisal as an auxiliary signal. For token xi, its surprisal is 
+
+ssurp  
+
+> i
+
+= − log p (xi | x<i ) . (70) In the implementation, ssurp  
+
+> i
+
+is computed from the logits at position i − 1 evaluated on token xi. The first sequence position has no preceding prediction and is assigned 
+
+ssurp 0 = 0 . (71) Because curvature and surprisal have different numerical scales, they are normalized separately. For a sequence-level signal 
+
+a = ( a0, a 1, . . . , a T −1), (72) we define robust normalization as 
+
+zrobust (ai) = ai − median( a)1.4826 MAD( a) + ε , (73) where 
+
+MAD( a) = median ( |a − median( a)|) , ε = 10 −6.
+
+(74) The median and median absolute deviation are computed over the complete input sequence. No clipping is applied. The final boundary score is 
+
+bi = zrobust (κi) + λszrobust (ssurp  
+
+> i
+
+) , (75) with 
+
+λs = 0 .15 (76) by default. Curvature therefore remains the primary struc-tural signal, while surprisal provides a smaller auxiliary cor-rection for local information changes. The default imple-mentation does not add rewards for punctuation, line breaks, passage separators, or other explicit delimiters, avoiding de-pendence on a particular document format or prompt tem-plate. 
+
+B.3 Dynamic-Programming Segmentation Objective 
+
+Segmentation domain. Let the context occupy the interval 
+
+[cs, c e) (77) in the complete input sequence. GraceKV preserves a recent window of length r at the end of the context, and therefore performs segmentation only over the compressible interval 
+
+[cs, c end ), cend = ce − r. (78) The prefix, recent window, question, and template suffix are excluded from the dynamic-programming domain and form hard boundaries. Let 
+
+N = cend − cs (79) be the length of the compressible region. We use coordinates relative to this region below. A slot is a half-open interval 
+
+S = [ a, e ), 0 ≤ a < e ≤ N, (80) with length 
+
+|S| = e − a. (81) The complete partition is 
+
+S = {Sj = [ aj , a j+1 )}Jj=1 , (82) where 
+
+a1 = 0 , aJ+1 = N. (83) 
+
+Within-slot representation dispersion. A slot suitable for coarse prototype representation should not only avoid cross-ing strong curvature boundaries, but should also exhibit a rel-atively consistent internal trajectory. We therefore measure the dispersion of adjacent hidden-state differences within each slot. For sampled layer l, define adjacent differences over the compressible region as 
+
+d(l) 
+
+> t
+
+= ¯h(l) 
+
+> cs+t+1
+
+− ¯h(l)
+
+> cs+t
+
+, t = 0 , . . . , N − 2. (84) For slot S = [ a, e ), the number of adjacent differences is 
+
+nS = |S| − 1 = e − a − 1. (85) When nS ≥ 1, their mean is 
+
+¯d(l) 
+
+> S
+
+= 1
+
+nSe−2X
+
+> t=a
+
+d(l) 
+
+> t
+
+. (86) For nS ≥ 2, the layer-specific dispersion is defined as the sample variance of these difference vectors: 
+
+Disp l(S) = 1
+
+nS − 1
+
+> e−2
+
+X
+
+> t=a
+
+d(l) 
+
+> t
+
+− ¯d(l)
+
+> S
+> 22
+
+. (87) For nS < 2, we define 
+
+Disp l(S) = 0 . (88) The final slot dispersion is averaged across the sampled lay-ers: 
+
+Disp( S) = 1
+
+|L seg |
+
+X
+
+> l∈L seg
+
+Disp l(S). (89) A low value of Disp( S) indicates that the hidden-state trajectory evolves in a relatively consistent direction within the slot, making the interval more suitable for a shared coarse representation. A large value indicates that the interval may contain multiple representation patterns, even when it does not contain a single dominant curvature peak. For efficient interval queries, the implementation com-putes the equivalent form 
+
+Disp l(S) = 
+
+> e−2
+
+X
+
+> t=a
+
+d(l)
+
+> t
+> 22
+
+− 1
+
+nS
+
+> e−2
+
+X
+
+> t=a
+
+d(l)
+
+> t
+> 22
+
+max( nS − 1, 1) . (90) Prefix statistics of P 
+
+> t
+
+d(l) 
+
+> t
+
+and P 
+
+> t
+
+∥d(l) 
+
+> t
+
+∥22 allow the disper-sion of any candidate slot to be queried in constant time during dynamic programming. 
+
+Global segmentation objective. The boundary score en-courages cuts at representation transitions, whereas the dis-persion term discourages slots whose internal trajectories are inconsistent. Optimizing only these terms, however, may create excessive numbers of very short slots. We therefore additionally introduce a preferred slot length and a fixed cost for creating a new boundary. Let n0 denote the target slot length and define the length penalty 
+
+Φ( S) = 
+
+ |S| − n0
+
+n0
+
+2
+
+. (91) For every non-initial slot beginning at relative position aj , the corresponding cut is placed after complete-sequence position 
+
+cs + aj − 1. It receives boundary reward bcs+aj −1 and pays a fixed cut cost ccut .The complete segmentation objective is 
+
+max 
+
+> S
+> J
+
+X
+
+> j=2
+
+ bcs+aj −1 − ccut 
+
+
+
+− λdJX
+
+> j=1
+
+Disp( Sj )
+
+− λnJX
+
+> j=1
+
+ |Sj | − n0
+
+n0
+
+2
+
+,
+
+(92) subject, under normal conditions, to 
+
+nmin ≤ | Sj | ≤ nmax . (93) The default values are 
+
+nmin = 16 , nmax = 128 , n0 = 64 , (94) and 
+
+λd = 0 .25 , λn = 0 .10 , ccut = 1 .0. (95) The first term favors boundaries supported by curvature and surprisal. The second term favors slots whose inter-nal representation trajectories are consistent. The third term prevents slot lengths from deviating excessively from the preferred scale, while the fixed cut cost suppresses over-segmentation caused by noisy local peaks. 
+
+Dynamic-programming recurrence. Let F [i] denote the maximum objective value for partitioning the relative interval 
+
+[0 , i ). We initialize 
+
+F [0] = 0 . (96) Define the reward for starting a new slot at relative position 
+
+a as 
+
+Γ( a) = 
+
+(0, a = 0 ,bcs+a−1 − ccut , a > 0. (97) For endpoint i, the standard predecessor set is 
+
+A(i) = {a | 0 ≤ a < i, n min ≤ i − a ≤ nmax } . (98) The recurrence is 
+
+F [i] = max 
+
+> a∈A (i)
+
+"
+
+F [a] + Γ( a) − λd Disp([ a, i )) 
+
+− λn
+
+ i − a − n0
+
+n0
+
+2 #
+
+.
+
+(99) The maximizing predecessor is recorded as 
+
+P [i] = arg max 
+
+> a∈A (i)
+
+"
+
+F [a] + Γ( a) − λd Disp([ a, i )) 
+
+− λn
+
+ i − a − n0
+
+n0
+
+2 #
+
+.
+
+(100) Starting from i = N and following the backpointers P [i]
+
+recovers the complete shared slot partition. The first slot begins at zero and therefore receives neither a boundary reward nor a cut penalty. The final slot only needs to reach N and receives no additional terminal reward. If no standard predecessor exists for i = N , the implementation relaxes only the minimum-length constraint of the final slot: 
+
+Aterm (N ) = {a | 0 ≤ a < N, 1 ≤ N − a ≤ nmax } .
+
+(101) This guarantees complete coverage when the remaining suf-fix is shorter than nmin . When the entire compressible region is shorter than nmin , it is represented as a single slot. Each endpoint considers at most nmax − nmin + 1 stan-dard predecessors, and each interval dispersion is queried in constant time. The resulting time complexity is 
+
+O(N n max ), (102) and the dynamic-programming state and backpointers re-quire 
+
+O(N ) (103) additional memory. With the default nmax = 128 , the search bandwidth remains fixed as the context length grows. 
+
+B.4 Why Curvature for Slot Boundaries 
+
+Curvature and token importance serve fundamentally dif-ferent roles in GraceKV. The subsequent value flow esti-mates whether a region is useful for the current task, whereas curvature-guided segmentation determines which neighbor-ing tokens should not be forced to share an initially coarse representation. The former answers whether a region is worth preserving; the latter identifies where a low-resolution rep-resentation should be structurally separated. We therefore do not directly use attention scores, token relevance, or multi-hop values to determine the shared slot partition, as doing so would make the structural decomposition itself depend entirely on the current question’s local attention pattern. Curvature is particularly suitable for this purpose because it measures a change in the direction of representation evo-lution, rather than only the distance between neighboring states. Hidden states may move by a relatively large dis-tance while continuing along a consistent direction, in which case the underlying representation pattern remains smooth. Conversely, a sequence of individually small changes may still contain a strong structural transition when their direc-tions change sharply. Segmentation based only on adjacent embedding distance cannot distinguish these two cases as directly. Curvature and surprisal also provide complementary in-formation. Surprisal measures the difficulty of predicting the current token. Rare entities, numbers, special symbols, or unusual surface forms may all produce high surprisal with-out defining a structural boundary. Curvature instead com-pares the directions of the hidden-state trajectory on the two sides of a position and is therefore more directly related to a transition between local representation patterns. GraceKV consequently assigns surprisal a relatively small auxiliary weight rather than allowing it to dominate the partition. The multi-layer, multi-scale formulation further prevents the partition from depending on a single representation depth or neighborhood size. Small windows respond to local tran-sitions, whereas larger windows capture broader structural changes. Intermediate and deeper layers expose representa-tion changes at different abstraction levels. Subtracting the cross-layer, cross-scale standard deviation suppresses peaks that are not stable across these views. The dynamic-programming objective also does not me-chanically convert every curvature peak into a boundary. A candidate cut must jointly compete with within-slot dis-persion, preferred length, and the fixed cost of introducing another slot. A local peak is selected only when its structural benefit is sufficient to compensate for the additional seg-mentation cost. The final partition therefore reflects a global trade-off between local boundary evidence and overall slot quality, rather than a simple curvature-thresholding rule. The same stabilized curvature signal κ is additionally used to propose structural split positions within each prototype tree. For an interval I, GraceKV constructs a set of binary-split candidates from the highest-curvature positions and the interval midpoint: 
+
+C(I) = TopK t∈I (κt) ∪ { mid( I)} , (104) where the default number of curvature candidates is 
+
+K = 16 . (105) When comparing binary splits, curvature is min–max nor-malized within the current interval and included as an auxil-iary reward with default weight 0.05 in addition to distortion reduction. Importantly, tree refinement uses the stabilized curvature 
+
+κ, rather than the boundary score b that combines curva-ture with surprisal. Curvature thus serves two consistent but distinct structural roles: it first determines the shared macro-scopic slot partition and then biases finer-grained refinement within each per-head prototype tree. In the ablation denoted by w/o Curv. Segmentation , we replace the complete curvature-guided segmentation proce-dure with uniform slots of target length 64. We also remove curvature-guided tree refinement by disabling curvature can-didates and curvature rewards, leaving only the interval mid-point as the binary-split candidate. This variant is therefore not a surprisal-only dynamic-programming partition. It re-moves both curvature-guided slot construction and the curva-ture bias used during subsequent tree refinement. Its perfor-mance degradation across different backbones, task types, and cache budgets supports the role of curvature in both macroscopic structural partitioning and fine-grained proto-type refinement. C Global Allocation, Greedy Approximation, and the Singleton Floor 
+
+This section further clarifies the meaning of “global allo-cation” in GraceKV, the computational difficulty of exact global optimization, the approximation induced by marginal-utility greedy allocation, and the role of the singleton floor in compensating for this approximation. In the main paper, “global” refers to the scope of resource competition : all layer– KV-head–slot atomic units share the same cache budget and compete within a unified decision space. It does not imply that GraceKV guarantees a globally optimal solution in the combinatorial-optimization sense. GraceKV instead uses a global priority queue to efficiently approximate this combi-natorial allocation problem and introduces a budget-aware singleton floor to protect exact information that may other-wise be underestimated by step-wise greedy decisions. 
+
+C.1 Global Allocation vs. Global Optimality 
+
+Let 
+
+S = {Sj }Jj=1 
+
+denote the shared slot partition produced by curvature-guided segmentation. For every layer–KV-head–slot tuple (l, g, j ),GraceKV constructs a prototype tree 
+
+Tl,g,j ,
+
+whose current cache representation is described by a frontier 
+
+Fl,g,j .
+
+An empty frontier means that the entire slot is dropped at the corresponding layer and KV head. A frontier containing only the root represents the complete slot using one coarse prototype. Expanding frontier nodes progressively improves local resolution, while full expansion to token-level leaves recovers the original K/V entries. For an uncovered slot, GraceKV defines an Add operation 
+
+Add( l, g, j ),
+
+which inserts the root rl,g,j into the frontier. For an expand-able frontier node v, GraceKV defines a Split operation 
+
+Split( l, g, v ),
+
+which replaces v with its precomputed child set child( v).Their physical cache-entry costs are 
+
+cadd = 1 , csplit (v) = | child( v)| − 1.
+
+Let Rl,g (v) denote the input-conditioned value of node v,let ωl,g denote the sensitivity of the corresponding layer–KV-head pair, and let D(Iv ) and Ddrop (Iv ) denote the prototype distortion and complete-drop cost of interval Iv , respectively. The marginal gains of Add and Split are 
+
+∆add (l, g, j ) = ωl,g Rl,g (rl,g,j ) Ddrop (Irl,g,j ) − D(Irl,g,j ) ,
+
+and 
+
+∆split (l, g, v ) = ωl,g Rl,g (v)
+
+D(Iv ) − X
+
+> u∈child( v)
+
+D(Iu)
+
+ .
+
+Accordingly, Add measures the gain obtained by changing a region from complete removal to coarse coverage, whereas Split measures the gain obtained by replacing one coarse prototype with a finer set of child prototypes. Because the two operations use the same value, distortion, sensitivity, and physical-entry units, coverage and resolution can directly compete under one shared budget. Let A denote the set of all potential Add and Split op-erations, and let Pred( a) denote the prerequisite operations of action a. For example, a Split operation can be executed only after the corresponding root has been admitted and all required ancestor expansions have been completed. After de-ducting the recent window and the realized singleton-floor cost, let Bfree denote the budget available to the main auction. The ideal combinatorial allocation problem can be written as 
+
+max 
+
+> A′⊆A
+
+X
+
+> a∈A ′
+
+∆( a)s.t. X
+
+> a∈A ′
+
+c(a) ≤ Bfree ,
+
+Pred( a) ⊆ A ′, ∀a ∈ A ′.
+
+In this formulation, global allocation means that: 
+
+• candidate operations from all Transformer layers belong to the same competition space; 
+
+• all KV heads share the same remaining cache budget; 
+
+• coverage and refinement operations from different context slots can be compared directly; 
+
+• Add and Split use the same physical-entry budget despite representing different compression behaviors; and 
+
+• the main auction does not impose preset layer-wise, KV-head-wise, or slot-wise quotas. Consequently, the number of physical cache entries even-tually assigned to each layer, KV head, or context slot is an 
+
+emergent result of global competition among its candidate operations, rather than a pre-specified compression ratio or local quota. Global optimality is a stronger and fundamentally differ-ent requirement. It would require searching over all valid frontier combinations of all prototype trees and identifying the joint representation with the maximum total utility un-der the shared budget. GraceKV does not claim such com-binatorial optimality. In other words, global describes the scope of resource competition, whereas optimal describes an exact solution guarantee over the complete discrete search space. GraceKV implements the former and efficiently ap-proximates the latter. The w/o Global Allocation ablation replaces the freely shared budget with fixed layer–KV-head-level capac-ity limits. The prototype trees and utility definitions remain unchanged, but once a layer–KV-head pair reaches its local limit, it cannot consume budget left unused by another pair. This prevents cache resources from flowing toward higher-utility operations and recovers the “first impose local quotas, then make compression decisions” paradigm discussed in the main paper. C.2 Difficulty of Exact Global Optimization 
+
+The difficulty of exact optimization does not arise only from the number of candidate operations. Each prototype tree con-tains a combinatorial number of valid frontiers under ances-tor constraints, while the choices made across different trees are coupled by the shared cache budget. For a prototype tree T , let 
+
+F(T )
+
+denote the set of all valid frontiers of that tree. For any node 
+
+v, a valid representation of its subtree has two possibilities: 1. retain v itself as a frontier node; or 2. expand v and independently select a valid frontier from every child subtree. Let N (v) denote the number of valid frontiers in the sub-tree rooted at v. A leaf node satisfies 
+
+N (v) = 1 , v is a leaf ,
+
+whereas a non-leaf node satisfies 
+
+N (v) = 1 + Y
+
+> u∈child( v)
+
+N (u).
+
+The first term corresponds to retaining the parent node, while the second term corresponds to expanding the parent and jointly selecting frontiers from all child subtrees. Even for a balanced binary tree, this quantity grows rapidly with tree depth. Salient-token extraction may additionally create three-way branches, further enlarging the valid-frontier space. Let the complete set of atomic prototype trees be 
+
+T = {T l,g,j : 1 ≤ l ≤ L, 1 ≤ g ≤ G, 1 ≤ j ≤ J} .
+
+Explicit enumeration of all joint cache representations would require considering a search space of size 
+
+Y
+
+> T ∈ T
+
+|F(T )|.
+
+The number of slots J grows approximately linearly with context length, and every slot is instantiated across L layers and G KV heads. Therefore, enumerating all joint frontiers is infeasible for long-context inference. Even if every tree were first reduced to a set of cost–utility states, exact global allocation would still require jointly se-lecting one valid state from every tree under a shared budget. The problem simultaneously contains: 
+
+• discrete physical-entry costs; 
+
+• tree-structured prerequisite constraints; 
+
+• distinct coverage and refinement actions; 
+
+• shared-budget coupling across atomic units; and 
+
+• high-value leaves that may be reachable only after multi-ple intermediate expansions. An exact dynamic program would generally need to in-clude the cache budget as an additional state dimension and repeatedly merge the non-dominated cost–utility states of different trees. Its cost depends not only on the numerical budget but also on the number of non-dominated frontiers retained for every subtree. In online long-context inference, such optimization overhead can become comparable to, or even outweigh, the decoding savings obtained from cache compression. GraceKV therefore does not attempt to solve the exact combinatorial problem online. Instead, it uses a global greedy allocator based on marginal utility per physical entry. This converts an intractable joint-frontier search into a sequence of priority-queue operations while preserving global resource competition across layers, KV heads, and context regions. 
+
+C.3 Greedy Marginal-Utility Allocation 
+
+For each candidate action a, GraceKV defines its marginal utility per physical cache entry as 
+
+U (a) = ∆( a)
+
+c(a) .
+
+Normalizing by cost is important because different ex-pansions consume different numbers of entries. A binary Split usually adds one net cache entry, whereas an internal salient-token extraction may add two. Ranking actions only by their unnormalized gains would systematically favor ex-pensive operations merely because they purchase multiple entries at once. After completing the singleton-floor stage, GraceKV ini-tializes a global max-priority queue according to the current prototype-tree states: 
+
+• for every uncovered slot, its root Add operation is inserted into the queue; 
+
+• for every non-leaf frontier node exposed by the singleton-floor stage, its Split operation is inserted; 
+
+• Add and Split operations already executed during floor construction are not inserted again; and 
+
+• a deeper Split becomes available only after its parent has become part of the current frontier. At every iteration, the allocator performs the following procedure: 1. pop the operation with the highest unit-cost utility; 2. verify that its associated node is still part of the current frontier; 3. verify that its prerequisite operations remain satisfied; 4. check whether its physical cost fits within the remaining budget; 5. execute the operation and update the corresponding fron-tier if it is feasible; 6. insert newly exposed child Split operations into the queue; and 7. repeat until the budget is exhausted or no executable op-eration remains. If the currently highest-ranked operation costs more than the remaining budget, the allocator does not terminate imme-diately. It discards that infeasible queue item and continues searching for a lower-cost action. Therefore, when a cost-two extraction cannot be purchased, the final remaining budget unit may still be spent on a cost-one Add or binary Split. The value, distortion, and gain of every node are pre-computed during tree construction. An operation in one tree does not change the distortion or token value of another tree. Different trees are coupled only through the shared budget, while operations within the same tree are coupled through frontier and ancestor constraints. This enables incremental allocation: an operation enters the queue only after its parent action is completed, and stale actions are ignored when they are popped if their nodes are no longer part of the current frontier. Let |A| denote the number of potential operations. Since each effective operation is inserted into and removed from the heap only a constant number of times, the priority-queue complexity is 
+
+O(|A| log |A| ) ,
+
+which is substantially smaller than explicitly enumerating all joint frontiers. Although the selection process is greedy, it is still global :each step compares the currently available actions across all layers, KV heads, and context slots, rather than performing independent greedy allocation within each local unit. Nevertheless, marginal-utility greedy allocation cannot guarantee combinatorial global optimality. One important reason is that the gain of reaching a high-value leaf may be non-smooth along its prerequisite path. Suppose a high-value token t lies on the path 
+
+r = v0 → v1 → · · · → vd = {t}.
+
+Exactly preserving t may require one root Add followed by multiple Split or Extract operations. Although the final singleton leaf may provide a large cumulative benefit, some intermediate operations may have relatively small immediate gains. A step-wise greedy allocator observes only currently exposed actions and may spend the available budget on al-ternatives with higher immediate utility before reaching {t}.The singleton floor is introduced specifically to compensate for this type of non-smooth gain. 
+
+C.4 Singleton-Floor Construction and Budget Accounting 
+
+The singleton floor is not a set of free cache entries stored outside the prototype trees. It is a budget-constrained exact-representation channel that forces a small number of high-value layer–KV-head–token tuples to become token-level leaves before the main global auction. Its purpose is to reduce the risk that entity names, numerical values, label strings, or few-shot output formats are blurred by coarse prototypes. 
+
+Candidate scoring. Let 
+
+Rtok 
+
+> l,g,t
+
+denote the value of token t at layer l and KV head g. GraceKV first computes the consensus value across all layer–KV-head pairs: ¯Rtok  
+
+> t
+
+= Mean l,g Rtok 
+
+> l,g,t
+
+.
+
+It then mixes the local value with the global consensus and applies width-seven max-pooling: 
+
+fl,g,t = max  
+
+> τ∈N 7(t)
+
+(1 − c)Rtok  
+
+> l,g,τ
+
++ c ¯Rtok 
+
+> τ
+
+ , c = 0 .5,
+
+where 
+
+N7(t) = {τ ∈ C : |τ − t| ≤ 3} .
+
+The consensus term encourages important positions to re-ceive compatible protection across multiple layers and KV heads. Max-pooling allows a high-value token to protect nearby subword pieces and reduces the risk that only part of a multi-token entity is isolated. For each (l, g ), tokens are ranked by fl,g,t and must satisfy the quality gate 
+
+fl,g,t ≥ γfloor 
+
+Nc
+
+, γfloor = 1 .2.
+
+Candidates are then selected in descending order until their cumulative original token value reaches 
+
+ηfloor = 0 .95 .
+
+This procedure produces an initial candidate set 
+
+Cfloor .
+
+The same textual position appearing in different layer– KV-head pairs corresponds to different physical K/V entries. Therefore, (l, g, t ) tuples are counted independently rather than deduplicated only by token position t.
+
+From candidates to realized singletons. The number of selected token positions is only an approximate measure of the floor scale and is not the actual physical entry cost. To realize a candidate (l, g, t ), GraceKV must first execute the root Add operation if the corresponding slot is uncovered and then repeatedly Split or Extract the frontier node con-taining t until 
+
+Iv = {t}.
+
+Let 
+
+Pt
+
+denote the set of not-yet-executed operations required to re-alize candidate t under the current frontier F. Its incremental physical cost is 
+
+C(t | F ) = X
+
+> a∈P t
+
+c(a).
+
+When multiple floor candidates belong to the same tree, already expanded common ancestors are reused and are not charged again. Therefore, the joint cost of realizing several floor tokens can be smaller than the sum of their indepen-dently computed path costs. After deducting the recent window, the base allocatable budget is 
+
+Bbase = Btotal − LGr. 
+
+Let Afloor denote the deduplicated tree operations actually executed during the floor stage. These operations induce a set of physical frontier entries 
+
+Efloor ,
+
+which contains the exact singleton leaves together with all root, internal, and sibling prototype entries materialized by the required paths and retained in the resulting frontier. An entry shared by multiple floor paths is included only once. Since c(a) counts the number of newly introduced physical entries, the realized floor budget is equivalently 
+
+Bfloor = |E floor | = X
+
+> a∈A floor
+
+c(a),
+
+and is bounded by 
+
+Bfloor ≤ ⌊ αB base ⌋ , α = 0 .6.
+
+Initial candidate selection uses the number of candidate to-kens to approximately control the floor scale, whereas actual execution is always charged according to the physical entries introduced by the required tree paths. The implementation additionally uses a per-head safeguard during this bounded floor stage to prevent a single layer–KV-head pair from con-suming most of the protection budget. This safeguard applies only to the singleton-floor stage and is not a local quota in the main Add–Split auction. Any floor budget that is not consumed during candidate realization is returned to the subsequent global auction. The successfully realized singleton-anchor set is denoted by 
+
+Sfloor ⊆ C floor .
+
+Accordingly, a floor singleton refers only to a tuple 
+
+(l, g, t ) ∈ S floor 
+
+that is successfully expanded into a token-level frontier leaf. In contrast, Efloor denotes the complete set of physical frontier entries reserved by the floor stage, including both these exact leaves and the other frontier entries required to realize them. The remaining auction budget is 
+
+Bfree = Bbase − Bfloor .
+
+This gives the complete physical interpretation of the bud-get notation used in the main paper. The singleton floor is initiated by a collection of exact singleton anchors, while 
+
+Bfloor = |E floor |
+
+counts all deduplicated physical entries introduced by the corresponding Add, Split, and Extract paths. The w/o Singleton Floor ablation removes this protection channel by setting 
+
+α = 0 ,
+
+while keeping the prototype trees, token values, distortion estimates, and global auction unchanged. 
+
+C.5 Interaction Between the Singleton Floor and Prototype Trees 
+
+The singleton floor and the prototype-tree representation are not two parallel cache systems. A floor token becomes an exact cache entry by being isolated as a singleton leaf inside 
+
+its prototype tree. No second copy of its K/V pair is appended outside the tree frontier. Suppose a current frontier node v covers an interval Iv
+
+containing one or more floor candidates that have not yet been isolated. A regular node compares curvature-aligned binary splitting with salient-token extraction. In contrast, a node containing an unrealized floor candidate is forced to use Extract. If multiple floor candidates occur inside Iv , the highest-value candidate position p is isolated first, producing up to three non-empty child intervals: 
+
+[av , p ), {p}, [p + 1 , b v ).
+
+The singleton {p} immediately becomes an exact leaf. If either side interval still contains unrealized floor can-didates, forced extraction continues recursively until the budget-feasible candidates have been isolated. For an exact singleton node v = {t}, prototype construc-tion degenerates to 
+
+ekv = kt, evv = vt, pv = t, meff  
+
+> v
+
+= 1 .
+
+Therefore, its multiplicity bias is 
+
+log meff  
+
+> v
+
+= 0 ,
+
+and decoding uses the original post-RoPE K/V pair collected during prefill. This construction satisfies the following non-duplication invariant: 
+
+(l, g, t ) ∈ S floor =⇒ t belongs to exactly one current frontier interval .
+
+Once t is isolated as a singleton, its left and right sibling intervals no longer cover that position. Consequently: 
+
+• a floor token is not simultaneously stored in a singleton and a sibling prototype; 
+
+• no second exact K/V copy is stored outside the tree; 
+
+• the packing stage requires no additional deduplication; 
+
+• shared ancestor paths are executed and charged only once; and 
+
+• floor singletons and ordinary frontier nodes jointly form the same physical ragged cache. The notation distinguishes the successfully realized sin-gleton anchors Sfloor from the complete physical entry set 
+
+Efloor . The former contains only exact layer–KV-head–token leaves, whereas the latter additionally contains the root, inter-nal, and sibling frontier entries materialized while exposing those leaves. Physically, every element of Efloor is a node of the same final prototype-tree frontier, and 
+
+Bfloor = |E floor | .
+
+When the text distinguishes “ordinary frontier nodes” from “floor singletons,” the distinction refers only to how they are selected: ordinary frontier nodes are exposed by the main auction, whereas floor singleton anchors are forced by the protection stage. They do not belong to separate cache struc-tures. If the floor cost cap is insufficient to fully isolate an initial candidate, that candidate is not included in Sfloor and is not inserted as an additional exact entry. It may remain repre-sented by a coarser prototype containing its position or may be refined later by the main auction. This preserves the total physical budget and avoids duplicate storage. C.6 Budget Utilization, Early Stopping, and FullKV Recovery 
+
+Budget utilization and early stopping. The abstract opti-mization constraint is X
+
+> a∈A ′
+
+c(a) ≤ Bfree ,
+
+rather than X
+
+> a∈A ′
+
+c(a) = Bfree .
+
+The cache budget is therefore formally an upper bound, while the optimization objective is to maximize estimated utility. In principle, if no remaining operation provides a positive estimated improvement, allocating further entries is unnecessary, and the formulation permits the allocator to terminate before consuming the entire budget. More generally, allocation can terminate when: 1. the remaining budget is zero; 2. all prototype trees have reached the finest available rep-resentation; 3. the priority queue contains no operation whose prerequi-sites are satisfied; 4. the remaining budget cannot accommodate the discrete cost of any candidate; or 5. under a strict elastic stopping policy, no remaining can-didate has positive marginal utility. The default configuration uses non-elastic allocation. Esti-mated gains are lower-bounded by zero when necessary, and legal zero-utility refinements remain admissible. Therefore, the fifth stopping condition is effectively inactive in the de-fault setting. If a cost-two action does not fit the remaining budget, the allocator continues searching for cost-one actions instead of terminating immediately. As a result, although the mathematical formulation al-lows unused budget, the default allocator continues to dis-tribute entries whenever feasible tree refinements remain. Any residual under-utilization can only arise when the queue is exhausted or when the final discrete action costs cannot match a very small residual budget. Relative to the complete long-context cache budget, this difference is negligible in practice. This design reconciles utility maximization with stable compression-ratio control: the inequality constraint pre-serves the principled possibility of early stopping, while the default non-elastic implementation makes the realized phys-ical cache size closely track the target budget. 
+
+FullKV recovery. When the target compression ratio is 
+
+x = 1 ,
+
+the total context-cache budget becomes 
+
+Btotal = LGN ctx .
+
+After deducting the recent window, the base budget avail-able to the prototype trees is 
+
+Bbase = LG (Nctx − r) = LGN c.
+
+Consider a prototype tree covering n original tokens. Ad-mitting its root costs one entry. Every subsequent expansion of an internal node v incurs the net cost 
+
+| child( v)| − 1.
+
+Starting from an empty frontier, if the tree is fully expanded into n token-level leaves, the total operation cost satisfies the telescoping identity 
+
+1 + X
+
+> v∈I
+
+(| child( v)| − 1) = n, 
+
+where I denotes the set of expanded internal nodes. Thus, recovering all original tokens in a tree requires ex-actly n physical cache entries, matching the corresponding FullKV cost. The Add, Split, and Extract operations executed by the singleton floor form only a subset of this complete expansion path. They are not an additional set of cache entries. Since their realized cost is deducted from the main auction budget, 
+
+Bfloor + Bfree = LGN c
+
+when x = 1 .Under the default non-elastic configuration, nonnegative and zero-utility refinement operations remain executable. Therefore, full expansion is not interrupted merely because an intermediate Split has zero immediate gain. Every com-pressible token eventually becomes a singleton leaf, while the recent window is already stored using its original entries. For every (l, g, t ), the resulting cache therefore satisfies 
+
+ekl,g,t = kl,g,t , evl,g,t = vl,g,t , meff  
+
+> l,g,t
+
+= 1 .
+
+GraceKV consequently recovers the same token positions, K/V representations, and attention computation as FullKV. The two operating extremes of GraceKV therefore have a unified interpretation: 
+
+• under a limited budget, empty frontiers, internal pro-totypes, and singleton leaves implement true dropping, coarse information coverage, and fine local resolution, respectively; and 
+
+• when the budget is restored to the FullKV scale, all pro-totype trees expand to their original token-level leaves. The singleton floor, greedy auction, and FullKV recovery are therefore not unrelated special cases. They are different operating states of the same prototype-tree representation space under the same physical cache-budget accounting. 
+
+# D Experimental Details and Reproducibility 
+
+D.1 Models, Tasks, and Evaluation Settings 
+
+Backbone Models. We evaluate GraceKV on multiple open-source large language models with different model scales and architectures, including Qwen2.5-3B, Qwen2.5-7B, Qwen2.5-14B, Llama-3.1-8B, and Mistral-7B. The main results in the paper are reported using Qwen2.5-7B, while the remaining models are used for cross-backbone evalua-tion and ablation studies. This setting allows us to examine whether the effectiveness of GraceKV depends on a particu-lar model scale, attention configuration, or model family. For each backbone, the model and its corresponding to-kenizer are loaded from the same publicly available model release, ensuring consistency in the vocabulary, special to-kens, positional encoding configuration, and input format-ting. For models with native conversation templates, we use the chat template provided by the corresponding tokenizer. All models are directly used for inference without additional training, parameter updates, or task-specific fine-tuning. GraceKV performs cache compression after one standard prefill pass. Therefore, adapting GraceKV to a new backbone only requires accounting for its number of layers, number of KV heads, and hidden-state dimensionality. No backbone-specific compression module needs to be trained. 
+
+Long-Context Tasks. We conduct experiments on Long-Bench and RULER, covering six representative types of long-context tasks: 
+
+• single-document question answering; 
+
+• multi-document question answering; 
+
+• long-document summarization; 
+
+• few-shot generation; 
+
+• long-context aggregation; 
+
+• multi-target exact retrieval. These tasks examine different requirements for com-pressed KV cache representations. Single-document ques-tion answering primarily requires locating local evidence within one long document. Multi-document question an-swering further requires connecting information distributed across distant context regions. Summarization emphasizes broad coverage of the input context, whereas few-shot gener-ation requires preserving demonstration patterns, output for-mats, and locally precise information. Aggregation depends on integrating evidence distributed throughout the context, while retrieval requires accurately recovering multiple dis-tant targets from a large amount of distractor content. Together, these task categories cover two central require-ments of KV cache compression: preserving broad informa-tion coverage and maintaining sufficiently high local resolu-tion at critical positions. We follow the corresponding task protocols and evaluation settings of LongBench and RULER. 
+
+Input Processing. All methods use the same model input, tokenizer, and input template. For each sample, we explicitly distinguish the template prefix, long context, question, and template suffix, and record the position of the long context in the complete token sequence. We represent the complete input as 
+
+X = Xpre ⊕ Xctx ⊕ Xpost , (106) where Xpre denotes the input-template prefix, Xctx denotes the long context, and Xpost contains the question and tem-plate suffix. All contexts are retained in full throughout our experi-ments, without context truncation. Every method processes exactly the same tokenized sequence, ensuring that differ-ences among compression methods are not caused by differ-ences in the input content. For the same sample, all methods additionally share the same prefill input, model parameters, question position, and generation configuration. Consequently, the observed perfor-mance differences primarily arise from the compressed KV cache constructed after prefill, rather than from differences in input formatting or context length. 
+
+D.2 Evaluation Metrics 
+
+We use the official or equivalent evaluation metric associated with each task category. For readability, all scores reported in the main paper and appendix are multiplied by 100 .
+
+Question-Answering F1. Single-document and multi-document question-answering tasks are evaluated using token-level F1. Before evaluation, both the prediction and reference answer are normalized by converting text to low-ercase, removing English articles and punctuation, and col-lapsing consecutive whitespace. Let P and G denote the normalized token sequences of the prediction and reference answer, respectively. Precision and recall are defined as 
+
+Precision = |P ∩ G||P | , Recall = |P ∩ G||G| . (107) The corresponding F1 score is 
+
+F1 = 2 · Precision · Recall Precision + Recall . (108) When multiple acceptable reference answers are available, we compute the F1 score against each reference and retain the maximum value. This metric jointly measures the precision and coverage of the generated answer and permits partial token-level matches. 
+
+Rouge-L. Long-document summarization and few-shot generation are evaluated using word-level Rouge-L. Let 
+
+LCS( P, G ) denote the length of the longest common sub-sequence between prediction P and reference G. The corre-sponding precision and recall are 
+
+PLCS = LCS( P, G )
+
+|P | , RLCS = LCS( P, G )
+
+|G| . (109) Rouge-L F1 is then defined as 
+
+Rouge -L = 2PLCS RLCS 
+
+PLCS + RLCS 
+
+. (110) Rouge-L measures content and ordering consistency through the longest common subsequence. It is therefore suitable for evaluating both long-form summaries and the agreement between generated outputs and reference formats in few-shot tasks. 
+
+Set Recall. Aggregation and multi-target retrieval tasks are evaluated using set recall. Let 
+
+Y = {y1, y 2, . . . , y m} (111) denote the set of targets that should be recovered for a sample, and let ˆy denote the generated response. A target yi is con-sidered successfully recovered if it appears in the generated response. Set recall is defined as 
+
+SetRecall = 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+1 [yi ⊆ ˆy] . (112) In the implementation, both the generated response and target strings are converted to lowercase before matching. Unlike semantic-similarity metrics, set recall directly ver-ifies whether each target has been recovered. It therefore provides a strict measure of whether the compressed cache preserves distributed evidence and maintains the precise ad-dressability required for long-context aggregation and multi-target retrieval. 
+
+D.3 Hardware and Software Environment 
+
+All experiments are conducted on NVIDIA A800 GPUs. Different experiments are executed in parallel according to the available computational resources. The number of GPUs is not treated as part of the model configuration, compression method, or evaluation protocol and is therefore not reported separately. Model inference uses bfloat16 numerical precision. The primary software environment consists of: 
+
+• Python 3.12; 
+
+• PyTorch 2.8; 
+
+• Transformers 5.13; 
+
+• CUDA 12.x. All models are loaded in inference mode and evaluated using the same numerical precision. The feature collection, slot segmentation, prototype-tree construction, global re-source allocation, and compressed-cache decoding stages of GraceKV are executed in the GPU environment and require no additional training process. Task-quality experiments and system-efficiency measure-ments are reported separately. The measurement protocols for latency and memory, together with the construction over-head and amortization analysis, are described in the system-efficiency appendix to avoid conflating model quality with hardware-dependent runtime measurements. 
+
+D.4 Fairness and Reproducibility 
+
+For every model and task category, all methods use the same model weights, tokenizer, input template, tokenized context, question position, compression-ratio setting, generation con-figuration, and evaluation function. The complete context is retained for every method, and no method-specific context truncation strategy is applied. Results are obtained under the same task partition and eval-uation protocol, ensuring that the performance differences primarily reflect how effectively each compressed cache rep-resentation preserves contextual information. The comparisons in the main paper cover token-eviction, KV-merging, and adaptive cache-allocation methods. Since different approaches may originally rely on different cache representations and system interfaces, our evaluation focuses on their task performance under a unified long-context eval-uation protocol, rather than on reproducing every system-level optimization of their original implementations. FullKV is evaluated using the same backbone, inputs, and evaluation pipeline and serves as the uncompressed reference. 
+
+# E Additional Results and Hyperparameter Sensitivity 
+
+E.1 Cross-Backbone Results 
+
+To examine whether GraceKV depends on a particular model architecture, family, or parameter scale, we further evaluate it on four additional backbones: Llama-3.1-8B-Instruct, Qwen2.5-14B-Instruct, Mistral-7B-Instruct-v0.3, and Qwen2.5-3B-Instruct. These models cover the Qwen, Llama, and Mistral families and parameter scales from 3B to 14B. All methods follow the same evaluation protocol, mandatory-region definition, and physical KV-entry budget used in the main experiments. Tables 4–7 report every evalu-ated compression ratio and cache budget. FullKV is shown as the uncompressed reference and is excluded from the ranking among compressed-cache methods. The best and second-best compressed-cache results in each column are highlighted in bold and underlined, respectively. Across the 128 model–task–budget settings, GraceKV ranks first in 85 settings and second in another 26, plac-ing among the top two in 111 settings. These results span three model families and parameter scales from 3B to 14B, indicating that the allocation mechanism is not tied to the behavior of a single backbone. GraceKV is particularly consistent on question answer-ing. It ranks first in all 24 single-document QA settings. On multi-document QA, it ranks first in 18 settings and second in the remaining six. The advantage often becomes more pronounced as the budget tightens. At 64 × compres-sion, GraceKV improves over the strongest alternative by 2.12, 3.77, 1.00, and 1.12 points on single-document QA for Llama-3.1-8B-Instruct, Qwen2.5-14B-Instruct, Mistral-7B-Instruct-v0.3, and Qwen2.5-3B-Instruct, respectively. These results support the central motivation of GraceKV: under a limited cache budget, jointly allocating contextual coverage and local resolution is more effective than committing to a fixed token-retention or merging rule. The same trend extends beyond question answering. GraceKV ranks among the top two in 21 of 24 summa-rization settings and 22 of 24 few-shot settings. The abso-lute gaps on summarization are generally smaller, as these tasks place greater emphasis on broad contextual coverage and are therefore less sensitive to exact local representa-tions. Nevertheless, GraceKV remains consistently compet-itive and becomes the strongest method in many moderate-and high-compression settings. Its stability across question answering, summarization, and few-shot learning suggests that the method does not obtain its gains by specializing to a single information pattern. RULER further reveals the different representation re-quirements of aggregation and retrieval. Retrieval requires accurate localization of one or more original evidence po-sitions, and GraceKV ranks first in 12 of 16 settings and second in four more. In contrast, aggregation favors broad and relatively uniform coverage, allowing methods domi-nated by coarse merging to perform strongly. GraceKV is not the best method in every aggregation setting, but remains competitive and achieves the highest score under several tight budgets. This contrast is consistent with the motivation for LongBench (Single-Document QA, F1 ×100 ) LongBench (Multi-Document QA, F1 ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×
+
+FullKV 45.47 31.19 H2O 41.49 39.10 35.57 31.93 27.69 24.31 30.90 29.81 30.33 28.82 28.39 27.48 StreamingLLM 32.76 28.86 25.79 24.24 22.35 21.83 25.80 23.98 24.17 24.15 23.07 22.95 CaM 41.36 38.13 34.87 30.24 26.45 22.75 30.66 30.00 30.25 28.38 27.97 27.80 SnapKV 44.80 43.87 39.42 34.02 29.40 24.46 31.42 31.01 30.08 29.96 29.69 28.35 D2O 40.61 37.62 35.66 32.05 27.21 23.00 30.26 29.47 30.87 28.26 28.39 27.75 PyramidKV 44.81 43.02 39.01 34.28 29.57 22.78 31.14 30.12 30.19 28.90 27.64 26.44 ChunkKV 44.70 43.08 39.58 34.19 30.86 22.75 31.11 30.91 30.37 29.21 29.40 28.12 
+
+GraceKV (Ours) 44.94 44.13 40.37 36.97 32.98 25.25 31.22 31.07 30.89 29.59 29.92 28.60 LongBench (Summarization, Rouge-L ×100 ) LongBench (Few-Shot, Rouge-L ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×
+
+FullKV 16.29 35.42 H2O 15.85 15.52 14.99 14.11 13.01 12.09 35.29 35.55 35.27 35.27 34.47 34.62 StreamingLLM 14.94 13.53 12.93 12.54 11.89 11.62 35.55 34.44 34.63 34.46 33.96 34.37 CaM 15.77 15.29 14.70 13.69 12.62 11.75 35.36 35.00 34.77 34.95 34.91 34.24 SnapKV 15.06 14.45 13.83 12.99 12.38 11.90 34.94 35.04 34.52 34.38 34.44 34.79 
+
+D2O 15.82 15.43 14.62 13.93 12.75 11.83 35.26 35.77 35.57 34.80 34.38 34.14 PyramidKV 15.03 14.19 13.63 12.96 12.17 11.66 35.08 35.64 35.03 34.62 34.32 34.46 ChunkKV 15.08 14.37 13.75 12.97 12.50 11.91 35.04 34.97 35.72 34.56 34.67 34.38 
+
+GraceKV (Ours) 15.85 15.51 15.03 14.16 12.92 12.19 35.97 35.90 35.69 35.16 34.95 34.62 
+
+RULER (Aggregation, Set Recall ×100 ) RULER (Retrieval, Set Recall ×100 )Method 4K 2K 1K 512 4K 2K 1K 512 FullKV 89.00 93.50 H2O 87.33 87.00 84.00 80.33 19.75 10.25 4.75 1.25 StreamingLLM 70.67 62.00 54.33 49.33 25.75 13.75 6.25 2.75 CaM 87.67 87.33 85.67 84.00 17.50 7.75 3.00 0.50 SnapKV 85.33 75.00 67.00 53.00 95.25 94.75 94.50 95.00 D2O 86.67 86.00 85.33 84.33 20.00 9.25 3.75 0.25 PyramidKV 83.67 74.67 67.67 53.67 93.75 96.00 94.00 94.25 ChunkKV 88.33 83.33 77.67 66.67 95.00 93.25 94.75 92.00 
+
+GraceKV (Ours) 87.67 84.33 79.33 75.00 95.25 96.25 94.50 95.25 
+
+Table 4: Complete cross-backbone results on Llama-3.1-8B-Instruct. FullKV is the uncompressed reference. The best and second-best compressed-cache results in each column are highlighted in bold and underlined, respectively. a unified coverage–resolution allocation space: no fixed rep-resentation form is uniformly optimal across tasks, whereas GraceKV can adapt the balance through global competition among Add and Split operations. 
+
+E.2 Sensitivity to the Singleton-Floor Budget and 
+
+λgraph 
+
+We study four hyperparameters that directly affect the al-location behavior of GraceKV. All sensitivity experiments follow a one-factor-at-a-time protocol: one parameter is var-ied while all remaining parameters are fixed to their default values. We report F1 on LongBench single-document QA under 8× and 64 × compression, representing moderate and tight cache budgets, respectively. All scores are multiplied by 100. 
+
+Singleton-floor budget. Let Bpool denote the shared cache budget after deducting mandatory recent-window entries but before charging the singleton floor. The floor ratio α limits the physical cost of exact singleton entries as 
+
+Bfloor ≤ αB pool . (113) Setting α = 0 disables the singleton floor. Exact singleton entries and subsequent Add/Split operations consume the same physical cache budget, so increasing α does not intro-duce any free entries. The default value is α = 0 .6.
+
+Multi-hop relevance weight. GraceKV combines direct relevance and relevance propagated over token-level atten-tion graphs: 
+
+Rtok  
+
+> l,g,t
+
+= (1 − λgraph )bsl,g,t + λgraph bdt, (114) where bsl,g,t is normalized direct relevance and bdt is normal-ized multi-hop relevance. The default value is λgraph = 0 .3.As shown in Table 8, disabling the singleton floor reduces F1 from 41.58 to 40.53 at 8× compression and from 31.49 LongBench (Single-Document QA, F1 ×100 ) LongBench (Multi-Document QA, F1 ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×                                                                                                                                                                                                                                                                                                
+
+> FullKV 45.25 37.94 H2O 42.93 37.86 36.54 32.58 29.33 23.82 37.67 35.75 35.30 33.66 33.69 32.89 StreamingLLM 30.16 27.88 26.09 25.01 22.79 23.19 29.13 28.42 25.54 25.98 25.20 25.21 CaM 41.99 38.27 34.60 30.30 26.18 22.78 38.35 34.84 34.08 33.68 32.05 29.20 SnapKV 44.11 42.58 39.14 34.45 29.37 24.21 37.89 38.35 37.86 37.29 33.73 32.95 D2O 40.81 37.69 33.41 29.73 24.59 22.99 35.62 35.02 33.89 32.94 30.43 27.11 PyramidKV 44.43 43.13 37.85 33.08 29.06 24.29 38.04 38.51 38.35 37.10 33.38 32.48 ChunkKV 44.83 42.79 39.57 34.40 27.80 23.29 37.69 38.42 37.94 37.30 34.76 28.66
+> GraceKV (Ours) 45.04 43.19 41.32 36.08 33.14 26.17 38.45 38.63 38.18 37.57 35.03 33.02 LongBench (Summarization, Rouge-L ×100 )LongBench (Few-Shot, Rouge-L ×100 )Method 4×8×16 ×32 ×64 ×128 ×4×8×16 ×32 ×64 ×128 ×
+> FullKV 15.90 36.74 H2O 15.37 15.17 14.91 14.10 12.57 12.32 36.02 36.16 35.40 35.55 34.03 33.64
+> StreamingLLM 14.51 13.68 13.13 12.80 12.37 12.05 34.62 33.60 33.24 33.19 32.71 32.91 CaM 15.62 15.24 14.69 13.87 12.80 11.97 35.77 35.19 34.44 34.38 33.70 33.48 SnapKV 14.57 14.06 13.60 13.13 12.55 12.17 36.32 35.73 34.84 35.02 34.07 33.62 D2O 15.41 15.20 14.72 13.81 12.55 11.87 36.12 35.79 35.16 33.95 33.42 33.22 PyramidKV 14.40 13.93 13.41 12.95 12.39 12.17 35.93 35.12 34.23 34.50 33.38 33.24 ChunkKV 14.70 13.96 13.64 13.07 12.61 12.16 35.69 35.11 34.52 33.43 33.70 33.25
+> GraceKV (Ours) 15.82 15.21 14.88 14.19 12.77 12.64 36.68 36.33 35.64 35.13 34.28 33.54
+> RULER (Aggregation, Set Recall ×100 )RULER (Retrieval, Set Recall ×100 )Method 4K 2K 1K 512 4K 2K 1K 512 FullKV 95.33 69.00 H2O 94.00 92.00 91.67 88.67 12.00 5.75 2.00 0.00 StreamingLLM 84.67 78.67 70.00 63.33 20.00 12.25 6.25 2.75 CaM 94.00 94.67 94.00 94.00 14.75 6.25 2.00 0.00 SnapKV 92.33 90.00 86.67 81.33 68.00 68.75 66.50 58.50 D2O 93.67 93.67 93.33 89.67 10.50 5.00 1.25 0.00 PyramidKV 91.00 89.00 86.33 77.00 69.00 68.50 67.25 57.25 ChunkKV 94.33 92.00 92.33 86.67 68.25 69.50 68.25 59.75 GraceKV (Ours) 94.67 91.00 88.00 82.67 69.50 69.75 68.75 58.50
+
+Table 5: Complete cross-backbone results on Qwen2.5-14B-Instruct. FullKV is the uncompressed reference. The best and second-best compressed-cache results in each column are highlighted in bold and underlined, respectively. to 29.97 at 64 × compression. This supports the motivation for the floor: purely step-wise marginal allocation can under-estimate the non-smooth benefit of exactly retaining a small number of high-value tokens. Once entities, numbers, labels, or answer-format cues are absorbed into coarse prototypes, later refinements may not recover their exact representations within a limited budget. Performance generally improves as α increases from 0 to the range 0.4–0.6. At 64 × compression, α = 0 .4 and 
+
+α = 0 .6 obtain 31.02 and 31.49, respectively, indicating a stable intermediate region rather than an isolated optimum. Increasing α further to 0.8 reduces the 64 × result to 29.96. Under a tight budget, excessive spending on exact singletons leaves insufficient capacity for Add operations that expand coverage and Split operations that refine already covered regions. The singleton floor is therefore most effective as a limited exact-preservation guarantee rather than as the dom-inant allocation mechanism. GraceKV is also stable for λgraph ∈ [0 .15 , 0.50] . Direct relevance alone remains a strong signal, obtaining 41.39 and 31.09 when λgraph = 0 . Adding a moderate amount of prop-agated relevance improves the moderate-budget result by re-covering indirectly connected evidence that may receive lim-ited direct attention from the question probes. The best values at 8× and 64 × occur at 0.3 and 0.5, respectively, showing that the preferred mixture can vary mildly with the available budget without forming a narrow valid region. When λgraph increases to 0.7, performance drops under both budgets, with the 64 × score falling to 29.34. Excessive propagation can diffuse value toward indirectly associated but nonessential tokens and weaken the role of direct ques-tion relevance. Such noise is especially harmful under tight budgets because it displaces representations of truly critical evidence. We therefore use λgraph = 0 .3, allowing multi-hop information to complement rather than replace direct relevance. LongBench (Single-Document QA, F1 ×100 ) LongBench (Multi-Document QA, F1 ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×
+
+FullKV 36.88 28.19 H2O 34.78 32.80 32.26 27.85 24.46 19.58 28.09 27.31 25.20 25.98 24.02 22.90 StreamingLLM 26.05 24.12 22.80 20.45 18.83 18.68 20.89 18.62 16.25 16.33 17.75 17.04 CaM 33.84 31.94 29.57 26.49 21.70 19.16 27.55 26.22 24.43 25.97 25.23 22.06 SnapKV 36.19 34.61 31.30 28.70 24.34 21.04 27.96 27.81 27.38 27.54 24.92 22.66 D2O 33.85 31.75 29.66 26.54 21.11 19.64 27.51 26.32 24.91 25.27 24.57 22.71 PyramidKV 36.08 34.26 30.95 29.20 23.92 19.49 28.06 27.14 26.71 26.67 25.64 23.01 ChunkKV 36.48 34.25 31.88 29.46 24.18 20.84 28.14 27.27 26.80 26.97 24.60 22.62 
+
+GraceKV (Ours) 37.05 34.96 33.50 30.01 25.46 21.52 28.21 27.99 26.89 26.97 25.85 23.81 LongBench (Summarization, Rouge-L ×100 ) LongBench (Few-Shot, Rouge-L ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×
+
+FullKV 16.52 38.25 H2O 16.21 15.89 15.42 14.71 13.61 12.27 37.39 37.23 37.25 38.01 37.58 36.46 StreamingLLM 15.13 13.94 13.05 12.68 12.40 12.27 37.35 38.23 37.97 36.65 37.19 36.52 CaM 16.17 15.74 15.21 14.54 13.30 12.27 37.63 37.01 36.65 36.79 36.91 36.92 SnapKV 15.37 15.16 14.44 13.75 12.83 12.07 37.98 37.78 36.78 36.69 37.01 37.09 D2O 15.99 15.79 15.34 14.47 13.13 12.08 37.39 37.43 37.38 37.42 37.25 36.88 PyramidKV 15.39 14.95 14.30 13.73 12.72 12.09 38.47 37.59 36.27 37.28 37.41 37.43 ChunkKV 15.60 15.04 14.38 13.67 12.90 12.06 37.86 36.88 36.90 37.31 37.58 37.39 
+
+GraceKV (Ours) 16.08 15.98 15.63 15.03 14.11 12.89 38.91 37.75 37.56 37.79 37.67 38.07 RULER (Aggregation, Set Recall ×100 ) RULER (Retrieval, Set Recall ×100 )Method 4K 2K 1K 512 4K 2K 1K 512 FullKV 87.00 74.25 H2O 85.33 82.33 77.33 71.67 12.75 4.75 0.75 0.00 StreamingLLM 86.00 82.67 73.33 53.67 23.50 11.75 6.00 2.75 CaM 85.00 83.00 82.33 77.00 17.75 6.00 1.25 0.00 SnapKV 81.00 78.00 76.67 70.33 73.00 71.50 67.00 47.00 D2O 83.33 82.00 80.33 76.00 12.75 4.75 1.50 0.00 PyramidKV 80.00 78.00 76.67 68.00 73.00 72.75 66.00 43.75 ChunkKV 83.67 83.00 81.00 77.33 73.50 71.25 66.00 55.00 
+
+GraceKV (Ours) 84.00 80.67 80.00 79.33 74.25 74.00 68.50 55.25 
+
+Table 6: Complete cross-backbone results on Mistral-7B-Instruct-v0.3. FullKV is the uncompressed reference. The best and second-best compressed-cache results in each column are highlighted in bold and underlined, respectively. 
+
+E.3 Sensitivity to the Target Slot Length and 
+
+λZ : λM
+
+We next vary the target slot length n0 and the distortion-weight ratio λZ : λM . The target length is a soft preference in the dynamic-programming segmentation objective rather than a fixed chunk size. Actual slot boundaries remain adap-tive to curvature, surprisal, within-slot representation disper-sion, and the length regularizer. The default target length is 
+
+n0 = 64 .For an interval I and probe query q, GraceKV combines the approximation error of the attention partition with that of the value aggregate: 
+
+Dq (I) = λZ
+
+
+
+Zq (I) − eZq (I)
+
+2
+
+Zq (I)2 + ϵ +λM
+
+Mq (I) − fMq (I) 22
+
+∥Mq (I)∥22 + ϵ .
+
+(115) Here, Zq (I) and Mq (I) denote the original attention par-tition and value aggregate, while eZq (I) and fMq (I) are their prototype-based approximations. The default ratio is 
+
+λZ : λM = 0 .25 : 0 .75 .GraceKV remains stable over a reasonably broad range of target slot lengths. For n0 ∈ { 48 , 64 , 96 , 128 }, the scores vary by only 0.37 points at 8× compression, from 41.58 to 41.95, and by 0.39 points at 64 × compression, from 31.10 to 31.49. The default value n0 = 64 achieves the best result at 
+
+64 × compression and is 0.37 points below the best result at 
+
+8× compression. These results indicate that GraceKV does not rely on a narrowly tuned target slot length. This robustness follows from two levels of adaptivity. First, 
+
+n0 acts only as a soft regularizer, allowing dynamic pro-gramming to move the actual slot boundaries according to the hidden-state trajectory. Second, the initial slot determines only the interval covered by a tree root and does not fix the final cache resolution; subsequent Split operations can still refine selected regions. Consequently, moderate changes to LongBench (Single-Document QA, F1 ×100 ) LongBench (Multi-Document QA, F1 ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×
+
+FullKV 37.26 20.26 H2O 34.08 30.14 28.44 24.65 21.58 20.97 18.02 16.04 14.13 14.09 13.96 11.21 StreamingLLM 26.54 24.05 22.39 21.63 20.08 19.83 14.02 11.49 9.62 9.78 10.35 10.39 CaM 33.43 29.99 28.02 24.87 22.03 20.16 17.60 16.26 13.67 13.81 12.56 11.25 SnapKV 36.04 32.54 31.47 27.46 23.23 19.61 19.28 19.50 18.74 18.50 15.14 13.00 D2O 33.00 29.27 26.83 23.24 21.56 19.93 15.49 14.41 13.28 12.59 11.85 10.19 PyramidKV 35.64 32.59 29.34 25.42 20.72 19.24 19.88 19.19 18.87 17.15 14.76 9.76 ChunkKV 36.25 32.89 29.19 25.53 22.14 19.98 20.16 20.12 19.67 17.12 12.47 11.26 
+
+GraceKV (Ours) 36.42 33.03 31.90 28.40 24.35 21.01 20.29 19.92 19.99 18.61 16.23 14.28 LongBench (Summarization, Rouge-L ×100 ) LongBench (Few-Shot, Rouge-L ×100 )Method 4× 8× 16 × 32 × 64 × 128 × 4× 8× 16 × 32 × 64 × 128 ×
+
+FullKV 15.55 35.06 H2O 15.04 14.80 13.96 13.38 12.70 12.04 33.88 33.15 32.57 31.65 31.26 30.74 StreamingLLM 14.02 13.37 12.84 12.38 12.07 11.72 33.08 31.91 30.83 30.21 30.42 30.05 CaM 14.89 14.86 14.10 13.30 12.28 11.53 33.51 33.23 32.44 32.58 31.30 30.10 SnapKV 14.44 14.18 13.56 13.06 11.90 11.95 33.66 33.15 32.12 32.14 30.52 30.03 D2O 14.66 14.34 13.66 13.18 12.19 11.76 33.67 32.81 32.90 31.53 31.27 30.51 PyramidKV 14.09 13.88 13.27 12.82 12.15 11.66 33.80 32.38 32.48 31.22 30.15 29.65 ChunkKV 14.77 14.23 13.54 13.19 12.40 12.00 33.35 32.65 31.87 31.16 29.60 29.88 
+
+GraceKV (Ours) 14.82 14.59 13.99 13.70 12.95 12.33 34.01 33.35 32.71 32.22 31.34 30.90 RULER (Aggregation, Set Recall ×100 ) RULER (Retrieval, Set Recall ×100 )Method 4K 2K 1K 512 4K 2K 1K 512 FullKV 78.67 39.50 H2O 77.00 76.33 75.00 68.67 7.00 3.25 0.25 0.00 StreamingLLM 23.33 15.67 13.33 8.33 18.50 10.75 6.25 2.75 CaM 75.00 74.00 73.67 71.00 6.50 1.50 0.00 0.00 SnapKV 73.67 69.00 68.33 59.33 40.00 40.75 40.25 32.75 
+
+D2O 75.33 74.00 72.67 66.00 5.25 1.25 0.00 0.00 PyramidKV 72.00 69.33 61.33 56.33 40.75 41.75 39.25 28.75 ChunkKV 74.33 72.00 65.00 61.00 40.50 39.75 39.50 32.25 
+
+GraceKV (Ours) 73.33 72.33 70.33 68.67 40.75 41.50 39.50 32.75 
+
+Table 7: Complete cross-backbone results on Qwen2.5-3B-Instruct. FullKV is the uncompressed reference. The best and second-best compressed-cache results in each column are highlighted in bold and underlined, respectively. 
+
+α F1@ 8× F1@ 64 × λgraph F1@ 8× F1@ 64 ×
+
+0.0 40.53 29.97 0.00 41.39 31.09 0.2 41.44 30.08 0.15 41.72 31.14 0.4 41.62 31.02 0.30 † 41.58 31.49 
+
+0.6† 41.58 31.49 0.50 41.33 31.28 0.8 41.88 29.96 0.70 40.97 29.34 
+
+Table 8: Sensitivity to the singleton-floor ratio α and the multi-hop relevance weight λgraph . Each parameter is varied indepen-dently while the others remain at their defaults. Scores are F1 ( ×100 ). † denotes the default value. The best and second-best results in each column are highlighted in bold and underlined, respectively. the initial slot granularity have only a limited influence on the final representation. A shorter target length of n0 = 32 is less favorable, partic-ularly under 64 × compression, where its score decreases to 30.44, compared with the best score of 31.49. Shorter slots produce more tree roots, and covering each slot requires at least one Add operation. This increases the base cost of main-taining broad contextual coverage and leaves less budget for refining high-value regions. We therefore select n0 = 64 as a balanced default between the number of tree roots, structural adaptivity, and the available refinement space within each tree, rather than because it is the only effective value. n0 F1@ 8× F1@ 64 × λZ : λM F1@ 8× F1@ 64 ×                         
+
+> 32 41.50 30.44 0 : 1 42.16 30.93 48 41.95 31.20 (0 .25 : 0 .75) †41.58 31.49
+> 64 †41.58 31.49 0.5 : 0 .541.72 30.66 96 41.71 31.10 0.75 : 0 .25 41.62 30.58 128 41.74 31.19 1 : 0 41.35 30.95
+
+Table 9: Sensitivity to the target slot length n0 and the distortion-weight ratio λZ : λM . Each parameter is varied independently while the others remain at their defaults. Scores are F1 ( ×100 ). † denotes the default value. The best and second-best results in each column are highlighted in bold and underlined, respectively. The distortion-weight study reveals a budget-dependent trade-off between the two distortion terms. At 8× compres-sion, using only the value-aggregation term, i.e., λZ : λM =0 : 1 , achieves the highest score of 42.16. The other weight settings produce scores between 41.35 and 41.72, with the default ratio 0.25 : 0 .75 obtaining 41.58. This suggests that the value-aggregation signal is particularly informative when the cache budget is relatively sufficient. Under the tighter 64 × budget, however, the default ratio 
+
+λZ : λM = 0 .25 : 0 .75 achieves the best score of 31.49. Removing the partition term, i.e., using 0 : 1 , reduces the score by 0.56 points to 30.93, while removing the value-aggregation term, i.e., using 1 : 0 , reduces it by 0.54 points to 30.95. The balanced ratio 0.5 : 0 .5 and the partition-heavier ratio 0.75 : 0 .25 obtain 30.66 and 30.58, respectively. These results show that the preferred weighting changes with the available cache budget: the value-aggregation term alone is effective at moderate compression, whereas an appropriately weighted combination of both terms is more effective under severe compression. We therefore use 0.25 : 0 .75 as the default because it performs best in the more challenging 
+
+64 × setting while remaining effective at 8× compression. A merged prototype simultaneously changes the local soft-max partition and the value aggregate returned by attention. Retaining both distortion components therefore provides a more complete estimate of the gains of Add and Split oper-ations under severe compression. Overall, noticeable degra-dation occurs mainly in mechanistically extreme configura-tions, such as disabling the singleton floor, assigning exces-sive budget to exact singletons, overemphasizing propagated relevance, or constructing overly short initial slots. Although the default configuration is not the isolated point-wise opti-mum on every axis and budget, it provides consistently strong performance across moderate and tight compression without task-specific hyperparameter tuning. 
+
+# F System Efficiency and Construction Overhead 
+
+This section provides a detailed analysis of the system effi-ciency of GraceKV, including the physical memory footprint of the compressed KV cache, steady-state decoding latency, one-time prototype-tree construction overhead, and the amor-tization of this construction cost under long generation and repeated use of the same cache. Unless otherwise specified, the experiments are conducted with Qwen2.5-7B-Instruct on a single NVIDIA GeForce RTX 5090 GPU. The software environment consists of Py-Torch 2.8.0, CUDA 12.8, and Transformers 5.13.1. We use bfloat16 precision and a batch size of one. All inputs are processed according to their actual token lengths without padding them to a fixed context length. The prefix, question suffix, and template suffix are retained exactly and participate in both cache storage and subsequent decoding. The recent window at the end of the context is also retained exactly and counted toward the cache budget. GraceKV performs only one standard prefill and collects the hidden states, Q/K/V representations, head-wise outputs, and token surprisal required for subsequent compression dur-ing this pass. After prefill, GraceKV constructs the prototype trees, performs global resource allocation once, and materi-alizes the selected nodes into a compressed KV cache. The resulting cache can be directly used for autoregressive gener-ation without additional training or additional model forward passes. 
+
+F.1 Comparative Decode Latency and KV Cache Memory 
+
+Figure 3 in the main paper reports the KV cache memory and per-token decoding latency of GraceKV across context lengths of 6K, 12K, 18K, 24K, and 30K. It compares FullKV with GraceKV under 4×, 8×, and 16 × compression. At a context length of 30K, the KV cache of FullKV occupies 1.77 GB, whereas GraceKV requires only 463 MB, 246 MB, and 137 MB under 4×, 8×, and 16 × compression, respectively. These configurations reduce cache memory by approximately 74%, 86%, and 92% relative to FullKV.                 
+
+> Cache Configuration KV Cache Memory Reduction
+> FullKV 1.77 GB –GraceKV, 4×463 MB ≈74%
+> GraceKV, 8×246 MB ≈86%
+> GraceKV, 16 ×137 MB ≈92%
+
+Table 10: Key KV cache memory results at a context length of 30K, corresponding to Figure 3 in the main paper. As the context length increases, FullKV must access an increasingly large number of historical K/V entries at every generation step, whereas the physical cache size of GraceKV remains constrained by the specified budget. Consequently, the gap in cache-access cost grows with the context length. At the longest context setting in Figure 3, the per-token de-coding latency of FullKV is up to approximately 1.7× that of GraceKV. The KV cache memory reported in Figure 3 corresponds to the actual physical footprint of the final cache tensors rather than a theoretical estimate obtained by directly dividing the FullKV memory by the nominal compression ratio. The per-sistent cache of GraceKV contains the retained original K/V entries, prototype K/V entries, effective multiplicities, po-sitions, valid masks, and per-head valid lengths. Moreover, the prefix, question suffix, and recent window remain un-compressed. The actual memory footprint therefore does not exactly equal the FullKV footprint divided by the nominal compression ratio, although it still decreases substantially as the budget becomes tighter. Table 11 further reports the cache size and decoding la-tency under an 8× budget across representative task cate-gories. Entries denotes the number of valid physical layer– KV-head K/V entries, while Cache includes both K/V tensors and the metadata required by the cache implementation. GraceKV substantially reduces the physical KV cache footprint across all task categories. For the two RULER set-ting, the cache is reduced from 877.0 MiB and 887.4 MiB to 130.3 MiB and 131.4 MiB, respectively, while the number of effective cache entries decreases from approximately 1.75M to approximately 230K. The decoding advantage becomes more pronounced as the context length increases. Under shorter contexts, model-weight access, fixed kernel launches, and other computation still account for a considerable fraction of the total latency, making the difference between cache sizes relatively small. As the context becomes longer, historical K/V access and attention computation contribute more substantially to the overall cost, and the smaller cache of GraceKV provides increasingly stable acceleration. At few-shot setting, GraceKV reduces latency from 24.43 to 23.95 ms/token. It reduces latency by 1.57 and 1.89 ms/-token in the two RULER categories, corresponding to ap-proximately 6.1% and 7.5% lower per-token latency. These results are consistent with Figure 3: the memory reduction takes effect immediately after compression, while the decod-ing advantage increases with the context length. 
+
+F.2 Equal-Budget Interpretation 
+
+GraceKV defines one cache-budget unit as one physically stored K/V pair at a particular layer and KV head. Regardless of whether a cache entry represents an original token, an exact singleton, or a prototype of a contiguous interval, it participates in decoding as one physical cache position. Under the same physical-entry budget, the dominant K/V storage cost and steady-state attention computation are there-fore determined primarily by the number of final entries rather than by how those entries were selected or constructed. The role of GraceKV is to decide where the limited cache resources should be placed: 
+
+• which layer–KV-head combinations should receive more entries; 
+
+• which slots should first obtain information coverage through Add; 
+
+• which covered regions should receive higher local reso-lution through Split; and 
+
+• which high-value tokens should be retained exactly as singletons. These allocation decisions are made once during post-prefill construction. The retained frontier entries, including exact floor-selected singleton leaves and the other prototype nodes retained along their tree paths, together with the recent window, are then uniformly materialized as physical K/V cache entries, and subsequent generation directly operates on the compressed cache. Table 12 reports the physical cache sizes and steady-state decoding costs of three compressed caches under the same 
+
+8× budget on LongBench single-document QA. The three methods retain similar numbers of physical en-tries and therefore exhibit decoding latency and primary K/V storage within the same range. This result shows that the multi-resolution prototypes of GraceKV do not introduce decoding computation proportional to the size of the origi-nal prototype trees. The trees are used only to determine the final cache representation and are not retained or traversed during generation. Small differences in physical cache memory can remain even when the number of valid entries is similar. These dif-ferences mainly arise from: 
+
+• different entry distributions across layers and KV heads; 
+
+• a small amount of padding caused by organizing each layer according to its longest KV head; 
+
+• the effective multiplicities, positions, valid masks, and per-head lengths stored by GraceKV; 
+
+• different cache layouts and memory-access patterns; and 
+
+• the use of a general multiplicity-aware ragged-attention implementation rather than a specialized fused kernel. Accordingly, under an identical physical-entry budget and a unified decoding implementation, compressed-cache meth-ods generally exhibit similar steady-state memory and decod-ing costs. The principal distinction of GraceKV is not the use of additional decoding computation, but its ability to orga-nize the same number of entries more effectively by jointly allocating information coverage and local resolution. The K/V entries constitute the dominant part of the persis-tent cache, whereas the additional metadata is comparatively small. Complete prototype trees and candidate nodes ex-ist only during construction. After cache packing, GraceKV retains only the selected frontier nodes and the metadata required for decoding. This also explains why Figure 3 in the main paper primarily compares FullKV with GraceKV. The purpose of Figure 3 is to show how replacing the complete cache with a budget-constrained cache changes memory and cache-access costs as the context length grows. Under the same physical-entry budget, compressed methods generally have similar steady-state system costs; their central difference is how much useful contextual information they preserve within those entries. Task Category Cache Configuration Decode Memory Entries (ms/token) (MiB)                                    
+
+> LongBench (Summarization) FullKV 23.23 181.3 353K GraceKV 23.33 53.9 90K LongBench (Single-Document QA) FullKV 23.15 294.9 586K GraceKV 23.02 51.7 94K LongBench (Few-Shot) FullKV 24.43 523.2 1.04M GraceKV 23.95 93.7 156K RULER (Aggregation) FullKV 25.63 877.0 1.75M GraceKV 24.06 130.3 228K RULER (Retrieval) FullKV 25.17 887.4 1.77M GraceKV 23.28 131.4 235K
+
+Table 11: KV cache memory and decoding latency under an 8× cache budget across representative task categories. Cache memory includes K/V tensors and the required cache metadata.              
+
+> Method Decode Cache Entries (ms/token) (MiB)
+> StreamingLLM 22.98 48.3 93K SnapKV 23.00 48.3 94K GraceKV 23.02 51.7 94K
+
+Table 12: Physical cache sizes and steady-state decoding costs under the same 8× cache budget on LongBench single-document QA. 
+
+F.3 One-Time Construction Latency and Peak Memory 
+
+GraceKV constructs the compressed cache once after pre-fill. This stage transforms the representations collected dur-ing prefill into curvature-guided slots, prototype trees, and a globally allocated cache that can be directly used for decod-ing. The complete construction procedure consists of: 1. multi-layer, multi-scale curvature computation and slot segmentation; 2. direct and multi-hop token-relevance computation; 3. layer–KV-head sensitivity estimation; 4. prototype-tree construction for all atomic units; 5. singleton-floor selection and global Add–Split alloca-tion; and 6. packing the final frontier nodes into the ragged KV cache. On LongBench single-document QA, the average con-struction time of GraceKV is approximately 2.35 seconds. This is the one-time post-prefill overhead summarized as approximately 2 seconds in the main paper. Prototype-tree construction is the largest component, ac-counting for approximately 60% of the total construction time. Each layer–KV-head–slot atomic unit requires the eval-uation of interval representations, prototype distortion, and candidate split gains. In contrast, token relevance, sensitiv-ity estimation, and global allocation introduce substantially smaller costs. The current implementation controls construction over-head through several engineering designs: 
+
+• each non-leaf node retains only a small number of high-value split candidates; 
+
+• further refinement is skipped for sufficiently low-distortion intervals; 
+
+• a minimum leaf size constrains the overall tree size; 
+
+• high-value floor-selected positions can still be refined to exact singletons; 
+
+• interval statistics are computed in batches across layers, KV heads, and slots; and 
+
+• candidate trees and intermediate statistics are released after cache packing. These designs allow GraceKV to complete global cache allocation across layers, KV heads, and slots within seconds, without additional model forward passes. 
+
+Peak memory. Prototype-tree construction temporarily maintains interval statistics, candidate prototypes, attention-quality quantities, and batched tree workspaces. This pro-duces a temporary peak-memory increase after prefill. The approximately 8% peak-memory overhead refers to the temporary increase during construction relative to the model and standard prefill memory baseline. Most of this increase is associated with prototype-tree workspaces rather than the final KV cache. Once global allocation and cache packing are complete, intermediate tree nodes, candidate splits, and interval statis-tics are released. Only the final compressed cache remains during generation. At a context length of 30K, for example, the final cache can be reduced from 1.77 GB to 463 MB, 246 MB, or 137 MB. GraceKV therefore exchanges a lim-ited and temporary construction workspace for a persistent cache reduction throughout subsequent generation. The current implementation focuses primarily on the global resource allocation algorithm and does not yet employ specialized low-level operators for prototype-tree construc-tion or multiplicity-aware attention. The construction cost can be further reduced through: Cache Component Role In Budget Persistent 
+
+Key prototype or original Key Computes attention scores Yes Yes Value prototype or original Value Produces the aggregated attention output Yes Yes Effective multiplicity Restores the effective attention mass represented by a proto-type No Yes Position Records the positional coordinate of each cache entry No Yes Valid mask Marks valid cache positions for each KV head No Yes Per-head lengths Supports layer-wise and head-wise variable cache lengths No Yes Complete prototype tree Constructs and evaluates candidate cache representations No No 
+
+Table 13: Components of the persistent GraceKV cache. The complete prototype trees are discarded after the final cache has been materialized. “In Budget” indicates whether a component is counted toward the physical KV-entry budget. 
+
+Construction Stage Average Time Main Operations 
+
+Curvature segmentation 0.26 s Curvature aggregation, boundary scoring, and dynamic-programming seg-mentation Token relevance 0.02 s Direct and multi-hop token-relevance computation Prototype-tree construction 1.39 s Interval statistics, prototype construction, distortion evaluation, and candi-date splitting Global allocation 0.25 s Singleton-floor selection and global Add–Split allocation Cache packing 0.33 s Final-frontier collection and ragged-cache materialization Other lightweight operations ≈ 0.10 s Layer–KV-head sensitivity estimation and data organization 
+
+Total construction ≈ 2.35 s Complete post-prefill cache construction 
+
+Table 14: Construction-time breakdown on LongBench single-document QA. 
+
+Metric Memory Usage 
+
+Model and standard-prefill baseline ≈ 14 .6 GB Peak during GraceKV construction ≈ 15 .6 GB Typical temporary increase ≈ 1.0–1.5 GB Relative peak overhead ≈ 7% –10% 
+
+Summary value ≈ 8% 
+
+Table 15: Peak-memory overhead during GraceKV cache construction. The relative overhead is measured against the model and standard prefill memory baseline. 
+
+• parallel prototype-tree construction across atomic units; 
+
+• operator fusion for interval statistics, prototype computa-tion, and distortion evaluation; 
+
+• batched processing of global candidate operations; 
+
+• a more compact flattened and packed cache layout; and 
+
+• specialized Triton or CUDA kernels for ragged attention and multiplicity correction. Among these directions, parallel tree construction and op-erator fusion are also the primary optimization opportunities identified in the main paper. 
+
+F.4 Amortization and Break-Even Analysis 
+
+The construction cost of GraceKV is incurred only once after prefill, whereas the reductions in cache memory and cache-access cost persist for every subsequently generated token. Let the one-time GraceKV construction time be 
+
+Cbuild , (116) 
+
+Number of Cache Uses R Average Cost per Use 
+
+1 2.35 s 2 1.18 s 4 0.59 s 8 0.29 s 
+
+Table 16: Amortization of a representative 2.35-second con-struction cost when the same question-conditioned com-pressed cache is reused. and let the average per-token decoding latency of FullKV and GraceKV be 
+
+dFull and dGrace , (117) respectively. When 
+
+dFull > d Grace , (118) the time-based break-even generation length can be estimated as 
+
+NBE =
+
+ 1000 Cbuild 
+
+dFull − dGrace 
+
+
+
+, (119) where Cbuild is measured in seconds and the decoding laten-cies are measured in milliseconds per token. Using an average construction cost of approximately 2 seconds, Table 17 reports representative amortization results under long-context settings. As the context length increases, FullKV must read an in-creasingly large number of historical K/V entries at every Task Category Avg. Context FullKV GraceKV Saving Break-Even (ms/token) (ms/token) (ms/token) Tokens                   
+
+> LongBench (Few-Shot) 9,029 24.43 23.95 0.48 ≈4.2KRULER (Aggregation) 15,500 25.63 24.06 1.57 ≈1.3KRULER (Retrieval) 15,670 25.17 23.28 1.89 ≈1.1K
+
+Table 17: Representative time-based break-even points under long-context settings, using an average GraceKV construction cost of approximately 2 seconds. decoding step, whereas the physical cache size of GraceKV remains constrained by the specified budget. Longer contexts therefore tend to produce larger per-token savings and allow the one-time construction cost to be amortized over fewer generated tokens. The time-based break-even analysis captures only wall-clock decoding latency and does not account for the broader system value of reduced cache memory. GraceKV releases a substantial amount of KV cache memory immediately after compression, even before the generated sequence reaches the pure latency break-even point. The released memory can be used to: 
+
+• support longer input contexts; 
+
+• increase the batch size on the same GPU; 
+
+• improve concurrent request capacity; 
+
+• preserve additional space for model weights, activations, and runtime workspaces; and 
+
+• reduce memory pressure during long-context inference. The compressed cache constructed by GraceKV can also be reused for multiple generations that share the same com-plete prefill input, including the same context, question suffix, and template. If the same question-conditioned cache is used 
+
+R times, the average construction cost assigned to each use becomes 
+
+Cbuild (R) = Cbuild 
+
+R . (120) GraceKV is therefore particularly suitable for long-context scenarios with sustained generation or repeated decoding from the same complete prompt, including: 
+
+• long-form text or code generation from a fixed prompt; 
+
+• multi-candidate sampling for the same question; 
+
+• beam search and branched decoding from a shared prefill state; 
+
+• self-consistency or reranking based on repeated genera-tions from the same complete prompt; and 
+
+• repeated inference requests with an identical context, question suffix, and template. These reuse cases preserve the question-conditioned prefill state used to construct the final cache. GraceKV should not directly reuse the same compressed cache for an arbitrary new question over the same document. A new question may change the direct token relevance, multi-hop relevance, and layer–KV-head sensitivity, which can alter both the selected singleton anchors and the subsequent global allocation. A promising extension is to reuse only the question-independent construction results across different questions. For example, curvature-guided slot boundaries, candidate prototype trees, and interval statistics could be cached for a document, while the question-conditioned relevance, sen-sitivity, singleton-floor selection, and global allocation are recomputed for each new question. This would preserve question adaptivity while avoiding repetition of the most expensive structural construction stages. Another possible direction is to construct query-robust caches using relevance signals aggregated over multiple representative questions, although such a setting requires separate evaluation. For repeated generations from the same complete prompt, curvature segmentation, prototype-tree construction, and global allocation are performed only once, while the com-pact cache can be reused throughout subsequent decoding. As either the generation length or the number of same-prompt cache uses increases, the one-time construction cost is rapidly amortized, whereas the memory reduction and lower cache-access cost continue to accumulate over the entire cache lifetime. Overall, without specialized low-level optimization, GraceKV already achieves substantial KV cache memory reduction, lower per-token decoding latency under long con-texts, and a controllable one-time construction overhead of approximately 2 seconds and approximately 8% peak mem-ory. Parallel tree construction, operator fusion, specialized ragged-attention kernels, and reuse of question-independent structural components can further reduce this overhead and expand the end-to-end efficiency gains.

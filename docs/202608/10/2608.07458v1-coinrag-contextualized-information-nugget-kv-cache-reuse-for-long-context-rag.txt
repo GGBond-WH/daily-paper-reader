@@ -1,0 +1,501 @@
+Title: CoinRAG: Contextualized Information Nugget KV Cache Reuse for Long-Context RAG
+
+URL Source: https://arxiv.org/pdf/2608.07458v1
+
+Published Time: Mon, 10 Aug 2026 01:13:41 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# CoinRAG: Contextualized Information Nugget KV Cache Reuse for Long-Context RAG 
+
+Gyuwan Kim 1 Cheoneum Park 2 Tao Yang 11University of California, Santa Barbara 2Hanbat National University 
+
+{gyuwankim, tyang}@ucsb.edu, parkce@hanbat.ac.kr 
+
+Abstract 
+
+Recent optimization studies on Retrieval-Augmented Generation (RAG) have exploited chunk-level KV cache reuse to avoid process-ing long retrieved contexts for higher effi-ciency, while significant information redun-dancy and noise still remain in the coarse-grained chunks. This paper optimizes the Pareto frontier under low prefill latency con-straints while maximizing accuracy by propos-ing CoinRAG ( Co ntextualized Information 
+
+Nugget KV Cache Reuse for Long-Context 
+
+RAG ). The name metaphorically reflects our core mechanism: much like assembling small tokens (or “coins”) to accumulate a larger value, CoinRAG compositionally reuses offline-computed, fine-grained nugget caches to form a learned contextual representation efficiently in a more semantically relevant but compact man-ner. Specifically, instead of full-chunk encod-ing, CoinRAG identifies query-relevant seman-tic units within retrieved chunks through two-stage retrieval and seamlessly assembles their sliced KV representations with a chunk-level context. Extensive evaluations on LongBench multi-hop question answering tasks demon-strate that CoinRAG significantly reduces op-erational costs and outperforms the other base-lines with a new Pareto frontier and an average 5.3% relative improvement in answer quality (F1) under a standard fast prefill latency budget. 
+
+1 Introduction 
+
+Retrieval-Augmented Generation (RAG) (Lewis et al., 2020; Gao et al., 2023b) is a widely adopted paradigm for enhancing large language models (LLMs) with external knowledge (Chen et al., 2024b). By feeding retrieved documents to the LLM with the query, RAG improves factual con-sistency (Gao et al., 2023a) and reduces hallucina-tion (Shuster et al., 2021) without model retraining. However, when RAG systems operate at the coarse granularity of full documents or large text chunks, inference is expensive, leading to high prefill la-tency and computational redundancy. To improve inference efficiency, a promising remedy is to pre-compute and reuse key-value (KV) caches (Pope et al., 2023), a technique that has been extensively engineered for prompt management and multi-query prefix sharing (Kwon et al., 2023; Zheng et al., 2024; Gim et al., 2024; Haoyang et al., 2025). Crucially, this core mechanical capability under-pins the emerging Cache-augmented Generation 
+
+(CAG) paradigm (Chan et al., 2025), which pro-poses pre-loading entire external knowledge bases into the model’s context to eliminate real-time re-trieval. RoPE-based position rotation (Su et al., 2024; Lu et al., 2025; Yang et al., 2025) has been developed further to capture relative positional con-texts of dynamically retrieved chunks, enabling chunk-level KV cache reuse during inference. As RAG has become popular for user-facing web applications, inference must answer questions at in-teractive latencies and sustain the high-throughput demands of large live query traffic. A commer-cial web service operates under a Service Level Agreement (SLA), which typically uses tail latency (percentiles) rather than average latency for the re-quired response time. Modern SLAs specify targets like 99% of requests under some milliseconds. In the literature, response time for interactive web ser-vices is defined as the time to deliver the first byte of a response transferred from a server to a client, and a response time of 100 ms or less is perceived as instantaneous (PubNub, 2023; Miller, 1968) and is a desirable interactive response time budget. Pre-vious work on low-latency machine learning infer-ence has pursued a P99 tail latency budget within 100 ms (Yun et al., 2015; Crankshaw et al., 2017; Gujarati et al., 2020). With this in mind, our study adopts a Time-to-First-Token (TTFT) budget limit as the P99 latency under 100 ms. Note that lower-ing latency also leads to a higher throughput. Standard RAG, even with KV cache reuse, is arXiv:2608.07458v1 [cs.CL] 7 Aug 2026 expensive in terms of TTFT. To meet SLA under a low-latency budget, it needs to limit the retrieval scope, degrading answer accuracy. This paper fo-cuses on maximizing RAG accuracy under a low-latency budget and takes a new approach by op-erating RAG at a finer-grained level of informa-tion extracted in advance from text chunks with a slim representation, which also reduces the risk that relevant evidence gets lost amid long, noisy contexts (Liu et al., 2024). Specifically, we extract information nuggets from text chunks offline, in-stead of retrieving and encoding them entirely at inference time. Our approach is motivated by prior information retrieval studies, which use the human-identified nuggets for answer evaluation (Voorhees, 2004) and which extract nuggets dynamically from each document via an LLM (Pradeep et al., 2025; Łajewska and Balog, 2025). This paper makes the following contributions. 1) It proposes a RAG framework for efficient in-ference with a slim nugget-based representation for contextual KV-cache reuse, targeted for higher accuracy under a standard fast response-time bud-get. 2) This scheme comes with the following tech-niques: (a) Offline extraction of text-span-based nuggets, nugget-aware fine-tuning, and two-stage online retrieval that selects relevant nuggets from many candidates; (b) Contextualized KV cache composition for query-relevant nuggets from the same chunks. We evaluate CoinRAG on multi-hop question an-swering benchmarks from LongBench (Bai et al., 2024), where it consistently outperforms Standard RAG and Standard CAG with a 5.3% (41.7 vs. 39.6) answer quality improvement averaged over 3 datasets under the P99 latency 100 ms budget. When removing the latency limit entirely, Coin-RAG still outperforms 2 out of 3 datasets with a 3-dataset average F1 score improvement of 5.2%. 
+
+2 Proposed Method: CoinRAG 
+
+We propose CoinRAG (Co ntextualized 
+
+Information Nugget KV Cache Reuse for Long-Context RAG ), motivated by two key design considerations for higher RAG accuracy under a low-latency budget. First, the granularity of KV cache at the chunk level is still too coarse, often adding noise and unnecessary redundancy. We instead seek a slim representation of essential content in text chunks that maximizes the informa-tion density delivered to the LLM, representing each document chunk with a set of text spans capturing essential information nuggets. Second, we take a query-driven nugget retrieval approach as dynamic filtration to select relevant nugget slices with contextual KV cache composition, preventing attention dilution with enhanced reasoning precision. Appendix D provides a step-by-step inference walkthrough example for CoinRAG. Appendix H shows examples of answer generation that suc-ceeded and failed with CoinRAG. 
+
+2.1 Problem Formulation 
+
+In standard RAG, a large corpus D consists of long documents pre-segmented into fixed-size text chunks B = {bj }, where each chunk is a sequence of tokens. Traditional frameworks generate an an-swer to a query q by jointly encoding the system prompt p, retrieved chunks, and the query q on-line during the prefill stage. This design introduces significant computational redundancy and high pre-fill latency because long contexts are repeatedly re-encoded across queries. To eliminate this bottleneck, CoinRAG shifts context encoding entirely offline. During this phase, every chunk bj ∈ B is processed through a one-time forward pass to compute and store its full-context key-value (KV) representations Cbj .At online inference, CoinRAG bypasses full-text re-encoding. Instead of computing hidden states from raw text, our framework dynamically ex-tracts query-relevant textual units within retrieved chunks, slices their corresponding precomputed KV caches, and aligns them into a single prefix con-text cache Cctx . The online query is then encoded conditioned on this composed prefix cache, and the final context cache is constructed by concate-nating Cctx with the newly computed query repre-sentations: KV CoinRAG = Cctx ⊕ KV M(q; Cctx ),where ⊕ denotes KV cache concatenation along the sequence dimension, and KV M(q; Cctx ) repre-sents the query encoding pass. Appendix B gives the prompt template injected by CoinRAG into an LLM for answer generation with the retrieved nuggets and the input query. 
+
+2.2 Offline Nugget Extraction 
+
+Unlike prior nugget-based approaches that gener-ate nuggets online via an LLM and encode isolated nuggets without context, CoinRAG extracts candi-date nuggets from each text chunk bj ∈ B offline, identifying each as a contiguous span defined by start and end token indices within its source chunk. This span-level grounding lets us later slice the corresponding portion of the precomputed chunk cache to form a contextualized nugget KV cache, rather than needing to re-encode the nugget’s text in isolation. 
+
+Algorithm 1 Nugget extraction pipeline.                                                                          
+
+> Require: passage p; LLM extractor ELLM ; similarity sim ;threshold τ
+> Ensure: nugget set N(p), expressed as token span indices 1: {˜n1, . . . , ˜nK} ← E LLM (p)▷LLM prompting 2: N(p)← ∅
+> 3: for i= 1 , . . . , K do
+> 4: if ˜ni∈Sub( p)then ▷Stage A: exact match 5: ni←˜ni
+> 6: else ▷Stage B: fuzzy match 7: W←whole-word spans of pnear length |˜ni|
+> 8: s∗←arg max w∈Wsim( w, ˜ni)
+> 9: if sim( s∗,˜ni)≥τthen
+> 10: ni←s∗
+> 11: else
+> 12: continue ▷Stage C: abandon 13: end if
+> 14: end if
+> 15: (si, e i)←find (ni, p )▷token span 16: N(p)← N (p)∪ { (ni, s i, e i)}
+> 17: end for
+> 18: return N(p)
+
+Algorithm 1 delineates this extraction procedure applied to a raw text passage p. An LLM first pro-poses candidate nuggets from p (Line 1). Each can-didate is matched back to a token span in p: we first check whether it appears verbatim as a substring of p (Stage A: exact match; Lines 4–5). If not, we search word-level spans of p near the candidate’s length and match against the one with the highest similarity to the candidate, accepting it only if this similarity exceeds a threshold τ (Stage B: fuzzy match; Lines 6–10), and otherwise dropping the candidate (Stage C: abandon; Line 12). These ac-cepted spans, marked by their start and end token positions in p, form the extracted nuggets (Lines 15–16). Appendix C provides the LLM prompt for extraction, an extraction example, and characteris-tics of this extraction on the test datasets. 
+
+2.3 Two-Stage Online Nugget Retrieval 
+
+At runtime, our framework efficiently identifies the most informative segments for a given query through two-stage retrieval, scalable to large cor-pora. Formally, we define a ranked list of the top-k
+
+information nuggets for the query q as R(q) = 
+
+{(bi, s i, e i)}ki=1 , where each tuple specifies the source chunk bi and the boundary token indices 
+
+[si, e i] that define the contiguous span of the nugget within that chunk. Given a query q, a dense retriever first fetches the top-kc text chunks from the corpus to construct a retrieved subset Bret = {bi}kc 
+
+> i=1
+
+⊂ B .We then evaluate and rank the pre-extracted can-didate nuggets nested exclusively within these re-trieved chunks Bret based on their embedding simi-larity to q, keeping the top-k entries. Crucially, rather than treating these extracted nuggets as isolated text snippets that lack seman-tic grounding, CoinRAG utilizes the boundary in-dices [si, e i] as pointers to slice the correspond-ing portions of the precomputed offline chunk cache Cbi . This operation yields contextualized nugget KV caches, denoted as Cbi [si : ei], ensur-ing that the representations inherently retain the deep, document-level context established during full-chunk preprocessing. Because Cbi is computed by encoding the entire chunk bi before any nugget is selected, every token’s KV state within the sliced range [si, e i] is identical to what it would be under a fresh encoding of the chunk, carrying the same contextual grounding that full-chunk encoding pro-vides. Isolated nugget encoding forfeits exactly this: re-encoding a nugget’s raw text on its own recom-putes its KV states from scratch, without access to the rest of the chunk. §4.3 empirically confirms the benefit of this preserved conditioning by com-paring contextualized nugget KV slicing against isolated nugget re-encoding. 
+
+2.4 Contextualized KV Cache Composition with Position Alignment 
+
+Once loaded and sliced, the contextualized nugget caches are composed into a unified prefix cache 
+
+Cctx alongside the system prompt cache Cp. Be-cause individual nugget caches originate from dif-ferent source chunks and token positions, their rel-ative rotary position encodings (RoPE) (Su et al., 2024) mismatch, preventing naive concatenation. To resolve these positional gaps, we adapt a po-sition rotation operator Rot( C; ∆) that shifts the positional indices of a cached KV block by an off-set ∆.The unified context cache is constructed through granular cache composition: Cctx = Cp ⊕
+
+Rot( Cb1 [s1 : e1]; ∆ 1) ⊕ · · · ⊕ Rot( Cbk [sk :
+
+ek]; ∆ k). To manage the structural alignment of these heterogeneous spans, CoinRAG employs an 
+
+order-preserving, contiguous position alignment strategy that preserves the original document se-quence order while packing nuggets consecutively to eliminate structural gaps. Accordingly, the posi-Query Prompt (a) Standard RAG Query Prompt  (b) CacheBlend Query Prompt  
+
+> (c) TurboRAG Query Prompt (d) KVLink Query Prompt
+> (e) CoinRAG (Ours) KV cache computed offline
+> KV cache computed online
+
+Figure 1: Comparison of context construction during the prefill stage across RAG paradigms. Gray blocks represent KV caches precomputed offline , where each token attends to all previous tokens within the same chunk, and yellow blocks represent KV caches computed online during inference, where each token attends to all previous tokens. 
+
+tion rotation offset ∆i for the i-th nugget is dynam-ically calculated as ∆i = |p| + P
+
+> j<i
+
+(ej − sj + 1) .By masking non-retrieved intermediate text and assigning continuous positional indices, this mech-anism minimizes the total context length, thereby reducing GPU memory footprints and accelerating decoding without altering the model architecture. 
+
+2.5 Nugget-Aware Fine-tuning 
+
+While CoinRAG can operate in a training-free man-ner, the online synthesis of non-contiguous cached segments inherently introduces a structural training-inference gap, as LLMs are trained on continuous sequences. To mitigate this gap and optimize down-stream answer generation, CoinRAG incorporates a nugget-aware fine-tuning stage that aligns the training structure with test-time operations. We train the LLM on a question-answering dataset where each instance consists of a query q,a target answer y, and a document collection con-taining a mixture of ground-truth and distractors. To replicate the online extraction and composition pipeline, we fetch the top-k relevant nuggets for q
+
+from these documents and dynamically construct the prefix context cache Cctx via the position align-ment described in Section 2.4. The optimization objective directly minimizes the standard cross-entropy loss on the target answer tokens using the model parameters: L(M) = − PTt=1 log PM(yt |
+
+y<t , C ctx , q ).
+
+3 Comparison to Prior RAG Paradigms 
+
+This section positions CoinRAG relative to two lines of prior work: cache-augmented generation (§3.1), which precomputes and reuses KV caches at the chunk level, and nugget-based RAG (§3.2), which represents retrieved evidence as fine-grained information nuggets. Figure 1 illustrates the prefill KV cache construction of CoinRAG and alterna-tive RAG paradigms, especially with KV cache reuse, and Table 1 compares them. Table 2 com-pares CoinRAG with prior nugget-based RAG. 
+
+Standard RAG (Figure 1(a)) computes the in-teraction of full retrieved text and query entirely online via KV StandardRAG = KV M(p ⊕ tchunk ⊕ q),where tchunk = b1 ⊕ · · · ⊕ bkc represents the raw text sequence constructed by concatenating the full chunks. This paradigm suffers from severe prefill latency due to full online forward propagation over long sequences for every query. 
+
+3.1 Cache-Augmented Generation 
+
+To mitigate high prefill latency in RAG, recent optimizations leverage Cache-Augmented Gen-eration (CAG) to precompute and reuse docu-ment KV caches (Gim et al., 2024). Chan et al. (2025) pioneered this by preloading the entire corpus into the context window to bypass on-line retrieval, at the cost of severe memory bloat from attending to the entire corpus. Standard CAG bypasses online encoding by caching full retrieved chunks offline via KV StandardCAG =
+
+Cchunk ctx ⊕ KV M(q; Cchunk ctx ), where Cchunk ctx = Cp ⊕
+
+Rot (Cc1 ; ∆ 1) ⊕ · · · ⊕ Rot (Cckc ; ∆ kc ) represents the prefix context cache assembled from the full chunk representations. TurboRAG (Lu et al., 2025) and Block-attention (Ma et al., 2025) instantiate this paradigm, precomputing and reusing chunk-level KV caches to isolate cross-chunk attention and slash TTFT. Since the two are essentially iden-tical in design, we let TurboRAG (Figure 1(c)) represent this paradigm, and label it TurboRAG in all comparison and experimental figures and tables. Standard CAG accelerates TTFT by bypassing on-line encoding, caching coarse-grained, full-chunk representations in storage and loading them into GPU memory at inference time. Building on Standard CAG’s cached full-chunk representations, CoinRAG (Figure 1(e)) compiles the context via an optimized cache-slicing pipeline. This formulation achieves a compact memory foot-print while fully preserving the document-level se-mantic grounding of Standard CAG. Like Stan-dard CAG, CoinRAG encodes each chunk indepen-dently offline, but at the finer granularity of nuggets rather than full chunks, which reduces latency. A separate line of work restores cross-chunk interactions by partially recomputing cached KV states online rather than caching purely at the chunk level. CacheBlend (Yao et al., 2025) (Figure 1(b)), which we also compare against, reuses precom-puted KV caches while selectively recomputing a small subset of tokens to restore cross-attention with preceding context. KVLink (Yang et al., 2025) (Figure 1(d)) instead inserts trainable link tokens into each chunk, whose KV states are computed by attending over the previous chunks to restore cross-chunk self-attention.                            
+
+> System Retrieval KV Encoding Training Unit Reuse Context Required
+> Standard RAG Chunk No All chunks No CacheBlend Chunk Yes Selective No TurboRAG Chunk Yes Each chunk Yes KVLink Chunk Yes Each chunk + link Yes CoinRAG Nugget Yes Each chunk Yes
+
+Table 1: CoinRAG vs. related RAG baselines. 
+
+3.2 Nugget-based RAG 
+
+The nugget concept (Voorhees, 2004) was pro-posed for IR/QA system evaluation, where a hu-man assessor enumerates the essential information nuggets that a good response should contain and uses this list to assess response quality. AutoNugge-tizer (Pradeep et al., 2025) automated this process using LLMs, which GINGER (Łajewska and Ba-log, 2025) and Crucible (Dietz et al., 2026) extend to nugget-augmented generation by dynamically constructing nuggets from retrieved documents to guide inference. As listed in Table 2, CoinRAG differs from these nugget-based studies in both when and how nuggets are formed. Nugget extraction in Coin-RAG occurs offline and is query-independent, be-coming query-specific only after online two-stage retrieval, and each nugget is a text span from the original document that recovers the broader con-text of its source chunk during inference. GINGER and Crucible instead construct nuggets online per query with an LLM, and each stands alone with no surrounding context. Because GINGER and Cru-cible do not study KV cache precomputation and instead incur high prefill latency overhead from repeated expensive LLM calls during query pro-cessing, we exclude them from our empirical com-parison, which centers on KV cache reuse systems.             
+
+> Property GINGER/Crucible CoinRAG
+> KV Cache Precomp. No Yes Nugget Generation Online Offline Nugget Vocabulary Any text Document span Nugget Context Context-free Contextual Latency High Low
+
+Table 2: CoinRAG vs. prior nugget-based RAG. 
+
+4 Experiments 
+
+4.1 Experimental Setup Baselines. We compare CoinRAG with Standard RAG, TurboRAG, CacheBlend, and KVLink, for-malized in Section 3. Block-attention is omitted since TurboRAG represents it, given their near-identical chunk-level KV cache reuse design. We replicate TurboRAG and KVLink, training them with the same data and hyperparameters as Coin-RAG for a fair comparison, though their train-ing configurations necessarily differ given each method’s distinct mechanism. 
+
+Metrics. We adopt the token-level F1-score as our accuracy metric, which reliably reflects seman-tic correctness since our inference prompt (Ap-pendix B) constrains the model to synthesize con-cise answers without verbose explanations. For ef-ficiency, we focus on Time-to-First-Token (TTFT) latency (ms), the time to construct the prefix con-text and process the query during the prefill stage, which dominates overall inference time given our short generated answers. We additionally report the prefill length in tokens, a direct proxy for KV cache memory usage, which often dominates GPU memory in long-context inference. 10 2 10 3      
+
+> Latency budget (ms)
+> 38 40 42 44 46 48 50 52
+> F1-Score
+> (a) HotpotQA
+> 10 210 3
+> Latency budget (ms)
+> 28 30 32 34 36 38 40 42 44 46
+> F1-Score
+> (b) 2WikiMQA
+> 10 210 3
+> Latency budget (ms)
+> 20 22 24 26 28 30 32
+> F1-Score
+> (c) MuSiQue
+> Standard RAG CacheBlend TurboRAG KVLink CoinRAG
+
+Figure 2: Pareto frontiers: accuracy vs. latency budget. The x-axis denotes Time-to-First-Token (TTFT) P99 latency budget on a log scale, while the y-axis shows F1-score on answer quality. Star markers ( ⋆) indicate the peak F1-score achieved by each method with no latency limit. A vertical dashed line denotes the 100 ms latency budget.                                                                                                                                                                                                                              
+
+> Method HotpotQA 2WikiMQA MuSiQue Average #F1 ↑TTFT ↓p99 ↓Len ↓#F1 ↑TTFT ↓p99 ↓Len ↓#F1 ↑TTFT ↓p99 ↓Len ↓F1 ↑TTFT ↓p99 ↓Len ↓
+> P99 latency ≤100 ms
+> Standard RAG 140.1 74 81 741 128.5 71 83 684 121.0 76 82 743 29.9 74 82 723 CacheBlend 242.8 80 95 1175 337.3 80 99 1415 321.0 86 96 1576 33.7 82 97 1389 TurboRAG 149.1 71 83 752 242.2 80 95 1059 127.4 73 94 754 39.6 75 91 855 KVLink 149.0 57 65 749 338.7 70 80 1433 226.8 67 71 1170 38.2 65 72 1117 CoinRAG 1, 30 51.4 72 87 618 3, 3 42.4 61 78 389 4, 3 31.4 62 77 387 41.7 65 81 465
+> No latency limit constraint
+> Standard RAG 10 48.4 436 510 4687 20 46.0 820 1051 8241 10 26.5 429 536 4635 40.3 562 699 5854 CacheBlend 548.7 222 285 2484 544.8 130 165 2221 527.7 208 246 2442 40.4 187 232 2382 TurboRAG 20 49.7 439 816 9262 444.8 116 150 1849 127.4 73 94 754 40.6 209 353 3955 KVLink 20 52.5 189 238 9175 539.0 87 102 2251 226.8 67 71 1170 39.4 114 137 4199 CoinRAG 1, 30 51.4 72 87 618 3, 20 44.5 96 115 695 5, 5 32.2 76 106 427 42.7 81 103 580
+
+Table 3: F1 score of the best configuration of each baseline under two latency budgets. The # column denotes the chunk count kc or nugget composition kc, k , TTFT is prefill latency in milliseconds, and Len is the active prefix context length in tokens. Bold marks the highest F1 across methods within each budget and dataset (or average). 
+
+Evaluation Datasets. We conduct experiments on three multi-document question answering bench-marks from LongBench (Bai et al., 2024) that de-mand cross-document aggregation and reasoning: HotpotQA (Yang et al., 2018), 2WikiMQA (Ho et al., 2020), and MuSiQue (Trivedi et al., 2022). Each dataset provides a task-specific document cor-pus for retrieval. 
+
+Other settings. During offline time, we employ GPT-4o-mini to extract nuggets from 512-token chunks. Online retrieval and answer generation use BGE-M3 and Qwen2-7B-Instruct, chosen for its native support for flexible position rotation via RoPE. For each method, we sweep the number of retrieved chunks kc (or nuggets k for CoinRAG) to draw its accuracy–efficiency trade-off curve. For CacheBlend, we additionally sweep the recomputa-tion ratio r. We fine-tune CoinRAG for one epoch over 277,280 training instances. Appendix E gives additional setup details. 
+
+4.2 Main Results 
+
+Figure 2 shows Pareto frontiers, with F1 accuracy score on the y-axis and P99 TTFT latency budget on the x-axis, plotting each baseline’s F1 score with its best configuration under a given budget. As the budget increases, a baseline may reach its peak F1 score, after which its curve becomes flat. Table 3 compares the baselines on 3 datasets under a P99 TTFT latency budget of 100 ms (top) and with no latency limit (bottom), reporting the F1 score, mean TTFT, P99 TTFT, and average input token length of each baseline’s best configuration. The last few columns list the average performance across the 3 datasets. 10 3 10 4      
+
+> Context length budget (# tokens)
+> 40 42 44 46 48 50 52
+> F1-Score
+> (a) HotpotQA
+> 10 310 4
+> Context length budget (# tokens)
+> 28 30 32 34 36 38 40 42 44 46
+> F1-Score
+> (b) 2WikiMQA
+> 10 310 4
+> Context length budget (# tokens)
+> 20 22 24 26 28 30 32
+> F1-Score
+> (c) MuSiQue
+> Standard RAG CacheBlend TurboRAG KVLink CoinRAG
+
+Figure 3: Pareto frontiers: accuracy vs. length budget. The x-axis denotes a prefill context length limit in token count on a log scale, while the y-axis shows F1-score on answer quality. Star markers ( ⋆) indicate the peak F1-score achieved by each method with no context length limit. 
+
+With a P99 100 ms latency constraint, Standard RAG is forced only to retrieve 1 document to meet the budget, while other baselines offer more flexi-bility with KV cache reuse. In all 3 datasets, Coin-RAG outperforms Standard RAG, CacheBlend, TurboRAG, and KVLink, while TurboRAG is the strongest among the other baselines. The F1 score of CoinRAG is 5.3% higher than TurboRAG av-eraged over 3 datasets, while the contextual token length of CoinRAG is 1.84 × shorter. When relaxing the P99 latency budget to 116 ms, CoinRAG still outperforms all other baselines in F1 score. After that, Standard RAG and TurboRAG be-gin to perform comparably to CoinRAG and gradu-ally outperform it for 2WikiMQA, as shown in Fig-ure 2. After around 160 ms, KVLink starts to catch up to and outperform CoinRAG on HotpotQA. Still on the F1 average of 3 datasets, CoinRAG outper-forms others by over 5% on average. This means cross-chunk interaction can contribute positively, but can also lead to more noise. When removing the latency limit entirely, TurboRAG remains the strongest other baseline, and CoinRAG outperforms it in 2 out of 3 datasets with a 3-dataset average improvement of 5.2% (42.7 vs. 40.6) and with a 6.8 × shorter average length. Although the slim KV cache representation in CoinRAG can sometimes miss useful interac-tions across chunks, on average this design can still offset the loss with a larger gain by remov-ing noise and unnecessary context that misleads or slows down LLM inference. Under a low-latency SLA budget, this advantage becomes more promi-nent, and CoinRAG can have a good impact for long-context RAG services under such a budget. Figure 3 shows Pareto frontiers analogous to Fig-ure 2, but with the prefill context length limit in tokens on the x-axis instead of TTFT. Given the same length limit, CoinRAG achieves a higher F1 score than the other baselines, aided by its nugget-level KV cache reuse, which yields a substantially more compact context representation. Even with no length limit, CoinRAG’s context length remains up to 10.1 × shorter than Standard RAG’s, the longest among all baselines under this setting. This active token count serves as a direct proxy for the live KV cache size, which dictates the runtime GPU memory footprint during inference. Across both the latency and length axes, CoinRAG establishes a stronger empirical Pareto frontier, maximizing an-swer quality while substantially reducing hardware resource usage. This smaller KV cache footprint per query also allows more concurrent requests to fit in GPU memory, translating into higher serv-ing throughput for RAG systems under low-latency SLAs. 
+
+4.3 Ablation Studies 
+
+Figure 4 plots F1-score against TTFT for the fol-lowing four ablation studies, each evaluated on HotpotQA, 2WikiMQA, and MuSiQue. 
+
+Contextualized vs. Isolated Nugget Encoding. 
+
+We examine the effect of contextualized KV slic-ing (§2.4) by comparing it against encoding each selected nugget span in isolation, using identical re-trieval and token spans in both cases. For CoinRAG, encoding nuggets in isolation lowers peak F1-score 10 2 10 3      
+
+> Latency budget (ms)
+> 32.5 35.0 37.5 40.0 42.5 45.0 47.5 50.0 52.5
+> F1-Score (a) HotpotQA
+> 10 210 3
+> Latency budget (ms)
+> 28 30 32 34 36 38 40 42 44
+> F1-Score (b) 2WikiMQA
+> 10 210 3
+> Latency budget (ms)
+> 22 24 26 28 30 32
+> F1-Score (c) MuSiQue
+> CoinRAG Isolated Nugget Encoding One-Stage Retrieval No Position Alignment No Fine-Tuning
+
+Figure 4: F1-score versus TTFT P99 latency budget (ms) comparing CoinRAG against four ablations, each removing one component: Isolated Nugget Encoding, One-Stage Retrieval, No Position Alignment, and No Fine-Tuning. Star markers ( ⋆) indicate each configuration’s peak F1-score. 
+
+by 6.3, 4.9, and 3.9 points on the 3 datasets. This confirms that the cached KV representations carry contextual information beyond what the isolated nugget span alone conveys. 
+
+Two-Stage vs. One-Stage Retrieval. We com-pare CoinRAG’s two-stage chunk-to-nugget re-trieval (§2.3) against retrieving nuggets directly from the full nugget collection in a single stage. Two-stage retrieval reaches a higher peak F1-score on all 3 datasets, a relative gain of 9.6 to 17.5 per-cent over one-stage retrieval. This F1 gain also comes with fewer selected nuggets at the peak con-figuration, which shortens the active context and lowers TTFT. This confirms that narrowing the candidate pool to nuggets within already-retrieved chunks improves retrieval quality. 
+
+Position Alignment. We compare CoinRAG’s position alignment (§2.4) against applying no posi-tion alignment ( ∆i = 0 ), which leaves each nugget at its original position within its own source chunk. Position alignment is most beneficial under a tight 75 ms P99 budget, improving F1 by 3.0–8.5% across the 3 datasets. From a 100 ms P99 budget onward, position alignment achieves a compara-ble F1 score to no position alignment across the 3 datasets. 
+
+Nugget-Aware Fine-Tuning. We compare Coin-RAG with and without nugget-aware fine-tuning (§2.5). Nugget-aware fine-tuning improves peak F1-score by +11.3 points on HotpotQA, +6.3 points on 2WikiMQA, and +6.4 points on MuSiQue. This confirms that nugget-aware fine-tuning bridges the training-inference alignment gap by calibrating the model against position em-bedding shifts induced by stitching together non-contiguous nugget spans. 
+
+5 Conclusion 
+
+We present CoinRAG, a lightweight long-context RAG framework with a slim representation to de-liver effective and interactive responses via contex-tual KV nugget cache reuse. Key underlying tech-nical contributions include: an offline extraction of essential text-span-based information nuggets, nugget-aware finetuning, a two-stage online re-trieval pipeline that selects query-specific nuggets, and contextualized KV cache composition. Empirically, under a standard 100 ms P99 la-tency budget, CoinRAG outperforms the F1 score of the best competitor, TurboRAG, by 4.7%, 0.5%, and 14.6% for 3 datasets, with an average gain of 5.3%. Without a latency limit, CoinRAG still out-performs the baselines on average for 3 datasets by 5.2% F-1 improvement or more, indicating that the gain by removing noise and unnecessary context by CoinRAG outweighs the loss due to missing some interaction. Position alignment during online cache composition is most beneficial when the P99 latency budget is tight (e.g., under 75 ms), and re-mains comparable to no position alignment beyond that budget. In general, CoinRAG adds a signifi-cant novel contribution with a new Pareto frontier for effective long-context RAG inference under an interactive TTFT SLA budget. Limitations 
+
+While CoinRAG has demonstrated a new Pareto frontier for effective long-context RAG under a standard low-latency SLA budget, we explicitly acknowledge several systemic constraints. • Although pre-encoding text into static KV rep-resentations significantly accelerates online pre-fill runtimes, it introduces offline resource costs that scale with the corpus size, including disk storage overhead, necessitating efficient memory-mapped I/O or hierarchical caching infrastruc-ture, and a non-trivial one-time nugget-aware fine-tuning cost. We assume documents do not change frequently, and thus one-time or infre-quent offline computing cost can be acceptable. Appendix F describes offline cache construction, disk storage, selective loading, and the I/O setup in more detail. • The precomputed cache layer is inherently cou-pled to the specific model checkpoint. Because the stored KV representations are tightly bound to the underlying transformer weights and posi-tional embedding topologies, updating the back-bone language model or altering its architecture forces a re-encoding of documents. • The downstream answer quality remains bounded by the initial chunk-level and nugget-level re-trieval recall. If the retrieval pipeline fails to surface the canonical evidence spans, the down-stream model cannot synthesize the correct an-swer, although integrating task-aware fine-tuned retrievers or cross-encoder rerankers represents a promising trajectory to mitigate this orthogonal bottleneck. • CoinRAG composes cached representations at the granularity of individual chunks, so nuggets originating from different chunks do not at-tend to each other during encoding, a limita-tion shared with TurboRAG-style chunk-level caching. While our evaluation has compared CacheBlend that addresses cross-chunk attention in KV cache reuse, a future study is to investi-gate the use of these techniques in CoinRAG to optimize attention computation. • Our evaluation assumes that the online cache has a capacity limitation and thus does not consider inter-query KV-cache reuse when some consecu-tive queries may share the same retrieved docu-ments. Prior KV-cache reuse studies, including TurboRAG, KVLink, and CacheBlend, follow this assumption, and this setting is fair for com-paring them. With large online cache capacity, standard RAG could take advantage of document overlap among queries to reduce TTFT, while the F1 score of standard RAG with no latency-limit budget in Table 3 remains the same. While query-independent offline KV cache reuse can be more versatile, the impact evaluation on ex-ploiting inter-query cache reuse requires a traffic dataset with a query appearance order, and this can be studied in the future. We discuss additional future work in Appendix A. 
+
+References         
+
+> Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, and 1 others. 2024. Long-bench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , pages 3119– 3137. Brian J Chan, Chao-Ting Chen, Jui-Hung Cheng, and Hen-Hsen Huang. 2025. Don’t do rag: When cache-augmented generation is all you need for knowledge tasks. In Companion Proceedings of the ACM on Web Conference 2025 , pages 893–897. Jianlv Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. 2024a. Bge m3-embedding: Multi-lingual, multi-functionality, multi-granularity text embeddings through self-knowledge distillation.
+> Preprint , arXiv:2402.03216. Jiawei Chen, Hongyu Lin, Xianpei Han, and Le Sun. 2024b. Benchmarking large language models in retrieval-augmented generation. In Proceedings of the AAAI Conference on Artificial Intelligence , vol-ume 38, pages 17754–17762. Eunsol Choi, He He, Mohit Iyyer, Mark Yatskar, Wen-tau Yih, Yejin Choi, Percy Liang, and Luke Zettle-moyer. 2018. Quac: Question answering in context. In Proceedings of the 2018 conference on empiri-cal methods in natural language processing , pages 2174–2184. Daniel Crankshaw, Xin Wang, Giulio Zhou, Michael J. Franklin, Joseph E. Gonzalez, and Ion Stoica. 2017. Clipper: a low-latency online prediction serving sys-tem. In Proceedings of the 14th USENIX Conference on Networked Systems Design and Implementation ,NSDI’17, page 613–627, USA. USENIX Associa-tion. Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. 2023. Qlora: Efficient finetuning of quantized llms. Advances in Neural Information Processing Systems , 36:10088–10115.
+
+Laura Dietz, Bryan Li, Gabrielle Liu, Jia-Huei Ju, Eu-gene Yang, Dawn Lawrie, William Walden, and James Mayfield. 2026. Incorporating q&a nuggets into retrieval-augmented generation. In European Conference on Information Retrieval , pages 301–309. Springer. Song Feng, Siva Sankalp Patel, Hui Wan, and Sachin-dra Joshi. 2021. Multidoc2dial: Modeling dialogues grounded in multiple documents. In Proceedings of the 2021 conference on empirical methods in natural language processing , pages 6162–6176. Song Feng, Hui Wan, Chulaka Gunasekara, Siva Patel, Sachindra Joshi, and Luis Lastras. 2020. doc2dial: A goal-oriented document-grounded dialogue dataset. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) ,pages 8118–8128. Tianyu Gao, Howard Yen, Jiatong Yu, and Danqi Chen. 2023a. Enabling large language models to generate text with citations. In Proceedings of the 2023 Con-ference on Empirical Methods in Natural Language Processing , pages 6465–6488. Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and Haofen Wang. 2023b. Retrieval-augmented gen-eration for large language models: A survey. arXiv preprint arXiv:2312.10997 .In Gim, Guojun Chen, Seung-seob Lee, Nikhil Sarda, Anurag Khandelwal, and Lin Zhong. 2024. Prompt cache: Modular attention reuse for low-latency infer-ence. Proceedings of Machine Learning and Systems ,6:325–338. Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not what you’ve signed up for: Compromis-ing real-world llm-integrated applications with indi-rect prompt injection. In Proceedings of the 16th ACM workshop on artificial intelligence and security ,pages 79–90. Arpan Gujarati, Reza Karimi, Safya Alzayat, Wei Hao, Antoine Kaufmann, Ymir Vigfusson, and Jonathan Mace. 2020. Serving DNNs like clockwork: Per-formance predictability from the bottom up. In 
+
+14th USENIX Symposium on Operating Systems De-sign and Implementation (OSDI 20) , pages 443–462. USENIX Association. LI Haoyang, Yiming Li, Anxin Tian, Tianhao Tang, Zhanchao Xu, Xuejia Chen, HU Nicole, Wei Dong, Li Qing, and Lei Chen. 2025. A survey on large lan-guage model acceleration based on kv cache manage-ment. Transactions on Machine Learning Research .Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps. In Proceedings of the 28th International Con-ference on Computational Linguistics , pages 6609– 6625. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th symposium on operating systems principles , pages 611–626. Weronika Łajewska and Krisztian Balog. 2025. Ginger: Grounded information nugget-based generation of responses. In Proceedings of the 48th International ACM SIGIR Conference on Research and Develop-ment in Information Retrieval , pages 2723–2727. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-rich Küttler, Mike Lewis, Wen-tau Yih, Tim Rock-täschel, and 1 others. 2020. Retrieval-augmented gen-eration for knowledge-intensive nlp tasks. Advances in neural information processing systems , 33:9459– 9474. Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language mod-els use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173. Songshuo Lu, Hua Wang, Yutian Rong, Zhi Chen, and Yaohua Tang. 2025. Turborag: Accelerating retrieval-augmented generation with precomputed kv caches for chunked text. In Proceedings of the 2025 Con-ference on Empirical Methods in Natural Language Processing , pages 6599–6612. Dongyang Ma, Yan Wang, and Tian Lan. 2025. Block-attention for efficient prefilling. In International Con-ference on Learning Representations , volume 2025, pages 63774–63788. Robert B. Miller. 1968. Response time in man-computer conversational transactions. In Proceedings of the December 9-11, 1968, Fall Joint Computer Confer-ence, Part I , AFIPS ’68 (Fall, part I), page 267–277, New York, NY, USA. Association for Computing Machinery. Reiner Pope, Sholto Douglas, Aakanksha Chowdhery, Jacob Devlin, James Bradbury, Jonathan Heek, Kefan Xiao, Shivani Agrawal, and Jeff Dean. 2023. Effi-ciently scaling transformer inference. Proceedings of Machine Learning and Systems , 5:606–624. Ronak Pradeep, Nandan Thakur, Shivani Upadhyay, Daniel Campos, Nick Craswell, Ian Soboroff, Hoa Trang Dang, and Jimmy Lin. 2025. The great nugget recall: Automating fact extraction and rag evaluation with large language models. In Proceed-ings of the 48th International ACM SIGIR Confer-ence on Research and Development in Information Retrieval , pages 180–190. PubNub. 2023. Response time. https://medium.com/@PubNub/how-fast-is-real-time-human-perception-and-technology-fe7246381935. Accessed: 2026-05-15. Siva Reddy, Danqi Chen, and Christopher D Manning. 2019. Coqa: A conversational question answering challenge. Transactions of the Association for Com-putational Linguistics , 7:249–266. Kurt Shuster, Spencer Poff, Moya Chen, Douwe Kiela, and Jason Weston. 2021. Retrieval augmentation reduces hallucination in conversation. In Findings of the Association for Computational Linguistics: EMNLP 2021 , pages 3784–3803. Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. 2024. Roformer: En-hanced transformer with rotary position embedding. 
+
+Neurocomputing , 568:127063. Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2022. Musique: Multi-hop questions via single-hop question composition. 
+
+Transactions of the Association for Computational Linguistics , 10:539–554. Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2023. Interleaving retrieval with chain-of-thought reasoning for knowledge-intensive multi-step questions. In Proceedings of the 61st annual meeting of the association for com-putational linguistics (volume 1: long papers) , pages 10014–10037. Ellen M. Voorhees. 2004. Overview of the trec 2003 question answering track. In Text Retrieval Confer-ence .An Yang, Baosong Yang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Zhou, Chengpeng Li, Chengyuan Li, Dayiheng Liu, Fei Huang, Guanting Dong, Hao-ran Wei, Huan Lin, Jialong Tang, Jialin Wang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Ma, and 43 others. 2024. Qwen2 technical report. Jingbo Yang, Bairu Hou, Wei Wei, Yujia Bao, and Shiyu Chang. 2025. Kvlink: Accelerating large language models via efficient kv cache reuse. arXiv preprint arXiv:2502.16002 .Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christo-pher D Manning. 2018. Hotpotqa: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 Conference on Empiri-cal Methods in Natural Language Processing , pages 2369–2380. Jiayi Yao, Hanchen Li, Yuhan Liu, Siddhant Ray, Yihua Cheng, Qizheng Zhang, Kuntai Du, Shan Lu, and Junchen Jiang. 2025. Cacheblend: Fast large lan-guage model serving for rag with cached knowledge fusion. In Proceedings of the Twentieth European Conference on Computer Systems , pages 94–109. Jeong-Min Yun, Yuxiong He, Sameh Elnikety, and Shaolei Ren. 2015. Optimal aggregation policy for reducing tail latency of web search. In Proceedings of the 38th International ACM SIGIR Conference on Research and Development in Information Retrieval ,SIGIR ’15, page 63–72, New York, NY, USA. Asso-ciation for Computing Machinery. Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Livia Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonza-lez, and 1 others. 2024. Sglang: Efficient structured language model programs. Advances in Neural Infor-mation Processing Systems , 37:62557–62583. A Future Work 
+
+We evaluate CoinRAG on three LongBench multi-hop, multi-document QA benchmarks (HotpotQA, 2WikiMQA, MuSiQue) because answering their queries requires synthesizing evidence scattered across multiple retrieved chunks, directly stressing the cross-chunk retrieval and cache reuse behavior that CoinRAG targets, unlike single-document or single-hop QA benchmarks; this dataset choice also follows common practice across prior KV cache reuse works. Our evaluation focuses on single-shot multi-document question answering. Extending CoinRAG to genuinely conversational or repeated-query benchmarks (e.g., QuAC (Choi et al., 2018), CoQA (Reddy et al., 2019), Doc2Dial (Feng et al., 2020), MultiDoc2Dial (Feng et al., 2021)), where retrieval happens multiple times over a conversa-tion and often returns the same or overlapping doc-ument context across turns, would further validate the amortized benefit of offline cache reuse and broaden its applicability. Finally, prompt injection (Greshake et al., 2023) is a broader security concern for RAG systems in general, as retrieved documents may contain mali-cious content. Because cached nugget representa-tions in CoinRAG are computed offline, standard prompt-injection mitigations such as anomaly de-tectors and sanitizers could be applied at that stage without affecting online latency. Nonetheless, an-swer generation may still attend to cached mali-cious content if an adversarial span is retrieved, and we leave a systematic study of nugget cache reuse’s susceptibility to prompt injection to future work. 
+
+B Answer Generation Prompt 
+
+Figure 5 presents the full text of the prompt tem-plate injected by CoinRAG into the base language model ( M) to generate a short answer from the retrieved nuggets. The instruction block explicitly enforces a three-tier execution priority: (i) if the correct answer is explicitly contained within the provided clues, it must be extracted verbatim, (ii) if not explicitly stated, the model must deduce the an-swer through multi-hop reasoning strictly grounded in the retrieved context, and (iii) the model may resort to its internal parametric knowledge only when the prior conditions are completely unful-filled. This core instruction is pre-encoded only once as the static system prefix described in Sec-tion 2.4, whereas the dynamic nugget (clue) se-quences are mapped directly to the precomputed full-context KV cache slots, with the target ques-tion appended at the very end of the prompt se-quence. 
+
+C Offline Nugget Extraction: Prompt, Example, and Characteristics 
+
+To operationalize the offline extraction framework of CoinRAG, we leverage GPT-4o-mini to derive an initial list of nuggets via the structured layout detailed in Figure 6, which specifies the complete system prompt template and underlying constraints utilized throughout the offline processing phase. The number of candidate nuggets K proposed per passage (Algorithm 1, Line 1) is not a fixed setting but an outcome of the LLM’s output for each pas-sage, averaging approximately 7.1 candidates per passage across the training and evaluation corpora. Figure 7 provides an example of step-by-step extraction executed on an actual LongBench text segment from the HotpotQA subset, specifically mapping the transition from a raw source paragraph to structured factual nuggets using a sample pas-sage ( passage_idx=7 , “Grania: She-King of the Irish Seas”). To evaluate the operational characteristics and density of the extracted text segments, we com-pile empirical statistics for both the training splits (IRCoT (Trivedi et al., 2023)) and the LongBench evaluation splits of each dataset in Table 4, cover-ing query, passage, and nugget-level statistics. The empirical results reveal that our offline pipeline consistently compresses diffuse document contexts into compact, atomic nuggets across both splits: mean nugget length is far shorter than mean pas-sage length, while the share of overlapping adja-cent nugget spans (Ovlp%) remains low across all 3 datasets. This confirms that CoinRAG’s offline extraction pipeline behaves consistently from the smaller evaluation splits to the substantially larger training splits, and that CoinRAG can drastically reduce context length without sacrificing the under-lying semantic grounding necessary for accurate QA synthesis. 
+
+D Steps of Online Inference: Example 
+
+To illustrate the end-to-end execution flow of Coin-RAG, Figure 8 gives a step-by-step trace of answer-ing a multi-hop question from the LongBench Hot-potQA evaluation suite. The entire operational se-quence demonstrates how our framework bypasses ### Instruction: You are an intelligent Open Domain QA system. You will be given a [Question] and a list of candidate [Clues]. You must determine the correct answer based on your own internal knowledge, using the [Clues] as potential clues. 
+
+Follow this logic strictly: 1. Direct Match Priority 
+
+- Examine all [Clues]. - If any clue contains the exact answer (exact span, alias, abbreviation, numerical value, or canonical entity), output it verbatim. 
+
+2. Retrieval-Guided Reasoning (Clues-First Inference) 
+
+If no clue contains the exact answer, but: - a clue includes key entities, partial spans, events, definitions, dates, or semantic cues relevant to the question, then: - Use only these retrieved cues to infer the correct short answer. The inference must stay anchored to the retrieved content, not free-form reasoning. Example: - If the clue is "The Big Apple" and the question is "Which city . . . ?", answer "New York City". 
+
+3. Minimal Fallback (Only When Retrieval Is Useless) 
+
+- Only if none of the retrieved clues provide helpful information (no match, no partial cue, no relevant entity), - Then rely on your internal knowledge to generate the correct short answer. 
+
+Output Rules 
+
+Output only the short answer. No explanations. No reasoning. Answer should be minimal (entity, number, date, phrase). ### Input: {N clues, each prefixed by <|doc_start|> }Question: {question} 
+
+Figure 5: Qwen2-7B-Instruct answer generation prompt. The instruction block is computed once as the system prefix. The clues (chunks or nuggets) fill the cached K/V slot, and the question is appended. The model is constrained to emit a minimal short answer for lexical token-matching scoring.                                                                             
+
+> Dataset Split Query Passage Nugget #Q Words #Psg Psg/Q Words #Nug Nug/Q Nug/Psg Words Ovlp% HotpotQA Train 91,010 17.9 858,618 9.4 94 6,662,421 73.2 7.8 10.0 4.1
+> Eval 200 15.2 1,719 8.6 1060 101,540 509.0 59.1 13.0 5.0
+> 2WikiMQA Train 166,174 12.7 1,295,924 7.8 66 7,921,522 47.7 6.1 9.1 3.6
+> Eval 200 11.7 1,783 9.9 504 56,176 305.9 31.5 11.3 3.9
+> MuSiQue Train 20,096 16.1 392,913 19.6 83 2,647,463 131.7 6.7 9.8 4.5
+> Eval 200 15.6 2,179 11.1 1001 119,061 611.9 54.6 13.1 5.0
+
+Table 4: Dataset statistics on the training set (IRCoT (Trivedi et al., 2023)) and evaluation set (LongBench (Bai et al., 2024)). #Q : training examples/test questions; #Psg , #Nug : total passages/nuggets (for train these are summed over the training examples, so they include cross-example repetition; for eval they are the unique test passages and their total nuggets); Words : mean length in words; Psg/Q : passages per question; Nug/Q : nuggets per training example/test question; Nug/Psg : nuggets per passage; Ovlp% : share of adjacent nugget pairs whose spans overlap within a passage. 
+
+online text re-encoding by dynamically assembling fine-grained cached segments into a seamless de-coding prefix. As shown in Figure 8, the online processing pipeline operates through four main stages: First, a dense embedding model retrieves the top-kc can-didate text chunks from the large external corpus. Second, fine-grained information nuggets are re-trieved exclusively within this pre-selected chunk pool to drop uninformative tokens while maintain-ing factual relevance. Third, the corresponding KV representations of the selected nuggets are directly You are an information extraction system for Open-Domain Question Answering. Given a passage, extract all spans that could serve as evidence or direct answers to factual questions. ### Rules: 1. Extract spans EXACTLY as they appear in the original text. Do NOT paraphrase, reorder, or modify any words. 2. A span can be any length — a clause, a full sentence, or multiple sentences — as long as it captures a single coherent fact. Choose the minimal span that makes the fact understandable on its own. 3. Focus on spans containing: - Named entities with factual context (e.g., birth, death, roles, locations) - Dates, quantities, measurements, statistics - Events and actions (who did what, when, where) - Relationships between entities (e.g., "X is the father of Y") - Definitions or descriptions of concepts 4. Skip spans that are: - Purely transitional or connective (e.g., "However, this was not the case.") - Redundant (already covered by another extracted span) - Opinions or speculations without factual grounding 5. Spans may partially overlap if they capture different facts. ### Output Format: Return a JSON array of strings. Each string must be an exact substring of the original passage. 
+
+> Example:
+> ["Albert Einstein was born on March 14, 1879, in Ulm, Germany.", "the Nobel Prize in Physics in 1921", "his explanation of the photoelectric effect"]
+
+Figure 6: Full system prompt used for GPT-4o-mini nugget extraction. The user content follows the format 
+
+"Passage: \n{passage}" .
+
+fetched from the precomputed document cache and stitched together using our position alignment strat-egy to construct the final prompt prefix. Finally, the language model processes the online query condi-tioned on this optimized context cache to synthe-size the correct answer. 
+
+E Evaluation Setup Details 
+
+Chunk and Nugget Retrieval. During the of-fline phase, we employ GPT-4o-mini to extract atomic information nuggets from each chunk via structured prompting, accepting a fuzzy-matched candidate only if its similarity to the source span exceeds a threshold τ = 0 .7 (§2.2). Additional details, including the extraction prompt, an exam-ple, and extraction statistics, are provided in Ap-pendix C. We use BGE-M3 (Chen et al., 2024a) as our dense embedding model to fetch candidate text chunks of fixed size 512 tokens and to score query-relevance of the nuggets extracted offline within the retrieved chunks. For each method, we sweep re-trieval top-k to draw its accuracy–efficiency trade-off curve. For chunk-based methods, we vary the number of retrieved coarse chunks within the range 
+
+kc ∈ { 1, 2, 3, 4, 5, 10 , 20 , 30 , 50 }. For the nugget-based method CoinRAG, which uses two-stage retrieval, we first fetch candidate chunks using the identical kc range, and subsequently sweep the final selected nugget count within the range 
+
+k ∈ { 1, 2, 3, 4, 5, 10 , 20 , 30 , 50 , 100 , 150 , 200 }.
+
+KV Caching and Loading. Every chunk in the corpus is pre-encoded once into full-context KV representations, stored on disk and loaded selectively during inference. For CacheBlend, we sweep the recomputation ratio 
+
+r ∈ { 0.0, 0.1, 0.2, . . . , 1.0}, in 0.1 intervals from 0 to 1. Unlike prior KV cache reuse methods, which cache full chunks or documents, CoinRAG reduces disk footprint by storing only tokens belonging to at least one extracted nugget. Hardware infrastruc-ture, memory-mapped I/O management, and offline cost figures are detailed in Appendix F. 
+
+Nugget-Aware Fine-tuning. We fine-tune the model for one epoch over 277,280 training in-stances from the training splits of HotpotQA, 2WikiMQA, and MuSiQue (per-dataset statistics in Table 4), using an effective batch size of 16. The hyperparameter configuration is detailed in Appendix G. Nugget extraction, cache construc-tion, and nugget-aware fine-tuning are one-time costs per corpus and backbone checkpoint, not per query. 
+
+Generation and Prompting. The base lan-guage model M for cache slicing, composi-tion, and downstream generation is Qwen2-7B-Input passage (longbench-hotpotqa, passage_idx=7): 
+
+Passage 7: Grania: She-King of the Irish Seas Grania: She-King of the Irish Seas is a 1986 historical fiction novel about Grace O’Malley (Irish: Gráinne Ní Mháille), the so-called Sea Queen of Connemara, by American-born Irish author Morgan Llywelyn. Llywelyn’s novel is a heavily fictionalized account of O’Malley’s life, with the author having created characters as needed for the plot of the story. The novel was the basis for the 2007 Broadway musical The Pirate Queen. 
+
+Step 1. ELLM (p) = {˜n1, . . . , ˜n6}
+
+1. Grania: She-King of the Irish Seas is a 1986 historical fiction novel 
+
+2. Grace O’Malley (Irish: Grainne Ni Mhaille) 
+
+3. the so-called Sea Queen of Connemara 
+
+4. by American-born Irish author Morgan Llywelyn 
+
+5. Llywelyn’s novel is a heavily fictionalized account of O’Malley’s life 
+
+6. The novel was the basis for the 2007 Broadway musical The Pirate Queen 
+
+Step 2. Stage A partition 
+
+Exact substring of p (ni ← ˜ni): ˜n1, ˜n3, ˜n4, ˜n5, ˜n6
+
+Non-exact ( → Stage B): ˜n2
+
+Step 3. Fuzzy recovery for ˜n2
+
+LLM candidate ˜n2:
+
+Grace O’Malley (Irish: Grainne Ni Mhaille) 
+
+↓ best matching window in p (fuzzy matching score sim( s∗, ˜n2) = 0 .953 ): 
+
+s∗ (verbatim excerpt from p, highlighted in blue above): 
+
+Grace O’Malley (Irish: Gráinne Ní Mháille) 
+
+Step 4. Final N (p)
+
+1. Grania: She-King of the Irish Seas is a 1986 historical fiction novel exact 
+
+2. Grace O’Malley (Irish: Gráinne Ní Mháille) fuzzy 
+
+3. the so-called Sea Queen of Connemara exact 
+
+4. by American-born Irish author Morgan Llywelyn exact 
+
+5. Llywelyn’s novel is a heavily fictionalized account of O’Malley’s life exact 
+
+6. The novel was the basis for the 2007 Broadway musical The Pirate Queen exact 
+
+Figure 7: A step-by-step example of the nugget extraction algorithm of CoinRAG in Algorithm 1. The region in the passage targeted by fuzzy recovery is highlighted in blue. All extracted nuggets are sub-sentence spans (clauses / phrases) rather than full sentences. 
+
+Instruct (Yang et al., 2024), chosen for its native support for flexible position rotation via RoPE. We adopt an explicit QA-oriented prompt template that instructs the LLM to produce concise answers based on the retrieved evidence, avoiding verbose or descriptive outputs that complicate scoring. The full prompt template of CoinRAG is provided in Appendix B. Retrieved items are concatenated in ranked order from top-1 to top-k when constructing the prefix context cache. 
+
+F Hardware Infrastructure and I/O Management 
+
+To ensure the exact reproducibility of our effi-ciency evaluations, we specify the underlying com-putational environment and disk storage layout here. Throughout, we assume a static or infre-quently updated document corpus, consistent with the fixed collections used in our evaluation, so the offline costs reported below are each incurred once rather than repeatedly. Even so, because each chunk is cached independently, supporting incremental corpus updates by re-encoding only the affected chunks would be a natural extension of this design. 
+
+Hardware. All experiments are conducted on a single node equipped with dual-socket AMD EPYC 9354 32-Core Processors (totaling 64 physi-cal cores and 128 threads), 188 GB of system mem-ory, an NVIDIA RTX PRO 6000 (Blackwell Server Edition, 96 GB VRAM), and an NVIDIA L40S (48 GB VRAM). Model training is performed on Input question (longbench-hotpotqa, multi-hop): 
+
+Who wrote the novel that the 2007 Broadway musical The Pirate Queen was based on? 
+
+Step 1. Stage-1 chunk retrieval (BGE-M3, top-kc = 4 )1. [0.609] chunk_2403 “Grania: She-King of the Irish Seas” Grania: She-King of the Irish Seas is a 1986 historical fiction novel about Grace O’Malley (Irish: Gráinne Ní Mháille), the so-called Sea Queen of Connemara, by American-born Irish author Morgan Llywelyn. Llywelyn’s novel is a heavily fictionalized account of O’Malley’s life. . . 
+
+2. [0.474] chunk_3511 “Buxtehude Bull” (German YA novel award list) . . . 2008: Markus Zusak, Die Bücherdiebin (The Book Thief); 2009: Suzanne Collins, Die Tribute von Panem – Tödliche Spiele (The Hunger Games); 2010: Susan Beth Pfeffer, Die Welt, wie wir sie kannten; 2011: Lauren Oliver, Delirium; 2012: John Green, Das Schicksal. . . 
+
+3. [0.447] chunk_4862 “Gordon Dahlquist” (playwright/novelist) Gordon Dahlquist is an American playwright and novelist. A native of the Pacific Northwest, Dahlquist has lived and worked in New York City since 1988. His plays, which include Messalina and Delirium Palace (both Garland Playwriting Award winners), have been performed in New York and Los Angeles. . . 
+
+4. [0.445] chunk_2379 “Robert Jordan” (epic fantasy author) James Oliver Rigney Jr. (October 17, 1948 – September 16, 2007), better known by his pen name Robert Jordan, was an American author of epic fantasy. He is known best for his series The Wheel of Time. . . 
+
+Step 2. Stage-2 nugget retrieval within Stage-1 pool (top-k = 5 ). Blue = supporting; black = distractor. 1. [0.883] nug_38701 from chunk_2403 (Grania) The novel was the basis for the 2007 Broadway musical The Pirate Queen 
+
+2. [0.516] nug_38283 from chunk_2379 (Robert Jordan) an American author of epic fantasy 
+
+3. [0.491] nug_78735 from chunk_4862 (Gordon Dahlquist) Gordon Dahlquist is an American playwright and novelist. 
+
+4. [0.437] nug_38286 from chunk_2379 (Robert Jordan) one of several writers to have written original Conan the Barbarian novels 
+
+5. [0.436] nug_38699 from chunk_2403 (Grania) by American-born Irish author Morgan Llywelyn 
+
+Step 3. RAG prompt fed to LLM (blue = K/V loaded from pre-computed cache; black = newly prefilled at inference time). Each nugget is prefixed by a single <|doc_start|> separator; no <|doc_end|> is inserted between nuggets (it only appears once per chunk during KV cache pre-computation). 
+
+<|im_start|>system You are a helpful assistant. Use the context to answer the question concisely.<|im_end|> <|im_start|>user <|doc_start|>The novel was the basis for the 2007 Broadway musical The Pirate Queen <|doc_start|>an American author of epic fantasy <|doc_start|>Gordon Dahlquist is an American playwright and novelist. <|doc_start|>winning the Tony Award for Best Actor in a Musical <|doc_start|>one of several writers to have written original Conan the Barbarian novels <|doc_start|>by American-born Irish author Morgan Llywelyn Question: Who wrote the novel that the 2007 Broadway musical The Pirate Queen was based on?<|im_end|> <|im_start|>assistant\n 
+
+Step 4. Output 
+
+Morgan Llywelyn 
+
+Figure 8: Step-by-step illustration of the CoinRAG inference pipeline (HotpotQA, kc = 4 , k = 5 ). All retrieval scores, chunk IDs, and nugget IDs come from an actual BGE-M3 run on the HotpotQA index. The two supporting nuggets ( nug_38701 , nug_38699 ) both originate from the same chunk_2403 (Grania passage), while ranks 2–5 in between are filled with distractors that share only surface-level overlap (“author / Broadway musical / Tony Award”). the RTX PRO 6000, whereas all evaluation and latency benchmarks are executed on the L40S en-vironment in bfloat16 precision. The information nugget extraction pipeline is processed off-line via the GPT-4o-mini API with a concurrency limit of 100, bypassing local GPU computation. The pre-computed KV caches are stored on a local NVMe SSD (Samsung PM9A3, 3.84 TB, U.2, PCIe Gen4) and are loaded dynamically into GPU memory dur-ing training and inference. 
+
+KV Cache I/O Management. The primary infer-ence overhead of CoinRAG shifts from prefill com-putation to the disk I/O required for loading the re-trieved nugget KV slices. To minimize this I/O over-head, we carefully design the cache storage format and granularity. For the base model (Qwen2-7B-Instruct; 28 layers, 4 KV heads, and a head dimen-sion of 128), the KV cache for a single 512-token chunk occupies approximately 28 MB in bfloat16 
+
+precision. To ensure that each top-Knug retrieval only incurs a few megabytes of disk transfer, each chunk is stored as an independent file named 
+
+doc_{passage_id}_{chunk_id}.pt . These Py-Torch tensors are asynchronously loaded using a per-document thread pool ( –parallel_mode per_doc ). Crucially, since CoinRAG selectively slices only the required token ranges for each tar-get nugget, the actual data transferred per chunk remains substantially lower than the maximum 28 MB footprint. 
+
+Nugget Extraction. Extracting information nuggets from the training corpus (950,221 unique passages, yielding 6.08M nuggets at 99.9% validity) via the GPT-4o-mini Batch API costs approximately $265–325. Extracting nuggets for the three evaluation corpora combined (5,681 passages, yielding 277K nuggets) costs under $2. Both are one-time costs incurred during corpus preparation rather than per query. 
+
+Offline Cache Construction. Building the com-plete chunk KV cache store for all three evaluation corpora combined takes under 30 minutes in total, since each chunk requires only a single forward pass, equivalent in FLOPs to one online prefill pass over that chunk’s tokens. Disk storage scales lin-early with corpus size at approximately 27–28 MB per chunk, totaling 146 GB for HotpotQA, 75 GB for 2WikiMQA, and 173 GB for MuSiQue. Nugget spans cover approximately 70% of chunk tokens across the three evaluation corpora (after dedupli-cating positions shared by overlapping nuggets), implying that retaining only nugget-covered posi-tions rather than the full chunk could reduce disk footprint by roughly 30%. Like nugget extraction, this is a one-time cost incurred during corpus prepa-ration rather than per query. 
+
+Nugget-Aware Fine-Tuning. Nugget-aware fine-tuning trains Qwen2-7B-Instruct for one epoch over 277,280 examples (17,330 optimizer steps at a gradient accumulation factor of 16), requiring ap-proximately 140 GPU-hours on a single RTX PRO 6000 with a peak memory footprint of 75.8 GB. This is also a one-time cost, incurred once per back-bone checkpoint rather than per query. 
+
+G Fine-Tuning Hyperparameters 
+
+The complete optimization configuration deployed for the nugget-aware fine-tuning pipeline is de-tailed in Table 5. To ensure a fair and controlled comparison, we train the model under a fixed hy-perparameter configuration. We employ gradient checkpointing and memory-efficient 8-bit Paged AdamW (Dettmers et al., 2023) to prevent out-of-memory (OOM) errors under strict sequence length constraints.                 
+
+> Hyperparameter Value
+> Learning Rate 5×10 −6
+> LR Scheduler Cosine Warmup Ratio 0.03 Micro-Batch Size 1Gradient Accumulation 16 Total Epochs 1Optimizer Paged AdamW (8-bit) Precision bfloat16
+> Gradient Checkpointing On Max Sequence Length 1024 Training Chunks ( kc)5Training Nuggets ( k)10 RAFT Noise Probability 0.15
+> Table 5: Hyperparameter specifications for the nugget-aware fine-tuning pipeline.
+
+H Successful and Failed Inference Examples 
+
+To illustrate how answer generation with nuggets in CoinRAG works, we categorize the success cases from LongBench HotpotQA in Figure 9 (Type-1 to Type-3) and weak or failed cases in Figure 10 (Type-1 ′ to Type-3 ′). For those positive cases, our cache-stitching pipeline enables robust semantic inference and knowledge recovery within a highly Type-1: Lexical match. 
+
+Q: “Which is a flowering plant, Pueraria or Pleiospilos?” Gold: Pleiospilos Pred: pleiospilos ( ✓)
+
+Top-5 chunks: (1) [0.593] chunk_260 Pleiospilos — Pleiospilos is a genus of succulent flowering plants of the family Aizoaceae. . . (2) [0.544] chunk_255 Pueraria — Pueraria is a genus of 15–20 species of legumes. . . 
+
+(3) [0.535] chunk_259 Pleiospilos simulans (4) [0.514] chunk_261 Pleiospilos bolusii (5) [0.510] chunk_258 
+
+Pleiospilos nelii 
+
+Top-6 nuggets: [0.635] “Pleiospilos is a genus of succulent flowering plants of the family Aizoaceae, native to South Africa.” | [0.591] “Pleiospilos compactus” | [0.574] “Pleiospilos bolusii, the mimicry plant, is a species of flowering plant in the family Aizoaceae” | [0.567] “Pleiospilos nelii” | [0.560] “Pueraria is a genus of 15–20 species of legumes native to Asia.” | [0.554] “Pleiospilos bolusii” 
+
+Type-2: Semantic-only nugget. 
+
+Q: “Robbie Tucker plays in what series that follows a group of friends who run an Irish bar?” Gold: It’s Always Sunny in Philadelphia Pred: it’s always sunny in philadelphia ( ✓)
+
+Top-5 chunks: (1) [0.501] chunk_780 IASIP / Paddy’s Pub (2) [0.487] chunk_777 Robbie Tucker — . . . Tucker has also starred on . . . It’s Always Sunny in Philadelphia. . . (3) [0.480] chunk_3753 distractor (4) [0.478] chunk_778 IASIP overview (5) [0.476] chunk_786 Paddy’s Pub location 
+
+Top-6 nuggets: [0.640] “The series follows the exploits of ‘The Gang’, a group of narcissistic and sociopathic friends who run the Irish dive bar Paddy’s Pub in South Philadelphia, Pennsylvania” | [0.496] “The Gang originally consists of janitor Charlie Kelly. . . ” | [0.495] “Robbie Tucker (born April 5, 2001)” | [0.474] “Glenn Howerton as Dennis Reynolds, co-owner and the main bartender of Paddy’s Pub” | [0.462] “In season 2, they are joined by Frank Reynolds (Danny DeVito). . . ” | [0.443] “When the bar is open, they shirk their respective jobs’ responsibilities and choose to drink instead.” 
+
+Note: No nugget text contains the literal string “It’s Always Sunny in Philadelphia” — model infers the title from the show’s plot description (Paddy’s Pub, the Gang, South Philadelphia). 
+
+Type-3: Retrieval fails, model recovers. 
+
+Q: “Which ocean would the ingredients likely come from for the She-crab soup?” Gold: Atlantic Ocean Pred: atlantic ocean ( ✓)
+
+Top-5 chunks: (1) [0.695] chunk_5252 She-crab soup — . . . made of milk or heavy cream, crab or fish stock, Atlantic blue crab meat. . . (2) [0.496] chunk_3648 Crab trap (3) [0.455] chunk_5254 Watercress soup (4) [0.436] chunk_5247 
+
+Spinach soup (5) [0.421] chunk_5967 Mildred Brown food columnist 
+
+Top-6 nuggets: [0.699] “the orange crab roe comprise a chief ingredient in traditional she-crab soup.” | [0.691] “soup is named for the ‘she-crab’, or female crab. . . ” | [0.664] “She-crab soup is a rich soup, similar to bisque, made of milk or heavy cream, crab or fish stock, Atlantic blue crab meat, and (traditionally) crab roe. . . ” | [0.539] “The soup is a regional specialty from the South Carolina Lowcountry.” | [0.518] “The crab pot changed the way crabs are harvested on the Chesapeake Bay.” | [0.493] “Crab has been a viable food source since Native Americans lived and fished on the Delmarva Peninsula.” 
+
+Note: The literal answer “Atlantic Ocean” appears in no retrieved chunk or nugget. Only “Atlantic blue crab” (a species name) and geographic cues (South Carolina Lowcountry, Chesapeake Bay, Delmarva Peninsula) appear. Model bridges species name + east-coast geography → Atlantic Ocean. 
+
+Figure 9: Three success case types of CoinRAG on HotpotQA. All retrieval scores and IDs are from an actual BGE-M3 run. Predictions are from the model trained with SFT ( original_offset , kc = 5 , k = 6 ). Blue marks the gold answer or its semantic cue. 
+
+compressed footprint. However, these failure tra-jectories also illustrate that aggressive nugget slic-ing can sometimes amplify surface entity biases or omit contiguous linking paths during the retrieval and alignment stages, providing some insights for future optimizations. Even with such failed cases, our evaluation in Section 4.2 shows that CoinRAG still delivers a strong F1-score on average for three test datasets and outperforms the baselines under a targeted latency budget. Type-1 ′: Misled despite full evidence. 
+
+Q: “Gary L. Bennett was a part of the space missions that have a primary destination of what celestial body?” Gold: Sun 
+
+Pred: jupiter ( ×)
+
+Top-5 chunks: (1) [0.607] chunk_107 Gary L. Bennett bio (2) [0.494] chunk_108 Bennett UN delegations 
+
+(3) [0.470] chunk_135 Ulysses (spacecraft) — . . . primary mission was to orbit the Sun. . . (4) [0.454] chunk_128 
+
+distractor (5) [0.436] chunk_139 Pioneer H / Out-Of-The-Ecliptic 
+
+Top-6 nuggets: [0.525] “was a robotic space probe whose primary mission was to orbit the Sun and study it at all latitudes.” | [0.524] “went to Jupiter, Saturn, Uranus, Neptune and beyond” | [0.494] “and on the New Horizons mission to Jupiter.” | [0.484] “it was propelled on a trajectory to Jupiter by a combination of solid rocket motors” | [0.475] “Voyager, Galileo, and Ulysses space missions” | [0.472] “KELT is a terrestrial telescope mission designed to search for transiting systems” 
+
+Note: The gold answer “Sun” appears in the top-1 nugget, but four out of six nuggets mention “Jupiter”. Model is misled by surface frequency despite the highest-scoring nugget pointing to the correct answer. 
+
+Type-2 ′: Plausible alternative entity. 
+
+Q: “Name a member of a British-American supergroup who recorded a version of Nobody’s Child in 1990” Gold: Bob Dylan Pred: george harrison ( ×)
+
+Top-5 chunks: (1) [0.529] chunk_642 Wilburys pseudonyms (2) [0.519] chunk_634 Nobody’s Child album — compiled by . . . George Harrison (3) [0.485] chunk_638 Traveling Wilburys — Bob Dylan, George Harrison, Jeff Lynne, Roy Orbison and Tom Petty (4) [0.481] chunk_643 (5) [0.471] chunk_637 Nobody’s Child song disambiguation 
+
+Top-6 nuggets: [0.565] “Nobody’s Child: Romanian Angel Appeal, a 1990 charity album” | [0.549] “his presence on Nobody’s Child was reflected in the recordings submitted by Simon, Clapton and Eddy” | [0.534] “a cover of ‘Nobody’s Child’, which the band recorded for Olivia Harrison’s Romanian Angel Appeal charity project.” | [0.533] “Nobody’s Child (Penny McLean song), 1976” | [0.524] “covered by Tony Sheridan and the Beatles (1964), the Traveling Wilburys (1990), and others” | [0.516] “Nobody’s Child, a song by Electric Light Orchestra from Eldorado, 1974” 
+
+Note: The Wilburys roster (“Bob Dylan, George Harrison, Jeff Lynne, Roy Orbison and Tom Petty”) exists in chunk_638 but no nugget extracted it. Only Harrison-centric nuggets survive (Olivia Harrison, Harrison as compiler). Model picks Harrison — valid Wilburys member, but mismatches the canonical reference. 
+
+Type-3 ′: Retrieval fails, model fabricates plausible. 
+
+Q: “Prior to playing for Michigan State, Keith Nichol played football for a school located in what city?” Gold: Norman 
+
+Pred: lowell ( ×)
+
+Top-5 chunks: (1) [0.610] chunk_91 Keith Nichol — played college football for the University of Oklahoma. . . attended Lowell High School in Lowell, Michigan (2) [0.498] chunk_92 Nichol sophomore season (3) [0.478] chunk_67 John Macklin (4) [0.476] chunk_93 Nichol senior season (5) [0.473] chunk_105 1966 Notre Dame vs. MSU 
+
+Top-6 nuggets: [0.567] “played college football for the University of Oklahoma and Michigan State University” | [0.553] “transferred to Michigan State” | [0.519] “Both schools shared the MacArthur Bowl” | [0.514] “Nichol played an important role as receiver for the Spartans during the 2011 season” | [0.514] “attended Lowell High School in Lowell, Michigan” | [0.511] “coached football at a boys’ school at Pawling, New York.” 
+
+Note: Gold “Norman” (Oklahoma’s city) appears in no chunk or nugget — retrieval brings “University of Oklahoma” but no separate passage about Norman, OK. Model picks “Lowell” (from the Lowell HS nugget), interpreting “school” as high school instead of the intended college reading. 
+
+Figure 10: Three failed case types of CoinRAG on HotpotQA, mirroring the success cases in Figure 9. Red marks the misleading nugget/answer; blue marks the gold answer (when present).

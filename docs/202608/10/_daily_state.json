@@ -1,0 +1,105 @@
+{
+  "date": "20260810",
+  "date_label": "",
+  "generated_at": "2026-08-10 21:17:46 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2608.06849v1",
+      "route": "202608/10/2608.06849v1-autonomy-of-heads-data-free-sparse-attention-from-frozen-query-key-geometry",
+      "title": "Autonomy-of-Heads: Data-Free Sparse Attention from Frozen Query-Key Geometry",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "基于查询-键投影几何的无数据稀疏注意力，压缩KV缓存并降低注意力开销",
+      "first_seen_at": "2026-08-10 21:17:46 UTC",
+      "updated_at": "2026-08-10 21:17:46 UTC"
+    },
+    {
+      "paper_id": "2608.07001v1",
+      "route": "202608/10/2608.07001v1-every-cache-entry-earns-its-place-global-allocation-of-resolution-and-coverage-for-kv-cache-compression",
+      "title": "Every Cache Entry Earns Its Place: Global Allocation of Resolution and Coverage for KV Cache Compression",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "跨层、跨头和上下文槽对KV缓存压缩进行全局资源分配",
+      "first_seen_at": "2026-08-10 21:17:46 UTC",
+      "updated_at": "2026-08-10 21:17:46 UTC"
+    },
+    {
+      "paper_id": "2608.07009v1",
+      "route": "202608/10/2608.07009v1-hisparse-scaling-sparse-attention-decoding-with-hierarchical-kv-cache-management",
+      "title": "HiSparse: Scaling Sparse-Attention Decoding with Hierarchical KV Cache Management",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "分层KV缓存管理降低稀疏注意力解码的GPU显存占用",
+      "first_seen_at": "2026-08-10 21:17:46 UTC",
+      "updated_at": "2026-08-10 21:17:46 UTC"
+    },
+    {
+      "paper_id": "2608.06628v1",
+      "route": "202608/10/2608.06628v1-retrofitting-linear-attention-into-diffusion-language-models",
+      "title": "Retrofitting Linear Attention into Diffusion Language Models",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "将先前块的注意力线性化，降低带KV缓存的扩散语言模型前缀注意力开销",
+      "first_seen_at": "2026-08-10 21:17:46 UTC",
+      "updated_at": "2026-08-10 21:17:46 UTC"
+    },
+    {
+      "paper_id": "2608.07458v1",
+      "route": "202608/10/2608.07458v1-coinrag-contextualized-information-nugget-kv-cache-reuse-for-long-context-rag",
+      "title": "CoinRAG: Contextualized Information Nugget KV Cache Reuse for Long-Context RAG",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "组合式复用离线计算的细粒度信息碎片KV缓存以优化长上下文RAG",
+      "first_seen_at": "2026-08-10 21:17:46 UTC",
+      "updated_at": "2026-08-10 21:17:46 UTC"
+    },
+    {
+      "paper_id": "2608.06557v1",
+      "route": "202608/10/2608.06557v1-cascade-exploiting-slo-aware-latency-budget-for-fair-and-high-goodput-llm-inference-serving",
+      "title": "Cascade: Exploiting SLO-Aware latency budget for fair and high goodput LLM inference serving",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "利用延迟余量和可复用KV缓存状态进行大模型服务调度",
+      "first_seen_at": "2026-08-10 21:17:46 UTC",
+      "updated_at": "2026-08-10 21:17:46 UTC"
+    }
+  ]
+}
