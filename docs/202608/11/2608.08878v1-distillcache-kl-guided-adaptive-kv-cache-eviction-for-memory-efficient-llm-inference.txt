@@ -1,0 +1,738 @@
+Title: DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference
+
+URL Source: https://arxiv.org/pdf/2608.08878v1
+
+Published Time: Tue, 11 Aug 2026 01:33:47 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference 
+
+Asaad Althoubi 
+
+Oklahoma State University Stillwater, OK USA 
+
+aalthou@okstate.edu 
+
+# Abstract 
+
+Transformer-based large language models (LLMs) achieve strong performance across many tasks, but their Key-Value (KV) cache grows linearly with sequence length, creating a severe memory bottleneck for long-context inference. Existing heuristic eviction methods (e.g., H 2O and SnapKV) rely on static attention or positional signals that often fail to capture a token’s future predictive influence. We propose DistillCache , a reinforcement learning framework that formulates KV-cache eviction as a sequential decision problem. DistillCache learns a lightweight policy network using rich internal model signals (attention statistics, value norms, entropy, and position) and trains it with REINFORCE via a per-step KL-divergence reward to preserve the full-cache output distribution. On a 7B-parameter instruction-tuned Transformer (Mistral-7B-Instruct-v0.3), DistillCache retains 94.2% of full-cache accuracy on LongBench at a 25% cache budget, outperforming both strong heuristic baselines (H 2O, SnapKV) by up to 2.7 absolute points and, under our re-implementations, concurrent RL-based methods (ForesightKV, RLKV) by up to 1.4 points on long-context tasks. On reasoning benchmarks, DistillCache is competitive with the best concurrent method and surpasses it under aggressive compression. It also delivers up to 2.1× full-cache throughput while maintaining competitive practical efficiency. These results highlight the effectiveness of learned, distribution-aware policies for memory-efficient long-context LLM inference. 
+
+# 1 Introduction 
+
+Transformer-based large language models (LLMs) rely on Key-Value (KV) caches during autoregres-sive decoding to avoid recomputing prior token representations, but KV-cache size grows linearly with sequence length and increasingly becomes a major memory and throughput bottleneck as context windows scale. Recent KV-cache compression methods, such as H 2O [16] and SnapKV [11] mitigate this cost by retaining only selected tokens using heuristic importance scores derived from attention statistics. Although effective, these approaches assume that past attention patterns reliably predict future utility, which may fail under long-range dependencies or structured reasoning where token importance depends on downstream generation consequences. We introduce DistillCache , a reinforcement learning framework for adaptive KV-cache eviction that formulates cache management as a sequential decision process under fixed memory budgets. DistillCache trains a policy using a per-step KL-divergence reward that preserves full-cache output distributions, directly optimizing token retention for downstream distributional fidelity rather than heuristic proxy signals. Unlike concurrent RL-based methods specialized for particular reward structures or granularities, DistillCache provides a general-purpose distribution-preserving objective for autoregressive generation. 
+
+> Preprint. arXiv:2608.08878v1 [cs.LG] 9 Aug 2026
+
+Our main contributions are: • We introduce DistillCache, a KL-guided reinforcement learning framework for adaptive KV-cache eviction under strict memory constraints. • We show that RL-based optimization provides measurable gains over heuristic and supervised alternatives by optimizing long-horizon cache utility. • We evaluate DistillCache across LongBench, perplexity, throughput, and cross-model transfer, demonstrating improved memory-quality trade-offs with practical deployment efficiency. Importantly, DistillCache is not merely a learned proxy for heuristic importance metrics. By optimiz-ing token retention decisions against future distributional fidelity rather than retrospective attention statistics alone, it explicitly learns budget-constrained policies that account for downstream generation consequences. Concurrent with our work, ForesightKV [4] and RLKV [5] explore alternative RL-based KV-cache strategies with different reward designs and granularities; we provide direct comparisons in Section 4 and Appendix E. 
+
+# 2 Related Work 
+
+2.1 Heuristic-Based KV-Cache Management 
+
+The linear growth of the KV cache has motivated numerous eviction and compression strategies. H2O [16] retains tokens with the highest cumulative attention scores, based on the observation that frequently attended tokens (“heavy hitters”) tend to be important. StreamingLLM [15] preserves initial “attention sink” tokens together with a fixed-size recent window, enabling stable long-context decoding without retraining. SnapKV [11] selects representative tokens within sliding windows via clustering or top-k selection. Keyformer [1] retains tokens that most increase attention entropy. These approaches achieve substantial memory reduction but rely on fixed scoring rules that do not always anticipate long-range or future dependencies. 
+
+2.2 Learned and Adaptive Eviction 
+
+Recent work has explored learned or adaptive approaches to cache management. Ge et al. [7] show that token redundancy can be inferred from hidden representations, enabling dynamic pruning policies guided by internal model signals. KeyDiff [12] proposes a training-free, similarity-based eviction strategy. FastGen [6] introduces adaptive KV cache compression by profiling attention heads. LESS [3] synthesizes recurrence with a small auxiliary cache. CAKE [13] treats cache allocation as a cake-slicing problem with layer-wise and temporal eviction strategies. Because several concurrent learned eviction baselines lack fully standardized public implementations, we adopt best-effort reimplementations from published methodological descriptions and report these comparisons transparently as approximate rather than definitive leaderboard claims. Our primary goal is to contextualize DistillCache within emerging learned eviction paradigms rather than overstate absolute superiority. Concurrent with our work, ForesightKV [4] and RLKV [5] have explored RL-based KV-cache management for reasoning models. ForesightKV employs a two-stage pipeline — supervised Golden Eviction with pairwise ranking loss followed by GRPO — to optimize long-term KV-pair contribution, with a focus on low-entropy tokens. RLKV applies GRPO with L1-penalized gating adapters to identify reasoning-critical heads and reserves the full cache budget for them. In contrast, DistillCache trains a single lightweight global policy to distill the full-cache output distribution at every decoding step. DistillCache differs from these concurrent works in several key aspects: 1. Reward signal: DistillCache uses a per-step KL-divergence reward between the full-cache (teacher) and pruned-cache (student) next-token distributions. This directly optimizes for distributional fidelity at every decoding step, in contrast to ForesightKV’s long-term contribution prediction and RLKV’s final reasoning correctness objective. 2. Policy architecture: We train a single lightweight global MLP policy ( ∼200K parameters) that operates online during autoregressive decoding with an explicit teacher/student cache 2setup. ForesightKV relies on supervised pre-training followed by RL, while RLKV operates at the coarser head level rather than per-token. 3. Feature design: DistillCache leverages a richer combination of internal transformer signals (average attention, value norms, attention variance, entropy, and normalized position), enabling finer-grained, context-aware token selection. Complementary system-level techniques — including KV-cache offloading, fragmentation reduction, and optimized attention kernels — are reviewed in Appendix A; DistillCache is orthogonal to and composable with these approaches. Unlike supervised or heuristic ranking approaches, our reinforcement learning formulation directly optimizes long-horizon cache utility under strict memory budgets by using downstream distributional preservation as the training objective. 
+
+# 3 Methodology 
+
+We introduce DistillCache , a reinforcement learning framework for dynamic KV-cache eviction during autoregressive decoding. Unlike heuristic approaches that rank tokens using fixed importance signals, DistillCache learns a cache-retention policy from the model’s internal signals and optimizes it using a distribution-preservation objective. The goal is to retain a budgeted subset of cached tokens that keeps the pruned model’s next-token distribution close to that of the full-cache model. An overview of the system architecture and its integration into the decoding pipeline is provided in Appendix B. 
+
+3.1 Problem Formulation 
+
+At decoding step t, the model maintains a KV cache Ct containing keys and values for previously processed tokens. Given a fixed budget B, the objective is to construct a pruned cache C′ 
+
+> t
+
+⊆ C t with 
+
+|C ′
+
+> t
+
+| ≤ B such that generation quality is preserved as much as possible under memory constraints. We model cache eviction as a sequential decision process: at each decoding step, the policy observes token-level features derived from the current cache, selects which entries to retain, and receives a reward based on how well the pruned model matches the full-cache model. 
+
+3.1.1 State Space 
+
+For each token i currently stored in the KV cache, we construct a feature vector 
+
+xi = αi, ∥vi∥2, σ i, H i, pos i
+
+ ∈ R5,
+
+where: • αi is the average attention mass received by token i as a key across all heads and layers during the most recent forward pass; • ∥vi∥2 is the ℓ2 norm of token i’s value vector; • σi is the variance of the attention mass received by token i across heads; • Hi measures the entropy of recent query-side attention contexts associated with token 
+
+i. For each recent query q ∈ {t−w+1 , . . . , t } (w=64 ), let aq ∈ RLt denote the attention distribution over all cached keys, aq (i) the mass assigned to token i, and 
+
+H( aq ) = − P 
+
+> j
+
+aq (j) log aq (j). We define 
+
+Hi = 1
+
+ZitX
+
+> q=t−w+1
+
+aq (i) H( aq ), Zi =
+
+> t
+
+X
+
+> q=t−w+1
+
+aq (i),
+
+i.e., the attention-weighted average entropy of recent queries that attend to token i. Low 
+
+Hi indicates selection by concentrated queries; high Hi indicates selection under diffuse attention; • pos i is the normalized sequence position of token i within the current cache. Together, αi captures globally prominent tokens, pos i captures positional relevance, and the remaining features ( ∥vi∥2, σi, Hi) capture context-sensitive importance. All five are computed from quantities already available during decoding (see Section 4 for overhead). The full state at step t is st = {xi}Lt
+
+> i=1
+
+,where Lt = |C t|.33.1.2 Action Space 
+
+The policy network assigns a scalar score si = fϕ(xi) to each cached token via a lightweight MLP 
+
+fϕ. During training, we sample a stochastic ranking by perturbing scores with i.i.d. Gumbel noise, 
+
+˜si = si + gi, gi ∼ Gumbel(0 , 1) , at = top -B argsort(˜ s1, . . . , ˜sLt ),
+
+yields a subset sampled from the Plackett–Luce distribution induced by the scores {si} (see Ap-pendix C for the policy gradient derivation). At inference, the policy selects the top-B tokens deterministically without Gumbel perturbation. 
+
+3.1.3 Transition Dynamics and Training Architecture 
+
+A critical aspect of training is maintaining causal consistency. During training, we maintain two separate caches: • A teacher cache Cteacher  
+
+> t
+
+that is never pruned. It contains all tokens generated so far and is used to compute the full-cache distribution Pt.• A student cache Cstudent  
+
+> t
+
+that is pruned at each step according to the policy. It is used to compute the pruned-cache distribution ˆPt.After generating a new token xt, both caches are updated by appending the new key-value pair 
+
+(kt, v t). The student cache first receives the pruned cache C′ 
+
+> t
+
+from the previous step, then appends the new pair. The teacher cache simply appends to its full cache. This design ensures that Pt is always computed from an unpruned history, while ˆPt reflects the effect of all previous pruning decisions. The memory overhead during training is approximately doubled, which is acceptable given that the training is performed offline. 
+
+3.1.4 Reward Theoretical Motivation: Let ot = PNi=1 at,i vi denote the full attention output, where at,i are the normalized attention weights. When a set E of tokens is evicted, the remaining weights are renormalized and the approximate output becomes ˆot = P 
+
+> i∈S
+
+ˆat,i vi with ˆat,i = at,i /(1 − εt),where εt = P 
+
+> j∈E
+
+at,j is the evicted attention mass. Assuming ∥vi∥2 ≤ C, a direct application of the triangle inequality yields 
+
+∥ot − ˆot∥2 ≤ 2 C ε t.
+
+Since the logit vector is a linear projection of ot, the logit perturbation satisfies ∥ℓt − ˆℓt∥2 ≤ 2C′εt
+
+for a projection-dependent constant C′. By the local Lipschitz continuity of the softmax, small logit perturbations induce bounded KL divergence: 
+
+DKL (Pt ∥ ˆPt) ≤ ∥ℓt − ˆℓt∥22
+
+2 σ2min 
+
+≤ 2 C′ 2 ε2
+
+> t
+
+σ2min 
+
+,
+
+where σmin is the minimum softmax probability. This establishes that per-step KL divergence is upper-bounded by the squared evicted attention mass, providing a principled foundation for the reward defined below. Crucially, the KL reward captures this relationship end-to-end through the full softmax, accounting for non-linear interactions between retained tokens that the linear attention bound alone does not. The reward at step t is defined by using the divergence between the next-token distributions of the full-cache and pruned-cache models: 
+
+Rt = −DKL 
+
+ Pt ∥ ˆPt
+
+,
+
+where Pt denotes the full-cache next-token distribution and ˆPt denotes the corresponding pruned-cache distribution. This reward encourages the policy to retain tokens whose removal would substantially alter the model’s predictions. In practice, the KL divergence is computed from the output logits of the two forward passes with standard numerical stabilization. 43.2 Policy Optimization 
+
+We optimize the policy parameters ϕ using REINFORCE with entropy regularization and a variance-reduction baseline. Let at denote the sampled top-B selection at step t. The objective is 
+
+∇ϕJ = E
+
+"X
+
+> t
+
+∇ϕ log πϕ(at | st) ( Gt − bt)
+
+#
+
++ β ∇ϕEH πϕ(· | st) ,
+
+where: • Gt = PTτ =t γτ −tRτ is the discounted return; • bt is a baseline used to reduce gradient variance; • β is the entropy regularization coefficient; • H(πϕ(· | st)) denotes the policy entropy. In our implementation, the stochasticity arises from the Gumbel perturbation used to induce the sampled ranking and, therefore, the selected top-B subset. The log-probability log πϕ(at | st) for a top-B subset can be derived from the Plackett–Luce distribution (see Appendix C). We use γ = 0 .99 
+
+and β = 0 .01 in all experiments. To further reduce variance, we use a leave-one-out (RLOO) baseline within each batch: for a batch of 
+
+K sampled actions, the baseline for one sample is the average reward of the other K − 1 samples. The entropy term H(πϕ(· | st)) is estimated using the single-sample surrogate ˆH ≈ − log πϕ(at | st),which is unbiased in expectation and avoids the combinatorial cost of computing the exact subset entropy. In addition, we maintain an exponential moving average baseline for training stability. This is a practical policy-gradient estimator for the subset-selection problem. 
+
+3.3 Training vs. Inference Training. Each training step performs two forward passes — one on the teacher’s full cache to obtain Pt, one on the student’s pruned cache to obtain ˆPt — whose KL divergence defines the reward. This doubles the memory footprint, but training is performed offline and only once per model configuration. We use 2 × RTX 4090 with tensor parallelism to accommodate the 7B model and dual-cache architecture. 
+
+Inference. At inference time, the teacher branch and reward computation are removed. Each decoding step requires only a single forward pass: the model generates logits and updates the KV cache, the policy scores the cached tokens and prunes the cache to budget, and the next token is selected from the current step’s logits. Pruning thus prepares the cache for the next step rather than affecting the current token. The runtime overhead is limited to feature extraction and a lightweight policy forward pass (Algorithm 1). Training details (dataset, number of steps, hyperparameters, and compute requirements) are provided in Appendix D. 
+
+3.3.1 Why Reinforcement Learning Instead of Supervised Ranking 
+
+Supervised ranking requires proxy labels for token importance, whereas DistillCache directly opti-mizes retention decisions against downstream generation fidelity under explicit budget constraints. This allows the policy to learn long-horizon trade-offs that static ranking objectives may not capture. 
+
+# 4 Results 
+
+4.1 Experimental Setup 
+
+We evaluate DistillCache against Full KV Cache (no pruning), H 2O [16], SnapKV [11], Fore-sightKV [4], and RLKV [5] on Mistral-7B-Instruct-v0.3 (7B parameters), with cross-model eval-uation on Llama-3-8B-Instruct, reporting absolute accuracy on LongBench and reasoning tasks (GSM8K + BBH) across cache budgets from 12.5% to 100%. Full experimental details are provided in Appendix D. 5Algorithm 1 DistillCache Inference  
+
+> 1:
+
+Input: model M, trained policy fϕ, prompt tokens x1: L, budget ratio r, minimum budget Bmin 
+
+(set to 32), max generation length Tmax  
+
+> 2:
+
+C ← ∅ ▷ cache is empty before the first forward pass  
+
+> 3:
+
+for t = 0 , 1, . . . , T max − 1 do  
+
+> 4:
+
+input t ←
+
+x1: L if t = 0 
+
+xL+t otherwise  
+
+> 5:
+
+(logits t, at, Ct) ← M (input t | C ) ▷ single forward pass; Ct includes the new KV pair  
+
+> 6:
+
+Extract features xi from at and Ct ▷ build_features (at, Ct) 
+
+> 7:
+
+Compute scores si = fϕ(xi) for each i ∈ { 1, . . . , |C t|}  
+
+> 8:
+
+B ← max  ⌊r · |C t|⌋ , B min 
+
+ 
+
+> 9:
+
+I ← argtop B
+
+ {si}|C t|
+
+> i=1
+
+ ▷ deterministic; no Gumbel noise, no hard-coded protection  
+
+> 10:
+
+C ← {C t[i] | i ∈ I} ▷ prune; retained cache used by the next step  
+
+> 11:
+
+xL+t+1 ← argmax( logits t) ▷ greedy; logits from the unpruned forward pass  
+
+> 12:
+
+if xL+t+1 = [EOS] then  
+
+> 13:
+
+break  
+
+> 14:
+
+end if  
+
+> 15:
+
+end for  
+
+> 16:
+
+return x1: L+t+1 
+
+Table 1: Absolute and Relative Accuracy (%) vs KV-Cache Budget on Mistral-7B-Instruct-v0.3 (mean ± std over 5 independent training runs) 
+
+Task Method 100% (Abs) 50% 25% 12.5% 
+
+LongBench H2O 41.5 39 .2 ± 1.2
+
+(94.5%) 
+
+36 .4 ± 1.5
+
+(87.7%) 
+
+29 .8 ± 2.1
+
+(71.8%) SnapKV 41.5 39 .6 ± 1.1
+
+(95.4%) 
+
+37 .0 ± 1.3
+
+(89.2%) 
+
+31 .0 ± 1.8
+
+(74.7%) ForesightKV [4] 41.5 40 .3 ± 1.0
+
+(97.1%) 
+
+38 .2 ± 1.2
+
+(92.0%) 
+
+34 .4 ± 1.6
+
+(82.9%) RLKV [5] 41.5 40 .0 ± 1.3
+
+(96.4%) 
+
+37 .7 ± 1.4
+
+(90.8%) 
+
+33 .5 ± 1.9
+
+(80.7%) 
+
+DistillCache 41.5 40 .5 ± 0.9
+
+(97.6%) 
+
+39 .1 ± 1.1
+
+(94.2%) 
+
+36 .6 ± 1.5
+
+(88.2%) Reasoning H2O 52.0 46 .6 ± 1.4
+
+(89.6%) 
+
+41 .4 ± 1.7
+
+(79.6%) 
+
+32 .4 ± 2.0
+
+(62.3%) SnapKV 52.0 47 .3 ± 1.2
+
+(91.0%) 
+
+42 .7 ± 1.5
+
+(82.1%) 
+
+34 .3 ± 1.9
+
+(66.0%) ForesightKV [4] 52.0 48 .4 ± 1.2
+
+(93.1%) 
+
+44 .7 ± 1.3
+
+(86.0%) 
+
+38 .1 ± 1.7
+
+(73.3%) RLKV [5] 52.0 48 .9 ± 1.1
+
+(94.0%) 
+
+45 .7 ± 1.3
+
+(87.9%) 
+
+38 .9 ± 1.8
+
+(74.8%) 
+
+DistillCache 52.0 48 .6 ± 1.0
+
+(93.5%) 
+
+45 .0 ± 1.2
+
+(86.5%) 
+
+39 .9 ± 1.6
+
+(76.7%) 
+
+4.2 Accuracy vs Cache Budget 
+
+Table 1 reports absolute and relative accuracy across cache budgets on Mistral-7B-Instruct-v0.3. The full-cache baseline achieves 41.5% on LongBench and 52.0% on the reasoning tasks (averaged over GSM8K and BBH). DistillCache consistently outperforms heuristic baselines, with larger gains under aggressive com-pression (e.g., +2.7 LongBench points over H 2O at 25%). It also matches or exceeds concurrent RL methods on evaluated LongBench budgets, while RLKV remains slightly stronger on reasoning at moderate budgets. DistillCache closes this gap under 12.5% compression, where token-level distributional fidelity becomes more decisive. 6Across five random seeds, DistillCache consistently outperformed supervised and heuristic alter-natives, with improvements remaining stable across all seeds (mean ± std over 5 runs reported throughout). A supervised distillation ranker that uses the same five features, but is trained to regress teacher-derived importance scores without RL optimization achieves 37 .8 ± 1.2 on LongBench at 25% cache budget, compared to DistillCache’s 39 .1 ± 1.1. This indicates that RL provides gains beyond static or supervised token salience objectives; a complete ablation that includes heuristic and feature-ablated baselines is reported in Appendix F (Table 10). 
+
+Cross-model generalization: Zero-shot transfer from Mistral-7B to Llama-3-8B preserves competi-tiveness with heuristic baselines without retraining, while concurrent RL methods require per-model retraining (Appendix E, Table 4). 
+
+4.3 Accuracy vs Context Length 
+
+Table 2 evaluates performance as the context length increases under a fixed 25% budget on Long-Bench. Table 2: Absolute Accuracy vs Context Length (25% Budget) 
+
+Context H2O SnapKV ForesightKV RLKV DistillCache 
+
+2K 40 .2 ± 0.5 40 .4 ± 0.4 40 .8 ± 0.4 40 .7 ± 0.5 40 .5 ± 0.4
+
+4K 38 .5 ± 0.8 39 .0 ± 0.7 39 .8 ± 0.6 39 .5 ± 0.7 40 .2 ± 0.6
+
+8K 34 .1 ± 1.1 35 .0 ± 1.0 37 .0 ± 0.9 36 .4 ± 1.0 38 .1 ± 0.9
+
+DistillCache maintains higher accuracy than both heuristic baselines and the concurrent RL methods at longer contexts, with the performance gap becoming more pronounced at 8K tokens. At 2K contexts, all methods perform within 1 point of each other, as the cache budget is sufficient to retain most tokens regardless of strategy; the advantage of learned selection emerges only when the budget forces meaningful eviction decisions. DistillCache’s robustness at 8K tokens highlights the benefit of per-step distributional preservation over ForesightKV’s future-score prediction and RLKV’s static head allocation. 
+
+4.4 Memory–Quality Trade-off 
+
+Figure 1 shows the increase in perplexity relative to the full-cache baseline as a function of the compression ratio. At a 25% cache budget, the increase in perplexity is +0.35 for DistillCache, compared to +0.62 for H 2O, +0.55 for SnapKV, +0.44 for ForesightKV, and +0.47 for RLKV. DistillCache consistently exhibits the lowest perplexity degradation across compression ratios. 
+
+4.5 Throughput and Latency 
+
+Table 3 reports per-component latency and end-to-end throughput for all methods at a 25% cache budget on 2 × RTX 4090. Table 3: Latency and Throughput (2 × RTX 4090, 25% Budget). 
+
+Method Cache Attn. (ms) Feat. (ms) Policy (ms) Tokens/s †
+
+Full 100% 42.1 – – 18.0 H2O 25% 18.5 – – 42.8 SnapKV 25% 18.7 0.2 – 41.5 ForesightKV 25% 18.6 0.5 0.7 38.2 RLKV 25% 18.5 0.3 0.6 39.5 
+
+DistillCache 25% 18.5 0.9 0.5 38.0  
+
+> †Tokens/s is measured end-to-end and includes memory management and scheduling overhead beyond the three reported component times.
+
+712.5 25 50 75 100 
+
+KV-Cache Budget (%) 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Perplexity Increase
+
+H2OSnapKV ForesightKV RLKV DistillCache Figure 1: Perplexity increase vs KV-cache compression ratio. Lower is better. The capital of France is Paris ,but the user did not say it was London .
+
+> Evict Keep
+> Retention
+> H2OForesightKV RLKV DistillCache
+
+Figure 2: Example of token retention behavior. Reducing the cache to 25% yields approximately 2.1 × speedup compared to the full-cache baseline. DistillCache introduces an additional ∼1.4 ms/token overhead from feature extraction and policy evaluation, resulting in throughput comparable to concurrent RL methods and slightly below heuristic methods. 
+
+4.6 Qualitative Observations 
+
+In representative examples (Figure 2), DistillCache tends to preserve tokens that are critical for logical consistency (e.g., negations such as “not” and clause-governing verbs such as “say”), which heuristic baselines and some concurrent RL methods sometimes discard due to their long-term or head-level objectives. In particular, DistillCache avoids redundantly retaining tokens that all methods already identify (e.g., high-attention entities) and instead allocates the budget to less-obvious, distribution-critical tokens. Furthermore, the policy learns to assign high scores to initial attention-sink tokens and recent tokens without any hard-coded protection, recovering the retention patterns used by heuristic methods (H 2O, StreamingLLM) as a special case of its learned scoring function while additionally preserving context-sensitive tokens that fixed rules would miss. 85 Limitations 
+
+Training Cost and Stability: Training DistillCache requires approximately 130 GPU-hours on 2 ×
+
+RTX 4090 and doubles memory usage during training due to the separate teacher cache, making it substantially more expensive than zero-training heuristics. REINFORCE also introduces variance, which we mitigate through entropy regularization, leave-one-out baselines, and multi-seed averaging. Although more advanced optimizers such as PPO or GRPO may further improve stability, they would substantially increase training complexity and cost. 
+
+Reasoning and Architectural Scope: RLKV remains slightly stronger on reasoning benchmarks at moderate budgets, though DistillCache closes this gap under aggressive compression, and preliminary hybridization suggests complementary strengths. More broadly, the policy scores tokens indepen-dently without explicitly modeling inter-token interactions, and its feature design remains coupled to transformer attention patterns, which may limit transfer to other architectures without redesign. 
+
+Practical Overhead and Baseline Comparisons: DistillCache introduces approximately +1.4 ms/token inference overhead relative to H 2O due to feature extraction and policy evaluation, although kernel fusion may reduce this cost. Our comparisons with ForesightKV and RLKV are based on best-effort re-implementations from public descriptions rather than official codebases, so differences in original training setups or hyperparameter tuning may affect exact reported gaps. Consequently, DistillCache is best viewed as a deployment-oriented memory optimization strategy when repeated inference efficiency justifies its upfront training and implementation complexity. 
+
+# 6 Conclusion 
+
+We introduced DistillCache , an RL framework for adaptive KV-cache eviction that preserves genera-tion quality under memory budgets via a per-step KL-divergence objective between full-cache and pruned-cache distributions. By directly optimizing retention for distributional fidelity, DistillCache moves beyond heuristic attention-based pruning and provides a general mechanism for budget-aware compression across long-context tasks. On Mistral-7B-Instruct-v0.3 and zero-shot transfer to Llama-3-8B-Instruct, DistillCache retains 94.2% of full-cache LongBench performance at a 25% KV-cache budget, outperforming heuristic baselines by up to 2.7 points and concurrent learned methods by 0.9–1.4 points on evaluated long-context settings. Although RLKV edges ahead on reasoning at moderate budgets, DistillCache recovers under aggressive compression and shows complementary potential via hybridization. Overall, distribution-preserving adaptive eviction is a promising direction for memory-constrained LLM inference. Future work should explore broader architectural transfer, lower-cost optimization, and tighter integration with complementary compression methods. 
+
+# References 
+
+[1] Muhammad Adnan et al. Keyformer: KV Cache Reduction Through Key Tokens Selection for Efficient Generative Inference. In Proceedings of Machine Learning and Systems , volume 6, pages 114–127, 2024. [2] Payman Behnam, Yaosheng Fu, Ritchie Zhao, Po-An Tsai, Zhiding Yu, and Alexey Tumanov. RocketKV: Accelerating Long-Context LLM Inference via Two-Stage KV Cache Compression. In Proceedings of the 42nd International Conference on Machine Learning , volume 267 of 
+
+Proceedings of Machine Learning Research , pages 3358–3392. PMLR, 13–19 Jul 2025. URL 
+
+https://proceedings.mlr.press/v267/behnam25a.html .[3] Harry Dong, Xinyu Yang, Zhenyu Zhang, Zhangyang Wang, Yuejie Chi, and Beidi Chen. Get More with LESS: Synthesizing Recurrence with KV Cache Compression for Efficient LLM Inference. In Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp, editors, Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research ,pages 11437–11452. PMLR, 21–27 Jul 2024. URL https://proceedings.mlr.press/ v235/dong24f.html .9[4] Zican Dong, Peiyu Liu, Junyi Li, Zhipeng Chen, Han Peng, Shuo Wang, and Wayne Xin Zhao. ForesightKV: Optimizing KV Cache Eviction for Reasoning Models by Learning Long-Term Contribution, 2026. [5] Wenjie Du, Li Jiang, Keda Tao, Xue Liu, and Huan Wang. Which Heads Matter for Reasoning? RL-Guided KV Cache Compression, 2026. [6] Suyu Ge, Yunan Zhang, Liyuan Liu, Minjia Zhang, Jiawei Han, and Jianfeng Gao. FastGen: Fast Domain-Adaptive Key-Value Cache Compression for LLM Inference. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2024. URL https://aclanthology.org/2024.acl-long.XXX .[7] Suyu Ge et al. Model Tells You What to Discard: Adaptive KV Cache Compression for LLMs. In The Twelfth International Conference on Learning Representations (ICLR) , 2024. [8] Ke Hong et al. FLASHDECODING++: Faster Large Language Model Inference with Asyn-chronization, Flat GEMM Optimization, and Heuristics. In Proceedings of Machine Learning and Systems , 2024. [9] Shibo Jie, Yehui Tang, Kai Han, Zhi-Hong Deng, and Jing Han. SpeCache: Speculative Key-Value Caching for Efficient Generation of LLMs. In Forty-second International Con-ference on Machine Learning (ICML) , 2025. URL https://openreview.net/forum?id= PQIrsaIQdn .[10] Woosuk Kwon et al. Efficient Memory Management for Large Language Model Serving with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles ,SOSP ’23, pages 611–626, New York, NY, USA, 2023. Association for Computing Machinery. ISBN 9798400702297. doi: 10.1145/3600006.3613165. URL https://doi.org/10.1145/ 3600006.3613165 .[11] Yuhong Li et al. SnapKV: LLM Knows What You are Looking for Before Generation. In 
+
+Advances in Neural Information Processing Systems , volume 37, pages 22947–22970. Curran Associates, Inc., 2024. doi: 10.52202/079017-0722. [12] Junyoung Park, Dalton Jones, Matthew J Morse, Raghavv Goel, Mingu Lee, and Christopher Lott. KeyDiff: Key Similarity-Based KV Cache Eviction for Long-Context LLM Inference in Resource-Constrained Environments. In The Thirty-ninth Annual Conference on Neural Informa-tion Processing Systems , 2025. URL https://openreview.net/forum?id=uBaFH7aQnC .[13] Ziran Qin, Yuchen Cao, Mingbao Lin, Wen Hu, Shixuan Fan, Ke Cheng, Weiyao Lin, and Jianguo Li. CAKE: Cascading and Adaptive KV Cache Eviction with Layer Preferences. In 
+
+The Thirteenth International Conference on Learning Representations (ICLR) , 2025. [14] Ying Sheng et al. FlexGen: High-throughput Generative Inference of Large Language Models with a Single GPU. In Proceedings of the 40th International Conference on Machine Learning ,ICML’23. JMLR.org, 2023. [15] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient Streaming Language Models with Attention Sinks. In International Conference on Learning Representa-tions (ICLR) , 2024. [16] Zhenyu Zhang et al. H 2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. In A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, editors, Advances in Neural Information Processing Systems , volume 36, pages 34661–34710. Curran Associates, Inc., 2023. 
+
+# A System-Level Optimization and Complementary Techniques 
+
+In addition to token-level pruning, system research has explored improving inference efficiency through memory management, scheduling, and optimized attention kernels. SpeCache [9] offloads the full KV cache to CPU memory, fetching only important pairs to GPU via a low-precision copy 10 and prefetching speculatively to hide latency, achieving 10× compression without retraining and remaining orthogonal to token-level eviction. RocketKV [2] proposes a two-stage, training-free compression method—coarse-grain permanent eviction followed by fine-grain hybrid sparse atten-tion—and reports up to 400× compression, 3.7× speedup, and 32.6% peak memory reduction on long-context tasks. Other notable system techniques include offloading (FlexGen [14]), fragmentation reduction (PagedAttention [10]) and optimized attention kernels (FlashDecoding++ [8]). Distill-Cache is complementary to these system-level techniques; in principle, token-level pruning can be combined with offloading, quantization, or speculative caching to further reduce memory usage while maintaining generation quality. 
+
+# B System Architecture 
+
+Figure 3 shows how DistillCache integrates into the transformer decoding pipeline. At each decoding step, a single forward pass on the current cache Ct produces logits ℓt, attention weights, and an updated KV cache. Token-level features xi are extracted from the attention outputs and passed through the policy network, which produces importance scores si. The controller selects the top-B
+
+tokens to form the pruned cache C′
+
+> t
+
+, which feeds the next decoding step. The current token is selected from ℓt — the logits produced by the unpruned forward pass — so pruning does not affect the current prediction. During training, the architecture includes an additional teacher branch that maintains a separate full cache and computes Pt, while a student forward pass on C′ 
+
+> t
+
+produces ˆPt. Their KL divergence defines the reward. At inference time, the teacher branch is removed and only a single forward pass is used.              
+
+> Pruned Cache
+> Ct
+> Forward Pass (model, Ct)Feature Extraction
+> xi
+> Policy Network
+> si=fϕ(xi)
+> Top-BSelection Pruned Cache
+> C′
+> t
+> Next Token
+> xt+1 = argmax( ℓt)
+> Teacher Cache
+> Cteacher
+> t(full) Rt=−DKL (Pt∥ˆPt)
+> DistillCache Controller (Inference)
+> attns, values
+> ℓtappend (kt, v t)
+> append (kt, v t)
+> Pt
+> ˆPt
+
+Figure 3: DistillCache architecture. Solid arrows denote the inference-time pipeline: the pruned cache Ct is used in a forward pass to produce logits ℓt, attention weights, and value tensors. Token features xi are extracted from the attention outputs; the policy network scores each token; Top-B
+
+selection forms C′
+
+> t
+
+. The next token is selected from ℓt (produced by the unpruned forward pass); the pruned cache C′ 
+
+> t
+
+feeds the next decoding step. Dashed arrows denote training-only supervision: the teacher branch maintains a separate unpruned cache Cteacher  
+
+> t
+
+and produces Pt; the student branch performs a separate forward pass on C′ 
+
+> t
+
+to produce ˆPt; their KL divergence defines the reward Rt.
+
+# C Policy Gradient Derivation for Gumbel-Top-B Selection 
+
+We provide a sketch of the gradient derivation. Let scores si = fϕ(xi) and let τ denote the sampling temperature. The Gumbel perturbation gi ∼ Gumbel(0 , 1) yields perturbed scores ˜si = si/τ + gi.Sorting the perturbed scores gives a permutation σ; the top-B subset a consists of the first B indices in σ. The probability of a particular subset a (of size B) under the induced Plackett–Luce distribution 11 is 
+
+πϕ(a | s) = exp  P  
+
+> i∈a
+
+si/τ X
+
+> a′⊆[L]
+> |a′|=B
+
+exp  X 
+
+> i∈a′
+
+si/τ  = exp  P  
+
+> i∈a
+
+si/τ 
+
+Z(s, B, τ ) ,
+
+where Z(s, B, τ ) is the partition function summing over all  LB
+
+ subsets. The log-probability of the sampled subset is therefore 
+
+log πϕ(a | s) = X
+
+> i∈a
+
+si/τ − log Z(s, B, τ ).
+
+In our implementation, we compute log Z exactly using dynamic programming in O(L · B) time and 
+
+O(B) space per sequence ( log_sum_exp_subsets in the released code). This avoids the variance that the Monte Carlo approximation of the partition function would introduce. Gradients ∇ϕ log πϕ
+
+are obtained by automatic differentiation through the DP, since every operation ( logaddexp , addition) is differentiable. At τ = 1 (used in all experiments), the distribution reduces to the standard Plackett– Luce over subsets. For efficiency, we use a single sample per training example and rely on the REINFORCE variance reduction techniques (RLOO baseline, entropy regularization) described in Section 3. 
+
+# D Training Details 
+
+Experimental Protocol. All experiments use Mistral-7B-Instruct-v0.3 (7B parameters) on 2 ×
+
+NVIDIA RTX 4090 (48 GB total VRAM) with tensor parallelism, with the DistillCache policy trained offline and applied at each decoding step. ForesightKV and RLKV are re-implemented from their public descriptions and evaluated under the exact same protocol. We report absolute accuracy normalized to the full-cache baseline across cache budgets {100% , 50% , 25% , 12 .5% }. Following recent recommendations, we use a dynamic budget that scales with sequence length: at decoding step t, the budget B is set to max( ⌊r · Lt⌋, B min ), where r is the target ratio (e.g., 0.25), Lt = |C t|,and Bmin = 32 is a minimum budget that prevents degenerate caches at very short sequences. This design ensures that very short sequences (where Lt is small) are never over-compressed. 
+
+Evaluation Protocol. For LongBench, we evaluated all methods zero-shot using the standard task prompts from the official repository (no few-shot examples). For GSM8K, we use the conventional 8-shot chain-of-thought prompt with the original GSM8K training set as exemplars (the policy is trained exclusively on the GSM8K training questions not used as exemplars, ensuring no leakage). BBH is evaluated with the standard 3-shot direct prompting format. Generation uses greedy decoding with a maximum of 512 new tokens; longer generations are truncated before scoring. All accuracy numbers are computed by exact match for GSM8K and BBH, and by ROUGE-L for LongBench tasks, following the original benchmark evaluation scripts. The policy is trained offline on a mixed dataset including LongBench (2wikimqa split, excluded from the test-set average) and GSM8K (main split, train portion only), exposing the policy to diverse long-context and reasoning behaviors. Training runs for 10,000 steps; each step samples a single prompt, tokenises it, and truncates to a maximum of 4,096 tokens. On 2 × NVIDIA RTX 4090, training completes in approximately 130 GPU-hours (measured wall-clock time across 5 independent seeds). The LLM is frozen throughout training; only the ∼200K policy parameters receive gradients, and all forward passes use FP16 precision, which keeps per-step cost modest despite the dual teacher/student cache architecture. The exact log-partition function log Z(s, B, τ ) used for computing log πϕ during training has com-plexity O(L · B) per sequence, which is negligible at our training scale ( L ≤ 4,096 , B ≤ 1,024 )but would benefit from approximation at longer contexts. This cost is absent at inference, where the policy uses deterministic argtop B (Algorithm 1, line 9). The policy network is a two-layer MLP with 128 hidden units, ReLU activations, and LayerNorm (∼200K parameters). Optimization uses AdamW with learning rate 3 × 10 −4, cosine decay with 500 warmup steps, and gradient clipping at max-norm 1.0. The discount factor is γ = 0 .99 , and the regularization coefficient of the entropy is β = 0 .01 . Unless otherwise stated, results are averaged over 5 independent training runs (different random seeds) and reported with mean ± standard deviation. 12 E Additional Experiments and Analysis 
+
+In this section, we provide further experiments to strengthen our claims against concurrent RL-based KV-cache methods. 
+
+E.1 Zero-Shot Policy Transfer 
+
+To evaluate cross-model generalization, we apply the DistillCache policy — trained on Mistral-7B — to Llama-3-8B-Instruct zero-shot , without any fine-tuning. All other experimental conditions (budget, features, decoding setup) remain identical. Table 4 provides the full comparison, including heuristic and concurrent RL baselines on the target model. Table 4: Cross-model evaluation at 25% cache budget on Llama-3-8B-Instruct. DistillCache is applied zero-shot from Mistral-7B; concurrent RL methods are retrained on the target model. Full-cache baseline: LongBench = 42.8%, Reasoning = 56.4%.                                                 
+
+> Method Training LongBench Reasoning
+> H2Onative 37 .2±1.6(86.9%) 44 .0±1.8(78.0%) SnapKV native 37 .9±1.4(88.6%) 45 .6±1.6(80.9%) ForesightKV retrained 39 .5±1.2(92.3%) 48 .2±1.3(85.5%) RLKV retrained 39 .1±1.3(91.4%) 49 .5±1.2(87.8%)
+> DistillCache zero-shot 38 .4±1.3(89.7%) 46 .2±1.4(81.9%)
+
+Table 5: DistillCache accuracy at 25% cache budget: trained policy (Mistral-7B) vs zero-shot transfer (Llama-3-8B-Instruct). 
+
+Model LongBench Reasoning (GSM8K+BBH) 
+
+Mistral-7B (trained) 39.1 ± 1.1 45.0 ± 1.2 Llama-3-8B-Instruct (zero-shot) 38.4 ± 1.3 46.2 ± 1.4 Despite not receiving model-specific training, DistillCache outperforms both heuristic baselines running natively on the target model on both tasks. The near-parity between trained and zero-shot performance (0.7-point drop on LongBench, slight gain on reasoning due to Llama-3’s stronger reasoning capabilities) demonstrates that the policy captures general KV-cache importance patterns that transfer across architectures. Concurrent RL methods achieve higher accuracy but require per-model retraining — a cost DistillCache avoids entirely. 
+
+E.2 Reward Ablation Study 
+
+We retrained DistillCache using two alternative reward formulations: a ForesightKV-style long-term contribution reward (approximated via 8-step rollout utility) and a holistic future-utility ranking (global ranking across budgets). All other hyperparameters, features, and training budgets were kept identical. Table 6: Reward ablation on LongBench at 25% cache budget. 
+
+Reward Type LongBench Accuracy 
+
+ForesightKV-style (long-term contribution) 36.8 ± 1.2 Holistic future-utility ranking 37.5 ± 1.0 
+
+Per-step KL (DistillCache) 39 .1 ± 1.1
+
+Our original per-step KL-divergence reward outperforms both alternatives by 1.6–2.3 points, confirm-ing that directly optimizing distributional fidelity at every decoding step is more effective for general long-context performance than long-term or holistic objectives. 13 E.3 Head-Level Hybrid Approach 
+
+We investigate complementarity with RLKV by combining its head-level gating strategy with our token-level policy. We identify the top 20% most important heads using attention statistics, allocate them full cache budget, and apply DistillCache token selection within the remaining 80% of heads. Table 7: Head-level hybrid at 25% overall cache budget on LongBench. 
+
+Method LongBench Accuracy 
+
+DistillCache (standalone) 39.1 ± 1.1 RLKV-style head gating only 37.7 ± 1.4 
+
+Head-Level Hybrid 39 .8 ± 1.0
+
+The hybrid approach yields a further +0.7 improvement. Although the absolute gain is modest, it is consistent across all five training seeds (the improvement holds in every seed), indicating that head-level and token-level selection capture complementary aspects of cache importance. By allocat-ing the full cache to reasoning-critical heads and applying the distributional fidelity of DistillCache’s token-level within the remaining heads, the two strategies operate on orthogonal axes — which heads matter versus which tokens within each head matter — and their gains naturally compose. 
+
+E.4 Why Per-Step KL vs. Concurrent Rewards 
+
+ForesightKV optimizes long-term contribution via future attention scores and low-entropy loss, while RLKV optimizes final-answer correctness. Our per-step KL reward directly preserves the full output distribution at every decoding step, which is general-purpose across autoregressive generation tasks for both general long-context (LongBench) and reasoning tasks. An additional advantage of the KL objective becomes apparent when considering token-level vulnera-bility to eviction. In practice, low-entropy tokens — those where the model assigns most probability mass to a single next token — suffer disproportionately from cache eviction: removing even a few contextually relevant KV pairs can shift the peaked distribution enough to alter the predicted token, producing factual errors in numbers, symbols, or entities that propagate through subsequent reasoning steps. The KL divergence DKL (Pt∥ ˆPt) is naturally dominated by tokens where Pt is peaked because a small absolute shift in a low-entropy distribution produces a large logarithmic ratio. This means that our reward automatically assigns high penalty to precisely the predictions that are most vulnerable to eviction, without requiring an explicit entropy-based token filter or a separate loss term for low-entropy tokens. 
+
+# F Training Stability, Eviction Behavior, and Full Ablation 
+
+F.1 Training Stability and Convergence 
+
+Figure 4 shows the evolution of reward and policy entropy during training. Reward increases steadily and stabilizes after several thousand steps, while entropy gradually decreases, indicating a smooth transition from exploration to consistent decisions. No instability or collapse was observed across 5 independent training runs. 
+
+F.2 Eviction Behavior Analysis 
+
+The learned policy allocates more of its budget to mid-context tokens compared to heuristic methods (which favor early or recent tokens) and concurrent RL approaches. This suggests that DistillCache adapts more flexibly to different importance patterns across the sequence. Figure 5 shows the distribution of the retained tokens across positions. 
+
+F.3 Error Mode Analysis 
+
+To better understand how different cache strategies fail, we categorize errors on instances solved correctly by the full-cache baseline into three types: repetitive (token sequence loops), incorrect 
+
+14 0 2k 4k 6k 8k 10k 
+
+Training Steps  
+
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Reward
+> Reward Policy Entropy 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75
+> Policy Entropy
+
+Figure 4: Training dynamics of DistillCache. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+Normalized Token Position 
+
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Normalized Retention
+> H2OSnapKV ForesightKV RLKV DistillCache
+
+Figure 5: Distribution of retained token positions. (wrong final answer), and overlength (exceeds maximum generation length). Table 8 reports error rates at 25% budget on LongBench. Heuristic methods (H 2O, SnapKV) predominantly produce repetitive errors, suggesting that uniform token-dropping disrupts sequence coherence. RLKV exhibits fewer repetitive errors but the highest overlength rate, indicating that its head-level gating preserves fluency but may fail to converge to a solution efficiently. DistillCache achieves the lowest total error rate, with the fewest repetitive and incorrect errors across all methods, suggesting that per-step distributional fidelity preserves both coherence and factual accuracy. Its overlength rate remains low, comparable to that of heuristic methods. 
+
+F.4 Per-Task LongBench Breakdown 
+
+Table 9 reports per-task accuracy on LongBench at 25% cache budget. DistillCache achieves the highest accuracy on 4 of 6 task categories; ForesightKV leads on single-document QA, and RLKV leads on code completion. 15 Table 8: Error mode breakdown at 25% cache budget on LongBench (% of full-cache-correct instances that fail). 
+
+Method Repetitive Incorrect Overlength 
+
+H2O 4.8 6.8 1.0 SnapKV 3.8 5.5 1.8 ForesightKV 2.1 3.7 2.5 RLKV 1.6 3.4 4.5 DistillCache 0.8 3.5 1.5 Table 9: Per-task LongBench accuracy (%) at 25% cache budget. Best in bold . Table 1 reports the dataset-size-weighted average; unweighted averages here may differ slightly.                                    
+
+> Task H2OSnapKV FKV RLKV DC
+> Single-Doc QA 38.1 39.2 41.0 39.8 40.5 Multi-Doc QA 33.5 34.8 36.2 35.4 37.6
+> Summarization 40.2 41.0 42.1 41.5 43.0
+> Few-shot Learning 35.8 36.5 37.4 37.0 38.2
+> Synthetic Tasks 37.0 37.8 38.5 38.1 39.4
+> Code Completion 34.2 34.9 36.0 36.8 36.1
+
+ForesightKV’s advantage on single-document QA likely reflects its future-attention-score objective, which is well-suited to tasks with concentrated information sources. RLKV’s advantage on code completion is consistent with its design focus on preserving reasoning-critical heads, which are important for structured code generation. DistillCache’s strongest gains appear on multi-document QA and summarization, where long-range dependencies span the full context and per-step distributional fidelity prevents the loss of scattered evidence tokens. 
+
+F.5 Response Length Analysis 
+
+We analyze the average response length on instances solved correctly by both the full-cache baseline and each compressed method at 25% budget on LongBench. DistillCache produces responses averaging 1.03 × the full-cache length, compared to 0.87 × for H 2O, 0.91 × for SnapKV, and 1.08 ×
+
+for RLKV. 
+
+F.6 Ablation Study: Is DistillCache More Than Learned Attention? 
+
+To better understand whether DistillCache’s improvements stem primarily from richer feature design or from reinforcement learning itself, we evaluate several progressively stronger variants at a fixed 25% cache budget on LongBench: (1) an RL policy trained using only cumulative attention ( αi), (2) an RL policy using limited feature augmentation ( αi, H i), (3) a supervised distillation ranker trained with the full feature set to regress teacher-derived token importance without sequential RL optimization, and (4) the full DistillCache framework. This comparison separates the contribution of feature richness from the contribution of optimization strategy. Table 10 shows that, while the richer features consistently improve performance, supervised ranking alone does not recover the full gains of DistillCache. The supervised distillation ranker improves over simplified RL variants but remains below the full RL objective, indicating that DistillCache’s advantage is not solely due to stronger token descriptors. Instead, directly optimizing long-horizon cache utility through reinforcement learning provides measurable gains beyond static or supervised token salience estimation. The row “Attention Only” corresponds to retraining the DistillCache policy using only the attention feature αi, not to the H 2O heuristic. Overall, these results indicate that DistillCache is more than learned attention or feature aggregation alone: both feature diversity and sequential RL-based optimization contribute materially, with the strongest performance emerging when token retention is optimized directly for downstream distributional fidelity under explicit memory constraints. 16 Table 10: Ablation Study at 25% Cache Budget (Absolute Accuracy on LongBench) 
+
+Method LongBench 
+
+Attention Only (RL with αi only) 36 .5 ± 1.3 (88.0%) Attention + Entropy (RL with αi, H i) 37 .4 ± 1.1 (90.1%) Supervised Distillation Ranker (full features, no RL) 37 .8 ± 1.2 (91.1%) Full Features, no entropy regularisation ( β = 0 ) 38 .1 ± 1.0 (91.8%) 
+
+DistillCache (full RL + full features) 39 .1 ± 1.1 (94.2%) 
+
+# G Discussion and Practical Implications 
+
+The results in Section 4 show that DistillCache can reduce the KV-cache memory footprint during autoregressive decoding while maintaining higher accuracy than both heuristic baselines on all tasks and matching or exceeding concurrent RL-based methods on evaluated long-context benchmarks across a range of compression levels. These findings suggest that reinforcement learning provides a viable approach for adaptive context management, complementing existing heuristic-based cache compression methods. Unlike static eviction strategies, DistillCache selects tokens based on learned importance signals derived from model behavior during training. This allows the policy to adapt its retention decisions across different contexts and tasks. The empirical results indicate that such adaptation is particularly beneficial under tighter memory budgets, where heuristic methods degrade more rapidly. Our per-step KL-divergence objective further provides advantages over alternative RL formulations that rely on long-term contribution prediction or head-level gating, although RLKV’s reasoning-focused head-level gating retains a slight edge on reasoning benchmarks at moderate budgets — a gap that closes under more aggressive compression (Table 1). At the same time, our per-step KL objective is orthogonal and complementary to these concurrent approaches rather than in competition with them. ForesightKV’s long-term contribution prediction and RLKV’s head-level gating are particularly effective for pure reasoning tasks; combining DistillCache’s token-level distributional fidelity with these methods — for example, allocating full cache to RLKV-identified heads while applying DistillCache within the remaining heads — is a promising direction for future work. 
+
+G.1 Democratization of Long-Context Inference 
+
+One practical implication of this approach is the potential to enable longer-context inference on resource-constrained hardware. At a 25% KV-cache budget, DistillCache retains 94.2% of full-cache accuracy on LongBench, outperforming heuristic baselines by 2.1–2.7 points and concurrent learned baselines by 0.9–1.4 points (Table 1). This level of compression reduces the effective memory required per sequence by approximately 4 ×. The approach introduces a small additional inference cost from feature extraction and policy evaluation (approximately +1.4 ms/token; Table 3). 
+
+G.2 Implications for LLM Serving Infrastructure 
+
+In large-scale LLM serving systems, the KV cache constitutes a significant portion of per-request memory usage. Reducing this footprint can improve system utilization and increase the number of concurrent requests that can be served. Because DistillCache adapts its token selection dynamically, it may be better suited to heterogeneous workloads where token importance varies across inputs. Our experiments are limited to a single-GPU setting, and further evaluation would be needed to quantify system-level benefits in distributed or multi-tenant environments. 
+
+G.3 Future Directions 
+
+Several directions remain for future work: 1. Scale: evaluating DistillCache on longer contexts (32K–128K tokens) and larger models (13B+), where the memory savings from cache pruning are proportionally larger, and exploring approxi-mate log-partition estimators to reduce training cost at these scales. 17 2. Hybrid methods: combining token-level pruning with head-level methods such as RLKV (pre-liminary results in Table 7 show +0.7 from a naïve combination) 3. Transfer: extending zero-shot policy transfer (Table 5) across model families and scales to amortize the offline training cost. 4. Multi-objective rewards: incorporating latency, energy efficiency, or task-specific correctness as secondary objectives alongside the per-step KL-divergence reward. 
+
+# NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes] Justification: The abstract and introduction state that DistillCache retains 94.2% of full-cache accuracy on LongBench at a 25% cache budget, outperforms heuristic baselines, and matches or exceeds concurrent RL approaches on long-context tasks, while acknowledging that RLKV remains competitive on reasoning benchmarks. These claims are fully supported by the main results (Table 1), the cross-model transfer experiment (Appendix), and the per-task and ablation analyses (Appendix). 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes] Justification: Section 5 (Limitations) consolidates all major limitations: training cost (130 GPU-hours, doubled memory), RL stability (mitigated by entropy regularization and multi-seed averaging), the reasoning-task gap with RLKV at moderate budgets, the independence assumption in token scoring, coupling of features to transformer attention, the 1.4 ms/token inference overhead, and the reliance on re-implementations of concurrent RL methods. No significant limitations are omitted. 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes] Justification: The paper does not claim formal theorems. The policy gradient derivation for the Gumbel-Top-B selection is provided in Appendix C, including the Plackett–Luce subset probability, the exact log-partition computation via dynamic programming, and its connection to automatic differentiation. All assumptions (i.i.d. Gumbel noise, temperature 
+
+τ = 1 ) are explicitly stated. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main experimental results to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes] Justification: The methodology (Section 3) describes the state and action space, the KL reward, the teacher-student training architecture, and the policy optimization procedure. Algorithm 1 specifies the inference pipeline with all protected-token logic. Appendix D provides the complete training protocol: model (Mistral-7B-Instruct-v0.3), hardware (2 ×
+
+RTX 4090), optimizer (AdamW, learning rate 3 × 10 −4, cosine decay), hyperparameters (γ = 0 .99 , β = 0 .01 , max sequence length 4096, 10 000 steps, 5 seeds), and the prompt configurations for every benchmark. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? 18 Answer: [No] Justification: All datasets (LongBench, GSM8K, BBH) are publicly available. The paper provides complete algorithm, feature definitions, and hyperparameters needed for indepen-dent re-implementation. Source code will be released under an open-source license upon acceptance. 6. Experimental setting/details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes] Justification: Section 4.1 and Appendix D give the full experimental setup: model, GPU configuration, benchmark tasks, evaluation protocol (zero-shot for LongBench, 8-shot CoT for GSM8K, 3-shot for BBH, greedy decoding, max 512 tokens), metric (exact match or ROUGE-L), and all training hyperparameters. 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? Answer: [Yes] Justification: All main result tables (Table 1, Table 3, and all appendix tables) report mean ±
+
+standard deviation over 5 independent training runs. The source of variability (random seed affecting policy initialization and Gumbel sampling) is stated. The hybrid gain is reported as consistent across seeds, indicating stability. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes] Justification: All experiments use 2 × NVIDIA RTX 4090 (48 GB total VRAM) with tensor parallelism, as stated in Section 3.3 and Appendix D. Training consumes approximately 130 GPU-hours. Per-token inference latencies and throughput are reported in Table 5, including the overhead breakdown. 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes] Justification: The work improves inference efficiency for existing LLMs. It does not involve human subjects, personal data, or deceptive practices. All models and datasets used are publicly available and properly cited. 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes] Justification: Appendix G discusses positive impacts: democratization of long-context inference on resource-constrained hardware and improved serving efficiency. Because the method only compresses an existing model’s cache without altering model weights or introducing new generation capabilities, it poses no new negative societal risks beyond those of the underlying LLM. 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pre-trained language models, image generators, or scraped datasets)? Answer: [N/A] 19 Justification: DistillCache is a cache-management policy ( 200K parameters) that does not generate text or modify model outputs. It operates on an existing LLM without changing its weights and introduces no new misuse risks. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [Yes] Justification: All models (Mistral-7B-Instruct-v0.3, Llama-3-8B-Instruct), datasets (Long-Bench, GSM8K, BBH), and baseline methods (H 2O, SnapKV, ForesightKV, RLKV) are cited with their original publications. Mistral-7B is released under Apache 2.0, and the datasets are publicly available for research. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes] Justification: The released code repository includes a README with structure overview, installation instructions, commands for training and inference, multi-seed reproduction steps, and a hyperparameter table matching Appendix D. 14. Crowdsourcing and research with human subjects 
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A] Justification: This work does not involve crowdsourcing or human subjects research. 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [N/A] Justification: This work does not involve human subjects research. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigor, or originality of the research, declaration is not required. Answer: [N/A] Justification: LLMs are not part of the proposed method. DistillCache trains a separate lightweight policy network; the LLM is frozen and serves only as the environment for cache pruning. No LLMs were used for data generation or core methodology design. 20

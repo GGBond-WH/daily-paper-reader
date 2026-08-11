@@ -1,0 +1,509 @@
+Title: Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models
+
+URL Source: https://arxiv.org/pdf/2608.08086v1
+
+Published Time: Tue, 11 Aug 2026 00:39:04 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+Preprint, August 2026 
+
+# Archer: Adaptive Reuse of Cached Hidden States for Ef-ficient Rollback in Diffusion Language Models 
+
+Xuning He 1,2, Zinan Sheng 3, Yongding Tao 3, Huanyu Liu 3, Ge Li 3, Xue Jiang 3, Yihong Dong 1
+
+> 1
+
+School of Computer Science, Shanghai Jiao Tong University 
+
+> 2
+
+College of Artificial Intelligence, Nankai University 
+
+> 3
+
+School of Computer Science, Peking University 
+
+hxning@mail.nankai.edu.cn dongyh@sjtu.edu.cn 
+
+## Abstract 
+
+Diffusion language models (DLMs) iteratively refine a sequence, allowing earlier predictions to be revised as context evolves. This rollback capability distinguishes them from irreversible autoregressive generation, but makes inference costly. Ev-ery denoising update alters the global context, forcing both prompt and response states to be recomputed even though only response tokens are revisable. Key-value (KV) caching could reduce this cost, yet conventional caching assumes immutable historical states and is therefore difficult to reconcile with rollback. In this paper, we introduce Adaptive Reuse of Cached Hidden States for Efficient Rollback (Archer ), a training-free KV caching method for rollback-capable DLMs. Archer asymmetrically keeps the mutable response synchronized with the current hypoth-esis while reusing prompt K/V within a bounded state neighborhood. Although prompt representations also change under bidirectional attention, their token iden-tities remain fixed; bounded reuse therefore amortizes repeated prompt computa-tion without caching mutable response states. It also delays feedback from ten-tative tokens, reducing premature reinforcement of transient high-confidence er-rors and giving rollback more opportunity to correct them. Our analysis charac-terizes prompt reuse as a reversibility-aligned cache boundary, bounds its state-dependent approximation error, and gives a decoder-margin condition for pre-serving full-refresh decisions. Existing DLM acceleration often trades quality for speed. Archer shifts this frontier, attaining the best mean performance of 33 .63% 
+
+together with a 2.57 × mean speedup on the main suite. Across evaluated settings, it improves Pass@1 by up to 3.05 points and reaches up to 2.95 × speedup. Con-trolled analyses connect the quality gain to delayed prompt feedback and validate state-aware refresh. Our code is available at https://github.com/Hxnng/Archer. 
+
+## 1 Introduction 
+
+Diffusion language models (DLMs) generate through iterative, bidirectional denoising rather than an irreversible left-to-right factorization (Austin et al., 2021a; Li et al., 2022; Sahoo et al., 2024). This evolving state makes rollback possible: an earlier prediction can be reconsidered when later context reveals an inconsistency. Recent rollback-capable decoders show that this flexibility is particularly valuable for structured generation (Wang et al., 2025; Hong et al., 2025; Dong et al., 2026). Yet rollback requires many full-sequence forward passes, and the cost grows rapidly with the prompt and output length. Once rollback is used at scale, KV caching becomes necessary; the central question is how to introduce it without weakening the ability to revise the generation. The same rollback that makes DLMs attractive also breaks the premise behind conventional KV caching. In autoregressive decoding, causal attention keeps previous contexts fixed, so their K/V states remain reusable (Pope et al., 2023; Kwon et al., 2023). Under bidirectional attention, chang-ing one generated token alters both the generation states and the prompt states that attend to it. Full recomputation preserves the intended rollback process but repeatedly processes an unchanged prompt; caching the entire sequence saves this work but retains activations derived from a genera-tion that may no longer exist. Moreover, an eager prompt update immediately feeds every tentative 1arXiv:2608.08086v1 [cs.CL] 8 Aug 2026 Preprint, August 2026 
+
+Figure 1: Archer reuses prompt K/V while recomputing the revisable response, reducing latency and improving Pass@1 on MBPP. token back into later predictions, which may reinforce a transient error before subsequent context can correct it. The challenge is therefore to locate a cache boundary that saves computation while leaving every revisable generation state current. Existing methods improve either rollback quality or DLM efficiency, but do not resolve their interac-tion. Token-level rollback decoders improve quality but typically repeat full-sequence computation (Wang et al., 2025; Hong et al., 2025; Dong et al., 2026). DLM accelerators reduce computation through blockwise generation, parallel token acceptance, delayed KV updates, or selective recom-putation (Arriola et al., 2025; Wu et al., 2025; Ma et al., 2025; Liu et al., 2025), but are designed for decoding without token-level rollback. Their generation caches must either be frequently invalidated or retain states derived from tokens that have already changed, so efficient reuse and unrestricted rollback remain at odds. A method for scalable rollback must make this trade-off explicit rather than assume that conventional cache reuse transfers unchanged. We introduce Adaptive Reuse of Cached Hidden States for Efficient Rollback ( Archer ) to make this interaction explicit. Archer caches only prompt K/V states and recomputes the complete generation at every step, preserving rollback for every generated token. It refreshes the prompt cache when the current generation has moved sufficiently far from the state at which the cache was created. This state-aware policy amortizes prompt computation while preventing unbounded staleness. Bounded reuse also forms a temporal anchor that delays feedback from tentative tokens and can reduce pre-mature error reinforcement. Our analysis identifies prompt states as a cache boundary aligned with rollback, derives the computational gain and a state-dependent approximation bound, and gives a decoder-margin condition under which Archer preserves the rollback decision of full recomputa-tion. Archer thus turns the tension between caching and rollback into a controlled lag-and-reset process that alternates local reuse with global synchronization. Across the main benchmarks, Archer breaks the usual quality–speed trade-off, achieving the best average performance at 33 .63% , a 2.57 × average speedup, and up to 2.95 × speedup on a sin-gle benchmark. Across backbones, it improves Pass@1 by up to 3.05 points and accelerates every tested pair by 1.36 –1.78 ×. Relative to Saber, it improves Pass@1 on the original MBPP and Live-CodeBench suites as well as on the MBPP-ET and HumanEval-ET versions, and reduces latency on all three benchmarks. Controlled analyses support delayed prompt feedback and state-aware re-fresh. We 1) formulate the conflict between KV caching and rollback and identify prompt states as the appropriate boundary; 2) propose Archer with state-aware refresh and characterize its efficiency, approximation error, and decision fidelity; and 3) show that rollback-compatible caching moves the DLM quality–speed frontier rather than forcing a choice between the two. 
+
+## 2 Motivation 
+
+Rollback is a defining advantage of DLM decoding over an irreversible left-to-right process (Wang et al., 2025; Hong et al., 2025; Dong et al., 2026). It allows the current output to remain provisional until later context resolves earlier uncertainty, but every change is followed by another bidirectional 2Preprint, August 2026 
+
+Figure 2: Effect of prompt-cache radius K. Longer reuse reduces latency, while quality peaks at moderate K and declines with excessive staleness. forward pass over an increasingly long sequence. As prompts and outputs scale, repeatedly recom-puting the entire context is no longer practical, so KV caching becomes necessary for rollback to remain usable. The design problem is to obtain this reuse without turning a revisable generation into fixed history. The resulting systems question is not whether to cache, but where reuse can coexist with unrestricted revision inside the same decoder. The cache boundary must follow the semantics of rollback rather than the convenience of imple-mentation. Generation states represent precisely the part of the sequence that may change, and the affected positions are not known in advance. At step t, the rollback set is determined from the cur-rent context-dependent logits, which can be summarized as Rt = B(Fθ (p, g t)) . If the unreliable tokens were already known before evaluating Fθ , the decoder could remove them directly; rollback is needed because their reliability must first be reassessed as context evolves. Generation caching therefore creates a circular dependency. Determining which cached K/V and logits remain valid requires the same bidirectional generation computation that caching is intended to avoid, and one revised token can invalidate every state that depends on it. Exact generation-side reuse consequently approaches full recomputation, while approximate reuse introduces assumptions that may restrict rollback. Preserving unrestricted rollback therefore keeps the mutable generation outside the persis-tent cache and recomputes it before every decoding decision. Prompt states provide the boundary that satisfies both requirements. Their values depend on the current output, but their token identities remain fixed, so reuse introduces contextual delay without making any generated token permanent. Archer therefore recomputes the complete generation at every step and reuses only prompt K/V. The eager feedback loop is 
+
+gt −→ C p(gt) −→ zt+1 −→ gt+1 , (1) where Cp(gt) is the prompt state induced by the current generation. Replacing it temporarily with 
+
+Cp(gr ) removes repeated prompt computation and delays the feedback of tentative tokens. The for-mer improves speed; the latter gives rollback more opportunity to correct transient high-confidence errors before they reinforce themselves. This asymmetry follows the semantics of revision rather than an arbitrary implementation choice. The cache lifetime controls whether this boundary yields a useful trade-off. Figure 2 shows that increasing the reuse radius K consistently reduces latency because prompt refreshes become less frequent. Quality is non-monotonic. A very small radius behaves similarly to eager execution and provides little reuse or temporal separation. A moderate radius delays premature feedback while keeping the prompt sufficiently representative of the current generation. An excessively large radius withholds useful context for too long, allowing approximation error to dominate. The rise-and-fall in quality shows that cache reuse must balance temporal anchoring against synchronization rather than maximize either one in isolation. Rollback and KV caching become compatible when reuse follows what the decoder is allowed to change. Prompt-only reuse keeps the generation current, delays feedback for a bounded interval, and restores the full context through synchronization. Archer operationalizes this boundary as the state-anchored lag-and-reset policy studied below. 3Preprint, August 2026 
+
+## 3 Related Work 
+
+3.1 Rollback in Diffusion Language Models DLMs replace left-to-right factorization with iterative denoising in continuous embeddings or dis-crete token spaces (Li et al., 2022; Austin et al., 2021a). Advances in discrete objectives have sub-stantially improved their modeling quality (Lou et al., 2024; Sahoo et al., 2024; Li et al., 2024), and recent systems such as LLaDA, Dream, and DiffuCoder have scaled the paradigm to general language modeling and code generation (Nie et al., 2025; Ye et al., 2025; Gong et al., 2025). Their changing intermediate states are not merely a sampling detail; they provide the rollback capability that motivates our systems design. Recent decoders increasingly exploit rollback through flexible sampling. ReMDM derives a remask-ing transition, RemeDi learns to identify unreliable predictions, and WINO and Saber revisit token-level decisions as context evolves (Wang et al., 2025; Huang et al., 2025; Hong et al., 2025; Dong et al., 2026). These token-level methods generally process the revised sequence with another full forward pass. Reversible Diffusion Decoding instead returns to earlier blocks using cached block states (Wang et al., 2026), but does not address repeated prompt computation during fine-grained re-vision inside a bidirectional generation region. Archer treats that interaction as a systems constraint. Because generated tokens may change again, it reuses only fixed prompt states, leaving the sampling policy and its correction mechanism unchanged. 3.2 Efficient DLM Inference Efficient DLM inference reduces either denoising steps or their per-step cost. Fast-dLLM, EB-Sampler, WINO, and Saber resolve multiple positions per pass according to confidence, entropy, or state changes (Wu et al., 2025; Ben-Hamu et al., 2025; Hong et al., 2025; Dong et al., 2026). These methods shorten the trajectory, but each remaining pass still processes the full bidirection-ally coupled sequence as prompts and outputs grow. The bottleneck therefore shifts from how many iterations are executed to how much repeated context each surviving iteration processes. KV caching is exact for the immutable history of causal decoding (Pope et al., 2023; Kwon et al., 2023), and fixed prompt modules can be shared across requests (Gim et al., 2024). For DLMs, Block Diffusion creates cacheable semi-autoregressive structure during training (Arriola et al., 2025), while training-free methods use prefix or dual caches, delayed token-level updates, and similarity-guided partial recomputation (Wu et al., 2025; Ma et al., 2025; Liu et al., 2025). These approaches target conventional denoising and do not treat rollback as a cache-invalidation event. Directly intro-ducing them into a rollback decoder can therefore retain generation-side computation from tokens later re-masked or replaced. Archer derives the cache boundary from rollback semantics. It amortizes prompt computation while recomputing every revisable generation state, so reuse neither commits a provisional token nor alters rollback semantics. 
+
+## 4 Archer 
+
+Archer realizes the preceding design as a training-free cache controller. It reuses prompt K/V, re-computes the complete generation region, and refreshes the cache according to response-state drift, while leaving the DLM and rollback policy unchanged. Figure 3 makes the division explicit: prompt states are reused, while generation states remain revisable. 4.1 Asymmetric State Reuse Let p ∈ V P be the prompt, gt ∈ (V ∪ { MASK })G the current response, and D the rollback decoder. Any auxiliary sampler state is suppressed for notation. We write Cp(g) for the prompt K/V obtained under response g and Φθ (g; C) for the generation forward using prompt cache C. Eager decoding evaluates 
+
+z⋆t = Φ θ (gt; Cp(gt)) , gt+1 = D(gt, z ⋆t ). (2) Suppose the current cache was created at response gr . Archer replaces the eager logits with 
+
+ˆzt = Φ θ (gt; Cp(gr )) . (3) 4Preprint, August 2026 
+
+Figure 3: Archer’s state-anchored prompt cache. Response states are recomputed at every update, and prompt K/V is refreshed when dH (gt, g r ) ≥ K.The generation path is otherwise fresh. At layer ℓ, its queries attend to anchored prompt K/V and current generation K/V, 
+
+Attn  Qℓg (gt), [Kℓp(gr )∥Kℓg (gt)] , [V ℓp (gr )∥V ℓg (gt)]  . (4) Hence every generation embedding, hidden state, and logit reflects gt; only response-to-prompt feed-back remains anchored at gr .4.2 State-Anchored Refresh Archer measures cache validity by the response change accumulated since the most recent refresh. The resulting anchor-relative distance is 
+
+Dt = dH (gt, g r ) = 
+
+> G
+
+X
+
+> i=1
+
+I[gt,i ̸ = gr,i ] (5) Archer refreshes when Dt ≥ K. A refresh performs a full forward, replaces the prompt cache, and sets gr ← gt. Otherwise Archer evaluates Eq. (3). This makes synchronization depend on accumulated response drift rather than on the number of updates alone. The logits passed to the original decoder are therefore 
+
+˜zt =
+
+Φθ (gt; Cp(gt)) , Dt ≥ K, 
+
+Φθ (gt; Cp(gr )) , Dt < K, gt+1 = D(gt, ˜zt). (6) The controller responds to net state drift rather than elapsed iterations. Several negligible updates may continue to reuse an anchor, while one large rollback can trigger immediate synchronization. Algorithm 1 gives the complete procedure. F ULL FORWARD returns exact logits and a new prompt cache; C ACHED FORWARD reconstructs the current generation using that cache. Token acceptance, replacement, re-masking, and termination remain entirely governed by D.
+
+## 5 Theoretical Analysis 
+
+Archer keeps the generation synchronized with the current hypothesis while allowing its interaction with the prompt to lag. Bidirectional dependence makes this asymmetry necessary for rollback, and the resulting state radius links its computational saving to its effect on decoder behavior. 5.1 Caching under Revision Let ∆0 contain the generation positions changed by rollback, and let ∆ℓ contain all positions whose layer-ℓ states may depend on ∆ℓ−1. Dense bidirectional attention gives 
+
+∆0̸ = ∅ =⇒ ∆1 = {1, . . . , P + G}. (7) 5Preprint, August 2026 
+
+Algorithm 1 State-anchored rollback decoding with Archer 
+
+Require: Prompt p, initial response g0, rollback decoder D, radius K 
+
+> 1:
+
+g ← g0; gr ← g0 
+
+> 2:
+
+(z, Cr ) ← FULL FORWARD (p, g ) 
+
+> 3:
+
+while ¬TERMINATED (g) do  
+
+> 4:
+
+g ← D (g, z ) 
+
+> 5:
+
+if ¬TERMINATED (g) then  
+
+> 6:
+
+if dH (g, g r ) ≥ K then  
+
+> 7:
+
+(z, Cr ) ← FULL FORWARD (p, g ) 
+
+> 8:
+
+gr ← g 
+
+> 9:
+
+else  
+
+> 10:
+
+z ← CACHED FORWARD (g; Cr ) 
+
+> 11:
+
+end if  
+
+> 12:
+
+end if  
+
+> 13:
+
+end while  
+
+> 14:
+
+return g
+
+This is a statement about structural dependence rather than numerical magnitude, but it rules out a universal exact-reuse guarantee for generation states after an arbitrary edit. 
+
+Proposition 1 (Rollback-compatible cache boundary) . Under arbitrary response revision, exact generation-state reuse requires recomputing its full bidirectional dependency closure. Archer in-stead caches no generation state and therefore preserves every replacement and re-masking action available to the original decoder. 
+
+Archer avoids retaining invalidated generation computation because every revised token is re-embedded and propagated through all layers before the next decision. Prompt staleness may change the selected action, but it cannot make a response position immutable; rollback capability is pre-served even when cached and eager trajectories differ. 5.2 Efficiency and Fidelity Let N = P + G. At layer ℓ, let αℓ collect projection and feed-forward work per position and βℓ the cost of a query–key interaction. The leading costs are 
+
+Cfull =
+
+> L
+
+X
+
+> ℓ=1
+
+ αℓN + βℓN 2 ,Ccache =
+
+> L
+
+X
+
+> ℓ=1
+
+(αℓG + βℓGN ) + H, 
+
+(8) where H is cache overhead. Archer retains the full receptive field while removing prompt queries, projections, and feed-forward paths. Ignoring H, a cached step costs approximately G/ (P + G) of a full step. With refresh fraction qK ,
+
+Send (K) ≈
+
+
+
+qK + (1 − qK ) GP + G
+
+−1
+
+. (9) The sequence partition determines the saving per cached step, while the refresh controller determines how often that saving is realized. Consider eager and cached logits at the same response gt, where the prompt cache is their only difference. Let E(g) stack the response embeddings and assume locally that 
+
+∥C p(g) − C p(g′)∥ ≤ LC ∥E(g) − E(g′)∥F ,
+
+∥Φθ (g; C) − Φθ (g; C′)∥∞ ≤ LΦ∥C − C ′∥. (10) If the embedding diameter is bounded by B, responses at Hamming distance Dt satisfy ∥E(gt) −
+
+E(gr )∥F ≤ B√Dt. With Γ = LΦLC B, every cached step obeys 
+
+∥z⋆t − ˆzt∥∞ ≤ ΓpDt < Γ√K. (11) 6Preprint, August 2026 Thus K bounds the state perturbation that causes cache error rather than the elapsed time since refresh. Consequently, cache age alone cannot determine validity. Equally old caches may encode substantially different response changes since their anchors were created. The decoder need not preserve every logit; it only needs to preserve the next action. Define local decision margin as 
+
+mD (g, z ) = inf  
+
+> δ
+
+{∥ δ∥∞ : D(g, z + δ)̸ = D(g, z )} . (12) Archer and eager decoding select same transition whenever 
+
+ΓpDt < m D (gt, z ⋆t ), (13) and the equality propagates through the trajectory when the condition holds at every cached step. Otherwise the trajectories may differ, but Proposition 1 still preserves revisability. The relevant guar-antee is decision fidelity under bounded state drift, not numerical identity. 5.3 Prompt Reuse as Feedback Control Prompt reuse also changes the local sensitivity of the decoder. The eager and anchored logit maps are 
+
+zfresh (g) = Φ θ (g; Cp(g)) ,zanchor  
+
+> r
+
+(g) = Φ θ (g; Cp(gr )) . (14) Within a fixed anchor interval, the chain rule gives 
+
+Jfresh = ∂g Φθ + ∂C Φθ ∂g Cp,Janchor = ∂g Φθ . (15) Prompt reuse leaves direct generation interaction and rollback intact while temporarily suppressing the cross-region feedback term ∂C Φθ ∂g Cp. This constitutes temporal anchoring rather than freezing because current generation interactions remain fresh while only their return path through the prompt is delayed. If the cross-region term amplifies a provisional error direction, delaying it reduces immediate self-reinforcement and gives rollback additional evidence with which to revise the token. The same delay harms the next decision when that term carries useful new context. Refresh restores the full Jacobian and clears the accumulated discrepancy. Stale prompts are not intrinsically more accurate, but bounded prompt staleness can provide short-term regularization while periodic synchronization preserves long-term consistency. The radius K controls the frequency of saved prompt computation, the size of the decision-relevant approximation, and the duration for which cross-region feedback is withheld. Archer thereby bal-ances efficiency, trajectory fidelity, and correction dynamics without caching the mutable object that rollback is designed to revise. 
+
+## 6 Experimental Results 
+
+Our experiments comprise a main comparison, a cross-backbone evaluation, and two controlled analyses of delayed prompt feedback and cache refresh. For a direct comparison with Saber, we fol-low its code-generation setting and evaluate on MBPP (Austin et al., 2021b), LiveCodeBench (Jain et al., 2025), and HumanEval (Chen et al., 2021a). Their executable tests provide a precise measure of whether revisions preserve functional correctness. This benchmark choice ensures comparabil-ity rather than limiting the mechanism to code: Archer observes only generation-state changes and uses neither code-specific structure nor execution feedback. The technical supplement provides the complete protocol, proofs, sensitivity results, and intervention analyses needed to reproduce and interpret this evaluation. 6.1 Main Results We compare Archer with LLaDA (Nie et al., 2025), Fast-dLLM, dKV-Cache, and dLLM-Cache (Wu et al., 2025; Ma et al., 2025; Liu et al., 2025), and the rollback-capable Saber (Dong et al., 2026). 7Preprint, August 2026 Table 1: Comparison with DLM sampling and cache baselines. Base/ET denote Pass@1 (%) on the original/Extended Test Cases versions of MBPP and HumanEval; Overall averages five quality scores and three benchmark speedups. Speedup is relative to LLaDA-Confidence; bold/underline mark first/second.                                                                                                               
+
+> MBPP LiveCodeBench HumanEval Overall Method Pass@1 ↑Time ↓Speedup ↑Pass@1 ↑Time ↓Speedup ↑Pass@1 ↑Time ↓Speedup ↑Perf. ↑Speedup ↑
+> Base ET Base Base ET
+> Standard DLM Sampling
+> LLaDA-Confidence 43.56 30.44 14.31 1.00 ×8.75 28.98 1.00 ×43.29 35.37 19.86 1.00 ×32.28 1.00 ×
+> Efficient DLM Sampling
+> Fast-dLLM + Cache 44.50 31.62 11.85 1.21 ×7.75 12.75 2.27 ×41.46 36.59 11.95 1.66 ×32.38 1.71 ×
+> Fast-dLLM + Parallel 40.05 29.27 3.40 4.21 ×8.25 4.85 5.98 ×41.46 36.59 4.60 4.32 ×31.12 4.84 ×
+> dKV-Cache-Decode 45.67 32.32 12.62 1.13 ×10.00 17.66 1.64 ×42.07 35.98 14.54 1.37 ×33.21 1.38 ×
+> dKV-Cache-Greedy 23.19 18.27 12.36 1.16 ×2.00 21.25 1.36 ×15.24 14.63 15.82 1.26 ×14.67 1.26 ×
+> dLLM-Cache 44.03 32.32 9.28 1.54 ×10.00 11.53 2.51 ×40.24 34.15 10.16 1.96 ×32.15 2.00 ×
+> Rollback-Capable DLM Decoding
+> Saber 44.03 31.38 8.45 1.69 ×7.25 17.75 1.63 ×44.51 37.20 12.13 1.64 ×32.87 1.65 ×
+> Archer 44.50 32.55 6.20 2.31 ×10.00 9.81 2.95 ×43.29 37.80 8.07 2.46 ×33.63 2.57 ×
+
+All methods share the model revision, prompts, output length, deterministic decoding, and evaluator. Archer uses K = 11 on MBPP, K = 10 on LiveCodeBench, and K = 8 on HumanEval. For MBPP and HumanEval, we report Pass@1 on the original benchmark (Base) and on its Extended Test Cases (ET) version, which retains the same tasks while adding edge-case tests (Dong et al., 2025); LiveCodeBench uses its standard Pass@1. Table 1 reports these scores, latency, and speedup relative to LLaDA-Confidence. Archer achieves the strongest overall quality–efficiency balance. Its 33 .63% average performance is the best result, and its 2.57 × average speedup is second only to aggressive parallel decoding, making it the only method in the top two for both metrics. The comparison with Saber isolates the benefit of prompt-state reuse under the same rollback pro-cess. Archer reduces mean latency from 8.45 to 6.20 seconds on MBPP, 17.75 to 9.81 seconds on LiveCodeBench, and 12.13 to 8.07 seconds on HumanEval, corresponding to 1.36 ×, 1.81 ×, and 
+
+1.50 × speedups over Saber. Quality improves by +0 .47 points on MBPP Base and +1 .17 points on MBPP-ET, and by +2 .75 points on LiveCodeBench. On HumanEval, Archer improves HumanEval-ET Pass@1 by +0 .60 points while Base Pass@1 decreases by 1.22 points. The remaining baselines expose the two ends of the trade-off. Fast-dLLM with parallel decoding attains the lowest latency, but its average performance is 2.51 points below Archer. dKV-Cache-Decode is the strongest competing method in average performance at 33 .21% , yet provides only 
+
+1.38 × average speedup compared with Archer’s 2.57 ×. These comparisons place Archer on the strongest measured quality–efficiency frontier. 6.2 Generalization across DLM Backbones We apply Archer without training to LLaDA-8B-Instruct (Nie et al., 2025), Dream-v0-Instruct-7B (Ye et al., 2025), and DiffuCoder-7B-cpGRPO (Gong et al., 2025), and re-run Saber on every setting, preserving each model’s native masking and logit conventions for a matched comparison. Table 2: Cross-backbone comparison with Saber. Base/ET denote Pass@1 (%) on the origi-nal/Extended Test Cases versions of MBPP and HumanEval; Time is seconds, Speedup is relative to Saber, and Overall averages six quality scores and three speedups.                                                                    
+
+> LLaDA-8B Dream-7B DiffuCoder-7B Overall Dataset Method Pass@1 ↑Time ↓Speedup ↑Pass@1 ↑Time ↓Speedup ↑Pass@1 ↑Time ↓Speedup ↑Perf. ↑Speedup ↑
+> Base ET Base ET Base ET MBPP Saber 44.0331.38 8.45 1.00 ×52.9341.69 8.18 1.00 ×59.4844.73 12.35 1.00 ×45.71 1.00 ×
+> Archer 44.5032.55 6.20 1.36 ×53.6342.15 5.51 1.48 ×60.1945.20 8.97 1.38 ×46.37 1.41 ×
+> HumanEval Saber 44.5137.20 12.13 1.00 ×29.88 28.05 10.40 1.00 ×57.3251.83 15.57 1.00 ×41.47 1.00 ×
+> Archer 43.29 37.20 7.29 1.66 ×31.1028.05 5.85 1.78 ×60.3754.27 9.24 1.68 ×42.38 1.71 ×
+
+8Preprint, August 2026 Table 2 shows that the acceleration transfers across all six model–benchmark pairs, with speedups ranging from 1.36 × to 1.78 ×. Archer also improves Pass@1 in five settings, including a 3.05 -point gain on DiffuCoder–HumanEval. Averaged across backbones, Archer raises performance from 
+
+45 .71% to 46 .37% on MBPP and from 41 .47% to 42 .38% on HumanEval, while accelerating infer-ence by 1.41 × and 1.71 ×, respectively. Prompt reuse therefore improves the quality–speed frontier across independently trained DLMs rather than exploiting behavior specific to one backbone. 6.3 Effect of Delayed Prompt Feedback The end-to-end comparison does not isolate why controlled staleness can improve quality, because two decoding trajectories may diverge for many reasons after their first different update. We there-fore intervene at a shared state and vary only the timing of prompt feedback. For every MBPP prob-lem, we find the first token accepted with confidence p ≥ 0.9 and clone the complete decoder state immediately after that acceptance. Fresh then rebuilds prompt K/V before the next update, so the accepted token affects the prompt representation immediately. Cached retains the preceding prompt snapshot, delaying that influence while leaving the response and rollback rule unchanged. We fol-low the selected token for five updates and evaluate both final completions. This paired construction turns feedback timing into the only controlled difference between the two branches. Table 3: Matched-state feedback intervention on MBPP (427 pairs). Rev.@5 is the five-step revision rate; “Only pass” counts branch-exclusive successes.                 
+
+> Branch Pass@1 ↑Rev.@5 Rev. step Only pass Base ET Fresh 43.33 31.38 99.53 1.028 18 Cached 44.50 32.55 99.53 1.056 23
+
+Table 3 shows that Cached improves Pass@1 by 1.17 points on both MBPP Base and MBPP-ET and uniquely solves 23 problems, compared with 18 for Fresh. Importantly, both branches revise 99 .53% 
+
+of the selected tokens, and do so after nearly the same number of updates. The quality difference therefore cannot be explained by Cached disabling or postponing rollback itself. It arises while the two branches retain the same correction mechanism but expose it to different prompt contexts, providing direct evidence that feedback timing can alter the functional outcome of rollback-capable generation under otherwise identical correction rules. 6.4 Why Refresh by State Distance? Having shown that feedback timing matters, we next ask when a cached prompt state should be synchronized. Archer measures how far the current response has moved from the cache anchor, 
+
+Dt = dH (gt, g r ). The simplest alternative is cache age, At = t − r, which refreshes after a fixed number of updates. Age treats all updates as equally damaging even though some change almost nothing and a single rollback may replace several response tokens. State distance instead measures the change that can actually invalidate the anchored prompt context. The relevant comparison is therefore not which signal best predicts small numerical logit drift, but which one better identifies reuse that changes the decoder’s next action. At sampled cached steps on MBPP, we execute an additional full forward from the identical response state. This fresh computation is a shadow observation: it does not change any token, confidence, refresh decision, or random state on the main Archer trajectory. We compare the cached and fresh Saber actions and their resulting next states, obtaining 5,122 paired probes while reproducing all 427 original completions, step counts, and main-trajectory NFEs exactly. We then measure how decision disagreement varies with Dt and compare distance with age using partial Spearman correlations that control for the other signal. 9Preprint, August 2026 Table 4: Decision-level cache validity on MBPP using 5,122 non-intervening shadow forwards against full refresh.                           
+
+> Calibration by anchor-relative state distance
+> DtProbes Action Dis. (%) Next-state dH
+> 0–3805 19.88 0.47
+> 4–71,566 48.53 1.26
+> 8–11 1,697 56.45 1.54
+> 12 –14 1,054 65.09 1.90
+> Refresh-signal comparison (partial Spearman ρ)
+> Signal Action Dis. Next-state dH
+> Anchor distance Dt0.145 0.145
+> Cache age At0.040 0.045
+
+Table 4 shows a monotonic calibration pattern: action disagreement rises from 19 .88% to 65 .09% as the response moves away from its anchor. After controlling for age, distance retains a partial corre-lation of 0.145 with both action disagreement and next-state distance; after controlling for distance, age falls to 0.040 and 0.045 . Thus, two caches of the same age can have very different decision-level validity. Anchor distance is the more informative refresh signal for Archer because it tracks whether reuse changes the rollback transition rather than only the elapsed time since synchronization. 
+
+## 7 Conclusion 
+
+Rollback is a defining advantage of DLMs, but its practical value depends on avoiding repeated full-sequence recomputation. Archer makes rollback efficient by reusing fixed prompt K/V while recomputing the mutable response. Across benchmarks and DLM backbones, Archer achieves the best overall performance with a 2.57 × mean speedup, reaching up to 2.95 × acceleration and +3 .05 
+
+Pass@1 points. These results establish state-aware prompt reuse as a practical basis for scalable revisable generation. They also show that bounded cache staleness can moderate premature feedback rather than merely introduce approximation error. Archer therefore reframes caching as a mechanism for improving both efficiency and correction dynamics in rollback-capable DLMs as sequences and rollback horizons continue to grow. 
+
+## 8 Limitations 
+
+Archer deliberately adopts a conservative cache boundary: it reuses prompt states while recomput-ing every state derived from the mutable response. This choice preserves unrestricted rollback, but it does not exhaust the possible computational savings. Generation-side caching remains a promis-ing direction when additional structure is available, for example sparse attention, model-specific validity certificates, or mechanisms that can identify an unchanged dependency region without first reproducing the full computation. The central challenge is to obtain such reuse without treating a provisional token as immutable or silently changing the rollback transition. More broadly, prompt reuse is only one component of efficient revisable generation. Archer uses a state-distance controller and leaves the underlying decoder unchanged; future work could combine rollback-compatible caching with adaptive token- or layer-level reuse, learned synchronization poli-cies, parallel acceptance, and systems-level attention optimizations. Understanding which of these mechanisms can be composed while retaining reliable revision is an important open problem for scaling rollback-capable DLMs to longer contexts and more demanding generation tasks. 
+
+## References 
+
+Marianne Arriola, Aaron Gokaslan, Justin T. Chiu, Zhihan Yang, Zhixuan Qi, Jiaqi Han, Sub-ham Sekhar Sahoo, and Volodymyr Kuleshov. Block diffusion: Interpolating between autore-gressive and diffusion language models, 2025. 10 Preprint, August 2026 Jacob Austin, Daniel D. Johnson, Jonathan Ho, Daniel Tarlow, and Rianne van den Berg. Struc-tured denoising diffusion models in discrete state-spaces. In Advances in Neural Information Processing Systems , volume 34, 2021a. Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles Sutton. Program synthesis with large language models, 2021b. Heli Ben-Hamu, Itai Gat, Daniel Severo, Niklas Nolte, and Brian Karrer. Accelerated sampling from masked diffusion models via entropy bounded unmasking, 2025. Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code, 2021a. Zhiyu Chen, Wenhu Chen, Charese Smiley, Sameena Shah, Iana Borova, Dylan Langdon, Reema Moussa, Matt Beane, Ting-Hao Huang, Bryan Routledge, and William Yang Wang. FinQA: A dataset of numerical reasoning over financial data. In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing , pp. 3697–3711, 2021b. doi: 10.18653/v1/ 2021.emnlp-main.300. Yihong Dong, Jiazheng Ding, Xue Jiang, Ge Li, Zhuo Li, and Zhi Jin. CodeScore: Evaluating code generation by learning code execution. ACM Transactions on Software Engineering and Methodology , 34(3):1–22, 2025. doi: 10.1145/3695991. Yihong Dong, Zhaoyu Ma, Xue Jiang, Zhiyuan Fan, Jiaru Qian, Yongmin Li, Jianha Xiao, Zhi Jin, and Ge Li. Saber: Efficient sampling with adaptive acceleration and backtracking enhanced remasking for diffusion language model in code generation. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 3623– 3642, 2026. doi: 10.18653/v1/2026.acl-long.165. In Gim, Guojun Chen, Seung-seob Lee, Nikhil Sarda, Anurag Khandelwal, and Lin Zhong. Prompt cache: Modular attention reuse for low-latency inference. In Proceedings of Machine Learning and Systems , volume 6, 2024. Shansan Gong, Ruixiang Zhang, Huangjie Zheng, Jiatao Gu, Navdeep Jaitly, Lingpeng Kong, and Yizhe Zhang. DiffuCoder: Understanding and improving masked diffusion models for code gen-eration, 2025. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset. In 
+
+Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks ,volume 1, 2021. Feng Hong, Geng Yu, Yushi Ye, Haicheng Huang, Huangjie Zheng, Ya Zhang, Yanfeng Wang, and Jiangchao Yao. Wide-in, narrow-out: Revokable decoding for efficient and effective DLLMs, 2025. Zemin Huang, Yuhang Wang, Zhiyang Chen, and Guo-Jun Qi. Don’t settle too early: Self-reflective remasking for diffusion language models, 2025. Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica. LiveCodeBench: Holistic and contamination free evaluation of large language models for code. In International Conference on Learning Repre-sentations , 2025. Qiao Jin, Bhuwan Dhingra, Zhengping Liu, William Cohen, and Xinghua Lu. PubMedQA: A dataset for biomedical research question answering. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing , pp. 2567–2577, 2019. doi: 10.18653/v1/D19-1259. 11 Preprint, August 2026 Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Prin-ciples , pp. 611–626, 2023. Xiang Lisa Li, John Thickstun, Ishaan Gulrajani, Percy Liang, and Tatsunori B. Hashimoto. Diffusion-LM improves controllable text generation, 2022. Yuchen Li, Alexandre Kirchmeyer, Aashay Mehta, Yilong Qin, Boris Dadachev, Kishore Papineni, Sanjiv Kumar, and Andrej Risteski. Promises and pitfalls of generative masked language mod-eling: Theoretical framework and practical guidelines. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research ,pp. 27969–28017, 2024. Zhiyuan Liu, Yicun Yang, Yaojie Zhang, Junjie Chen, Chang Zou, Qingyan Wei, Shaobo Wang, Yichen Zhu, and Linfeng Zhang. dLLM-Cache: Accelerating diffusion large language models with adaptive caching, 2025. Aaron Lou, Chenlin Meng, and Stefano Ermon. Discrete diffusion modeling by estimating the ratios of the data distribution. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pp. 32819–32848, 2024. Xinyin Ma, Runpeng Yu, Gongfan Fang, and Xinchao Wang. dKV-Cache: The cache for diffusion language models, 2025. Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Large language diffusion models, 2025. Reiner Pope, Sholto Douglas, Aakanksha Chowdhery, Jacob Devlin, James Bradbury, Jonathan Heek, Kefan Xiao, Shivani Agrawal, and Jeff Dean. Efficiently scaling transformer inference. In Proceedings of Machine Learning and Systems , volume 5, 2023. Subham Sekhar Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T. Chiu, Alexander Rush, and Volodymyr Kuleshov. Simple and effective masked diffusion language models, 2024. Guanghan Wang, Yair Schiff, Subham Sekhar Sahoo, and Volodymyr Kuleshov. Remasking discrete diffusion models with inference-time scaling. In Advances in Neural Information Processing Systems , 2025. Xinyun Wang, Min Zhang, Sen Cui, Zhikang Chen, Bo Jiang, Kun Kuang, and Mingbao Lin. Re-versible diffusion decoding for diffusion language models, 2026. Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie. Fast-dLLM: Training-free acceleration of diffusion LLM by enabling KV cache and parallel decoding, 2025. Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. Dream 7b: Diffusion large language models, 2025. 12 Preprint, August 2026 
+
+## A Formal Analysis 
+
+This section supplies the assumptions and proofs underlying the claims in the main paper. The analysis separates three notions that are easy to conflate. Archer preserves the ability to revise any response position, but it does not claim bitwise equivalence with eager decoding. Its prompt cache is an approximation whose local error is controlled by the distance from the cache anchor. Whether that numerical error changes the trajectory depends on the margin of the rollback decision, not on logit error alone. A.1 Notation and Decoder State Let p ∈ V P be a fixed prompt and let gt ∈ (V ∪ { MASK })G be the response after update t. The complete sampler state is denoted by ξt = ( gt, u t), where ut collects confidence histories and any other state used by the rollback rule. A full bidirectional forward can be written as 
+
+z⋆t = Φ θ (gt; Cp(gt)) , ξt+1 = D(ξt, z ⋆t ). (16) Here Cp(g) stacks the prompt K/V states from every transformer layer when the response is g. If the most recent cache was created at gr , Archer instead evaluates 
+
+ˆzt = Φ θ (gt; Cp(gr )) , ˆξt+1 = D(ξt, ˆzt). (17) Equations (16) and (17) compare the two forwards at the same sampler state. This distinction is important: after their decisions differ, the two complete trajectories need not remain at the same gt.A.2 Why Response-State Reuse Conflicts with Arbitrary Rollback The cache boundary follows from the dependency structure of bidirectional attention. Let ∆0 be the response positions changed by a rollback, and define the structural dependency closure at layer ℓ by 
+
+∆ℓ = {i : ∃j ∈ ∆ℓ−1 with an attention edge j → i}. (18) 
+
+Proposition 2 (Dense rollback closure) . For a transformer layer with dense bidirectional attention, 
+
+∆0̸ = ∅ implies ∆1 = {1, . . . , P + G}. Consequently, no nontrivial set of hidden states or K/V states from a previous response has a universal exact-reuse guarantee after an arbitrary rollback. Proof. Every query position i attends to every key position j. Choose any j ∈ ∆0. The edge j → i
+
+exists for every i, so every position belongs to ∆1. Later layers inherit this full structural closure. The claim concerns possible dependence rather than the magnitude of a particular numerical change. Establishing that an affected state happens to remain identical would require evaluating the affected computation and therefore cannot provide a universal skip rule. Proposition 2 does not say that every possible response cache is useless. Sparse attention, model-specific certificates, or a custom approximation may permit additional reuse. It says that a generic method cannot treat an accepted response token as immutable history while retaining arbitrary roll-back under dense bidirectional attention. Archer therefore stores no response hidden state across decoding updates, ensuring that every revised token is recomputed from the current state. 
+
+Proposition 3 (Preservation of revisability) . Suppose the original decoder D may replace or re-mask any response position. Archer leaves this action space unchanged: every response embedding, query, key, value, hidden state, and logit is recomputed before each update. Prompt caching may change which action is selected, but cannot make a response position immutable. Proof. At a cached forward, response queries attend to cached prompt K/V and newly computed response K/V. No response tensor from an earlier g is supplied to the model. Archer then passes a full response-logit tensor to the unmodified decoder. Hence every action available to D under an eager forward remains representable. Approximate prompt K/V can alter the logits and thus the chosen action, but they do not remove any response position from the decoder’s revision domain. This is the precise sense in which Archer is rollback-compatible. It preserves revisability, not nec-essarily the eager trajectory. 13 Preprint, August 2026 A.3 End-to-End Computational Cost Let N = P + G, and let L be the number of transformer layers. At layer ℓ, write αℓ for the position-wise projection and feed-forward cost and βℓ for one query–key interaction. A full forward has leading cost 
+
+Cfull =
+
+> L
+
+X
+
+> ℓ=1
+
+αℓN + βℓN 2 . (19) An Archer cached forward evaluates only G fresh query paths, while each query still attends to all 
+
+N positions. Including cache assembly and dispatch overhead H, its cost is 
+
+Ccache =
+
+> L
+
+X
+
+> ℓ=1
+
+[αℓG + βℓGN ] + H. (20) Thus Archer reduces prompt-side projections, prompt queries, and prompt feed-forward paths with-out shortening the receptive field of a response query. Let eager decoding use M0 forward steps. An Archer trajectory may have a different length MK
+
+because approximate logits can change a decoding decision. If RK of those steps are full refreshes, the cost-model speedup is 
+
+S(K) = M0Cfull 
+
+RK Cfull + ( MK − RK )Ccache 
+
+. (21) For equal trajectory lengths, define qK = RK /M K and η = Ccache /C full . Equation (21) reduces to 
+
+S(K) = [ qK + (1 − qK )η]−1 . (22) Ignoring H and layerwise constant differences gives η ≈ G/ (P + G). This yields the idealized expression in the main paper and the cached-step ceiling 1+ P/G . Wall-clock speed can depart from this ceiling because GPU kernels, memory movement, prompt-length variation, refresh frequency, and trajectory length all remain visible in Eq. (21). A.4 From Prompt Staleness to Logit Error We next derive the local approximation bound. Let Hℓg,t and ˆHℓg,t be eager and cached response hidden states after layer ℓ, both evaluated at gt, and define 
+
+eℓ = ∥Hℓg,t − ˆHℓg,t ∥, e0 = 0 . (23) At layer ℓ, prompt-cache staleness is 
+
+sℓt = ∥Kℓp(gt) − Kℓp(gr )∥ + ∥V ℓp (gt) − V ℓp (gr )∥. (24) Assume the response update at layer ℓ is locally Lipschitz in its response input and prompt K/V. For constants aℓ, b ℓ ≥ 0,
+
+∥Φℓ(H, C ) − Φℓ(H′, C ′)∥ ≤ aℓ∥H − H′∥ + bℓ∥C − C′∥. (25) 
+
+Lemma 1 (Layerwise propagation) . Under Eq. (25) ,
+
+eℓ ≤ aℓeℓ−1 + bℓsℓt . (26) 
+
+Proof. Add and subtract Φℓ( ˆHℓ−1 
+
+> g,t
+
+, C ℓt ) between the eager and cached updates. The triangle inequal-ity separates the error inherited from the previous response layer and the new error caused by prompt K/V. Applying Eq. (25) to the two terms yields Eq. (26). Unrolling the recurrence and applying an Lhead -Lipschitz output head gives 
+
+∥z⋆t − ˆzt∥∞ ≤ Lhead 
+
+> L
+
+X
+
+> ℓ=1
+
+bℓsℓtLY
+
+> j=ℓ+1
+
+aj . (27) 14 Preprint, August 2026 This expression makes two points explicit. Staleness can enter at every layer because each prompt representation depends on the response, and an early discrepancy can be amplified by later layers. To connect this bound to Archer’s controller, let E(g) stack response token embeddings and assume their diameter is bounded by B. Then 
+
+∥E(gt) − E(gr )∥F ≤ BpdH (gt, g r ). (28) If the layer-ℓ prompt-cache map is locally κℓ-Lipschitz in E(g), then sℓt ≤ κℓB√Dt. Substitution into Eq. (27) yields 
+
+∥z⋆t − ˆzt∥∞ ≤ ΓpDt, Γ = Lhead B
+
+> L
+
+X
+
+> ℓ=1
+
+bℓκℓLY
+
+> j=ℓ+1
+
+aj . (29) Archer reuses the cache only while Dt < K . Because Hamming distance is integer-valued, every cached step therefore satisfies 
+
+∥z⋆t − ˆzt∥∞ ≤ Γ√K − 1. (30) The constants are local and generally unavailable for a large pretrained model, so Eq. (30) is a structural guarantee rather than a numerical certificate. It explains why the controller uses response drift: unlike elapsed time, Dt appears directly in the perturbation bound. A.5 Decision Fidelity and Trajectory Fidelity Exact logits are stronger than the decoder requires. For sampler state ξ and logits z, define the local decision margin 
+
+mD (ξ, z ) = inf  
+
+> δ
+
+{∥ δ∥∞ : D(ξ, z + δ)̸ = D(ξ, z )} . (31) 
+
+Proposition 4 (One-step decision preservation) . At a common state ξt, Archer and eager decoding select the same next state whenever 
+
+ΓpDt < m D (ξt, z ⋆t ). (32) 
+
+Proof. Equation (29) places ˆzt inside the open ℓ∞ ball of radius mD (ξt, z ⋆t ) around the eager logits. By definition of the margin, D is constant throughout this ball. 
+
+Corollary 1 (Trajectory preservation) . If Eq. (32) holds at every cached step of a deterministic run, Archer and eager decoding produce the same trajectory and completion. Proof. Both methods start from the same state. Proposition 4 preserves equality at cached steps, while a refresh evaluates the same full model at the same state. Induction over decoder steps com-pletes the proof. The converse does not hold: a violation of the sufficient bound need not change the action. This is why the shadow-forward study measures action and next-state disagreement rather than treating logit error alone as the operational failure criterion. A.6 Temporal Anchoring as Delayed Feedback The same approximation that creates logit error also changes the dynamics of revision. To make this precise, consider a continuous relaxation y = E(g). Within one anchor interval, the eager and anchored logit maps and their Jacobians satisfy 
+
+zfresh (y) = Φ θ (y; Cp(y)) ,zanchor  
+
+> r
+
+(y) = Φ θ (y; Cp(yr )) , (33) 
+
+Jfresh = ∂y Φθ + ∂C Φθ ∂y Cp,Janchor = ∂y Φθ . (34) Archer does not suppress response–response interaction; that information is recomputed in ∂y Φθ . It temporarily suppresses only the indirect response-to-prompt-to-response path ∂C Φθ ∂y Cp. A refresh restores this term by setting yr ← y.15 Preprint, August 2026 Equation (34) supports a conditional, not universal, quality claim. If the indirect term amplifies a provisional error direction, anchoring reduces its immediate gain and gives rollback another update in which to revise the token. If the term instead carries useful new evidence, excessive anchoring delays that evidence and harms the next decision. The non-monotone quality curve in the main paper is consistent with these two regimes. Moderate K provides short-term inertia followed by reset, whereas K → ∞ removes the corrective synchronization that keeps the approximation aligned with the evolving response. A.7 Scope of the Guarantees The theory establishes four limited but useful facts. Dense bidirectional attention denies a generic exactness guarantee for response-state reuse after rollback; prompt-only caching preserves the de-coder’s revision domain; state distance bounds local prompt-induced logit error under explicit smoothness assumptions; and a decision margin turns that error bound into a sufficient condition for trajectory fidelity. It does not claim global Lipschitz constants for a pretrained DLM, statistical improvement from staleness, or exact equality with eager decoding. The empirical analyses below test the decision-level consequences that the theory deliberately leaves model dependent. 
+
+## B Complete Results and Robustness 
+
+The main paper reports the operating points that best expose Archer’s quality–latency trade-off. This section supplies the complete refresh-radius sweep behind those operating points. No radius is selected from a hidden test-only search. B.1 Refresh-Radius Sensitivity The refresh radius controls how far the response may move from the state at which prompt K/V was constructed. The limiting cases have direct interpretations. At K = 1 , every response change invalidates the snapshot and Archer approaches eager Saber. At K = ∞, the initial prompt snapshot is never synchronized again. Table 5: Refresh-radius sweep on LLaDA-8B-Instruct. Time is seconds per problem. 
+
+MBPP LiveCodeBench HumanEval Setting Pass@1 Time Speedup Pass@1 Time Speedup Pass@1 Time Speedup Saber 44.03 8.45 1.00 × 7.25 17.75 1.00 × 44.51 12.21 1.00 ×
+
+K = 1 44.03 8.41 1.00 × 7.25 17.82 1.00 × 44.51 12.14 1.01 ×
+
+K = 2 44.26 8.38 1.01 × 7.25 17.84 1.00 × 44.51 12.18 1.00 ×
+
+K = 4 44.96 7.10 1.19 × 8.00 12.77 1.39 × 42.68 9.20 1.33 ×
+
+K = 8 44.96 6.48 1.30 × 9.50 10.43 1.70 × 43.29 8.07 1.51 ×
+
+K = 16 43.33 5.94 1.42 × 9.25 8.92 1.99 × 41.46 7.07 1.73 ×
+
+K = 32 42.62 5.89 1.43 × 8.00 7.68 2.31 × 40.24 6.70 1.82 ×
+
+K = ∞ 42.62 5.98 1.41 × 7.00 8.01 2.22 × 39.63 6.69 1.83 ×
+
+Table 5 reports the full logarithmic sweep on all three code benchmarks. Latency improves as re-freshes become less frequent, whereas quality is non-monotone. Moderate radii preserve enough synchronization to avoid long-lived context error while still delaying prompt-mediated reinforce-ment. The deterioration at large radii is therefore not an unexplained tuning artifact; it is the empirical counterpart of the approximation term in Eq. (30). The sweep also makes clear that the same radius need not optimize every benchmark, which motivates reporting per-task operating points rather than a universal “best” K.16 Preprint, August 2026 
+
+## C Mechanism and Controlled Analyses 
+
+The main paper establishes the two central mechanism results through matched feedback and shadow-forward comparisons. Here we retain the supporting diagnostics needed to interpret those interventions and verify that prompt reuse does not obtain speed by disabling rollback. C.1 Rollback Remains Active A response position is counted as revised if it is re-masked or replaced after first receiving a non-mask prediction. Saber and Archer use the same rollback rule; the no-rollback decoder provides a zero-revision control. We use the representative radius K = 8 throughout this diagnostic. The MBPP measurement uses a fixed 150-problem subset; HumanEval and LiveCodeBench use their complete evaluation sets. Table 6: Rollback activity with K = 8 .                     
+
+> Benchmark Decoder Revised positions (%) Mean updates MBPP No rollback 0.00 65.97 Saber 29.18 146.98 Archer 30.03 147.51 HumanEval No rollback 0.00 66.26 Saber 27.87 157.55 Archer 30.24 158.49 LiveCodeBench No rollback 0.00 74.73 Saber 28.21 158.83 Archer 26.93 163.25
+
+Table 6 shows that Archer retains substantial revision activity and does not shorten the trajectory relative to Saber. Its speedup therefore does not come from freezing response tokens or removing opportunities for correction. This measurement supports Proposition 3 at the realized trajectory level. C.2 Matched-State Feedback Intervention End-to-end runs quickly diverge, so a conventional sampler comparison cannot isolate prompt-feedback timing. For each MBPP problem, we clone the decoder state after the first token accepted with confidence at least 0.9. Fresh immediately rebuilds prompt K/V, whereas Cached retains the pre-acceptance snapshot. The response state, rollback rule, and all other decoder variables remain matched. We then follow the selected token for five updates and evaluate both final programs. Both branches revise 99 .53% of selected tokens at nearly the same time, yet Cached solves five more branch-exclusive problems and improves Pass@1 by 1.17 points on both MBPP Base and its Ex-tended Test Cases version. Delayed feedback thus changes functional trajectories without obtaining its gain by disabling rollback. The intervention is local evidence rather than a universal monotonicity claim; the complete radius sweep shows that excessive delay can reverse the benefit. C.3 Decision-Level Cache Validity We collect 5,122 non-intervening shadow forwards from the MBPP run. Each probe evaluates fresh and cached logits at the same decoder state and compares the resulting Saber action. Shadow com-putations leave all 427 main responses, step counts, and NFEs unchanged. Action disagreement rises from 19.88% to 65.09% across distance bins, and next-state distance rises from 0.47 to 1.90. Cache age better describes low-level logit drift, but anchor distance has the stronger partial association with the next decoding transition. This distinction matches Archer’s objective: the controller need not minimize every floating-point difference; it should identify when reuse is likely to alter rollback behavior. The compact calibration and correlation results are reported in the main paper’s decision-level cache-validity analysis. 17 Preprint, August 2026 
+
+## D Generalization Beyond Code 
+
+Archer’s controller observes response-state changes and uses neither code structure nor execution feedback. We therefore extend the evaluation to mathematical, financial, and biomedical reasoning. MATH-500 (Hendrycks et al., 2021) requires free-form competition-mathematics answers, FinQA (Chen et al., 2021b) requires numerical reasoning over financial reports, and PubMedQA (Jin et al., 2019) requires yes/no/maybe decisions from biomedical abstracts. The three tasks differ substan-tially in prompt length and answer form, providing a direct test of whether prompt-side reuse trans-fers beyond program synthesis. Table 7: Cross-domain comparison with LLaDA-8B-Instruct. 
+
+MATH-500 FinQA PubMedQA Overall Method Acc. ↑ Time ↓ Speedup ↑ Acc. ↑ Time ↓ Speedup ↑ Acc. ↑ Time ↓ Speedup ↑ Perf. ↑ Speedup ↑
+
+Saber 25.60 8.13 1.00 × 29.56 24.66 1.00 × 69.40 14.15 1.00 × 41.52 1.00 ×
+
+Archer 25.00 6.39 1.27 × 30.17 9.86 2.50 × 69.50 9.58 1.48 × 41.56 1.75 ×
+
+We evaluate the fixed geometric sweep K ∈ { 4, 8, 12 , 16 } and report a representative Pareto point for each dataset in Table 7. The selected radii are 16 , 16 , and 4 for MATH-500, FinQA, and Pub-MedQA, respectively. Archer reduces latency in all three domains. The Overall columns average the three accuracy scores and the three corresponding speedups. On FinQA it improves numerical-answer accuracy by 0.61 points while accelerating decoding by 2.50 ×; on PubMedQA it improves label accuracy by 0.10 points at 1.48 × speedup. On MATH-500, a near-quality-preserving point obtains 1.27 × speedup with a 0.60 -point accuracy change. The same cache controller therefore produces useful quality–latency points across three non-code domains without task-specific logic. MATH-500 is scored after canonical answer normalization, and PubMedQA uses exact normalized yes/no/maybe labels. Because our FinQA decoder emits a free-form number rather than an exe-cutable program, we compare the extracted answer with the gold exe ans ; the reported value is numerical-answer accuracy rather than official program accuracy. Stating this distinction and the fixed candidate set makes the scope of the cross-domain evidence explicit. 
+
+## E Scaling and Systems Analysis 
+
+Archer removes repeated prompt projections while recomputing the revisable response. We test this systems claim through realized cache use and prompt- and response-length scaling. At the reported MBPP and LiveCodeBench operating points, 81.62% and 80.57% of main-trajectory model calls, respectively, use the cached prompt path. Archer may execute slightly more NFEs than Saber, so the speedup comes from lower work per update rather than a shorter correction trajectory. E.1 Prompt-Length Scaling We hold the response length at G = 256 and increase the fixed prompt from 128 to 2,048 tokens. At each length, full and cached updates start from the same state and are measured after warm-up, with CUDA synchronization immediately before and after every timed call. Table 8: Prompt-length scaling with G = 256 and K = 8 . Time is in milliseconds.                                               
+
+> Update P= 128 P= 256 P= 512 P= 1024 P= 2048 Overall Time ↓Speedup ↑Time ↓Speedup ↑Time ↓Speedup ↑Time ↓Speedup ↑Time ↓Speedup ↑Time ↓Speedup ↑
+> Full 46.11 1.00 ×57.80 1.00 ×82.88 1.00 ×145.66 1.00 ×271.91 1.00 ×120.87 1.00 ×
+> Cached 35.41 1.30 ×36.39 1.59 ×40.04 2.07 ×46.27 3.15 ×58.84 4.62 ×43.39 2.55 ×
+
+Table 8 shows that cached-step speedup increases monotonically from 1.30 × to 4.62 ×. Full-forward cost grows rapidly with the prompt, whereas cached-step time is dominated by the fixed response 18 Preprint, August 2026 Case Study: Delayed Prompt Feedback 
+
+Task I · MBPP 452: loss_amount. Matched g_t commits _amount (confidence 0.988); both branches re-mask _amount at t+1.    
+
+> Rollback rule is identical; only prompt-KV feedback timing differs .
+> t: same g_t
+
+→ t+1: [MASK] rollback → t+2: prompt-conditioned decode 
+
+Fresh prompt feedback Archer (Cached)                                                         
+
+> #t: commit provisional _amount #t+1: _amount →[MASK] #rollback active #prompt-KV refreshed immediately prompt_kv =update (P, _amount) logits =decode (g_t, prompt_kv_new) #immediate prompt-mediated feedback #t: commit provisional _amount #t+1: _amount →[MASK] #rollback active #anchored prompt-KV retained prompt_kv =P_anchor logits =decode (g_t, prompt_kv_anchor) #feedback delayed; rollback unchanged return original_price -sale_price
+> Fails: hidden no-loss case
+> t+2: altered prompt-conditioned logits
+> if sale_price <cost_price: return cost_price -sale_price return 0
+> Passes tests
+> t+2: different prompt-conditioned logits
+
+Task II · MBPP 558: digit_distance_nums. Matched g_t commits ums (confidence 0.984); both branches re-mask ums at t+1.    
+
+> Rollback rule is identical; only prompt-KV feedback timing differs.
+> t: same g_t
+
+→ t+1: [MASK] rollback → t+2: prompt-conditioned decode 
+
+Fresh prompt feedback Archer (Cached)                                                           
+
+> #t: commit provisional ums #t+1: ums →[MASK] #rollback active #prompt-KV refreshed immediately prompt_kv =update (P, ums) logits =decode (g_t, prompt_kv_new) #immediate prompt-mediated feedback #t: commit provisional ums #t+1: ums →[MASK] #rollback active #anchored prompt-KV retained prompt_kv =P_anchor logits =decode (g_t, prompt_kv_anchor) #feedback delayed; rollback unchanged Sum ( abs (str1[i] -str2[i]) for iin range(len (str1)))
+> Fails: string arithmetic
+> t+2: altered prompt-conditioned logits
+> sum ( abs ( int (d1) -int (d2)) for d1, d2 in zip (str1, str2))
+> Passes tests
+> t+2: different prompt-conditioned logits
+
+Figure 4: Delayed prompt-feedback case studies on MBPP. region. The measured trend directly matches the complexity analysis: prompt reuse becomes more valuable as the immutable context occupies a larger fraction of the sequence. E.2 Response-Length Scaling A complementary sweep fixes P = 512 and varies the response budget. Unlike the per-update study, this comparison measures the complete realized trajectory, including cache construction and refreshes. Archer remains faster at every tested response length, with gains of 1.46 –1.67 ×. The benefit does not vanish when response computation dominates because the prompt is still revisited over many rollback updates. 
+
+## F Qualitative Analysis and Failure Cases 
+
+Aggregate paired outcomes show that feedback timing matters, but they do not show how two tra-jectories become functionally different. We therefore manually inspected branch-exclusive MBPP outcomes whose probe lies inside executable code rather than at the terminal token. The accompa-nying case-study figure uses two Cached-only successes. In Task 452 (loss amount ), Fresh settles on an unconditional original price -sale price return, which fails whenever the sale does not produce a loss. Cached in-stead restores the necessary conditional and returns zero in the no-loss case. In Task 558 (digit distance nums ), Fresh applies abs directly to string characters, whereas Cached con-verts paired digits to integers before subtraction. Both high-confidence probed fragments are re-masked within the next update in both branches; the final difference is therefore not caused by making a token immutable. The paired intervention also contains the complementary boundary case, Task 760, where Fresh reaches the correct set-cardinality test and Cached adopts an incorrect duplicate detector. Delayed feedback is thus an inductive bias, not a free accuracy guarantee. Moderate anchoring can prevent transient evidence from being amplified too quickly, but it can also postpone useful evidence. 19 Preprint, August 2026 
+
+## G Detailed Experimental Setup 
+
+This section specifies the evaluation protocol used throughout the paper. The main experiments follow the code-generation setting of Saber, while the supplementary cross-domain study changes only the task prompt and evaluator. Unless noted otherwise, we decode each problem once without demonstrations or test-time sampling. G.1 Datasets Our primary comparison uses MBPP (Austin et al., 2021b), HumanEval (Chen et al., 2021a), their Extended Test Cases (ET) versions (Dong et al., 2025), and LiveCodeBench (Jain et al., 2025). MBPP contains 427 sanitized Python synthesis problems and HumanEval contains 164 function-completion tasks. Their ET versions preserve the original problems but evaluate generated programs against additional edge-case tests. LiveCodeBench is contamination-aware; we use all 400 tasks in 
+
+release v1 . In each code benchmark, the model receives the task description and, where appli-cable, the function signature, public tests, or starter code. The model must produce one executable Python completion that is evaluated without manual repair. To evaluate transfer beyond code, we additionally use the 500-problem MATH-500 test set derived from MATH (Hendrycks et al., 2021), the canonical FinQA test split (Chen et al., 2021b), and the 1,000-example expert-labeled PubMedQA set (Jin et al., 2019). MATH-500 requests a boxed final answer; FinQA requests a numerical answer from a financial report and table; and PubMedQA requires one of yes , no , or maybe after reading the question and abstract. These prompts preserve the same model template and response budget as the code experiments. G.2 Baselines We compare Archer with three classes of DLM decoding methods. The first is standard confidence-based LLaDA decoding, which executes the full denoising schedule without KV reuse. The second includes efficient DLM methods that target standard, non-rollback decoding: Fast-dLLM in cache-only and parallel forms (Wu et al., 2025), dKV-Cache in decode and greedy modes (Ma et al., 2025), and dLLM-Cache (Liu et al., 2025). The third is Saber (Dong et al., 2026), which performs a full forward pass at every rollback update. Archer uses exactly Saber’s acceptance, replacement, and re-masking rules; the only difference is whether the prompt K/V state is reused or refreshed. This pairing isolates the effect of the cache controller from a change in the rollback decoder. All baselines use the same task prompt, response budget, base-model revision, and evaluator when-ever their algorithms permit. We follow the released configurations of Fast-dLLM, dKV-Cache, dLLM-Cache, and Saber. Fast-dLLM is evaluated both with cache-only transfer and factor-one par-allel transfer, and dKV-Cache-Greedy uses its released random ordering with seed 42. G.3 Metrics For code generation, Pass@1 is the fraction of tasks whose single extracted completion passes every test in the corresponding evaluator: 
+
+Pass@1 = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+I[Passed( byi)] . (35) Here, N is the number of tasks and byi is the decoded completion for task i. For MBPP and Hu-manEval, we compute this score separately on the original Base test suite and the Extended Test Cases (ET) suite; the latter evaluates the same completion against additional edge-case tests. Live-CodeBench Pass@1 is computed by its official evaluator. MATH-500, FinQA, and PubMedQA re-port normalized answer or label accuracy. We also report the mean number of response updates (Steps), synchronized generation time per example (Time), and Speedup. Main-table speedups are computed against confidence-based LLaDA on the same benchmark; the cross-backbone study instead uses Saber on the same model as its reference. Timing includes cache construction, refreshes, cached forwards, and decoder control, but excludes model loading, tokenization, and program execution. 20 Preprint, August 2026 G.4 Implementation Details The primary results use LLaDA-8B-Instruct (Nie et al., 2025), pinned to revision 6059b30 . The cross-backbone study additionally evaluates Dream-v0-Instruct-7B (Ye et al., 2025) and DiffuCoder-7B-cpGRPO (Gong et al., 2025), preserving each model’s native mask identifier, logit alignment, and cache interface. All experiments use temperature zero, batch size one, a generation length of 256, and a block length of 256. Saber and Archer use n = 2 and μ = 2 .The principal Archer operating points use K = 11 on MBPP, K = 10 on LiveCodeBench, and K =8 on HumanEval. Cross-backbone results use K = 11 /15 for LLaDA, 17 /9 for Dream, and 8/15 
+
+for DiffuCoder on MBPP/HumanEval, respectively. These operating points are accompanied by the logarithmic sensitivity sweep in Appendix B.1; they do not assert that a universal radius is optimal. For the three cross-domain benchmarks, we evaluate the fixed candidate set K ∈ { 4, 8, 12 , 16 } and report the stated Pareto point. All timings are measured with CUDA synchronization immediately before and after generation. 21

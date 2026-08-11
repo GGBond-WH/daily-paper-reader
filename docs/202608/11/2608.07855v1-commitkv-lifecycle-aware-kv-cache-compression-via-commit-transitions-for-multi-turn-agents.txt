@@ -1,0 +1,895 @@
+Title: CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents
+
+URL Source: https://arxiv.org/pdf/2608.07855v1
+
+Published Time: Tue, 11 Aug 2026 00:21:33 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents 
+
+Weizhong Huang 1,† Jinchao Zhang 2,* Xiawu Zheng 1,* 
+
+> 1
+
+Xiamen University 2WeChat AI, Tencent Inc., China 
+
+> *
+
+Corresponding authors 
+
+Abstract 
+
+Multi-turn Reasoning-and-Acting (ReAct) agents accumulate growing trajectories of rea-soning, tool calls, and observations. Their key-value (KV) caches grow accordingly, increasing memory use and attention cost during model inference. Existing KV cache compression meth-ods reduce these costs by evicting states with low attention scores. However, low attention in the current turn does not imply future irrelevance, as temporarily inactive information may be-come important later. Snapshot-based eviction methods therefore do not explicitly distinguish temporarily dormant information from information that appears to have completed its role. In this paper, we present CommitKV , which identifies KV lifecycles through commit transitions. Specifically, CommitKV first divides completed agent events into token pages and compares each eligible page’s deletion effect before a tool-call commit and after the commit’s returned observation has been incorporated. Based on these paired measurements, CommitKV distin-guishes dormant pages from high-to-low completion candidates. It then applies a greedy joint test, accepting candidates for retirement only when their combined post-commit effect remains bounded. Finally, at a later compression checkpoint, accepted pages are excluded, a bounded set of pages awaiting post-commit measurement is protected, and the remaining KV states are retained within the cache budget using the same token indices for keys, values, and absolute po-sitions. These mechanisms ensure that CommitKV can distinguish dormant information from information that has completed its observed role and can be safely removed. Experiments on various benchmarks show that CommitKV reduces agent memory use, accelerates end-to-end inference, and achieves higher accuracy than existing KV cache compression methods. 
+
+## 1 Introduction 
+
+Large language model (LLM)-based agents [Yang et al., 2025, Guo et al., 2025, Abdin et al., 2025, Agarwal et al., 2025, Lyu et al., 2026b,a] solve complex tasks through reasoning and tool use [Guo et al., 2024, Cheng et al., 2024]. In the widely used ReAct paradigm, an agent alternates between reasoning, tool calls, and returned observations [Yao et al., 2023]. As the trajectory grows, so does its key-value (KV) cache. Cross-turn reuse avoids repeatedly prefilling the full history, but the persistent cache still increases memory and attention costs [Gao et al., 2024, Zheng et al., 2024]. KV cache compression mitigates this problem by retaining cached states under a fixed budget [Shi et al., 2024, WEI et al., 2025]. Existing methods typically estimate the importance of cached tokens from attention-based or query-aware scores [Tang et al., 2024, Cai et al., 2025b, Feng et al., 2025, Geng et al., 2025]. For example, SnapKV [Li et al., 2024] aggregates attention scores from a prompt-end observation 
+
+> †
+
+This work was done when Weizhong Huang was an intern at WeChat AI. 
+
+1arXiv:2608.07855v1 [cs.LG] 8 Aug 2026 (b) Ambiguity of Snapshot -Based Compression    
+
+> Both pages have low current importance at checkpoint j
+> Earlier Observation Page E1
+> Current Importance: LOW
+> Contains Paris , which is needed later
+> Tool -Call Page E2
+> Current Importance: LOW
+> Its weather request has already been
+> answered
+> Same Low Score, Different Future Roles
+> A snapshot -based policy may evict both pages
+> Premature Eviction
+> Useful Paris evidence is lost
+> Valid Eviction
+> E2 may have completed its role
+
+✕ ✓
+
+> Low Current Importance Does Not Mean Safe to Remove
+
+(a) Multi -Turn ReAct Trajectory       
+
+> User Question
+> Report the festival’s host city and current weather.
+> Earlier Observation Page E1
+> The festival is held in Paris .
+> From an earlier tool interaction
+> Needed later for the final answer
+> Next -Turn Queries
+> Returned observation, p ost -commit influence is measured
+> Tool -Call Page E2
+> Weather(place ID)
+> Used to request the weather result
+> Tool -Call Commit c
+> Tool call ends; pre -commit influence is measured
+> Returned Observation
+> Sunny, 18 °C
+> Compression Checkpoint j
+> KV Cache may be compressed here
+> Final Answer Paris ; sunny, 18 °C
+
+(c) CommitKV Resolves the Ambiguity     
+
+> Compare page influence before and after the returned observation
+> Earlier Observation
+> Page E1
+> Pre -Commit Influence: LOW
+> Post -Commit Influence: LOW
+> after the returned observation
+> LOW → LOW
+> Dormant
+> Keep for Now
+> Not evict ed by the lifecycle
+> rule
+> Low now, but may become useful later
+> Tool -Call
+> Page E2
+> Pre -Commit
+> Influence: HIGH
+> Post -Commit Influence: LOW
+> after the returned observation
+> HIGH → LOW
+> Completion
+> Candidate
+> Joint
+> Validation Evicted If Accepted
+> at checkpoint j
+> Evidence that its role in this tool interaction has completed
+> LOW → LOW: Keep for Now
+> HIGH → LOW: Evicted If Accepted
+
+Figure 1: Why snapshot scores are insufficient for KV-cache compression. At checkpoint j, the earlier observation page E1 and tool-call page E2 may both have low current importance, although 
+
+E1 contains Paris, which is needed later, while E2 may have completed its role after the weather observation returns. CommitKV compares their pre- and post-commit deletion effects: low-to-low 
+
+E1 is not evicted by the lifecycle rule, whereas high-to-low E2 becomes a completion candidate and is marked for retirement only if it passes joint validation; its KV states are removed at a later checkpoint. window, R-KV [Cai et al., 2025a] balances attention-based importance and key redundancy, and TriAttention [Mao et al., 2026] estimates importance using pre-RoPE [Su et al., 2024] query–key geometry. Despite their different scoring functions, these methods follow the same principle: they estimate token importance from the current inference state and evict low-scoring tokens. This snapshot-based strategy overlooks how information evolves across agent turns. As illustrated in Figure 1, an earlier observation and a completed tool-call page may both receive low scores at the current checkpoint. However, the earlier observation may only be temporarily dormant and become useful again, whereas the tool-call page may have completed its role after the returned observation becomes available. Therefore, a low current score alone cannot determine whether a page is safe to remove, potentially causing the premature eviction of useful states. To resolve this ambiguity, we present CommitKV , a lifecycle-aware KV cache compression method for multi-turn ReAct agents. First, CommitKV partitions completed tool calls and returned observations into event pages and treats the end of each generated tool call as a commit measurement boundary. It measures the deletion effect of the same page near the commit and after the returned observation is incorporated into the next turn, forming a commit transition . Next, it combines absolute deletion effects with percentile ranks to identify high-to-low completion candidates while avoiding the premature removal of low-to-low dormant pages. Finally, CommitKV jointly validates completion candidates and temporarily protects pages awaiting post-commit measurement. At each compression checkpoint, it excludes retired pages, retains the protected pending pages, and selects the remaining KV states under the cache budget, applying the same token indices to the keys, values, and absolute positions. In this way, CommitKV removes information that has completed its observed role while preserving information that may become useful in future turns. To evaluate CommitKV , we conduct extensive experiments on six LLMs across eight bench-marks and multiple KV-cache budgets. CommitKV outperforms the strongest compressed baseline by up to 22.24 percentage points in average accuracy, while achieving up to 5.00 × peak KV-memory savings and a 5.62 × end-to-end speedup. These results demonstrate that CommitKV effectively preserves agent performance while substantially reducing memory and latency. 21 Agent Events and Commit Transitions 
+
+1. Agent timeline     
+
+> History Reasoning Tool Call External Tool
+> Execution
+> Returned
+> Observation Next -Turn
+> Decoding
+
+x t
+
+z t
+
+a t   
+
+> ot
+> Tool -Call Commit c
+> End of tool -call generation
+> agent event agent event
+> Observation
+> incorporated into
+> xt+1
+> Pre -Commit Query Window
+> Qc
+> −
+> Last W decode queries
+> Post -Commit Query Window
+> Qc
+> +
+> First W next -turn decode queries
+
+2. Paired deletion -effect measurements         
+
+> Pre -Commit Deletion Effect
+> Rc
+> −(
+> E) over
+> Qc
+> −
+> Post -Commit Deletion Effect
+> Rc
+> +
+> (
+> E) over
+> Qc
+> +
+> Compare the Same
+> Eligible Page 𝑬
+> Commit Transition
+> Resident Event Page 𝑬
+> 𝐸 ⊂ 𝑎 𝑖 𝑜𝑟 𝑜 𝑖
+
+3. Persistent KV cache 
+
+••• 
+
+2 Lifecycle States from Commit Transitions 
+
+Same Eligible Resident Event Page  𝑬 
+
+> Pre -Commit
+> Measurement
+> Deletion effect
+> Rc
+> −(
+> E)
+> Percentile rank
+> Pc
+> −(
+> E)
+
+State: HIGH   
+
+> Post -Commit
+> Measurement
+> Deletion effect
+> Rc
+> +(
+> E)
+> Percentile rank
+> Pc
+> +(
+> E)
+
+State: LOW 
+
+> HIGH
+> →LOW
+> Commit
+> Transition
+
+Classify the Paired Lifecycle States 
+
+> LOW → LOW
+> Dormant
+> Low now, but may be useful later
+> HIGH → LOW
+> Completion Candidate
+> May have completed its
+> observed role
+
+LOW → HIGH 
+
+Newly Active 
+
+HIGH → HIGH 
+
+Still Active 
+
+> Otherwise: Uncertain
+> No reliable high/low transition
+
+A LOW Post -Commit State Alone Is Ambiguous 
+
+> It cannot distinguish dormant pages from completion candidates.
+> Only completion candidates proceed
+
+3 Lifecycle -Aware Joint Compression 
+
+1. Retirement -Set Construction  
+
+> Completion Candidates
+> Pc
+> E1
+> E2
+
+•••         
+
+> Em
+> Order: lower
+> Rc
+> +(
+> E),
+> then higher
+> Rc
+> −(
+> E)
+> Greedy Joint Validation
+> Joint gate
+> Rc
+> +
+> (𝒟
+> c∪ {
+> E}) ≤
+> τjoint
+
+✓ Pass → Add   
+
+> Eto 𝒟
+> c
+
+✕ Fail → Keep  𝑬  Resident  
+
+> Retirement Set
+
+𝒟      
+
+> c
+> E2
+> E5
+> E7
+> Accepted into 𝒟
+> c
+> Removed at checkpoint 𝑗
+
+2. Protecting Incomplete Transitions    
+
+> Pending Pages
+> Ea
+> Eb
+
+•••           
+
+> Ek
+> Resident token indices form 𝒩
+> j
+> Pre -commit effect
+> Rc
+> −(
+> E): available
+> Post -commit effect
+> Rc
+> +(
+> E): pending
+> Keep resident until
+> Rc
+> +(
+> E) is measured
+> Pending Budget
+> BN= ⌊
+> ηB ⌋
+> |𝒩
+> j| ≤
+> BN
+> If the budget is exceeded:
+> prioritize larger
+> Rc
+> −
+> (
+> E)
+
+3. Fixed -budget compression                  
+
+> Compression checkpoint 𝒋
+> Tokens in 𝒟
+> cPending indices 𝒩
+> jOther Resident Tokens
+> ×××•••
+> Ea
+> Eb•••
+> Ek
+> EXCLUDE PROTECT SELECT UNDER
+> THE BUDGET
+> Fixed -Budget Selection
+> Construct Retained Indices
+> Retained -Token
+> Index Set ℐ
+> j
+> 𝒩
+> j⊆ℐ
+> j
+> |ℐ
+> j| ≤
+> B
+> Apply the Same ℐ
+> jto
+> Keys, Values, and Absolute Positions
+
+Compressed Persistent KV Cache 
+
+> •••
+
+→
+
+→Figure 2: Overview of CommitKV . (1) For each tool-call commit, the deletion effect of the same eligible event page is measured in the pre- and post-commit query windows. (2) The paired deletion effects and percentile ranks determine the page’s lifecycle state; only a high-to-low page becomes a completion candidate. (3) A greedy joint test constructs the retirement set Dc. At checkpoint j,tokens in Dc are excluded, pending indices Nj are protected within BN , and the retained-token index set Ij is selected under budget B and applied consistently to keys, values, and absolute positions. 
+
+## 2 Related Work 
+
+LLM agents. LLM [Xie et al., 2025, 2026] agents interleave reasoning, tool use, and environment feedback across turns [Yao et al., 2023, Masterman et al., 2024, Zhang et al., 2025b]. Their growing trajectories increase context length and persistent KV-cache costs. Recent methods manage agent states using phase- and intent-aware importance, region-specific decay, episode-level eviction, con-text pruning, or cache recovery [Liu et al., 2026, Li et al., 2026, Matam and Kim, 2026, Kariyappa and Suh, 2026, Kim et al., 2025, Hao et al., 2026, Rusli et al., 2026]. CommitKV instead treats a tool-call commit as a lifecycle boundary, retiring completed pages while preserving dormant ones. 
+
+KV cache compression. KV cache compression reduces long-context inference costs by evicting or compacting cached states. Eviction criteria include attention [Zhang et al., 2023, Liu et al., 2023], query relevance [Tang et al., 2024], adaptive policies [Feng et al., 2025, Ge et al., 2024], anchor-direction projection [Geng et al., 2025], key similarity [Park et al., 2025], value awareness [Chang et al., 2026], and structured pages or chunks [Chitty-Venkata et al., 2026, Hu et al., 2026]. SnapKV uses prompt-end attention [Li et al., 2024], R-KV balances importance and redundancy [Cai et al., 2025a], and TriAttention uses pre-RoPE geometry [Mao et al., 2026]. Other techniques [Ma et al., 2023a, 2024b, Zheng et al., 2021, Zhang et al., 2026, Huang et al., 2025b,a] include cache merg-ing [Zhang et al., 2024, Liu et al., 2024a], quantization [Liu et al., 2024b, Hooper et al., 2024, He et al., 2024, Zhang et al., 2025a, Ma et al., 2024a, 2023b], hybrid error correction [Kang et al., 2024], low-rank projection [Chang et al., 2025], and low-rank keys with value-cache offloading [Sun et al., 2025] and others [Ma et al., 2026]. Most eviction methods score a single inference state, con-flating dormant and completed low-influence pages. CommitKV instead compares deletion effects before a commit and after the returned observation, distinguishing low-to-low dormant pages from high-to-low completion candidates and jointly validating the latter before retirement. 33 Methodology 
+
+3.1 Problem Formulation 
+
+Multi-turn ReAct agent. We consider a tool-using multi-turn ReAct agent [Yao et al., 2023] that answers a query q through repeated reasoning and tool use. At turn t, the agent receives the interaction history xt and generates reasoning zt followed by a decision at, which is either a tool call or a final answer. Define 
+
+xt = ( q, z1, a1, o1, . . . , zt−1, at−1, ot−1),
+
+yt = ( xt, zt, at). (1) If at invokes a tool, the returned observation ot is appended to the history for the next turn. Otherwise, at is the final answer and terminates the interaction. 
+
+KV reuse across turns. To avoid repeatedly prefilling the complete history, the server retains and reuses KV states across turns [Gao et al., 2024, Zheng et al., 2024]. At the first turn, it prefills 
+
+x1 = q. For each subsequent turn t > 1,
+
+xt = ( yt−1, ot−1), (2) where the KV states of yt−1 are already cached. The server therefore prefills only the new observation 
+
+ot−1 and appends the KV states of the generated zt and at during decoding. 
+
+Token-level KV cache compression. KV reuse causes the cache to grow with the interaction history. Consider an M -layer LLM [Vaswani et al., 2017] with H KV heads of width d. After turn 
+
+t, let Lt = |yt|. The KV tensors are 
+
+Kt, V t ∈ RM ×H×Lt×d, (3) where the four axes represent the layer, KV head, token number, and head width. FullKV retains all Lt tokens, whereas token-level compression reduces the token axis. We call each runtime boundary at which tokens may be removed a compression checkpoint . Suppose that 
+
+Sj tokens with absolute positions pj = ( pj, 1, . . . , p j,S j ) are resident before checkpoint j. The policy selects Ij ⊆ { 1, . . . , S j } and applies it to the keys, values, and positions: 
+
+fKj = Kj [: , :, Ij , :] , eV j = V j [: , :, Ij , :] ,
+
+epj = pj [Ij ], |I j | ≤ B. (4) Here, B is the token budget, and epj denotes the absolute positions of the retained tokens after compression. Applying the same index set preserves the correspondence between each retained KV state and its original absolute position. These positions must remain unchanged because RoPE [Su et al., 2024] uses them to encode positional relationships. 
+
+Agent events and commit transitions. To track how information exchanged through tool use changes across turns, CommitKV treats each completed tool call ai and each returned observation 
+
+oi as an agent event . Each event is partitioned into contiguous event pages . We use E to denote a contiguous token span taken from either ai or oi, with |E| ≤ G, where G is the maximum page size. The page E is the basic unit whose influence is measured and whose corresponding KV states may later be removed. 4The importance of an event page may change after the agent receives the corresponding ob-servation. For example, information used to formulate a tool call may become less useful once the requested result is available. SnapKV [Li et al., 2024] uses a short observation window at the end of the prompt to aggregate attention from recent query tokens and identify prefix KV positions that are likely to remain important during subsequent generation. Inspired by this window-based importance estimation, CommitKV introduces paired windows on opposite sides of each tool– observation boundary to measure how the importance of the same event page changes after the observation becomes available. For a tool call at, let c denote the tool-call commit at the end of its generation. The tool call ends at position |yt|. After ot is appended, the next-turn input becomes xt+1 = ( yt, ot), and the next decoding begins at position |xt+1 | + 1 . Given a query-window size W , we define the paired query windows 
+
+Q− 
+
+> c
+
+= |yt| − W + 1 , . . . , |yt| ,
+
+Q+ 
+
+> c
+
+= |xt+1 | + 1 , . . . , |xt+1 | + W . (5) The pre-commit query window Q− 
+
+> c
+
+contains the final W self-attention query positions ending at the completion of the tool call. The post-commit query window Q+ 
+
+> c
+
+contains the first W self-attention query positions generated during the next turn, after the returned observation has been incorporated into the input. At each query position, the attention mechanism reads information from the resident KV states. Measuring the effect of an event page over a query window therefore indicates how strongly that page contributes to the corresponding attention outputs. Comparing the influence of the same page across Q− 
+
+> c
+
+and Q+ 
+
+> c
+
+forms a commit transition . Because the two query windows lie immediately before and after the returned observation becomes available, this comparison captures how the role of the page changes across the tool–observation boundary. The sequence of commit transitions observed for a page across tool interactions defines its event lifecycle .
+
+3.2 Lifecycle States from Commit Transitions 
+
+The preceding subsection defines a commit transition by comparing the influence of the same event page before a tool-call commit and after the returned observation. CommitKV uses this transition to distinguish pages that may have completed their observed role from pages that are merely inactive. Specifically, a high-to-low change nominates a page for lifecycle-aware removal at a later compression checkpoint, whereas a low-to-low page is not removed by this rule because it may become useful in future turns. To identify these changes, CommitKV measures the effect of deleting each page in the pre- and post-commit query windows. 
+
+Deletion effect for event page. CommitKV records the attention weights and outputs pro-duced by one attention layer. Consider one attention head; the following computation is performed independently for every head. For a query position p ∈ Q , let api be the attention weight assigned to resident token i, let vi be its value vector, and let op be the original attention-head output. For the previously defined event page E, deleting its tokens and renormalizing the remaining attention weights gives 
+
+o\Ep =
+
+op − P i∈Epi≤p
+
+api vi
+
+1 − P i∈Epi≤p
+
+api 
+
+, (6) where o\Ep is the output after deleting E. For a query window Q, we first compute the maximum 5relative output change for each head and then take the maximum across heads: 
+
+Rh(E; Q) = max 
+
+> p∈Q
+
+∥op − o\Ep ∥2
+
+∥op∥2
+
+,R(E; Q) = max  
+
+> h
+
+Rh(E; Q).
+
+(7) A larger R(E; Q) means that deleting E causes a larger relative change in the attention output. 
+
+CommitKV evaluates this score in the pre- and post-commit query windows. Comparing the two scores provides the signal used to assign the lifecycle state of E and to nominate pages for removal at a later compression checkpoint. 
+
+Influence comparison across a commit. The deletion effect defined above measures the in-fluence of an event page within one query window. To determine how this influence changes after a returned observation, CommitKV compares the deletion effect across the pre- and post-commit windows. For each tool-call commit c,
+
+R− 
+
+> c
+
+(E) = R(E; Q− 
+
+> c
+
+), R+ 
+
+> c
+
+(E) = R(E; Q+ 
+
+> c
+
+). (8) Here, R− 
+
+> c
+
+(E) measures the influence of E before the returned observation, while R+ 
+
+> c
+
+(E) measures its influence after the observation has been processed. Their comparison therefore shows how the role of E changes across the commit. Because the two windows contain different query tokens, their deletion effects may have different numerical scales. Using only a fixed threshold may therefore give inconsistent labels across the two windows. To obtain a relative measure, let Ec denote the set of event pages whose deletion effects can be computed in both Q− 
+
+> c
+
+and Q+ 
+
+> c
+
+. For each E ∈ E c, let P − 
+
+> c
+
+(E) and P + 
+
+> c
+
+(E) denote the percentile ranks of R− 
+
+> c
+
+(E) and R+ 
+
+> c
+
+(E) among the pages in Ec, respectively. A larger percentile means that E
+
+is more influential than a larger fraction of the comparison pages. Neither the deletion effect nor the percentile is sufficient alone. A page may rank highly even when all deletion effects are very small, while a low-ranked page may still have a large deletion effect when all pages are important. We therefore classify a page using both its absolute deletion effect and its relative percentile: 
+
+H± 
+
+> c
+
+(E) = 1 ⇐⇒ R± 
+
+> c
+
+(E) ≥ τuse and P ± 
+
+> c
+
+(E) ≥ ρuse ,L± 
+
+> c
+
+(E) = 1 ⇐⇒ R± 
+
+> c
+
+(E) ≤ τdead and P ± 
+
+> c
+
+(E) ≤ ρdead . (9) Here, H± 
+
+> c
+
+(E) and L± 
+
+> c
+
+(E) are binary indicators of whether E has high or low influence, respectively. The superscripts − and + refer to the pre- and post-commit windows. The thresholds τuse and τdead 
+
+are applied to the absolute deletion effect, while ρuse and ρdead are applied to the percentile rank. We use τdead < τ use and ρdead < ρ use , leaving pages that satisfy neither condition unclassified rather than forcing an unreliable decision. 
+
+Lifecycle-state classification. The purpose of the paired measurements is not to remove every page with a low score. Instead, CommitKV looks for a clear decrease in influence, which provides evidence that a page has completed its observed role. The lifecycle state of E at commit c is defined as 
+
+λc(E) = 
+
+
+
+completion candidate H− 
+
+> c
+
+(E) = L+ 
+
+> c
+
+(E) = 1 ,
+
+dormant L− 
+
+> c
+
+(E) = L+ 
+
+> c
+
+(E) = 1 ,
+
+newly active L− 
+
+> c
+
+(E) = H+ 
+
+> c
+
+(E) = 1 ,
+
+still active H− 
+
+> c
+
+(E) = H+ 
+
+> c
+
+(E) = 1 ,
+
+uncertain otherwise .
+
+(10) 6A high-to-low transition marks E as a completion candidate because the page was influential before the commit but became unimportant after the returned observation was available. This change suggests that the page has completed its role in the current tool interaction. In contrast, a low-to-low page is marked as dormant rather than completed: its information may simply not have been needed yet. A low-to-high page becomes newly active after the observation, while a high-to-high page remains active across the commit. Pages without a clear high or low label are marked as uncertain to avoid making decisions from weak evidence. Only completion candidates proceed to the joint validation in Section 3.3. Pages classified as dormant, newly active, still active, or uncertain are not added to the retirement set by the lifecycle rule. 
+
+3.3 Lifecycle-Aware Joint Compression 
+
+The lifecycle state indicates whether an event page may have completed its role, but it does not directly determine whether the page can be safely removed. Before retiring any page, CommitKV 
+
+must account for the cumulative effect of removing multiple completion candidates and preserve pages whose pre-commit effects have been measured but whose post-commit effects are not yet available. CommitKV therefore performs two operations: it jointly validates completion candidates to construct the retirement set and temporarily protects pages awaiting post-commit measurements. 
+
+Retirement-set construction. The post-commit deletion effect of each completion candidate is initially measured by deleting that page alone. However, small individual effects can accumulate when several pages are removed together, potentially causing a much larger change in the attention output. CommitKV therefore evaluates completion candidates jointly before adding them to the retirement set. At commit c, the candidates are sorted by increasing R+ 
+
+> c
+
+(E), with decreasing R− 
+
+> c
+
+(E) as the second ordering criterion. This order prioritizes pages that have little influence after the returned observation but were clearly influential before it, providing stronger evidence that they have com-pleted their role. Starting from an empty retirement set Dc = ∅, CommitKV examines the candidates in this order. A candidate page E is added only if its joint deletion with the pages already accepted in Dc
+
+satisfies 
+
+R+ 
+
+> c
+
+(Dc ∪ { E}) ≤ τjoint . (11) Here, R+ 
+
+> c
+
+(A) denotes the post-commit deletion effect obtained by deleting all tokens belonging to the page set A at the same time. It is computed using Eqs. (6) and (7), treating the tokens in A as one combined deletion set. The threshold τjoint limits the cumulative change caused by the accepted pages. If adding E violates this threshold, E is not included in Dc. Passing this test only marks a page for retirement; its KV states remain resident until a later compression checkpoint. 
+
+Protecting incomplete transitions. A commit transition requires both a pre-commit and a post-commit measurement. The pre-commit measurement becomes available when the tool call is completed, whereas the post-commit measurement can only be collected after the returned obser-vation has been processed and the next-turn queries have been generated. During this interval, the page must remain in the KV cache. Otherwise, its post-commit deletion effect cannot be measured and its lifecycle state cannot be determined. At checkpoint j, let Pj ⊆ { 1, . . . , S j } denote all resident token indices belonging to pages awaiting post-commit measurements, and let Nj ⊆ P j denote the subset protected by CommitKV . To 7Algorithm 1: CommitKV for a multi-turn ReAct agent 
+
+Require: budget B, pending fraction η, page size G, window size W , and lifecycle thresholds  
+
+> 1:
+
+BN ← ⌊ ηB ⌋; Dc ← ∅ 
+
+> 2:
+
+for agent turn t = 1 , 2, . . . do  
+
+> 3:
+
+Prefill q if t = 1 , otherwise ot−1; decode zt, at 
+
+> 4:
+
+if t > 1 and Q+ 
+
+> ct−1
+
+is available then  
+
+> 5:
+
+Form Ect−1 ; compute R+ 
+
+> ct−1
+
+(E) and P ± 
+
+> ct−1
+
+(E) 
+
+> 6:
+
+Identify and sort completion candidates by Eqs. (9)–(10)  
+
+> 7:
+
+A ← ∅ 
+
+> 8:
+
+for each candidate E in increasing R+ 
+
+> ct−1
+
+(E) and decreasing R− 
+
+> ct−1
+
+(E) do  
+
+> 9:
+
+if R+ 
+
+> ct−1
+
+(A ∪ { E}) ≤ τjoint then  
+
+> 10:
+
+A ← A ∪ { E} 
+
+> 11:
+
+end if  
+
+> 12:
+
+end for  
+
+> 13:
+
+Dc ← D c ∪ A  
+
+> 14:
+
+end if  
+
+> 15:
+
+if at is a final answer then  
+
+> 16:
+
+return at 
+
+> 17:
+
+end if  
+
+> 18:
+
+Set commit ct; partition newly completed events into pages with |E| ≤ G 
+
+> 19:
+
+Compute R− 
+
+> ct
+
+(E) over Q− 
+
+> ct
+
+by Eqs. (5)–(8)  
+
+> 20:
+
+Protect pending pages by decreasing R− 
+
+> ct
+
+(E), subject to BN 
+
+> 21:
+
+if compression checkpoint j is reached then  
+
+> 22:
+
+Form Nj , exclude Dc, and select Ij with Nj ⊆ I j and |I j | ≤ B 
+
+> 23:
+
+Apply Ij by Eq. (4)  
+
+> 24:
+
+end if  
+
+> 25:
+
+end for 
+
+preserve these incomplete transitions without consuming an unbounded portion of the KV cache, 
+
+CommitKV protects at most 
+
+|N j | ≤ BN , BN = ⌊ηB ⌋, (12) where B is the total KV-cache token budget and η ∈ [0 , 1] specifies the fraction reserved for pend-ing measurements. If |P j | > B N , pages with larger pre-commit deletion effects are protected first until |N j | ≤ BN . These pages receive priority because a strong pre-commit effect is necessary for identifying a meaningful high-to-low transition. After the retirement and protection decisions, CommitKV determines the KV states retained at compression checkpoint j. Token indices belonging to pages in Dc are excluded, while the protected pending indices Nj are retained. The resulting retained-token index set Ij satisfies 
+
+Nj ⊆ I j , |I j | ≤ B. (13) The same index set Ij is applied to the cached keys, values, and their absolute positions, keeping them aligned after compression. 
+
+3.4 Overall Method Overview 
+
+Figure 2 summarizes the complete CommitKV pipeline, and Algorithm 1 gives its turn-by-turn procedure. At each turn, the server reuses the cached history and prefills q at the first turn or 8Table 1: Accuracy comparison across eight datasets and three model backbones under a 4096-token KV-cache budget. All results are reported as percentages ( %), and Average is the unweighted mean over the eight datasets. Bold marks the best compressed result for each backbone.                                                                                                                                             
+
+> Model Method Tool/evidence Reasoning Average FRAMES GAIA ToolHop xbench-DeepSearch GPQA Bamboogle MATH-500 AIME25
+> Qwen3-14B FullKV 36.29 21.36 76.90 20.00 50.51 67.20 76.00 56.67 50.62 SnapKV 19.54 9.71 12.94 6.00 23.23 57.60 68.40 13.33 26.34 R-KV 22.33 7.77 17.01 3.00 21.72 57.60 67.20 16.67 26.66 TriAttention 21.60 11.65 12.94 3.00 21.21 62.40 67.40 13.33 26.69
+> CommitKV 35.44 22.33 73.60 11.00 48.99 72.80 74.80 33.33 46.54
+> Qwen3.6-27B FullKV 58.98 37.86 75.13 27.00 58.59 90.40 87.80 83.33 64.89 SnapKV 50.85 22.33 73.86 15.00 27.78 75.20 84.20 40.00 48.65 R-KV 52.06 21.36 74.11 22.00 29.29 80.80 86.00 50.00 51.95 TriAttention 49.27 19.42 73.35 18.00 33.33 80.80 87.80 50.00 51.50
+> CommitKV 59.95 34.95 74.37 22.00 60.61 82.40 85.20 40.00 57.44
+> DeepSeek-R1-Distill-Llama-8B FullKV 12.14 3.88 67.01 3.00 33.33 32.00 71.00 33.33 31.96 SnapKV 11.41 3.88 63.96 3.00 35.35 28.00 65.40 16.67 28.46 R-KV 10.92 4.85 62.69 2.00 31.31 28.00 65.20 16.67 27.71 TriAttention 11.41 3.88 65.99 3.00 33.33 24.00 65.40 16.67 27.96
+> CommitKV 11.65 2.91 69.80 3.00 27.78 28.00 70.20 26.67 30.00
+
+only the new observation ot−1 thereafter. Once Q+ 
+
+> c
+
+is available, CommitKV forms Ec, the set of event pages whose deletion effects can be computed in both Q− 
+
+> c
+
+and Q+ 
+
+> c
+
+. It then computes R+ 
+
+> c
+
+(E),combines it with the stored R− 
+
+> c
+
+(E), assigns λc(E), and jointly validates completion candidates to construct Dc. If at is a tool call, newly completed events are partitioned into pages, and pages with larger R− 
+
+> c
+
+(E) are protected for the next post-commit measurement, subject to BN . At checkpoint 
+
+j, their resident token indices form Nj . CommitKV retains Nj , excludes token indices belonging to accepted pages in Dc, producing the retained-token index set Ij . Finally, Ij is applied to the keys, values, and absolute positions. 
+
+## 4 Experiments 
+
+4.1 Experimental Setup 
+
+Models. We evaluate six open-weight backbones spanning dense Transformers, hybrid architec-tures that combine linear attention with standard self-attention, distilled or specialized reason-ing models and mixture-of-experts (MoE) models: Qwen3-14B, Qwen3.6-27B [Yang et al., 2025], DeepSeek-R1-Distill-Llama-8B [Guo et al., 2025], GPT-OSS-20B [Agarwal et al., 2025], Phi-4-Reasoning [Abdin et al., 2025], and InternLM3-8B-Instruct [Cai et al., 2024]. The main text reports results for the first three models, while Appendix presents the remaining results. 
+
+Benchmarks. The evaluation covers two complementary types of benchmarks to assess both reasoning preservation and tool-mediated evidence use. The reasoning-intensive group contains GPQA [Rein et al., 2024], Bamboogle [Press et al., 2023], MATH-500 [Hendrycks et al., 2021], and AIME25 [Zhang and Team, 2025], which evaluate multi-step scientific, compositional, and math-ematical reasoning. The tool-use and evidence-intensive group contains FRAMES [Krishna et al., 2025], GAIA [Mialon et al., 2024], ToolHop [Ye et al., 2025], and xbench-DeepSearch [Chen et al., 2025], which evaluate tool use and evidence aggregation across multiple turns. 9Table 2: Comparison of accuracy for the Qwen3-14B model across eight datasets with KV cache budgets of 2048 and 8192 tokens. Average is the unweighted mean over all eight datasets; bold 
+
+marks the best compressed result under each cache budget.                                                                                      
+
+> Budget Method Tool/evidence Reasoning Average FRAMES GAIA ToolHop xbench-DeepSearch GPQA Bamboogle MATH-500 AIME25
+> 2048 FullKV 36.29 21.36 76.90 20.00 50.51 67.20 76.00 56.67 50.62 SnapKV 3.64 3.88 1.52 4.00 13.13 32.00 52.20 0.00 13.80 R-KV 5.70 6.80 5.58 3.00 12.63 41.60 51.00 3.33 16.21 TriAttention 6.07 5.83 3.30 1.00 12.12 29.60 52.40 0.00 13.79
+> CommitKV 28.28 15.53 41.88 13.00 47.47 58.40 73.00 30.00 38.45
+> 8192 SnapKV 35.80 18.45 69.80 12.00 30.00 69.60 77.40 33.33 43.30 R-KV 37.99 23.30 63.71 13.00 40.00 68.80 72.80 30.00 43.70 TriAttention 32.77 16.50 67.26 14.00 32.83 60.00 73.80 23.33 40.06
+> CommitKV 38.47 19.42 77.66 11.00 48.48 62.40 75.20 46.67 47.41
+
+Baselines. We compare CommitKV with representative KV-cache compression methods that provide publicly available implementations and can be reliably integrated into the same multi-turn inference framework. Specifically, we compare with FullKV , SnapKV [Li et al., 2024], R-KV [Cai et al., 2025a], and TriAttention [Mao et al., 2026]. SnapKV, R-KV, and TriAttention are commonly used KV cache compression baselines for reasoning models. During each ReAct agent turn, we adopt the same settings as R-KV and TriAttention: a compression policy is triggered every 128 decoded tokens, pruning the KV cache to the specified budget. Appendix provides further details. 
+
+Implementation Details. We conduct all experiments on 8 × NVIDIA H20 96GB GPUs. We implement CommitKV in SGLang [Zheng et al., 2024]. We evaluate KV-cache budgets of 2048, 4096, and 8192 tokens. We set W = 8 , G = 16 , η = 0 .125 , τuse = 0 .05 , τdead = τjoint = 0 .01 ,
+
+ρuse = 0 .75 , and ρdead = 0 .25 . At each commit, we scan at most 64 pages and protect at most 16 pending pages, with their total token count bounded by BN = ⌊ηB ⌋. We keep prompts, decoding settings, tool outputs, hardware, and tensor-parallel configurations fixed across methods. Appendix provides the complete protocol. 
+
+4.2 Main Results 
+
+Comparison with baselines. Table 1 reports the results across eight benchmarks and three model backbones under a 4096-token KV-cache budget. CommitKV achieves the highest average accuracy among all compressed methods, outperforming the strongest baseline by 19.85 %, 5.49 %,and 1.54 % on the three models, respectively. Furthermore, compared to FullKV, CommitKV incurs minimal performance degradation. 
+
+Cache budgets. Table 2 reports the average accuracy over the eight benchmarks for Qwen3-14B under 2048- and 8192-token KV-cache budgets. CommitKV achieves the best accuracy among the compressed methods under both budgets, demonstrating its robustness across different cache constraints. Notably, under the aggressive 2048-token budget setting, CommitKV outperforms the best R-KV method by 22.24 % and substantially narrows the gap with the FullKV. 
+
+4.3 Memory and Latency Analysis 
+
+We evaluate the memory and latency of Qwen3-14B on GAIA, xbench-DeepSearch, and GPQA under a 2048-token KV-cache budget. We report two complementary efficiency metrics: peak KV-10 cache memory and wall-clock time per completed sample. Peak KV-cache memory is the maximum per-GPU KV-cache footprint over a complete agent trajectory, while wall-clock time measures the average end-to-end time required to complete one sample over the full multi-turn execution process. Lower values are better for both metrics. GAIA xbench-DeepSearch GPQA 0510 15 20 25 30  
+
+> 8.96 7.25 21.74 5.17 5.17 5.21 5.44 5.24 5.17 5.17 5.19 5.19
+> 4.21 3.89 4.35
+> Peak KV memory (GB) ↓
+> GAIA xbench-DeepSearch GPQA 0510 15 20
+> 13.60 12.93 10.46 9.25 8.90 6.89 12.14 17.77 9.08 8.15 9.34 4.67
+> 4.40 6.29 1.86
+> Time per sample (s) ↓
+
+Efficiency (Qwen3-14B, 2,048 tokens)     
+
+> FullKV SnapKV R-KV TriAttention CommitKV
+
+Figure 3: Peak per-GPU KV-cache memory and wall-clock time per completed sample for Qwen3-14B on GAIA, xbench-DeepSearch, and GPQA with a 2048-token budget; lower is better. FullKV is the uncompressed reference. As shown in Figure 3, CommitKV consistently achieves the lowest peak KV-cache memory and wall-clock time across all three benchmarks. Specifically, CommitKV achieves up to 5.00 × savings in peak KV memory and a 5.62 × speedup in wall-clock time. These results show that lifecycle-aware cache retirement reduces the memory footprint while accelerating end-to-end agent execution without introducing prohibitive runtime overhead. 
+
+4.4 Ablation Studies 
+
+We conduct ablation studies on Qwen3-14B with a 4096-token KV-cache budget. We compare the complete CommitKV with five variants. w/o Lifecycle Mechanism removes all lifecycle-aware operations. w/o Pre-Commit State identifies retirement candidates using only L+ 
+
+> c
+
+(E) = 1 , instead of the paired high-to-low condition H− 
+
+> c
+
+(E) = L+ 
+
+> c
+
+(E) = 1 . w/o Percentile Calibration determines high-and low-influence states using only the absolute deletion effects and the thresholds τuse and τdead .
+
+w/o Joint Validation directly retires all completion candidates without applying Eq. (11). Finally, 
+
+w/o Transition Protection does not reserve Nj , allowing pages awaiting post-commit measurements to be removed at a compression checkpoint. Table 3: Ablation results for Qwen3-14B with a 4096-token KV-cache budget. Bold marks the best result.                              
+
+> Variant GAIA GPQA Bamboogle Average
+> w/o Lifecycle Mechanism 17.48 46.97 57.60 40.68 w/o Pre-Commit State 19.42 48.48 68.00 45.30 w/o Percentile Calibration 19.42 45.45 64.00 42.96 w/o Joint Validation 19.42 46.97 62.40 42.93 w/o Transition Protection 16.50 46.46 61.60 41.52
+> CommitKV (Full) 22.33 48.99 72.80 48.04
+
+As shown in Table 3, the complete CommitKV performs best on all three benchmarks. Dis-abling the lifecycle mechanism lowers the average accuracy from 48.04 % to 40.68 %. Removing the 11 pre-commit state reduces it to 45.30 %, showing that post-commit influence alone cannot distinguish dormant from completed pages. Removing percentile calibration and joint validation decreases av-erage accuracy by 5.08 % and 5.11 %, respectively. Removing transition protection causes a 6.52 %
+
+decrease, consistent with pending pages being removed before their post-commit measurements are collected. The above ablation experiments demonstrate that all components are effective. 
+
+## 5 Conclusion and Future Work 
+
+We present CommitKV , a lifecycle-aware KV cache compression method for multi-turn agents. It compares event pages across tool-call commits to distinguish dormant from completed informa-tion and jointly validates high-to-low candidates before retirement. Experiments demonstrate lower memory use, faster end-to-end inference, and better performance than existing methods. Future work will address the remaining gap to FullKV under small cache budgets. 
+
+## References 
+
+Marah Abdin, Sahaj Agarwal, Ahmed Awadallah, Vidhisha Balachandran, Harkirat Behl, Lingjiao Chen, Gustavo de Rosa, Suriya Gunasekar, Mojan Javaheripi, Neel Joshi, et al. Phi-4-reasoning technical report. arXiv preprint arXiv:2504.21318 , 2025. Sandhini Agarwal, Lama Ahmad, Jason Ai, Sam Altman, Andy Applebaum, Edwin Arbus, Rahul K Arora, Yu Bai, Bowen Baker, Haiming Bao, et al. gpt-oss-120b & gpt-oss-20b model card. arXiv preprint arXiv:2508.10925 , 2025. Zefan Cai, Wen Xiao, Hanshi Sun, cheng Luo, Yikai Zhang, Ke Wan, Yucheng Li, Yeyang Zhou, Li-Wen Chang, Jiuxiang Gu, Zhen Dong, Animashree Anandkumar, Abedelkadir Asi, and Junjie Hu. R-kv: Redundancy-aware kv cache compression for reasoning models. Advances in Neural Information Processing Systems , 38:60980–61005, 2025a. Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, and Wen Xiao. PyramidKV: Dynamic KV cache compression based on pyramidal information funneling. In Second Conference on Language Modeling , 2025b. URL https://openreview.net/forum?id=ayi7qezU87. Zheng Cai, Maosong Cao, Haojiong Chen, Kai Chen, Keyu Chen, Xin Chen, Xun Chen, Zehui Chen, Zhi Chen, Pei Chu, et al. Internlm2 technical report. arXiv preprint arXiv:2403.17297 , 2024. Chi-Chih Chang, Wei-Cheng Lin, Chien-Yu Lin, Chong-Yan Chen, Yu-Fang Hu, Pei-Shuo Wang, Ning-Chi Huang, Luis Ceze, Mohamed Abdelfattah, and Kai-Chiang Wu. Palu: Kv-cache com-pression with low-rank projection. In International Conference on Learning Representations ,volume 2025, pages 50222–50249, 2025. Ting-Yun Chang, Harvey Yiyun Fu, Deqing Fu, Chenghao Yang, Jesse Thomason, and Robin Jia. Value-aware stochastic kv cache eviction for reasoning models. arXiv preprint arXiv:2606.03928 ,2026. Kaiyuan Chen, Yixin Ren, Yang Liu, Xiaobo Hu, Haotong Tian, Tianbao Xie, Fangfu Liu, Haoye Zhang, Hongzhang Liu, Yuan Gong, et al. xbench: Tracking agents productivity scaling with profession-aligned real-world evaluations. arXiv preprint arXiv:2506.13651 , 2025. 12 Yuheng Cheng, Ceyao Zhang, Zhengwen Zhang, Xiangrui Meng, Sirui Hong, Wenhao Li, Zihao Wang, Zekai Wang, Feng Yin, Junhua Zhao, et al. Exploring large language model based intelligent agents: Definitions, methods, and prospects. arXiv preprint arXiv:2401.03428 , 2024. Krishna Teja Chitty-Venkata, Jie Ye, Siddhisanket Raskar, Anthony Kougkas, Xian Sun, Murali Emani, Venkatram Vishwanath, and Bogdan Nicolae. Pagedeviction: Structured block-wise kv cache pruning for efficient large language model inference. In Findings of the Association for Computational Linguistics: EACL 2026 , pages 3207–3218, 2026. Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S Kevin Zhou. Ada-kv: Optimizing kv cache eviction by adaptive budget allocation for efficient llm inference. Advances in Neural Information Processing Systems , 38:113152–113188, 2025. Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang, Djordje Jevdjic, Junbo Deng, Xingkun Yang, Zhou Yu, and Pengfei Zuo. {Cost-Efficient } large language model serving for multi-turn conversations with {CachedAttention }. In 2024 USENIX annual technical conference (USENIX ATC 24) , pages 111–126, 2024. Suyu Ge, Yunan Zhang, Liyuan Liu, Minjia Zhang, Jiawei Han, and Jianfeng Gao. Model tells you what to discard: Adaptive kv cache compression for llms. In International Conference on Learning Representations , volume 2024, pages 22975–22988, 2024. Zijie Geng, Jie Wang, Ziqi Liu, Feng Ju, Yiming Li, Xing Li, Mingxuan Yuan, Jianye Hao, Defu Lian, Enhong Chen, et al. Accurate kv cache eviction via anchor direction projection for efficient llm inference. Advances in Neural Information Processing Systems , 38:10420–10456, 2025. Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1 incentivizes reasoning in llms through reinforce-ment learning. Nature , 645(8081):633–638, 2025. Taicheng Guo, Xiuying Chen, Yaqi Wang, Ruidi Chang, Shichao Pei, Nitesh V Chawla, Olaf Wiest, and Xiangliang Zhang. Large language model based multi-agents: A survey of progress and challenges. arXiv preprint arXiv:2402.01680 , 2024. Xubin Hao, Hongjin Meng, Xin Yin, Jiawei Zhu, and Chenpeng Cao. Self-gc: Self-governing context for long-horizon llm agents. arXiv preprint arXiv:2607.00692 , 2026. Yefei He, Luoming Zhang, Weijia Wu, Jing Liu, Hong Zhou, and Bohan Zhuang. Zipcache: Ac-curate and efficient kv cache quantization with salient token identification. Advances in Neural Information Processing Systems , 37:68287–68307, 2024. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset. 
+
+Advances in Neural Information Processing Systems , 34, 2021. Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W Mahoney, Yakun S Shao, Kurt Keutzer, and Amir Gholami. Kvquant: Towards 10 million context length llm inference with kv cache quantization. Advances in Neural Information Processing Systems , 37:1270–1303, 2024. Long Hu, Nan Jia, Rui Wang, Jiahui Li, Qingyi Yang, Yixue Hao, Xianzhi Li, and Xiaofei Liao. TAKE: Task-aware chunked KV cache eviction for efficient long-context LLM prefill, 2026. URL https://openreview.net/forum?id=kMLfUshPwo. 13 Weizhong Huang, Yuxin Zhang, Xiawu Zheng, Fei Chao, and Rongrong Ji. Determining layer-wise sparsity for large language models through a theoretical perspective. arXiv preprint arXiv:2502.14770 , 2025a. Weizhong Huang, Yuxin Zhang, Xiawu Zheng, Yang Liu, Jing Lin, Yiwu Yao, and Rongrong Ji. Dynamic low-rank sparse adaptation for large language models. In International Conference on Learning Representations , volume 2025, pages 41926–41951, 2025b. Hao Kang, Qingru Zhang, Souvik Kundu, Geonhwa Jeong, Zaoxing Liu, Tushar Krishna, and Tuo Zhao. Gear: An efficient kv cache compression recipe for near-lossless generative inference of llm. 
+
+arXiv preprint arXiv:2403.05527 , 2024. Sanjay Kariyappa and G Edward Suh. Sidequest: Model-driven kv cache management for long-horizon agentic reasoning. arXiv preprint arXiv:2602.22603 , 2026. Minsoo Kim, Arnav Kundu, Han-Byul Kim, Richa Dixit, and Minsik Cho. Epicache: Episodic kv cache management for long-term conversation on resource-constrained environments. arXiv preprint arXiv:2509.17396 , 2025. Satyapriya Krishna, Kalpesh Krishna, Anhad Mohananey, Steven Schwarcz, Adam Stambler, Shyam Upadhyay, and Manaal Faruqui. Fact, fetch, and reason: A unified evaluation of retrieval-augmented generation. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Vol-ume 1: Long Papers) , pages 4745–4759, 2025. Junjie Li, Jiong Lou, and Jie Li. Intentkv: Cross-turn intent-aware kv cache pruning for agent inference. arXiv preprint arXiv:2606.09916 , 2026. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems , 37:22947–22970, 2024. Akide Liu, Jing Liu, Zizheng Pan, Yefei He, Gholamreza Haffari, and Bohan Zhuang. Minicache: Kv cache compression in depth dimension for large language models. Advances in Neural Information Processing Systems , 37:139997–140031, 2024a. Taowen Tony Liu, Jeffrey T. H. Wong, Can Xiao, Bowen Yang, Hao Mark Chen, and Yiren Zhao. AgentKV: Phase-aware KV eviction for agentic LLMs. In AdaptFM: Resource-Adaptive Founda-tion Model Inference , 2026. URL https://openreview.net/forum?id=s80e8otSxP. Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyrillidis, and Anshumali Shrivastava. Scissorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Information Processing Systems , 36:52342–52364, 2023. Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. Kivi: A tuning-free asymmetric 2bit quantization for kv cache. In International Conference on Machine Learning , pages 32332–32344. PMLR, 2024b. Kailin Lyu, Kangyi Wu, Pengna Li, Xiuyu Hu, Qingyi Si, Cui Miao, Ning Yang, Zihang Wang, Long Xiao, Lianyu Hu, et al. Himemvln: Enhancing reliability of open-source zero-shot vision-and-language navigation with hierarchical memory system. arXiv preprint arXiv:2603.14807 ,2026a. 14 Kailin Lyu, Zhiqiang Yuan, Jianwei He, Qiwei Yan, Xuanbo Su, Nanxing Hu, Yang Liu, Ce Hao, Shengqian Qin, Lianyu Hu, et al. Photocraft: Agentic reasoning with hierarchical self-evolving memory for deep image search. arXiv preprint arXiv:2606.03099 , 2026b. Yuexiao Ma, Taisong Jin, Xiawu Zheng, Yan Wang, Huixia Li, Yongjian Wu, Guannan Jiang, Wei Zhang, and Rongrong Ji. Ompq: Orthogonal mixed precision quantization. In Proceedings of the AAAI conference on artificial intelligence , volume 37, pages 9029–9037, 2023a. Yuexiao Ma, Huixia Li, Xiawu Zheng, Xuefeng Xiao, Rui Wang, Shilei Wen, Xin Pan, Fei Chao, and Rongrong Ji. Solving oscillation problem in post-training quantization through a theoreti-cal perspective. In 2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 7950–7959. IEEE, 2023b. Yuexiao Ma, Huixia Li, Xiawu Zheng, Feng Ling, Xuefeng Xiao, Rui Wang, Shilei Wen, Fei Chao, and Rongrong Ji. Affinequant: Affine transformation quantization for large language models. In 
+
+International Conference on Learning Representations , volume 2024, pages 50932–50951, 2024a. Yuexiao Ma, Huixia Li, Xiawu Zheng, Feng Ling, Xuefeng Xiao, Rui Wang, Shilei Wen, Fei Chao, and Rongrong Ji. Outlier-aware slicing for post-training quantization in vision transformer. In 
+
+Forty-first International Conference on Machine Learning , 2024b. Yuexiao Ma, Xuzhe Zheng, Jing Xu, Xiwei Xu, Feng Ling, Xiawu Zheng, Huafeng Kuang, Huixia Li, Xing Wang, Xuefeng Xiao, et al. Flow caching for autoregressive video generation. arXiv preprint arXiv:2602.10825 , 2026. Weian Mao, Xi Lin, Wei Huang, Yuxin Xie, Tianfu Fu, Bohan Zhuang, Song Han, and Yukang Chen. Triattention: Efficient long reasoning with trigonometric kv compression. arXiv preprint arXiv:2604.04921 , 2026. Tula Masterman, Sandi Besen, Mason Sawtell, and Alex Chao. The landscape of emerging ai agent architectures for reasoning, planning, and tool calling: A survey. arXiv preprint arXiv:2404.11584 ,2024. Venkatesha Matam and Keon Kim. Memdecay: Region-aware kv cache eviction for efficient llm agent inference. arXiv preprint arXiv:2607.10582 , 2026. Grégoire Mialon, Clémentine Fourrier, Thomas Wolf, Yann LeCun, and Thomas Scialom. Gaia: a benchmark for general ai assistants. In International Conference on Learning Representations ,volume 2024, pages 9025–9049, 2024. Junyoung Park, Dalton Jones, Matthew Morse, Raghavv Goel, Mingu Lee, and Christopher Lott. Keydiff: Key similarity-based kv cache eviction for long-context llm inference in resource-constrained environments. Advances in Neural Information Processing Systems , 38:5983–6019, 2025. Ofir Press, Muru Zhang, Sewon Min, Ludwig Schmidt, Noah Smith, and Mike Lewis. Measuring and narrowing the compositionality gap in language models. In Houda Bouamor, Juan Pino, and Kalika Bali, editors, Findings of the Association for Computational Linguistics: EMNLP 2023 ,pages 5687–5711, Singapore, December 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.findings-emnlp.378. URL https://aclanthology.org/2023.findings-emnlp.378/. 15 David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R. Bowman. Gpqa: A graduate-level google-proof q&a bench-mark. In First Conference on Language Modeling , 2024. URL https://openreview.net/forum?id= Ti67584b98. Andrew Rusli, Shreyan Paliwal, and Michael Jiao. Cache you later: Post-compression KV repair for long-context agentic LLM inference. In AdaptFM: Resource-Adaptive Foundation Model Inference ,2026. URL https://openreview.net/forum?id=LsrmZrp7tW. Luohe Shi, Hongyi Zhang, Yao Yao, Zuchao Li, and Hai Zhao. Keep the cost down: A review on methods to optimize llm’s kv-cache consumption. arXiv preprint arXiv:2407.18003 , 2024. Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: En-hanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. Hanshi Sun, Li-Wen Chang, Wenlei Bao, Size Zheng, Ningxin Zheng, Xin Liu, Harry Dong, Yuejie Chi, and Beidi Chen. Shadowkv: Kv cache in shadows for high-throughput long-context llm inference. In International Conference on Machine Learning , pages 57355–57373. PMLR, 2025. Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context llm inference. In International Conference on Machine Learning , pages 47901–47911. PMLR, 2024. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. GAO WEI, Xinyu Zhou, Peng Sun, Tianwei Zhang, and Yonggang Wen. Rethinking key-value cache compression techniques for large language model serving. Proceedings of Machine Learning and Systems , 7, 2025. Tianyu Xie, Yuexiao Ma, Yuhang Wu, Wang Chen, Jiayi Ji, Tat-Seng Chua, Xiawu Zheng, and Rongrong Ji. Training-free multimodal large language model orchestration. arXiv preprint arXiv:2508.10016 , 2025. Tianyu Xie, Jinfa Huang, Yuexiao Ma, Rongfang Luo, Yan Yang, Wang Chen, Yuhui Zeng, Ruize Fang, Yixuan Zou, Xiawu Zheng, et al. Socialomni: Benchmarking audio-visual social interactivity in omni models. arXiv preprint arXiv:2603.16859 , 2026. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 ,2025. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In The Eleventh International Conference on Learning Representations , 2023. URL https://openreview.net/forum?id=WE_ vluYUL-X. Junjie Ye, Zhengyin Du, Xuesong Yao, Weijian Lin, Yufei Xu, Zehui Chen, Zaiyuan Wang, Sining Zhu, Zhiheng Xi, Siyu Yuan, Tao Gui, Qi Zhang, Xuanjing Huang, and Jiecao Chen. ToolHop: A query-driven benchmark for evaluating large language models in multi-hop tool use. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long 
+
+16 Papers) , pages 2995–3021, Vienna, Austria, July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi: 10.18653/v1/2025.acl-long.150. URL https://aclanthology.org/ 2025.acl-long.150/. Hailin Zhang, Xiaodong Ji, Yilin Chen, Fangcheng Fu, Xupeng Miao, Xiaonan Nie, Weipeng Chen, and Bin Cui. Pqcache: Product quantization-based kvcache for long context llm inference. Pro-ceedings of the ACM on Management of Data , 3(3):1–30, 2025a. Yabo Zhang, Yihan Zeng, Qingyun Li, Zhen Hu, Kavin Han, and Wangmeng Zuo. Tool-r1: Sample-efficient reinforcement learning for agentic tool use. arXiv preprint arXiv:2509.12867 , 2025b. Yifan Zhang and Math-AI Team. American invitational mathematics examination (aime) 2025, 2025. URL https://huggingface.co/datasets/math-ai/aime25. Yuxin Zhang, Yuxuan Du, Gen Luo, Yunshan Zhong, Zhenyu Zhang, Shiwei Liu, and Rongrong Ji. Cam: Cache merging for memory-efficient llms inference. In International Conference on Machine Learning , pages 58840–58850. PMLR, 2024. Yuxin Zhang, Weizhong Huang, Yuexiao Ma, Yunshan Zhong, Xiawu Zheng, and Rongrong Ji. Sparsity-aware prompt tuning: A simple and effective way to fine-tune high-sparsity llms. In The Third Conference on Parsimony and Learning (Proceedings Track) , 2026. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient gen-erative inference of large language models. Advances in Neural Information Processing Systems ,36:34661–34710, 2023. Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. Sglang: Efficient execution of structured language model programs. Advances in neural information processing systems , 37:62557–62583, 2024. Xiawu Zheng, Yuexiao Ma, Teng Xi, Gang Zhang, Errui Ding, Yuchao Li, Jie Chen, Yonghong Tian, and Rongrong Ji. An information theory-inspired strategy for automatic network pruning. arXiv preprint arXiv:2108.08532 , 2021. 17

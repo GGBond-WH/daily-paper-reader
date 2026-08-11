@@ -1,0 +1,153 @@
+{
+  "date": "20260811",
+  "date_label": "",
+  "generated_at": "2026-08-11 20:59:00 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2608.08081v1",
+      "route": "202608/11/2608.08081v1-rotaryquant-fitting-120b-moe-models-on-consumer-hardware-via-fused-compressed-space-attention",
+      "title": "RotaryQuant: Fitting 120B MoE Models on Consumer Hardware via Fused Compressed-Space Attention",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 10.0,
+      "evidence": "包含IsoQuant KV缓存压缩的三轴压缩方案，在消费硬件上运行120B MoE模型",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.08878v1",
+      "route": "202608/11/2608.08878v1-distillcache-kl-guided-adaptive-kv-cache-eviction-for-memory-efficient-llm-inference",
+      "title": "DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 10.0,
+      "evidence": "提出基于强化学习的KV缓存驱逐框架，减小内存占用",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.07855v1",
+      "route": "202608/11/2608.07855v1-commitkv-lifecycle-aware-kv-cache-compression-via-commit-transitions-for-multi-turn-agents",
+      "title": "CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "提出基于提交转换的生命周期感知KV缓存压缩，针对多轮智能体轨迹",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.07915v1",
+      "route": "202608/11/2608.07915v1-spectra-pushing-the-kv-cache-beyond-the-2-bit-cliff-via-spectral-transform-coding",
+      "title": "SPECTRA: Pushing the KV Cache Beyond the 2-Bit Cliff via Spectral Transform Coding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "利用谱变换编码突破2比特量化极限的KV缓存压缩",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.08097v1",
+      "route": "202608/11/2608.08097v1-oasiskv-scaling-in-decode-kv-cache-beyond-hbm-with-lookahead-sparse-prefetching",
+      "title": "OasisKV: Scaling In-Decode KV Cache Beyond HBM with Lookahead Sparse Prefetching",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "通过前瞻稀疏预取将完整KV缓存存储与HBM解耦",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.08684v1",
+      "route": "202608/11/2608.08684v1-ripplekv-cross-layer-kv-cache-allocation-via-perturbation-propagation",
+      "title": "RippleKV: Cross-Layer KV Cache Allocation via Perturbation Propagation",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "基于扰动传播的跨层KV缓存分配方法",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.09412v1",
+      "route": "202608/11/2608.09412v1-kvdiagnosis-a-diagnostic-benchmark-for-kv-cache-compression-in-long-context-language-models",
+      "title": "KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "长上下文语言模型的KV缓存压缩诊断基准",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.08086v1",
+      "route": "202608/11/2608.08086v1-archer-adaptive-reuse-of-cached-hidden-states-for-efficient-rollback-in-diffusion-language-models",
+      "title": "Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "提出面向扩散语言模型的KV缓存方法，适应回滚场景的缓存复用",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    },
+    {
+      "paper_id": "2608.09225v1",
+      "route": "202608/11/2608.09225v1-governing-the-kv-cache-preventing-timing-side-channel-leakage-in-multi-tenant-llm-inference",
+      "title": "Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "聚焦多租户LLM推理中的前缀缓存，并提出治理机制防止侧信道攻击",
+      "first_seen_at": "2026-08-11 20:59:00 UTC",
+      "updated_at": "2026-08-11 20:59:00 UTC"
+    }
+  ]
+}

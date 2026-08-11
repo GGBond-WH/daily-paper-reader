@@ -1,0 +1,732 @@
+Title: KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models
+
+URL Source: https://arxiv.org/pdf/2608.09412v1
+
+Published Time: Tue, 11 Aug 2026 02:10:13 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models 
+
+# Chen Qiu 
+
+KAUST Thuwal, Saudi Arabia chen.qiu@kaust.edu.sa 
+
+# Ziwu Liu 
+
+KAUST Thuwal, Saudi Arabia ziwu.liu@kaust.edu.sa 
+
+# Chao Fei 
+
+KAUST Thuwal, Saudi Arabia chao.fei@kaust.edu.sa 
+
+# Guozhong Li 
+
+KAUST Thuwal, Saudi Arabia guozhong.li@kaust.edu.sa 
+
+# Panos Kalnis 
+
+KAUST Thuwal, Saudi Arabia panos.kalnis@kaust.edu.sa 
+
+## ABSTRACT 
+
+KV-cache compression reduces long-context memory, but aggre-gate task scores reveal neither which correct executions fail nor why. We present KVDiagnosis, a diagnostic dataset and benchmark with three contributions. First, a 25-method taxonomy groups meth-ods into five mechanism families and links them to eight verified implementations and their valid diagnostic measurements. Sec-ond, for every supported method–setting, we evaluate all sources in each fixed split against a per-source FullCache control before selecting FullCache-correct/compressed-wrong (C →W) rows sepa-rately for each method–setting, so no compressor defines another’s test set. Third, a common record format links paired outputs and run metadata to cache, likelihood, attention, and decoding mea-surements with explicit applicability states. On Qwen3-8B, four evidence-aware workloads yield 59 800 supported compressed runs over 2600 sources and 12 520 C →W rows. Under fixed diagnostic rules, 63.2% have low or partial measured/projected coverage. Only 19 rows (0.2%) combine high measured/projected coverage with strong likelihood drift; another 2,126 (17.0%) preserve structural position addressability, for which representation fidelity remains unknown, while showing the same drift. Against C →C success controls, all ten diagnostics separate failed from successful com-pression (stratified AUROC 0.684–0.871). Among 96 reproducible low-EAR failures, a controlled 4 × evidence-attention boost repairs 29.2%, versus 6.3% under a count-matched sham intervention and 3.3% degradation on matched C →C controls. Code and data are available at § KVDiagnosis .
+
+ACM Reference Format: 
+
+Chen Qiu, Ziwu Liu, Chao Fei, Guozhong Li, and Panos Kalnis. 2027. KVDiag-nosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models. In Proceedings of The 33rd ACM SIGKDD Conference on Knowledge Discovery and Data Mining (KDD ’27). ACM, New York, NY, USA, 17 pages. 
+
+> Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+> KDD ’27, August 1–5, 2027, San Jose, CA, USA
+> © 2027 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+
+## 1 INTRODUCTION 
+
+Long-context language models make document-scale question an-swering, retrieval, and reasoning possible, but their usable context is constrained by the state carried through autoregressive decod-ing. Every additional context token contributes a key and value at every layer, so KV-cache memory grows with sequence length and concurrent requests. Compression directly targets this state and is therefore an important route to practical long-context inference. It also creates an evaluation problem: when a previously correct answer breaks, a memory-footprint statistic and final task score do not identify what changed. KV-cache compressors transform different objects. Some evict token positions, others redistribute a fixed budget across layers or heads, and still others prune channels, quantize tensors, or retain semantic units [11, 27, 31, 34, 45, 46]. Each mechanism changes a different cache object and exposes different measurements. A label such as “50%” may mean half the positions for one method, fewer key channels for another, and lower numerical precision for a third. A fair benchmark must state what each setting means and use only diagnostics valid for its transformed object. Figure 1 makes this variation explicit by organizing 25 represen-tative methods into five primary mechanism families. Each method is placed by its main compression decision and transformed cache object; secondary traits may cross family boundaries. The map provides survey coverage, while boldface marks eight verified im-plementations selected for evaluation across all five families. This separation keeps the literature coverage broader than the claims supported by our experiments. Existing resources address complementary parts of this problem. Long-context benchmarks provide broad or controlled tasks [2, 20, 28], while surveys and cross-method studies organize compres-sors and report quality–efficiency trade-offs [25, 41, 49]. Gao et al. additionally identify per-sample performance drops and release a thresholded negative-sample benchmark, while Chen et al. charac-terize instruction-level failures and test changes to eviction meth-ods [5, 13]. These resources establish that aggregate scores can hide failures on individual examples. Yet no public resource we identified jointly provides (i) complete per-source results with Full-Cache controls; (ii) method–setting-specific FullCache-correct to compressed-wrong (C →W) records selected only after all source-level runs are complete; and (iii) valid cache, likelihood, attention, arXiv:2608.09412v1 [cs.AI] 10 Aug 2026 KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 
+
+KV-cache compression taxonomy Boldface : evaluated core 
+
+Token eviction / position selection Budget allocation / hierarchy Query-aware access / channel pruning Tensor / rep-resentation compression Chunk / semantic / learned state                   
+
+> Signal: recency, attention, or key geometry
+> Object: token positions
+> StreamingLLM [45] H2O [52] Scissorhands [33]
+> TOVA [37]
+> SnapKV [27]
+> KeyDiff [38]
+> Signal: layer/head quota allocation
+> Object: token slots or quotas PyramidKV [3]
+> AdaKV [11] HeadKV [12] PolyKV [9]
+> Signal: current query or channel salience
+> Object: blocks, positions, or channels
+> ThinK [46] Keyformer [1] Quest [42] Q-Filters [16] CHESS [10]
+> Signal: numerical or latent approximation
+> Object: precision or hidden dimension
+> QuantizedCache [21] KIVI [34] KVQuant [19] CommVQ [26] Palu [4] SALS [35]
+> Signal: semantic redundancy or reconstruction
+> Object: chunks or KV states
+> ChunkKV [31] DMC [36] KVzip [23] SCOPE [44]
+
+Figure 1: KV-cache compression taxonomy and evaluated subset. Each method is assigned by its primary compression decision and transformed object; bold names denote the eight verified implementations. Table 6 in the Appendix provides the detailed method-to-diagnostic mapping. 
+
+and decoding traces for those records. To our knowledge, no bench-mark connects all three in one reusable diagnostic dataset. This missing connection matters in two ways. First, the same final answer error can arise because a compressor deletes answer-supporting context, damages the representations stored in retained entries, weakens generation-time access, or changes the result dur-ing decoding or scoring. These causes require different fixes: higher precision cannot recover evicted evidence, and retaining more po-sitions cannot repair a representation error. Second, failure sets are method-specific. Evaluating one method only on failures found for another changes the test distribution and can hide distinctive cases, even when their aggregate scores are comparable. A ranking alone therefore cannot explain a failure, select a repair, or show that two compressors are interchangeable. We introduce KVDiagnosis, a paired diagnostic benchmark designed around this distinction. FullCache is executed once per source; every supported method–setting cell then covers all sources in the fixed benchmark split with the same model, prompt, tok-enizer, decoder, and scorer. After completing the run matrix, the benchmark extracts each cell’s C →W rows and attaches every ap-plicable diagnostic. Unsupported settings, execution errors, and inapplicable traces retain distinct status codes rather than disap-pearing from the accounting. A method’s own failure set shows what it breaks, while intersections are used only for matched com-parisons. This preserves scores and denominators over all sources without letting failure selection redefine the evaluated source set. On Qwen3-8B across four evidence-aware workloads [40], the benchmark contains 59 800 supported compressed runs over 2600 sources and 12 520 method–setting C →W rows. Under fixed diag-nostic rules, 63.2% have low or partial measured/projected support coverage. High measured/projected coverage with strong likeli-hood drift is rare (19 rows), whereas 2,126 rows show drift under structural position addressability, which does not measure repre-sentation fidelity. Methods with comparable aggregate quality can nevertheless fail on different source sets. 
+
+Contributions. This paper makes the following contributions. 
+
+• Mechanism coverage. We synthesize a representative 25-method taxonomy and a clear mapping from five mechanism families to eight verified implementations and the diagnos-tics each supports. 
+
+• Evaluation on all sources. We pair every source in each fixed split with FullCache, select failures separately for each method–setting, and link outputs and run metadata to valid cache, likelihood, attention, and decoding measurements without changing the evaluated source set. 
+
+• Paired empirical resource. We construct 59 800 supported compressed runs and 12 520 failure rows across four work-loads, validate the diagnostics against C →C controls, and test low-EAR failures with a targeted repair. 
+
+## 2 RELATED WORK 
+
+We organize related work into two groups: compression mecha-nisms that define what a method changes, and long-context re-sources and systems that define what existing evaluations report. Table 1 previews the resulting benchmark-level distinction. 
+
+## 2.1 KV-Cache Compression Landscape 
+
+Figure 1 organizes 25 representative methods by their primary compression decision and transformed cache object. Position meth-ods use recency, attention, or key geometry [27, 33, 37, 38, 45, 52]. Allocation methods redistribute slots across layers or heads, includ-ing recent head-level and heterogeneous layer-wise policies [3, 9, 11, 12]. Query-aware access and channel-pruning methods select pages, tokens, or channels at access time [1, 10, 16, 42, 46]. Ten-sor/representation methods range from scalar and vector quantiza-tion to low-rank latent caches [4, 19, 21, 26, 34, 35]; chunk, semantic, and learned-state methods compress larger units [23, 31, 36, 44]. Other designs not included in the main comparison classify attention heads or estimate expected attention [8, 14]; mix precision, product quantization, or coupled low-bit codes [18, 47, 50, 51]; and merge states across tokens and layers [15, 24, 29]. ART instead skips negligible KV blocks during attention and complements, rather than implements, a retained-cache policy [39]. Reviews summarize this rapidly changing space [25, 41]; related studies compare long-context approaches, deployed-system behavior, or data-dependent KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+Table 1: Released support for attributing and diagnosing KV-cache compression failures (C →W: correct under FullCache, wrong after compression). Grouped rows report the union across cited resources.                     
+
+> Resource Released outputs Matched FullCache baseline Failure cohort Diagnostic measurements
+> Long-context task suites [2, 20] Task-level aggregates None None None Aggregate KV evaluations [28, 49] Task–method aggregates Aggregate only None Study-level attention/behavior Negative-sample benchmark [13] Selected source-level failures Per source Score-loss threshold Outcome degradation Failure-mode study [5] Study-specific source/instruction cases Per source Study-defined Eviction bias; instruction behavior
+> KVDiagnosis (Ours) Complete source–method–setting matrix Matched per source C→W after matrix completion Cache retention/coverage; paired logits, attention, decoding
+
+compressibility [6, 13, 49]. Our representative taxonomy defines transformed objects and valid measurements. The same measurements do not apply unchanged to every family. Position retention is measured for token eviction, projected from chunks, N/A when positions are only structurally addressable, and potentially undefined for learned state. Cross-family diagnostics therefore require mechanism-specific interpretation. The detailed Appendix table (Table 6) mirrors Figure 1; its Evaluated entries identify the eight implementations spanning all five mechanisms. 
+
+## 2.2 Long-Context and KV-Cache Benchmarks 
+
+LongBench provides broad long-document tasks, while RULER of-fers controlled retrieval, tracking, and aggregation at configurable lengths [2, 20]. Lost in the Middle shows that evidence position affects long-context performance [30]. Qasper and HotpotQA pro-vide evidence-annotated questions [7, 48]; SCBench studies cache generation, compression, retrieval, and loading over multi-turn workloads [28]. No reviewed public resource combines complete per-source method–setting results, cell-specific C →W rows, and valid cache and predictive-distribution measurements. CacheGen compresses KV tensors for streaming [32]; serving methods optimize memory movement and execution, but neither replaces paired correctness analysis. Recent benchmarks make reusable data, evaluation, and release requirements explicit through production workloads, standardized frameworks, or separated ca-pability dimensions [17, 22, 43]. KVDiagnosis applies this release-oriented design to compression failures. Matched pairs hold model, prompt, tokenizer, decoding, and scorer fixed; complete coverage requires every planned cell or explicit N/A. 
+
+## 3 BENCHMARK DESIGN 
+
+We define the eligible mechanisms, construct the complete paired run matrix, and specify when each diagnostic applies. We separate overall quality from failure analysis while retaining the source and configuration details needed for reproducible reuse. 
+
+## 3.1 Scope and Evaluation Units 
+
+The scope follows three design constraints. First, the benchmark covers inference-time transformations that change the stored KV representation or the entries available to one attention operation while model parameters remain fixed. Architectural KV-head re-duction, paging, offloading, scheduling, and cross-request reuse are related mechanisms rather than benchmark subjects. Second, the evaluated methods must span distinct transformed objects in the survey taxonomy. Third, an implementation is included only after tests confirm that it runs the intended compression method and produces every expected result. The resulting eight evaluated methods span position selection, head-wise allocation, channel pruning, chunk retention, and ten-sor precision. Figure 1 shows this family coverage; Table 2 lists each implementation’s transformed unit and valid cache measure-ments. Seven methods use kvpress 0.5.3; QuantizedCache uses the Transformers/HQQ cache implementation [21]. Four record types prevent ambiguous claims. A source is one task prompt. A run record pairs a source with one method and configured setting, including settings that the implementation does not support. A supported run completes compressed inference. A 
+
+failure row is a supported run whose paired FullCache answer is correct and compressed answer is wrong. Because one source can yield several failures, run-, row-, and unique-source counts differ. Figure 2 summarizes how the complete paired run matrix becomes a diagnostic dataset without changing the evaluated source set. 
+
+## 3.2 Task and Method Adapters 
+
+A task adapter applies documented source-inclusion rules, then fixes the source identifier, prompt template, model input, reference answer, scorer version, and context length before compression. It aligns evidence after final-prompt tokenization because source off-sets can shift when instructions and chat formatting are added. RULER generators provide exact answer-bearing spans; Qasper and HotpotQA map official support text into the prompt and record alignment success. Once a split is fixed, missing or ambiguous map-pings never remove a source; they only make the affected cache diagnostic unavailable during paired failure analysis. A method adapter receives the same tokenized prompt and re-turns status, configured setting, actual method parameter, output, scorer input, and code/configuration versions. When applicable, it also maps retained token, block, or chunk identifiers to orig-inal positions. Likelihood traces use the same reference tokens under FullCache and compression. Attention traces use a separate eager-mode run only when compression behavior is unchanged, so inspectability does not confer an evaluation advantage. Record keys contain workload, source, model revision, method, setting, and run configuration. Aggregation verifies unique keys, FullCache partners, prompt hashes, numeric fields, and complete fixed-split coverage. Execution errors are audited separately rather than scored as wrong answers, and unsupported settings remain distinct from execution errors. KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 
+
+Table 2: Fixed benchmark scope. Top: source splits and evidence metadata. Bottom: valid cache measurements for the eight evaluated implementations. 
+
+Workload Sources Context Task and evidence Evaluation metric 
+
+RULER-8K 1100 8K Controlled retrieval, tracking, and extraction; generator-derived spans Exact answer / task score RULER-16K 1100 16K Same controlled families at longer target context; generator-derived spans Exact answer / task score Qasper 200 Long document Document QA; answer-supporting evidence annotations Normalized reference containment HotpotQA 200 Multi-document Multi-hop QA; supporting-fact sentence spans Normalized reference containment 
+
+Evaluated implementation(s) Transformed unit Supported cache measurements 
+
+StreamingLLM, SnapKV, TOVA, KeyDiff Token positions or clusters Measured original-token coverage AdaKV Head-wise token slots Measured coverage with head slots kept separate ThinK Key channels Structural position addressability; ERR/ECov N/A 
+
+QuantizedCache (HQQ) Key/value tensor precision Structural position addressability; ERR/ECov N/A 
+
+ChunkKV Semantic chunks Projected chunk-to-token coverage 
+
+1 Fixed run setup and verified adapters 
+
+FullCache control 
+
+once per source reused across cells 
+
+Compressed matrix 
+
+supported (𝑚, 𝑏 ) cells status recorded per run 
+
+2 Results for all runs 
+
+task score | four transitions | C→W rate denominator: all FullCache-correct sources in the cell 
+
+3 Complete all runs, then extract F𝑑,𝑚,𝑏 
+
+that cell’s own C →W rows 
+
+4 Available paired diagnostics 
+
+Cache 
+
+mapped retention 
+
+Likelihood 
+
+predictive drift 
+
+Attention 
+
+support access 
+
+Decoding 
+
+output / scorer 
+
+5 Reporting views 
+
+Method failure profile 
+
+coverage of F𝑑,𝑚,𝑏 
+
+Controlled comparison 
+
+intersection + sizes + Jaccard 
+
+Figure 2: All supported runs precede cell-wise C →W selec-tion and diagnostics. Method-specific sets preserve coverage; intersections support controlled comparisons. 
+
+## 3.3 Evaluation on All Sources and Failure Analysis 
+
+We first evaluate every source, then analyze failures without chang-ing the source set. Let X𝑑 be workload 𝑑 ’s fixed benchmark source split, 𝑆 𝐹 𝑖 the FullCache score, and 𝑆 𝐶 𝑖,𝑚,𝑏 the compressed score for method 𝑚 at compression setting 𝑏 . FullCache is executed once per source. Every supported (𝑚, 𝑏 ) cell then runs on every 𝑖 ∈ X 𝑑 
+
+with the same prompt, tokenizer, decoder, and scorer. Retention and channel-pruning methods use the 75/50/25 labels, while Quantized-Cache uses 8b/4b/2b; Table 7 defines the corresponding retained positions, key channels, or bit width, and no byte equivalence is assumed across mechanisms. 
+
+Evaluation on all sources. Conventional quality is computed before any diagnostic selection: 
+
+𝑄 𝑑,𝑚,𝑏 = 1
+
+|X 𝑑 |∑︁ 𝑖 ∈ X 𝑑 
+
+𝑆 𝐶 𝑖,𝑚,𝑏 .
+
+We additionally store the four correctness transitions, C →C, C →W, W→W, and W →C. The compression-induced failure rate uses all FullCache-correct source instances in the supported cell: 
+
+𝑟 𝐶𝑊 𝑑,𝑚,𝑏 = |F 𝑑,𝑚,𝑏 ||{ 𝑖 ∈ X 𝑑 : correct 𝐹 𝑖 = 1}| .
+
+Across workloads, both values are source weighted. Pooled quality averages all source scores; pooled C →W rate sums failures and divides by the corresponding FullCache-correct supported pairs. These results show how often a compressor succeeds and remain comparable with an ordinary benchmark report. 
+
+Paired failure analysis. Only after every supported run is com-plete do we extract 
+
+F𝑑,𝑚,𝑏 = {𝑖 ∈ X 𝑑 : correct 𝐹 𝑖 = 1 ∧ correct 𝐶 𝑖,𝑚,𝑏 = 0}.
+
+Diagnostic means are taken over F𝑑,𝑚,𝑏 , not X𝑑 . They profile ob-served failures, not global quality or method rankings. This order prevents cross-method selection bias. 
+
+Method-specific and matched views. A method’s own F𝑑,𝑚,𝑏 
+
+is the correct view for asking what it breaks. For diagnostic 𝑔 , let 
+
+A𝑔 𝑑,𝑚,𝑏 ⊆ X 𝑑 contain sources with the required paired trace, meta-data, defined denominator, and metric-specific integrity check. A direct comparison between (𝑚, 𝑏 𝑚 ) and (𝑛, 𝑏 𝑛 ) uses I𝑔 = F𝑑,𝑚,𝑏 𝑚 ∩F𝑑,𝑛,𝑏 𝑛 ∩A 𝑔 𝑑,𝑚,𝑏 𝑚 ∩A 𝑔 𝑑,𝑛,𝑏 𝑛 . The setting pair must have a stated basis for comparison; equal labels alone do not imply equal bytes. Each matched comparison reports intersection, union, and Jaccard. Low Jaccard—not a small intersection alone—shows that the methods fail on different sources. 
+
+## 3.4 Run Records and Coverage 
+
+Every run record stores identifiers, code and configuration versions, the configured setting and its actual method parameter, and a run status. Supported runs add paired raw and normalized outputs, scorer values, and correctness transitions; C →W failure rows may KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+Table 3: Run accounting. N/A denotes ThinK/25%; FC-eligible and C →W count FullCache-correct supported pairs, and Unique counts affected sources.                                           
+
+> Workload Src. Records N/A Runs FC-elig. C→WUnique
+> RULER-8K 1100 26 400 1100 25 300 22 264 5970 968
+> RULER-16K 1100 26 400 1100 25 300 21 873 5396 951
+> Qasper 200 4800 200 4600 1357 327 49
+> HotpotQA 200 4800 200 4600 3404 827 126
+> Total 2600 62 400 2600 59 800 48 898 12 520 2094
+
+also include support metadata and available diagnostics. Retained units map back to original token positions only when the method provides a valid direct or projected mapping. ThinK and Quan-tizedCache instead record structural position addressability, while ERR and ECov remain N/A ; unsupported settings and diagnostics without a valid trace likewise record N/A with a reason. Table 3 accounts for all 2600 sources and 62 400 records. Ex-cluding one unsupported ThinK/25% cell per source leaves 59 800 completed runs; FullCache correctness defines C →W eligibility. 
+
+## 3.5 Benchmark Use and Reporting 
+
+KVDiagnosis treats signatures as component-specific routes, not causal labels; the low-EAR intervention, sham, and C →C safety control validate one route. Reports pair task quality and C →W rate with cache representation, supported and N/A counts, valid denom-inators, and method-specific failure sets. Settings rank compression only within a method, and matched comparisons report overlap; distinct failures are not collapsed into a composite score. Appendix Table 10 specifies the versioned release files and con-sistency checks; each published C →W row links to its FullCache pair, diagnostics, and generator. The record format also accommodates new compressors through supported diagnostics and new tasks through a scorer and optional support evidence, without changing existing rows, setting seman-tics, or failure selection. 
+
+## 4 DIAGNOSTIC METRICS 
+
+A C →W transition establishes that compression changed a correct answer; it does not locate the change. Prior sample- and instruction-level studies expose this gap but do not provide a shared, struc-tured failure record [5, 13]. We therefore ask whether the evidence was retained, whether its effect on next-token predictions was preserved, whether generation could access it, and whether the output changed only during decoding or scoring. These measure-ments yield component-specific signatures; Section 5 evaluates their failure–success separation and tests the low-EAR access signature with a paired intervention. 
+
+Cache retention. Let 𝑧 = (𝑑, 𝑖, 𝑚, 𝑏 ) index workload 𝑑 , source 𝑖 ,method 𝑚 , and setting 𝑏 . Let 𝐸 𝑖, 1, . . . , 𝐸 𝑖,𝐽 𝑖 be the nonempty evidence spans and 𝐸 𝑖 = Ð𝑗 𝐸 𝑖,𝑗 their token positions. When a valid original-token map exists, 𝑅 𝑧,𝑢 is the set represented after compression in layer–KV-head slot 𝑢 ∈ U 𝑧 . Let 𝑐 𝑧,𝑢,𝑗 = |𝑅 𝑧,𝑢 ∩ 𝐸 𝑖,𝑗 |/| 𝐸 𝑖,𝑗 | and set 
+
+𝜏 = 0.5. 
+
+ERR 𝑧 = 1
+
+| U 𝑧 |∑︁ 𝑢 ∈U 𝑧 
+
+|𝑅 𝑧,𝑢 ∩ 𝐸 𝑖 ||𝐸 𝑖 | ,
+
+ECov 𝑧 = 1
+
+| U 𝑧 | 𝐽 𝑖 ∑︁ 𝑢 ∈U 𝑧 
+
+> 𝐽 𝑖
+
+∑︁  
+
+> 𝑗 =1
+
+1[𝑐 𝑧,𝑢,𝑗 ≥ 𝜏 ].
+
+Slot averaging prevents a cross-head union from producing artificial perfect coverage. We record four applicability states: measured token coverage for direct original-position maps, projected token coverage 
+
+for ChunkKV’s chunk-to-token map, structural position addressabil-ity for ThinK and QuantizedCache, and N/A when none applies. ERR and ECov are numeric only in the first two states. Structural addressability is recorded separately; annotated evidence positions remain addressable, but representation fidelity is unknown. 
+
+Predictive distribution. For reference tokens 𝑦 𝑖, 1: 𝑇 𝑖 , let 𝑝 𝐹 𝑑,𝑖,𝑡 and 
+
+𝑝 𝐶 𝑧,𝑡 be the paired FullCache and compressed teacher-forced next-token distributions, and let 𝜖 > 0 be a small constant for numerical stability. FullCache is independent of 𝑚, 𝑏 , whereas its compressed partner is not: 
+
+NLL 𝐹 𝑑,𝑖 = − 1
+
+𝑇 𝑖 ∑︁ 𝑡 
+
+log 𝑝 𝐹 𝑑,𝑖,𝑡 (𝑦 𝑖,𝑡 ),
+
+NLL 𝐶 𝑧 = − 1
+
+𝑇 𝑖 ∑︁ 𝑡 
+
+log 𝑝 𝐶 𝑧,𝑡 (𝑦 𝑖,𝑡 ),
+
+ΔNLL 𝑧 = NLL 𝐶 𝑧 − NLL 𝐹 𝑑,𝑖 , GPR 𝑧 = 𝑒 −NLL 𝐶 𝑧 
+
+𝑒 −NLL 𝐹 𝑑,𝑖 + 𝜖 .
+
+Full-to-compressed KL, Top-50 overlap, and gold-token rank shift provide complementary distribution checks; Figure 6 uses one mi-nus Top-50 overlap as the corresponding failure-risk direction. Pos-itive ΔNLL, low GPR/Top-50, or positive rank shift records paired drift, not its cause. 
+
+Access, decoding, and valid rows. On a valid eager trace that maps back to original positions, evidence attention mass (EAM) averages answer-time attention assigned to evidence over the com-mon layer–head–answer-step domain. Evidence attention retention (EAR) divides compressed EAM by FullCache EAM on that same domain, and normalized evidence attention enrichment (NEAE) divides EAM by the evidence share of the original context. Decod-ing records first/mean gold rank, evaluated and emitted tokens, stop reason, and normalized output. For every diagnostic 𝑞 , let 
+
+A𝑞 𝑑,𝑚,𝑏 ⊆ X 𝑑 contain the sources with the required paired trace, metadata, defined denominator, and metric-specific validity check. The mean uses only failure rows on which 𝑞 is valid: 
+
+𝑞 𝑑,𝑚,𝑏 =
+
+Í  
+
+> 𝑖 ∈F 𝑑,𝑚,𝑏 ∩A 𝑞 𝑑,𝑚,𝑏
+
+𝑞 𝑑,𝑖,𝑚,𝑏 
+
+| F 𝑑,𝑚,𝑏 ∩ A 𝑞 𝑑,𝑚,𝑏 | .
+
+Missing values are not imputed or treated as zero; an empty inter-section is N/A . The definitions above specify each reported quantity and its validity conditions; Appendix C applies them to complete method–setting results. 
+
+## 5 EXPERIMENTAL EVALUATION 
+
+We ask four questions: failure frequency (RQ1), diagnostic sep-aration and targeted repair (RQ2), differences hidden by similar aggregate scores (RQ3), and transfer across models on RULER and evidence-annotated QA (RQ4). Scores and C →W denominators precede failure analysis. 
+
+## 5.1 Experimental Setup 
+
+Implementation details. Qwen3-8B is the primary model; cross-model analysis uses Falcon3-7B-Instruct and Mistral-Small-24B-Instruct-2501 on RULER-16K, Qasper, and HotpotQA. Paired runs share the prompt, tokenizer, reference, scorer, and greedy decoder; KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 75 50 25                 
+
+> StreamLLM SnapKV TOVA KeyDiff ThinK ChunkKV AdaKV Quant.
+> 73.4 53.5 33.3 89.7 86.1 78.5 89.8 88.3 79.1 88.5 82.2 69.7 89.9 1.5 N/A 82.3 70.6 54.8 89.8 87.8 80.0 89.9 89.3 14.6
+
+A Mean task score ↑                  
+
+> 75 50 25
+> 29.0 54.5 75.4 2.0 7.5 20.5 1.1 4.5 19.1 5.9 15.5 32.5 2.8 98.3 N/A 18.1 35.6 51.0 1.3 5.1 18.3 0.8 3.1 87.2
+
+B C → W rate (%) ↓
+
+> Setting tier
+
+Figure 3: All 2600 sources: (A) mean task score; (B) C →W rate. Gray marks unsupported ThinK/25%; QuantizedCache uses 8b/4b/2b, while other methods use 75/50/25. 
+
+only the cache path changes. FullCache runs once per source as the paired control, not a ninth compressor, and cells match source IDs and prompt hashes. Runs use one NVIDIA H200 in bf16 with PyTorch 2.11.0+cu128, Transformers 5.2.0, and kvpress 0.5.3. Ap-pendix Table 8 records exact model revisions and software. Each fixed cell has one deterministic result, so figures omit error bars. 
+
+Datasets and metrics. RULER-8K and RULER-16K each contain 1100 instances spanning needle retrieval, multi-key and multi-value retrieval, variable tracking, and word extraction. Their generators expose exact evidence positions and task-specific exact-answer scor-ing. Qasper and HotpotQA each contribute 200 deterministically sampled, evidence-mapped sources. The QA scorer is benchmark-specific rather than official: it normalizes output and references, awards the fraction of references found as substrings, and marks correctness only at 1.0; multiple-choice items use exact option matching. Appendix D gives selection and mapping details. 
+
+Methods and settings. We test StreamingLLM, SnapKV, TOVA, KeyDiff, ThinK, ChunkKV, AdaKV, and QuantizedCache; Figure 1 and Table 2 map their mechanism families and cache representa-tions. Eviction, chunk, allocation, and ThinK methods use 75%, 50%, and 25% settings; QuantizedCache uses HQQ 8-, 4-, and 2-bit ten-sors (50%, 25%, and 12.5% ideal bit retention versus bf16). Settings therefore order compression only within a method. ThinK/25% is 
+
+N/A ; every other cell covers the fixed split. Latency, throughput, bytes, and energy are outside scope. 
+
+## 5.2 RQ1: How Often Are Correct Answers Lost? 
+
+Figure 3 reports mean score over 2600 sources (A) and C →W rate among FullCache-correct sources (B). FullCache scores 90.0 with 81.8% binary accuracy. At the light tier, TOVA, AdaKV, SnapKV, and QuantizedCache stay within 0.3 points, but their C →W rates span 0.8–2.0%—a 2.5 × difference hidden by aggregate quality. At the aggressive tier, TOVA/AdaKV score 79.1/80.0 versus 33.3/54.8 for StreamingLLM/ChunkKV. QuantizedCache falls from 89.3 at 4b to 14.6 at 2b; ThinK collapses at 50% and has no 25% result. Figure 4 resolves failure frequency and identity by workload. Panel A shows the C →W rate rising from 8/7/10/9% to 46/42/36/40% on RULER-8K/RULER-16K/Qasper/HotpotQA as the setting moves from the light to the aggressive tier (75% to 25%, or 8b to 2b for 75 50 25 RULER-8K RULER-16K Qasper HotpotQA 8 29 46 7 27 42 10 28 36 9 26 40 
+
+A C → W rate (%)           
+
+> 75 50 25 0.24 0.14 0.28 0.29 0.14 0.17 0.00 0.38 0.70 0.33 0.38 0.22
+
+B Failure-set Jaccard 
+
+> Setting tier
+
+Figure 4: Failure frequency and identity: (A) workload-level C→W rate; (B) SnapKV–TOVA failure-set Jaccard. Columns are light/intermediate/aggressive settings: 75/50/25% for re-tention methods and 8b/4b/2b for QuantizedCache in panel A. Single Multi-key Multi-val. Multi-query VT CWE FWE                                                 
+
+> AdaKV ChunkKV KeyDiff Quant. SnapKV Stream. TOVA ThinK
+> 133 14 58 5066 43 25 350 114 56 274 156 68 13 231 21 52 0115 53 215 275 75 45 91 81 75 159 29 49 5087 52 465 449 245 106 187 106 65 9129 15 3084 33 300 300 105 42 100 76 66
+> Failure rows by task and method
+> 0100 200 300 400
+> Selected failure rows
+
+Figure 5: RULER-8K failures by task and method. Counts reveal method-specific task concentration but do not rank task difficulty. 
+
+QuantizedCache). Panel B shows SnapKV–TOVA Jaccard overlap at or below 0.38 in 11 of 12 workload–setting cells; the exception is Qasper/25% at 0.70. Thus aggregate quality, paired failure frequency, and failure identity answer distinct questions. 
+
+Failure composition is method-specific. Figure 5 shows distinct task profiles: StreamingLLM concentrates on single- and multi-key retrieval, ChunkKV on multi-key retrieval and variable tracking, whereas QuantizedCache is more diffuse. Because task-family sizes differ, these are composition counts, not difficulty estimates. 
+
+Finding 1. Pooled failure frequency rises from the light to the aggressive setting tier on every workload, but method-level trends vary and ThinK is absent at 25%; this is not a cross-mechanism ranking. 
+
+## 5.3 RQ2: What Characterizes Failures? 
+
+The resource contains 12 520 C →W method–setting rows; pooled shares count rows because sources may recur. Six predeclared rules yield mutually exclusive categories, with multiple or no matches labeled Conflicting or Ambiguous . Coverage rules require measured token maps; structural addressability remains separate, and miss-ing fields cannot trigger a rule. The categories are observational signatures; intervention evidence is reported separately. KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+Table 4: Predefined diagnostic categories for 12,520 C →W method–setting rows. A match to exactly one of the first six rules assigns its named category; multiple matches assign Conflicting , and no match assigns Ambiguous . Sources may repeat. EAR/Top-50 are defined for 7,038 (56.2%)/8,400 (67.1%) rows; missing traces are not imputed. 
+
+Diagnostic category Rule Rows Share Diagnostic interpretation 
+
+Low mapped coverage mapped ECov < 0.50 5,047 40.3% Broad measured/projected support loss Partial mapped coverage 0.50 ≤ mapped ECov < 0.90 2,866 22.9% Incomplete measured/projected support High mapped-coverage drift mapped ECov ≥ 0.90, ΔNLL ≥ 1 19 0.2% Drift despite mapped position retention Structural-position drift structural addressability, ΔNLL ≥ 1 2,126 17.0% Positions addressable; fidelity unknown Low-EAR candidate mapped ECov ≥ 0.90 or structural addressabil-ity; EAR < 0.50 104 0.8% Evidence-access or routing deficit Decoding/scoring candidate mapped ECov ≥ 0.90 or structural addressabil-ity; |ΔNLL | ≤ 0.10, Top-50 ≥ 0.90 if available 405 3.2% Downstream output/scorer sensitivity Conflicting diagnostic signals Two or more rules match 1,556 12.4% Multiple signals co-occur Ambiguous No rule matches 397 3.2% No predefined signature 0.6 0.7 0.8 0.9   
+
+> Stratified AUROC (descriptive 95% CI)
+> ERR loss ECov loss ΔNLL −log GPR EAM loss EAR loss NEAE loss KL Top-50 disag. Gold-rank shift
+> 0.749 0.747 0.853 0.853 0.702 0.823 0.684 0.869 0.850 0.871
+> Retention Attention Distribution
+
+Figure 6: C →C versus C →W diagnostic separation. Larger values indicate greater failure risk; ERR/ECov exclude struc-tural methods. Metrics use only valid mixed strata, and in-tervals are descriptive because sources recur. 0 10 20 30 40 50 
+
+> Share of C → W rows (%)
+> Low mapped coverage Partial mapped coverage High mapped-coverage drift Structural-position drift Decoding/scoring Ambiguous
+> 167 45 168 35 11
+> 399 136 4216 60 12
+
+Diagnostic-category composition  
+
+> Qasper (n=327) HotpotQA (n=827)
+
+Figure 7: Diagnostic-category composition on evidence-annotated QA. Points report within-workload shares; labels give C →W row counts. Neither subset has conflicting labels or valid eager-attention traces. Diagnostics separate failures from successful compression. 
+
+Figure 6 compares C →W with a ledger of 4,936 C →C runs, us-ing only mixed strata and valid measurements. All ten predefined failure-risk directions exceed random ranking: stratified AUROC ranges from 0.684 for NEAE loss to 0.871 for gold-rank shift. KL (0.869), ΔNLL (0.853), Top-50 disagreement (0.850), and EAR loss (0.823) are strongest. After excluding structural rows, ERR loss (0.749) and ECov loss (0.747) also separate successful from failed compression. EAM and NEAE are weaker and vary more by method. Thus the diagnostics are not properties shared by every compressed run. Qasper | ThinK, 50% | structural-position drift     
+
+> FullCache: "Groningen Meaning Bank" →"The The …"
+> ECov N/A; ΔNLL=15.435. Positions remain addressable; fidelity is unknown.
+> HotpotQA | ChunkKV, 50% | partial projected coverage
+> FullCache: 15 →compressed: 10
+> ECov=0.704; ΔNLL=3.222. Only part of the support chain remains.
+
+Figure 8: Paired QA cases. ThinK preserves structural address-ability but incurs severe likelihood drift (top); ChunkKV retains partial projected evidence coverage and changes a numerical answer (bottom). Evidence coverage is often low or partial. The layer–KV-head estimator in Section 4 avoids a saturating cross-slot union. Among all failure rows, 5,047 (40.3%) have low mapped coverage and 2,866 (22.9%) have partial mapped coverage. Figure 7 shows the same combined share on evidence-annotated QA: 212/327 Qasper failures (64.8%) and 535/827 HotpotQA failures (64.7%). Lower retention also reduces ECov within position-selection methods: StreamingLLM falls from 0.262 to 0.074 and TOVA from 0.951 to 0.445 between 75% and 25%. These values describe a typical layer–head slot, not global absence of every support-span copy. 
+
+Structural addressability is not measured coverage. Only 19 rows (0.2%) combine mapped ECov of at least 0.90 with a gold-answer NLL increase of at least one. Separately, 2,126 rows (17.0%) show the same likelihood drift under ThinK or QuantizedCache. For these methods, annotated evidence positions remain addressable, but representation fidelity is unknown; ERR and ECov are therefore 
+
+N/A . On RULER-16K, ThinK at 50% flips all 951 FullCache-correct sources with mean ΔNLL 7.958 and GPR 0.015. QuantizedCache at 2b flips 883 of 951 with ΔNLL 2.230 and GPR 0.260. In the Qasper case (Figure 8), ThinK changes "Groningen Meaning Bank" into a repeated "The" sequence while ΔNLL reaches 15.435. Position addressability cannot replace a fidelity or likelihood check. 
+
+Low EAR predicts selective repair. The released records provide valid paired eager-attention traces and EAR for 7,038 rows (56.2%). Of the 104 rows matching only the low-EAR rule, 96 reproduce the failure under the intervention’s eager-attention baseline. Holding KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 75 50 25             
+
+> Retained cache (%)
+> 20 40
+> C→W rate (%)
+> (A) QA failure frequency
+> Streaming KeyDiff ChunkKV SnapKV AdaKV TOVA 0.0 0.5 1.0
+> Mean slot-ECov
+> (B) Slot-ECov at 25%
+> 75 50 25
+> Retained cache (%)
+> RULER-8K RULER-16K Qasper HotpotQA 0.24 0.14 0.28 0.29 0.14 0.17 0.00 0.38 0.70 0.33 0.38 0.22
+> (C) Failure-set Jaccard
+> Qwen3-8B Falcon3-7B Mistral-24B
+> Setting tier
+
+Figure 9: Cross-model validation. (A) QA C →W rate pooled over six position methods and QuantizedCache; the setting tiers map 75/50/25% to 8b/4b/2b for QuantizedCache. (B) Mean slot-ECov over RULER-16K/QA position-method failures at 25% retention; dashed: low-coverage threshold. (C) Qwen SnapKV–TOVA failure-set Jaccard. Comparisons use model-specific denominators and slot geometry. 
+
+the compressed cache and decoder fixed, adding log 4 to the atten-tion logits of retained gold-evidence positions repairs 28/96 (29.2%); boosting an equal number of deterministic non-evidence positions repairs 6/96 (6.3%), a paired difference of 22.9 percentage points (23 evidence-only versus 1 sham-only repair; 95% paired-bootstrap CI, 14.6–32.3 points; two-sided exact McNemar 𝑝 = 2.98 ×10 −6). The same evidence boost degrades only 3/92 (3.3%) matched C →C con-trols. This selective response supports low EAR as an access/routing signature in this cohort. Separately, Top-50 is valid for 8,400 rows (67.1%); 405 position-addressable, stable-likelihood rows remain decoding/scoring candidates, while 1,556 rows have conflicting signals and 397 are ambiguous. 
+
+Finding 2. Matched controls show that all ten diagnostics separate C→W from C →C; low EAR also predicts selective evidence-access repair. Low or partial mapped coverage is most frequent. Structural addressability must be paired with fidelity diagnostics rather than interpreted as coverage. 
+
+## 5.4 RQ3: What Do Similar Scores Hide? 
+
+SnapKV and TOVA each contribute 7800 compressed runs (2600 sources at three settings), with mean scores of 84.8 and 85.7. Yet 11 of 12 workload–setting cells have failure-set Jaccard overlap at or below 0.385 (Figure 4B): similar aggregate quality does not imply similar failures. Qasper rises to 0.70 at 25%, whereas HotpotQA falls from 0.38 to 0.22. Method-specific failure sets are therefore necessary, and intersections must be recomputed for each setting. 
+
+Finding 3. Similar aggregate quality does not imply interchange-able failures. Full method-specific sets preserve coverage; intersec-tions support controlled comparisons. 
+
+## 5.5 RQ4: Do Failure Signatures Persist Across Models? 
+
+We repeat paired C →W selection on Falcon3-7B and Mistral-24B with model-native geometry. Across Qwen, Falcon, and Mistral, the coverage analysis contains 13 597 mapped RULER-16K/QA position-method failures (Figure 9). 
+
+Coverage diagnoses transfer. From the light to the aggressive tier (75% to 25%, or 8b to 2b for QuantizedCache), the pooled QA C→W rate in Figure 9A rises from 8.9% to 38.7% (Qwen), 7.7% to 29.5% (Falcon), and 2.1% to 15.9% (Mistral). Across the 18 position-method setting cells in panel B, slot-ECov correlates with Qwen at 𝜌 = 0.969 for Falcon and 0 .957 for Mistral (both 𝑝 < 10 −9), and all six methods decline monotonically. StreamingLLM shows the clearest 25% coverage loss (0.069/0.087/0.091); SnapKV and AdaKV retain more support. 
+
+Fidelity drift is model-dependent. On RULER-16K, failure-row mean ΔNLL pooled over each method’s supported settings is 2.113, 2.177, and 1.760 for StreamingLLM and 7.819, 4.963, and 2.950 for ThinK across Qwen, Falcon, and Mistral. QuantizedCache marks a boundary: 2.153 on Qwen versus 0.348 and 0.021 on Falcon and Mistral. Falcon’s ThinK QA configuration lacks a comparable sweep: 50% collapses and 25% is unsupported. 
+
+Finding 4. Failure frequency and coverage diagnoses generalize across architectures, whereas quantization remains model-specific. Thus the procedure, not metric magnitude, generalizes. 
+
+## 5.6 Validation and Study Limitations 
+
+The released ledger regenerates all 12 520 C →W diagnostic keys. Token maps are measured, chunk maps projected, and structural methods or missing traces remain N/A ; recurring sources make AU-ROC intervals descriptive. Cross-model claims cover three logged revisions, greedy decoding, method-specific settings, fixed splits, and trace availability; attention AUROC and interventions remain Qwen-only. The Appendix audits environment, licenses, and AI use. 
+
+## 6 CONCLUSION 
+
+KV-cache compression enables long-context inference, but aggre-gate scores cannot explain changed answers. KVDiagnosis pairs every compressed run with FullCache, selects C →W rows, and reports only valid diagnostics. Across 59 800 primary-model runs, 63.2% of 12 520 failures show low or partial measured/projected coverage; all ten diagnostics separate C →W from C →C, and tar-geted evidence attention repairs 29.2% of reproducible low-EAR failures versus 6.3% under a matched sham. Coverage trends repro-duce on Falcon3-7B and Mistral-24B, whereas quantization drift remains model-specific. Explicit denominators, native geometry, and missing-value semantics support explaining failures rather than merely ranking compressors. KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+## REFERENCES 
+
+[1] Muhammad Adnan, Akhil Arunkumar, Gaurav Jain, Prashant J Nair, Ilya Solov-eychik, and Purushotham Kamath. 2024. Keyformer: Kv cache reduction through key tokens selection for efficient generative inference. Proceedings of Machine Learning and Systems 6 (2024), 114–127. [2] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2024. LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, 3119–3137. https://doi.org/10.18653/v1/2024.acl-long.172 [3] Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Baobao Chang, Junjie Hu, and Wen Xiao. 2024. PyramidKV: Dynamic KV Cache Compression Based on Pyramidal Information Funneling. https://doi.org/10.48550/arXiv.2406.02069 arXiv:2406.02069 [cs.CL] [4] Chi-Chih Chang, Wei-Cheng Lin, Chien-Yu Lin, Chong-Yan Chen, Yu-Fang Hu, Pei-Shuo Wang, Ning-Chi Huang, Luis Ceze, Mohamed S. Abdelfattah, and Kai-Chiang Wu. 2025. Palu: KV-Cache Compression with Low-Rank Projection. In 
+
+International Conference on Learning Representations . https://openreview.net/ forum?id=LWMS4pk2vK [5] Alex Chen, Renato Geh, Aditya Grover, Guy Van Den Broeck, and Daniel Mingyi Israel. 2026. The Pitfalls of KV Cache Compression. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, 41530–41553. https://doi. org/10.18653/v1/2026.acl-long.1926 [6] Jian Chen, Zhuoran Wang, Jiayu Qin, Ming Li, Meng Wang, Changyou Chen, Yin Chen, Qizhen Weng, and Yirui Liu. 2026. KV-CoRE: Benchmarking Data-Dependent Low-Rank Compressibility of KV-Caches in LLMs. https://doi.org/ 10.48550/arXiv.2602.05929 arXiv:2602.05929 [cs.LG] [7] Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gard-ner. 2021. A Dataset of Information-Seeking Questions and Answers Anchored in Research Papers. In Proceedings of the 2021 Conference of the North Ameri-can Chapter of the Association for Computational Linguistics: Human Language Technologies . 4599–4610. [8] Alessio Devoto, Maximilian Jeblick, and Simon Jégou. 2025. Expected Attention: KV Cache Compression by Estimating Attention from Future Queries Distribu-tion. arXiv preprint arXiv:2510.00636 (2025). https://arxiv.org/abs/2510.00636 [9] Chao Fei and Panos Kalnis. 2026. PolyKV: Heterogeneous Retention and Allo-cation for KV Cache Compression. https://doi.org/10.48550/arXiv.2606.15157 arXiv:2606.15157 [cs.LG] [10] Chao Fei, Guozhong Li, Chenxi Liu, and Panos Kalnis. 2026. CHESS: Context-aware Hierarchical Efficient Semantic Selection for Long-Context LLM Inference. arXiv:2602.20732 https://arxiv.org/abs/2602.20732 [11] Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S Kevin Zhou. 2025. Ada-KV: Optimizing KV Cache Eviction by Adaptive Budget Allocation for Ef-ficient LLM Inference. In Advances in Neural Information Processing Sys-tems , Vol. 38. https://proceedings.neurips.cc/paper_files/paper/2025/hash/ a40ff56daab9f4808b1e18350c8a11ce-Abstract-Conference.html [12] Yu Fu, Zefan Cai, Abedelkadir Asi, Wayne Xiong, Yue Dong, and Wen Xiao. 2025. Not All Heads Matter: A Head-Level KV Cache Compression Method with Integrated Retrieval and Reasoning. In International Conference on Learning Representations . https://openreview.net/forum?id=FJFVmeXusW [13] Wei Gao, Xinyu Zhou, Peng Sun, Tianwei Zhang, and Yonggang Wen. 2025. Rethinking Key-Value Cache Compression Techniques for Large Language Model Serving. In Proceedings of Machine Learning and Systems .[14] Suyu Ge, Yunan Zhang, Liyuan Liu, Minjia Zhang, Jiawei Han, and Jianfeng Gao. 2024. Model Tells You What to Discard: Adaptive KV Cache Compression for LLMs. In International Conference on Learning Representations . https://proceedings.iclr.cc/paper_files/paper/2024/hash/ 639a9a172c044fbb64175b5fad42e9a5-Abstract-Conference.html [15] Yoav Gelberg, Yam Eitan, Michael Bronstein, Yarin Gal, and Haggai Maron. 2026. Training Transformers for KV Cache Compressibility. arXiv:2605.05971 [cs.LG] https://arxiv.org/abs/2605.05971 [16] Nathan Godey, Alessio Devoto, Yu Zhao, Simone Scardapane, Pasquale Minervini, Éric de la Clergerie, and Benoît Sagot. 2025. Q-Filters: Leveraging QK Geometry for Efficient KV Cache Compression. arXiv:2503.02812 [cs.CL] https://arxiv.org/ abs/2503.02812 [17] Zixuan Gu, Qiufeng Fan, Long Sun, Yang Liu, and Xiaojun Ye. 2025. VFLAIR-LLM: A Comprehensive Framework and Benchmark for Split Learning of LLMs. In 
+
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 . Association for Computing Machinery, 5470–5481. https: //doi.org/10.1145/3711896.3737411 [18] Yefei He, Luoming Zhang, Weijia Wu, Jing Liu, Hong Zhou, and Bohan Zhuang. 2024. ZipCache: Accurate and Efficient KV Cache Quantization with Salient Token Identification. Advances in Neural Information Processing Systems 37 (2024). https://doi.org/10.52202/079017-2181 [19] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W Mahoney, Yakun S Shao, Kurt Keutzer, and Amir Gholami. 2024. Kvquant: Towards 10 million context length llm inference with kv cache quantization. Advances in Neural Information Processing Systems 37 (2024), 1270–1303. [20] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. 2024. RULER: What’s the Real Context Size of Your Long-Context Language Models? arXiv:2404.06654 [cs.CL] https: //arxiv.org/abs/2404.06654 [21] Hugging Face. 2026. Cache Strategies: Quantized Cache. https://huggingface.co/ docs/transformers/kv_cache. Transformers documentation; accessed 2026-07-19. [22] Zhuohang Jiang, Pangjing Wu, Ziran Liang, Peter Q. Chen, Xu Yuan, Ye Jia, Jiancheng Tu, Chen Li, Peter H. F. Ng, and Qing Li. 2025. HiBench: Benchmark-ing LLMs Capability on Hierarchical Structure Reasoning. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 . Asso-ciation for Computing Machinery, 5505–5515. https://doi.org/10.1145/3711896. 3737378 [23] Jang-Hyun Kim, Jinuk Kim, Sangwoo Kwon, Jae W Lee, Sangdoo Yun, and Hyun Oh Song. 2025. Kvzip: Query-agnostic kv cache compression with context reconstruction. Advances in Neural Information Processing Systems 38 (2025), 167563–167591. https://proceedings.neurips.cc/paper_files/paper/2025/hash/ f4eaa4b8f2d08edb3f0af990d56134ea-Abstract-Conference.html [24] Adrian Łańcucki, Konrad Staniszewski, Piotr Nawrot, and Edoardo Maria Ponti. 2025. Inference-time hyper-scaling with kv cache compres-sion. Advances in Neural Information Processing Systems 38 (2025), 9365–9397. https://proceedings.neurips.cc/paper_files/paper/2025/hash/ 0d781fa5f639bf2caf728a68e9678362-Abstract-Conference.html [25] Haoyang Li, Yiming Li, Anxin Tian, Tianhao Tang, Zhanchao Xu, Xuejia Chen, Nicole Hu, Wei Dong, Qing Li, and Lei Chen. 2024. A Survey on Large Lan-guage Model Acceleration based on KV Cache Management. arXiv preprint arXiv:2412.19442 (2024). [26] Junyan Li, Yang Zhang, Muhammad Yusuf Hassan, Talha Chafekar, Tianle Cai, Zhile Ren, Pengsheng Guo, Foroozan Karimzadeh, Colorado Reed, Chong Wang, and Chuang Gan. 2025. CommVQ: Commutative Vector Quantization for KV Cache Compression. In Proceedings of the 42nd International Conference on Ma-chine Learning (Proceedings of Machine Learning Research) , Vol. 267. PMLR, 36831– 36845. https://proceedings.mlr.press/v267/li25du.html [27] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Informa-tion Processing Systems 37 (2024), 22947–22970. [28] Yucheng Li, Huiqiang Jiang, Qianhui Wu, Xufang Luo, Surin Ahn, Chen-gruidong Zhang, Amir H. Abdi, Dongsheng Li, Jianfeng Gao, Yuqing Yang, and Lili Qiu. 2025. SCBench: A KV Cache-Centric Analy-sis of Long-Context Methods. In International Conference on Learning Representations . https://proceedings.iclr.cc/paper_files/paper/2025/hash/ a540b17fb2295c736d5afd6c507acf66-Abstract-Conference.html [29] Akide Liu, Jing Liu, Zizheng Pan, Yefei He, Gholamreza Haffari, and Bohan Zhuang. 2024. MiniCache: KV Cache Compression in Depth Dimension for Large Language Models. Advances in Neural Information Processing Systems 37 (2024). https://doi.org/10.52202/079017-4443 [30] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the Middle: How Language Models Use Long Contexts. Transactions of the Association for Computational Linguistics 
+
+12 (2024), 157–173. https://doi.org/10.1162/tacl_a_00638 [31] Xiang Liu, Zhenheng Tang, Peijie Dong, Zeyu Li, Yue Liu, Bo Li, Xuming Hu, and Xiaowen Chu. 2025. ChunkKV: Semantic-Preserving KV Cache Compression for Efficient Long-Context LLM Inference. Advances in Neural Information Processing Systems 38 (2025). https://proceedings.neurips.cc/paper_files/paper/2025/hash/ 2987f911151b39cd3a1761e212319e8e-Abstract-Conference.html [32] Yuhan Liu, Hanchen Li, Yihua Cheng, Siddhant Ray, Yuyang Huang, Qizheng Zhang, Kuntai Du, Jiayi Yao, Shan Lu, Ganesh Ananthanarayanan, Michael Maire, Henry Hoffmann, Ari Holtzman, and Junchen Jiang. 2024. CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving. In 
+
+Proceedings of the ACM SIGCOMM 2024 Conference . Association for Computing Machinery, 38–56. https://doi.org/10.1145/3651890.3672274 [33] Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyrillidis, and Anshumali Shrivastava. 2023. Scissorhands: Exploit-ing the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Information Processing Systems 36 (2023), 52342–52364. [34] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. 2024. KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache. In International Conference on Machine Learning .PMLR, 32332–32344. [35] Junlin Mu, Hantao Huang, Jihang Zhang, Minghui Yu, Tao Wang, and Yidong Li. 2025. SALS: Sparse Attention in Latent Space for KV Cache Compression. In Advances in Neural Information Processing Sys-tems , Vol. 38. https://proceedings.neurips.cc/paper_files/paper/2025/hash/ 00a0ebcad584c59dbc439c2af8793638-Abstract-Conference.html KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 
+
+[36] Piotr Nawrot, Adrian Łańcucki, Marcin Chochowski, David Tarjan, and Edoardo M Ponti. 2024. Dynamic memory compression: retrofitting LLMs for ac-celerated inference. In Proceedings of the 41st International Conference on Machine Learning . 37396–37412. [37] Matanel Oren, Michael Hassid, Nir Yarden, Yossi Adi, and Roy Schwartz. 2024. Transformers are multi-state rnns. In Proceedings of the 2024 Conference on Em-pirical Methods in Natural Language Processing . 18724–18741. [38] Junyoung Park, Dalton Jones, Matthew J. Morse, Raghavv Goel, Mingu Lee, and Chris Lott. 2025. KeyDiff: Key Similarity-Based KV Cache Eviction for Long-Context LLM Inference in Resource-Constrained Environments. https: //doi.org/10.48550/arXiv.2504.15364 arXiv:2504.15364 [cs.AI] [39] Chen Qiu, Guozhong Li, Cristian McGee, Aritra Dutta, and Panos Kalnis. 2026. ART: Attention Run-time Termination for Efficient Large Language Model De-coding. https://doi.org/10.48550/arXiv.2606.00024 arXiv:2606.00024 [cs.CL] [40] Qwen Team. 2025. Qwen3 Technical Report. arXiv preprint arXiv:2505.09388 
+
+(2025). https://doi.org/10.48550/arXiv.2505.09388 [41] Luohe Shi, Hongyi Zhang, Yao Yao, Zuchao Li, and Hai Zhao. 2024. Keep the Cost Down: A Review on Methods to Optimize LLM’s KV-Cache Consumption. https://doi.org/10.48550/arXiv.2407.18003 arXiv:2407.18003 [cs.CL] [42] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. 2024. QUEST: query-aware sparsity for efficient long-context LLM inference. In Proceedings of the 41st International Conference on Machine Learning . 47901– 47911. [43] Yuxin Wang, Yuhan Chen, Zeyu Li, Xueze Kang, Yuchu Fang, Yeju Zhou, Yang Zheng, Zhenheng Tang, Xin He, Rui Guo, Xin Wang, Qiang Wang, Amelie Chi Zhou, and Xiaowen Chu. 2025. BurstGPT: A Real-World Workload Dataset to Optimize LLM Serving Systems. In Proceedings of the 31st ACM SIGKDD Confer-ence on Knowledge Discovery and Data Mining V.2 . Association for Computing Machinery, 5831–5841. https://doi.org/10.1145/3711896.3737413 [44] Jialong Wu, Zhenglin Wang, Linhai Zhang, Yilong Lai, Yulan He, and Deyu Zhou. 2025. Scope: Optimizing key-value cache compression in long-context generation. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 10775–10790. [45] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024. Efficient streaming language models with attention sinks. In International Con-ference on Learning Representations .[46] Yuhui Xu, Zhanming Jie, Hanze Dong, Lei Wang, Xudong Lu, Aojun Zhou, Amrita Saha, Caiming Xiong, and Doyen Sahoo. 2025. ThinK: Thinner Key Cache by Query-Driven Pruning. In International Conference on Learn-ing Representations . https://proceedings.iclr.cc/paper_files/paper/2025/hash/ 8edb116d5b288b6a9bba4c16ab647702-Abstract-Conference.html [47] June Yong Yang, Byeongwook Kim, Jeongin Bae, Beomseok Kwon, Gunho Park, Eunho Yang, Se Jung Kwon, and Dongsoo Lee. 2024. No Token Left Behind: Reli-able KV Cache Compression via Importance-Aware Mixed Precision Quantization. arXiv:2402.18096 [cs.LG] https://arxiv.org/abs/2402.18096 [48] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W. Cohen, Ruslan Salakhutdinov, and Christopher D. Manning. 2018. HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing . 2369–2380. [49] Jiayi Yuan, Hongyi Liu, Shaochen Zhong, Yu-Neng Chuang, Songchen Li, Guanchu Wang, Duy Le, Hongye Jin, Vipin Chaudhary, Zhaozhuo Xu, Zirui Liu, and Xia Hu. 2024. KV Cache Compression, But What Must We Give in Return? A Comprehensive Benchmark of Long Context Capable Approaches. In Findings of the Association for Computational Linguistics: EMNLP 2024 . Association for Com-putational Linguistics, 4623–4648. https://doi.org/10.18653/v1/2024.findings-emnlp.266 [50] Hailin Zhang, Xiaodong Ji, Yilin Chen, Fangcheng Fu, Xupeng Miao, Xiaonan Nie, Weipeng Chen, and Bin Cui. 2024. PQCache: Product Quantization-based KVCache for Long Context LLM Inference. arXiv:2407.12820 [cs.CL] https: //arxiv.org/abs/2407.12820 [51] Tianyi Zhang, Jonah Yi, Zhaozhuo Xu, and Anshumali Shrivastava. 2024. KV Cache is 1 Bit Per Channel: Efficient Large Language Model Inference with Coupled Quantization. Advances in Neural Information Processing Systems 37 (2024). https://doi.org/10.52202/079017-0109 [52] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. 
+
+Advances in Neural Information Processing Systems 36 (2023), 34661–34710. KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+## A REPRODUCIBILITY AND DETAILED RESULTS 
+
+This appendix records the configurations, data sources, complete per-workload results, and validation checks needed to interpret the main paper. The public release preserves these records in a versioned archive with checksums, recorded dependency versions, runnable commands, validation logs, and compatible licenses. 
+
+PyramidKV adapter audit. The excluded implementation used kvpress 0.5.3 (source commit fa7a0dc ). The two classes were SnapKVPress 
+
+and PyramidKVPress , from the snapkv_press and pyramidkv_press modules. Both used a window of 64 and kernel size 5; PyramidKV additionally used beta=20 . The tracker replaced both compress methods with a generic fixed-budget path, bypassing PyramidKV’s 
+
+get_layer_budget . Across 3,300 RULER-8K, 3,300 RULER-16K, and 1,200 QA pairs, persisted retained-index mappings, raw and extracted outputs, scores, and gold NLL are equal in all 7,800 pairs. Every pair came from a different Slurm job and 84.2% from different nodes, excluding a file-copy explanation. Table 5 gives representative SHA-256 prefixes; the public audit records full hashes, class signatures, source hashes, configurations, and all equality rates. The rows are excluded rather than relabeled. 
+
+Table 5: Representative SnapKV/PyramidKV pair audit. Each hash is identical across the two method labels; KV is the retained ratio. 
+
+Workload Sample KV Index hash Output hash Equal 
+
+RULER-8K cwe_000000 75% 514e8b39ca d1626650b9 yes RULER-16K cwe_000000 50% 07e043e559 900b8707ae yes QA bridge hotpotqa_000000 25% 2b930b7d86 acc60cc7bd yes 
+
+Table 6: Twenty-five-method survey taxonomy and its connection to the KVDiagnosis diagnostics. Evaluated marks the eight experimental implementations; other rows provide literature coverage. 
+
+Method Compression decision Reduced object Compatible cache-level measurements Benchmark role Token eviction / position selection 
+
+StreamingLLM [45] Attention sinks plus recency Token positions Direct retained-position map Evaluated 
+
+H2O [52] Cumulative-attention heavy hitters Token positions Direct retained-position map Survey only Scissorhands [33] Persistent token importance Token positions Direct retained-position map Survey only TOVA [37] Current attention score Token positions Direct retained-position map Evaluated 
+
+SnapKV [27] Observation-window pooling Token clusters / positions Direct or cluster-projected map Evaluated 
+
+KeyDiff [38] Key-similarity eviction Token positions Direct retained-position map Evaluated Budget allocation / hierarchy 
+
+PyramidKV [3] Layer-adaptive funnel Layer/token quotas Layer-wise retained-position map Excluded AdaKV [11] Adaptive per-head quota Head-wise token slots Direct positions, heads kept separate Evaluated 
+
+HeadKV [12] Head-level importance and capacity allocation Head-wise token quotas Direct positions, heads kept separate Survey only PolyKV [9] Layer-wise policy routing and non-uniform allocation Layer policies / slot quotas Per-policy map plus composition metadata Survey only 
+
+Query-aware access / channel pruning 
+
+ThinK [46] Query-driven channel salience Key channels Structural addressability; ERR/ECov N/A ;distribution/decoding 
+
+Evaluated 
+
+Keyformer [1] Learned key-token score Token positions Direct retained-position map Survey only Quest [42] Query-aware critical pages Pages / blocks Page-to-token projection Survey only Q-Filters [16] Query–key geometry filter Tokens / blocks Query-specific retained-position map Survey only CHESS [10] Context-aware hierarchical semantic selection Grids / chunks / pages Hierarchy-to-token projection Survey only 
+
+Tensor / representation compression 
+
+QuantizedCache (HQQ) [21] Grouped low-bit approximation Key/value precision Structural addressability; ERR/ECov N/A ;distribution/decoding 
+
+Evaluated 
+
+KIVI [34] Asymmetric 2-bit quantization Key/value precision Structural addressability plus distribution/decoding metrics Survey only KVQuant [19] Non-uniform, outlier-aware quantization Key/value precision Structural addressability plus distribution/decoding metrics Survey only CommVQ [26] RoPE-commutative vector quantization Key/value vector codes Structural addressability plus reconstruction/distribution metrics Survey only 
+
+Continued on next page KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 
+
+Table 6 continued 
+
+Method Compression decision Reduced object Compatible cache-level measurements Benchmark role 
+
+Palu [4] Low-rank hidden-dimension projection Latent key/value dimensions Reconstruction map plus distribution/decoding metrics Survey only SALS [35] Sparse attention over a low-rank latent cache Latent states / selected tokens Latent reconstruction plus access/distribution metrics Survey only 
+
+Chunk / semantic / learned state 
+
+ChunkKV [31] Semantic chunk selection Token chunks Chunk-to-token projection Evaluated 
+
+DMC [36] Learned state merging KV states Merge records plus distribution/decoding measures Survey only KVzip [23] Context reconstruction Token/context states Reconstruction map plus distribution/decoding metrics Survey only SCOPE [44] Generation-aware hybrid selection Tokens / layers Layer/token map plus distribution/decoding metrics Survey only 
+
+Table 7: Fixed evaluation configurations. Unless noted, methods use kvpress 0.5.3. The 75/50/25 labels are target retained shares for token-, chunk-, and allocation-based methods; ThinK maps them to key-channel shares, and QuantizedCache maps them to bit widths. They are therefore compression settings, not byte-equivalent cross-method quantities. 
+
+Method Fixed configuration Compressed unit Setting interpretation 
+
+StreamingLLM n_sink=4 Token positions Retained share; four sink tokens remain fixed SnapKV window_size=64 ; kernel_size=5 Token clusters / positions Retained share TOVA No additional fixed parameter Token positions Retained share KeyDiff No additional fixed parameter Token positions Retained share ThinK window_size=32 Key channels 75/50 key-channel share; 25 is N/A 
+
+ChunkKV K-norm base; chunk_length=20 Token chunks Retained share AdaKV SnapKV base (window 64, kernel 5); 
+
+alpha_safeguard=0.2 
+
+Head-wise token slots Base retained share, then budget reallocation QuantizedCache [21] Transformers/HQQ; group_size=64 ;
+
+residual_length=128 
+
+Key/value precision 8b/4b/2b; ideal 50/25/12.5% of bf16 bits 
+
+Table 8: Core execution environment for the reported experiments. 
+
+Field Recorded value Field Recorded value 
+
+Model ID Qwen/Qwen3-8B Exact revision b968826d9c46dd6066d109 eabc6255188de91218 
+
+PyTorch / CUDA runtime 2.11.0+cu128 / 12.8 Transformers / datasets 5.2.0 / 5.0.0 Accelerate / kvpress 1.14.0 / 0.5.3 flash-attn 2.8.3.post1 Hardware / arithmetic NVIDIA H200 / bf16 Quantization / decoder HQQ / greedy argmax 
+
+> The public release records the immutable model revision, software environment, method settings, scorer configuration, and artifact checksums.
+
+Table 9: Verified licenses of the benchmark’s source datasets. 
+
+Source dataset Verified license 
+
+RULER Apache License 2.0 Qasper CC BY 4.0 HotpotQA CC BY-SA 4.0 
+
+> The benchmark code and derived artifacts carry explicit compatible licenses and redistribution notices in the public release.
+
+## A.1 Release Files and Automated Checks 
+
+The release structure specifies what a reusable benchmark contains beyond the paper. Table 10 lists the files versioned together and the automated checks that keep them consistent. Each published C →W row links to its paired FullCache run, diagnostics, and generator script. KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+Table 10: Release components and automated checks. The components are versioned together so reported rows remain traceable to inputs and generators. 
+
+Component Contents Automated check 
+
+Task manifest Source IDs, references, task identifiers, prompt hashes Unique IDs; hashes; alignment Core matrix Workload–method–setting cells, setting interpretation, supported/ N/A status Expected vs. observed rows Paired records FullCache/compressed outputs, scores, outcome changes, versions Matching pair; unique key; numeric fields Diagnostic records Cache, likelihood/distribution, attention applicability, and decoding measurements Required fields present; values finite and nonempty Validation summaries Task-score and C →W CSVs, overlap sets, figure inputs Regeneration; counts sum to totals Reproduction package Fixed dependency versions, pre-run report, generator scripts Version checks; deterministic rerun 
+
+## A.2 Results on the Full Evaluation Sets 
+
+Table 11 reports task quality and C →W rates for every supported method–setting cell in the four fixed evaluation sets. 
+
+Table 11: Results for all sources across the four workloads. Compressed cells report task score / C →W rate (%); the FullCache row reports task / binary score and the FullCache-correct denominator 𝑛 FC .
+
+Method Setting RULER-8K RULER-16K Qasper HotpotQA FullCache task / binary 97.1 / 88.0 
+
+𝑛 FC = 968 96.8 / 86.5 
+
+𝑛 FC = 951 29.5 / 29.5 
+
+𝑛 FC = 59 74.0 / 74.0 
+
+𝑛 FC = 148 StreamingLLM 75% 79.7 / 29.6 76.8 / 31.8 25.0 / 20.3 68.0 / 10.1 50% 57.2 / 56.5 54.9 / 58.4 21.5 / 33.9 57.5 / 24.3 25% 32.9 / 81.5 33.6 / 77.6 17.5 / 44.1 50.0 / 33.8 SnapKV 75% 96.6 / 2.5 96.8 / 1.4 31.5 / 1.7 71.5 / 3.4 50% 90.8 / 11.5 95.3 / 3.6 27.5 / 8.5 69.0 / 6.8 25% 82.9 / 25.4 86.3 / 16.8 27.5 / 11.9 63.0 / 14.9 TOVA 75% 96.9 / 1.2 96.7 / 0.9 30.0 / 0.0 72.5 / 2.0 50% 95.2 / 5.0 95.5 / 3.5 29.0 / 10.2 70.0 / 5.4 25% 84.6 / 22.0 85.5 / 17.5 27.5 / 16.9 65.5 / 11.5 KeyDiff 75% 96.6 / 5.4 96.3 / 4.1 24.5 / 18.6 64.5 / 16.2 50% 90.7 / 14.5 90.9 / 12.0 18.0 / 40.7 51.5 / 34.5 25% 78.6 / 30.3 78.9 / 28.1 13.5 / 57.6 25.5 / 66.2 ThinK 75% 97.7 / 2.2 97.2 / 1.8 28.0 / 10.2 68.5 / 10.8 50% 0.0 / 100.0 0.0 / 100.0 6.5 / 78.0 12.5 / 83.8 25% N/A N/A N/A N/A 
+
+ChunkKV 75% 89.9 / 17.7 89.4 / 17.2 24.0 / 23.7 60.5 / 23.6 50% 76.6 / 37.1 78.3 / 32.6 21.0 / 37.3 45.0 / 43.9 25% 58.5 / 53.0 62.4 / 47.1 18.5 / 40.7 28.5 / 66.9 AdaKV 75% 96.9 / 1.5 96.8 / 0.7 30.5 / 0.0 71.5 / 3.4 50% 93.4 / 7.3 96.3 / 2.4 27.5 / 10.2 70.0 / 5.4 25% 84.1 / 24.1 88.3 / 13.8 27.0 / 11.9 65.5 / 12.2 QuantizedCache 8b 97.0 / 0.9 96.9 / 0.4 29.5 / 1.7 72.5 / 2.0 4b 97.1 / 2.8 96.0 / 2.9 29.5 / 5.1 70.0 / 5.4 2b 20.0 / 84.8 9.2 / 92.8 8.5 / 71.2 21.0 / 72.3 
+
+> Values are exact for all sources in the fixed evaluation sets. Settings order compression severity within a method and are not byte-equivalent. Qasper and HotpotQA have only 59 and 148 FullCache-correct instances, respectively; their values describe this evaluation set.
+
+## B RELEASE VALIDATION AND DISCLOSURE 
+
+AI-use disclosure. This paper was prepared with AI-assisted tools for literature-search strategy, structure planning, drafting, citation checks, simulated review, and formatting. AI assistance also informed the auxiliary context-demand criteria and lookup generator; final labels are assigned deterministically without per-sample model inference. All arguments, claims, and conclusions were directed and reviewed by the authors, who take responsibility for the work. Adapter tests verify that each specialized compress implementation invokes the intended method. A CPU-only command regenerates run counts, tables, and figures, and a small GPU run repeats selected pairs. The package records artifact checksums, compatible licenses, a correction channel, and a permanent release URL. Figure 10 complements Table 12 by showing how the corrected RULER-8K failure rows are distributed across method–setting tiers and task families. It is a composition view of the selected corpus, not a ranking of method or task difficulty. KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 
+
+Table 12: Additional RULER-8K diagnostic-corpus coverage beyond the aggregate run accounting in Table 3. 
+
+Item Definition Count 
+
+Aggressive tier 25% retention or 2b quantization 3,108 Intermediate tier 50% retention or 4b quantization 2,271 Light tier 75% retention or 8b quantization 591 Coverage applicability status Measured, projected, structural, or N/A recorded 5,970 / 5,970 Numeric ERR/ECov rows Valid direct/projected original-token maps 4,124 / 5,970 EAR rows EAR computed from valid eager-attention traces; other rows carry explicit N/A 4,608 / 5,970 Auxiliary demand labels Five context-demand labels available 5,970 / 5,970 Most frequent method StreamingLLM selected rows 1,623 Least frequent method TOVA selected rows 273 AdaKV ChunkKV KeyDiff QuantizedCache SnapKV StreamingLLM TOVA ThinK 0250 500 750 1000 1250 1500 
+
+> Selected failure rows
+
+By compression method (failure cases only)      
+
+> Setting
+> 25% 50% 75%
+> 0500 1000 1500
+> Selected failure rows
+> Single NIAH Multi-key NIAH Multi-value NIAH Multi-query NIAH Variable tracking CWE FWE
+
+By RULER task (failure cases only) 
+
+Figure 10: Composition of the corrected RULER-8K diagnostic corpus. Left: selected failure rows by setting tier; 25/50/75% correspond to 2b/4b/8b for QuantizedCache. Right: selected rows by RULER task family. Table 13: RULER-8K task composition and demand profile. ERR/ECov average only measured/projected rows; other metric columns use their own valid rows. EAR and access demand exclude AdaKV/ChunkKV rows without eager-attention traces. 
+
+Task Rows Sources Slot ERR Slot ECov ΔNLL Top-50 EAR Evidence Distribution demand Access demand 
+
+Single NIAH 1,319 300 0.212 0.234 3.311 0.587 0.120 1.000 1.996 2.311 Multi-key NIAH 1,777 300 0.207 0.151 2.766 0.598 0.085 2.000 2.001 2.248 Multi-value NIAH 682 95 0.559 0.589 1.342 0.798 0.231 2.000 0.926 1.355 Multi-query NIAH 314 39 0.593 0.626 1.458 0.774 0.225 2.000 1.001 1.249 Variable tracking 652 100 0.519 0.520 4.509 0.572 0.309 3.000 2.096 1.220 CWE 771 72 0.436 0.444 1.228 0.884 0.222 3.000 0.591 1.501 FWE 455 62 0.705 0.713 1.303 0.819 0.303 3.000 0.577 1.541 
+
+## C RULER-8K PAIRED FAILURE ANALYSIS 
+
+This section reports task composition, row-level cases, and method–setting diagnostics for the RULER-8K C →W rows defined in Section 3.3. Metric definitions and applicability conditions follow Section 4; a source may contribute multiple failure rows. 
+
+## C.1 Diagnostic Corpus Composition 
+
+Single-needle and multi-key retrieval dominate the failure subset and have high predictive-distribution and attention-access demand. Variable tracking has the largest mean ΔNLL in Table 13; retaining the relevant positions is insufficient when compression disrupts the model state needed to associate variables with their values. Word extraction has high evidence demand but lower predictive-distribution demand, making it useful for separating evidence coverage from formatting and extraction accuracy. 
+
+## C.2 Diagnostics by Method and Setting 
+
+Means in Table 14 are conditional on each method’s own C →W set; direct numerical comparisons require common-failure intersections. Figure 11 visualizes the corresponding method–setting profiles while preserving structural and unavailable measurements as N/A .The cases in Table 15 apply the metrics to concrete rows. The StreamingLLM case removes both mapped evidence and attention access. The KeyDiff case retains 95.8% slot coverage but has EAR 0.015 and a corrupted identifier. ThinK and QuantizedCache show continuation failure KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+Table 14: Exact method-by-setting diagnostics on completed RULER-8K C →W rows. ERR/ECov are measured except for projected ChunkKV; 𝑆 marks structural position addressability, for which both are N/A . † marks unavailable native EAR. Demand is predictive-distribution/access (D/A). Rows/src. reports failure rows/unique sources. 
+
+Method Setting Rows/ src. ERR ECov ΔNLL KL Top-50 EAR Demand D/A 
+
+AdaKV 25% 233/233 0.454 0.486 0.795 0.779 0.759 N/A † 0.870/ N/A 
+
+50% 71/71 0.645 0.686 0.202 0.202 0.837 N/A † 0.545/ N/A 
+
+75% 15/15 0.868 0.880 0.003 0.001 0.970 N/A † 0.044/ N/A 
+
+ChunkKV 25% 513/513 0.430 0.424 1.633 1.623 0.711 N/A † 1.353/ N/A 
+
+50% 359/359 0.578 0.549 1.143 1.154 0.759 N/A † 0.965/ N/A 
+
+75% 171/171 0.702 0.693 0.696 0.699 0.803 N/A † 0.672/ N/A 
+
+KeyDiff 25% 293/293 0.437 0.356 1.043 1.063 0.744 0.076 1.039/2.075 50% 140/140 0.673 0.653 0.531 0.513 0.799 0.084 0.674/1.907 75% 52/52 0.885 0.952 0.097 0.099 0.886 0.101 0.263/1.577 Quant. 2b 821/821 N/A 𝑆 N/A 𝑆 2.404 2.397 0.581 0.554 1.948/0.730 4b 27/27 N/A 𝑆 N/A 𝑆 0.007 0.003 0.947 0.969 0.037/0.000 8b 9/9 N/A 𝑆 N/A 𝑆 0.000 0.000 0.989 0.998 0.000/0.000 SnapKV 25% 246/246 0.465 0.488 0.897 0.886 0.760 0.047 0.932/2.028 50% 111/111 0.641 0.682 0.345 0.358 0.807 0.047 0.691/1.982 75% 24/24 0.870 0.887 0.033 0.037 0.954 0.052 0.125/2.000 Stream. 25% 789/789 0.079 0.079 2.133 2.151 0.681 0.046 1.676/2.548 50% 547/547 0.172 0.171 1.955 1.977 0.699 0.074 1.544/2.333 75% 287/287 0.258 0.258 1.506 1.534 0.744 0.087 1.273/2.206 TOVA 25% 213/213 0.467 0.454 0.833 0.783 0.766 0.159 0.892/1.385 50% 48/48 0.707 0.716 0.177 0.191 0.874 0.196 0.410/1.125 75% 12/12 0.937 0.956 0.072 0.075 0.969 0.228 0.083/1.000 ThinK 25% N/A N/A N/A N/A N/A N/A N/A N/A 
+
+50% 968/968 N/A 𝑆 N/A 𝑆 7.827 7.821 0.486 0.063 2.847/2.148 75% 21/21 N/A 𝑆 N/A 𝑆 0.013 0.009 0.926 1.012 0.063/0.000 0.25 0.50 0.75 
+
+> N/A N/A
+
+Mapped slot ERR 
+
+> 0.25 0.50 0.75
+> N/A N/A
+
+Mapped slot ECov 
+
+> 0.0 2.5 5.0 7.5
+
+NLL 
+
+> AdaKV ChunkKV KeyDiff Quant. SnapKV Stream. TOVA ThinK 0.0 2.5 5.0 7.5
+
+KL 
+
+> AdaKV ChunkKV KeyDiff Quant. SnapKV Stream. TOVA ThinK 0.6 0.8 1.0
+
+Top-50 
+
+> AdaKV ChunkKV KeyDiff Quant. SnapKV Stream. TOVA ThinK 0.0 0.5 1.0
+
+EAR 1  
+
+> Setting
+> 25% 50% 75%
+
+Figure 11: Visual summary of Table 14. Structural ERR/ECov cells are N/A , not one. Higher is preferred for applicable ERR, ECov, and Top-50; lower is preferred for ΔNLL and KL. AdaKV and ChunkKV have no valid native EAR. 
+
+despite structural position addressability; neither has a numeric coverage claim. The final two rows separate a conflicting empty-output case from a decoding/scoring candidate with stable local measurements; neither observation alone identifies the cause. KDD ’27, August 1–5, 2027, San Jose, CA, USA Qiu et al. 
+
+Table 15: RULER-8K row-level examples under the corrected slot estimator. Stable local predictive distributions, low EAR, and a wrong free-generation output suggest different explanations; they are not causal labels. 
+
+Case Run Paired output and diagnostics Interpretation 
+
+Long-range low coverage vt_000097 
+
+StreamingLLM / 25% FC: QDVHI; Comp.: Q, R, S, T, U ECov 0.000; ΔNLL 7.033; Top-50 0.420; EAR 0.000 Support disappears across slots; selection is the first component to examine. Retained but low EAR niah_multikey_3_004079 
+
+KeyDiff / 75% FC: e2e94afd-7900-42e3-8a73-7e8c19d14bf2 
+
+Comp.: e2e94afd-7900-42e3-8a73-7e8c1d9e4bf2. 
+
+ECov 0.958; ΔNLL 0.137; KL 0.288; Top-50 0.706; EAR 0.015 Coverage is high while EAR is near zero; access is the only abnormal diagnostic. Conflicting access/decoding evidence 
+
+cwe_000045 
+
+ThinK / 50% FC: massage; Comp.: ∅
+
+ECov N/A 𝑆 ; ΔNLL 0.000; KL 0.000; Top-50 1.000; EAR 0.228 KL/Top-50 are stable, EAR is low, and free generation is empty; attribution is not unique. Decoding or scoring candidate 
+
+cwe_000004 
+
+QuantizedCache / 2b FC: vendor; Comp.: subsidy ECov N/A 𝑆 ; ΔNLL 0.000; KL 0.000; Top-50 1.000; EAR 0.787 Positions are structurally addressable and local distribution/EAR are stable, but the emitted list fails the scorer. Evid. Cue Long Exact Fmt. 050 100 
+
+> Rows (%)
+
+(a) Template labels      
+
+> S1 S2 S3
+> 0123
+> Demand score
+> 010 20 30 40
+> Rows (%)
+
+(b) Diagnostic demand  
+
+> Distribution Access
+
+Figure 12: Deterministic task-template label distributions (left) and metric-derived demand scores (right) on corrected RULER-8K failure rows. Access demand uses only rows with valid EAR. 
+
+## C.3 Auxiliary Demand Annotations and Profiles 
+
+The deterministic task-template labels and their aggregate distribution are defined in Section 5. The figure below retains the fuller distributional view used for secondary analysis. Figure 12 reports the auxiliary labels together with metric-derived demand-score distributions. These profiles condition on observed failures and do not imply general task difficulty or a method ranking. 
+
+## D RULER-16K AND EVIDENCE-ANNOTATED QA RESULTS 
+
+For RULER-16K, the light tier (75% retention or 8b) contains 555 failures among 7,608 FullCache-correct supported pairs, the intermediate tier (50% or 4b) contains 2,048 among 7,608, and the aggressive tier (25% or 2b) contains 2,793 among 6,657 because ThinK is unsupported. The table reports diagnostics conditional on each method’s own failures. For evidence-annotated QA, the same tiers contain 151, 442, and 561 C →W rows, respectively: 45/132/150 on Qasper and 106/310/411 on HotpotQA. These counts sum to the 327 and 827 rows in Table 3; Figure 7 reports their diagnostic-category composition. Evidence is aligned after final-prompt tokenization as described in Section 3.2, and an unavailable mapping makes only the affected cache diagnostic N/A , not the source or paired outcome. KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models KDD ’27, August 1–5, 2027, San Jose, CA, USA 
+
+Table 16: RULER-16K diagnostics on each method’s own C →W rows. ECov is measured except for projected ChunkKV; 𝑆 marks structural addressability with ECov N/A . The category is the modal row-level label before aggregation. 
+
+Method Setting C→Wrows ECov ΔNLL GPR Most frequent row-level diagnostic category 
+
+StreamingLLM [45] 75% 302 0.260 1.689 0.480 Low mapped coverage SnapKV [27] 75% 13 0.812 0.038 0.970 Partial mapped coverage TOVA [37] 75% 9 0.932 0.000 1.000 Conflicting diagnostic signals KeyDiff [38] 75% 39 0.944 0.105 0.920 Conflicting diagnostic signals ThinK [46] 75% 17 N/A 𝑆 0.023 0.983 Decoding/scoring candidate ChunkKV [31] 75% 164 0.698 0.423 0.835 Partial mapped coverage AdaKV [11] 75% 7 0.805 0.000 1.000 Partial mapped coverage QuantizedCache [21] 8b 4 N/A 𝑆 0.037 0.965 Decoding/scoring candidate StreamingLLM 50% 555 0.160 2.107 0.341 Low mapped coverage SnapKV 50% 34 0.639 0.117 0.908 Partial mapped coverage TOVA 50% 33 0.665 0.135 0.900 Partial mapped coverage KeyDiff 50% 114 0.594 0.595 0.681 Low mapped coverage ThinK 50% 951 N/A 𝑆 7.958 0.015 Structural-position drift ChunkKV 50% 310 0.567 0.870 0.643 Partial mapped coverage AdaKV 50% 23 0.584 -0.017 1.034 Low mapped coverage QuantizedCache 4b 28 N/A 𝑆 0.002 0.998 Decoding/scoring candidate StreamingLLM 25% 738 0.070 2.290 0.260 Low mapped coverage SnapKV 25% 160 0.488 0.502 0.684 Low mapped coverage TOVA 25% 166 0.445 0.759 0.601 Low mapped coverage KeyDiff 25% 267 0.353 1.065 0.558 Low mapped coverage ThinK 25% N/A N/A N/A N/A Unsupported ChunkKV 25% 448 0.467 1.395 0.467 Low mapped coverage AdaKV 25% 131 0.484 0.409 0.724 Low mapped coverage QuantizedCache 2b 883 N/A 𝑆 2.230 0.260 Structural-position drift

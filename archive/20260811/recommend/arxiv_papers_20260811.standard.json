@@ -1,0 +1,366 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-11T20:50:43.472406+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 7,
+    "deep_cap": 6,
+    "deep_selected": 7,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2608.08081v1",
+      "source": "arxiv",
+      "title": "RotaryQuant: Fitting 120B MoE Models on Consumer Hardware via Fused Compressed-Space Attention",
+      "abstract": "Large mixture-of-experts (MoE) language models with 26--120 billion parameters exceed the memory capacity of consumer devices through three simultaneous pressures: resident weight matrices, key-value (KV) cache state that grows linearly with context, and dozens of expert sublayers that must be paged on demand. We present RotaryQuant, a three-axis compression system that addresses all three. Mixed-precision weight quantization assigns bit-widths by architectural role: 4-bit for dense layers, 2-bit for routed experts, and 8-bit for the shared expert whose high activation kurtosis resists aggressive compression. LRU expert offloading pages non-resident experts to disk under genuine memory pressure. The novel axis is IsoQuant, a KV cache compression method that applies a Walsh--Hadamard transform followed by block-diagonal SO(4) rotations to isotropize activation distributions before 3-bit scalar quantization, requiring $O(d \\log d)$ operations and 256 stored parameters per head versus $O(d^2)$ and 16{,}384 for dense rotation methods. A fused four-kernel Metal GPU pipeline performs attention directly on packed 3-bit tensors without materializing full-precision KV state---a different execution model, not just a quantization scheme. The combined system fits Gemma 4-26B-A4B and Qwen3-30B-A3B within a 16\\,GB budget and Nemotron-H 120B within 32\\,GB, running interactively at 9--19 tok/s with near-zero perplexity degradation ($Δ$PPL $\\leq +0.0012$) and 100\\% retrieval accuracy at 32K context.",
+      "authors": [
+        "Anthony. Lui",
+        "Mohamed. Elsaied",
+        "N. P. Savani"
+      ],
+      "primary_category": "cs.NE",
+      "categories": [
+        "cs.NE",
+        "cs.LG"
+      ],
+      "published": "2026-08-08T11:58:56+00:00",
+      "link": "https://arxiv.org/pdf/2608.08081v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 10.0,
+      "llm_evidence_en": "three-axis compression including IsoQuant KV cache compression to fit 120B MoE models",
+      "llm_evidence_cn": "包含IsoQuant KV缓存压缩的三轴压缩方案，在消费硬件上运行120B MoE模型",
+      "llm_evidence": "包含IsoQuant KV缓存压缩的三轴压缩方案，在消费硬件上运行120B MoE模型",
+      "canonical_evidence": "包含IsoQuant KV缓存压缩的三轴压缩方案，在消费硬件上运行120B MoE模型",
+      "llm_tldr_en": "Presents RotaryQuant, a three-axis compression system for MoE LLMs: mixed-precision weight quantization, LRU expert offloading, and IsoQuant KV cache compression, enabling 26-120B models to run on consumer hardware.",
+      "llm_tldr_cn": "大规模MoE模型同时面临权重、KV缓存和专家子层的显存压力。RotaryQuant采用混合精度量化、LRU专家卸载和IsoQuant KV缓存压缩三轴方案，可在消费级硬件上运行26-120B参数模型，大幅降低MoE推理的显存需求。",
+      "llm_tldr": "大规模MoE模型同时面临权重、KV缓存和专家子层的显存压力。RotaryQuant采用混合精度量化、LRU专家卸载和IsoQuant KV缓存压缩三轴方案，可在消费级硬件上运行26-120B参数模型，大幅降低MoE推理的显存需求。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.08878v1",
+      "source": "arxiv",
+      "title": "DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference",
+      "abstract": "Transformer-based large language models (LLMs) achieve strong performance across many tasks, but their Key-Value (KV) cache grows linearly with sequence length, creating a severe memory bottleneck for long-context inference. Existing heuristic eviction methods (e.g., H$_2$O and SnapKV) rely on static attention or positional signals that often fail to capture a token's future predictive influence. We propose DistillCache, a reinforcement learning framework that formulates KV-cache eviction as a sequential decision problem. DistillCache learns a lightweight policy network using rich internal model signals (attention statistics, value norms, entropy, and position) and trains it with REINFORCE via a per-step KL-divergence reward to preserve the full-cache output distribution. On a 7B-parameter instruction-tuned Transformer (Mistral-7B-Instruct-v0.3), DistillCache retains 94.2% of full-cache accuracy on LongBench at a 25% cache budget, outperforming both strong heuristic baselines (H$_2$O, SnapKV) by up to 2.7 absolute points and, under our re-implementations, concurrent RL-based methods (ForesightKV, RLKV) by up to 1.4 points on long-context tasks. On reasoning benchmarks, DistillCache is competitive with the best concurrent method and surpasses it under aggressive compression. It also delivers up to 2.1x full-cache throughput while maintaining competitive practical efficiency. These results highlight the effectiveness of learned, distribution-aware policies for memory-efficient long-context LLM inference.",
+      "authors": [
+        "Asaad Althoubi"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI",
+        "cs.PF"
+      ],
+      "published": "2026-08-09T19:33:43+00:00",
+      "link": "https://arxiv.org/pdf/2608.08878v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 10.0,
+      "llm_evidence_en": "Presents a reinforcement learning framework for KV-cache eviction to reduce memory footprint.",
+      "llm_evidence_cn": "提出基于强化学习的KV缓存驱逐框架，减小内存占用",
+      "llm_evidence": "提出基于强化学习的KV缓存驱逐框架，减小内存占用",
+      "canonical_evidence": "提出基于强化学习的KV缓存驱逐框架，减小内存占用",
+      "llm_tldr_en": "Proposes DistillCache, a reinforcement learning framework that formulates KV-cache eviction as a sequential decision problem and uses KL-divergence reward to preserve future predictive influence, achieving memory-efficient LLM inference.",
+      "llm_tldr_cn": "大语言模型推理中，KV缓存随序列长度线性增长，成为长上下文的内存瓶颈。现有启发式驱逐方法依赖静态注意力或位置信号，难以捕捉token未来的预测影响。本文提出DistillCache，将KV缓存驱逐建模为序贯决策问题，用强化学习训练轻量策略网络，并利用每步KL散度奖励保留关键的预测信息。实验表明该方法能有效降低内存占用同时保持生成质量，为自适应缓存管理提供了新范式。",
+      "llm_tldr": "大语言模型推理中，KV缓存随序列长度线性增长，成为长上下文的内存瓶颈。现有启发式驱逐方法依赖静态注意力或位置信号，难以捕捉token未来的预测影响。本文提出DistillCache，将KV缓存驱逐建模为序贯决策问题，用强化学习训练轻量策略网络，并利用每步KL散度奖励保留关键的预测信息。实验表明该方法能有效降低内存占用同时保持生成质量，为自适应缓存管理提供了新范式。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.07855v1",
+      "source": "arxiv",
+      "title": "CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents",
+      "abstract": "Multi-turn Reasoning-and-Acting (ReAct) agents accumulate growing trajectories of reasoning, tool calls, and observations. Their key-value (KV) caches grow accordingly, increasing memory use and attention cost during model inference. Existing KV cache compression methods reduce these costs by evicting states with low attention scores. However, low attention in the current turn does not imply future irrelevance, as temporarily inactive information may become important later. Snapshot-based eviction methods therefore do not explicitly distinguish temporarily dormant information from information that appears to have completed its role. In this paper, we present CommitKV, which identifies KV lifecycles through commit transitions. Specifically, CommitKV first divides completed agent events into token pages and compares each eligible page's deletion effect before a tool-call commit and after the commit's returned observation has been incorporated. Based on these paired measurements, CommitKV distinguishes dormant pages from high-to-low completion candidates. It then applies a greedy joint test, accepting candidates for retirement only when their combined post-commit effect remains bounded. Finally, at a later compression checkpoint, accepted pages are excluded, a bounded set of pages awaiting post-commit measurement is protected, and the remaining KV states are retained within the cache budget using the same token indices for keys, values, and absolute positions. These mechanisms ensure that CommitKV can distinguish dormant information from information that has completed its observed role and can be safely removed. Experiments on various benchmarks show that CommitKV reduces agent memory use, accelerates end-to-end inference, and achieves higher accuracy than existing KV cache compression methods.",
+      "authors": [
+        "Weizhong Huang",
+        "Jinchao Zhang",
+        "Xiawu Zheng"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-08-08T01:50:55+00:00",
+      "link": "https://arxiv.org/pdf/2608.07855v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Proposes lifecycle-aware KV cache compression via commit transitions for multi-turn agents",
+      "llm_evidence_cn": "提出基于提交转换的生命周期感知KV缓存压缩，针对多轮智能体轨迹",
+      "llm_evidence": "提出基于提交转换的生命周期感知KV缓存压缩，针对多轮智能体轨迹",
+      "canonical_evidence": "提出基于提交转换的生命周期感知KV缓存压缩，针对多轮智能体轨迹",
+      "llm_tldr_en": "Multi-turn ReAct agents accumulate growing KV caches; CommitKV identifies KV lifecycles via commit transitions, distinguishing dormant information from completed roles, enabling more effective eviction and compression than attention-score-based methods.",
+      "llm_tldr_cn": "多轮ReAct智能体的轨迹不断积累，KV缓存随之增长，压缩时按当前注意力得分淘汰容易误删暂时休眠但未来重要的信息。本文提出CommitKV，通过提交转换识别KV的生命周期，区分暂时休眠与已完成任务的信息，再进行针对性淘汰。该方法比基于快照的淘汰策略更贴合多轮代理的真实使用模式，有望在保持信息完整性的同时降低内存和注意力开销。",
+      "llm_tldr": "多轮ReAct智能体的轨迹不断积累，KV缓存随之增长，压缩时按当前注意力得分淘汰容易误删暂时休眠但未来重要的信息。本文提出CommitKV，通过提交转换识别KV的生命周期，区分暂时休眠与已完成任务的信息，再进行针对性淘汰。该方法比基于快照的淘汰策略更贴合多轮代理的真实使用模式，有望在保持信息完整性的同时降低内存和注意力开销。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.07915v1",
+      "source": "arxiv",
+      "title": "SPECTRA: Pushing the KV Cache Beyond the 2-Bit Cliff via Spectral Transform Coding",
+      "abstract": "Large language models (LLMs) increasingly read long inputs in the agentic era, from whole documents and codebases to conversations across many turns. Their inference memory is then dominated by the key-value (KV) cache, the stored attention keys and values of every token the model has read and generated. Because the cache grows with context length and is re-read in full at every generated token, a longer context means more GPU memory.   To reduce this cost, most existing methods compress the KV cache by lowering every stored value to the same low precision, a technique known as quantization. They can push this to nearly two bits per value, but rarely further, because quality drops sharply at this 2-bit cliff: four levels are too few for the cache's outlier-heavy values, where a few large entries consume the levels and collapse the rest into noise. A natural remedy is to spend more bits on the channels (feature dimensions) that matter and fewer on the rest, but the raw cache offers no handle: its channels are strongly correlated, so none stands out as more important.   Our analysis shows that this handle appears once the cache is rotated into a coordinate system computed from its own statistics, removing these correlations. There, a small fraction of channels carries almost all the information, and spending the budget on those few is far more accurate than spreading it evenly.   Guided by this analysis, we develop SPECTRA, a training-free, drop-in codec that re-encodes the cache into this coordinate system and concentrates the bit budget on the channels that carry the signal. On Llama-3.1-8B and Qwen2.5-7B over long-context benchmarks, SPECTRA is near-lossless at 4x compression, competitive at 8x where uniform quantization has collapsed, and reaches up to 12x, pushing usable compression past the 2-bit cliff so the same GPU holds longer contexts and larger batches.",
+      "authors": [
+        "Jiamu Zhang",
+        "Liang Wu",
+        "Kelly Wan",
+        "Hanjie Chen",
+        "Liangjie Hong"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG"
+      ],
+      "published": "2026-08-08T04:43:22+00:00",
+      "link": "https://arxiv.org/pdf/2608.07915v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "KV cache compression via spectral transform coding beyond 2-bit quantization",
+      "llm_evidence_cn": "利用谱变换编码突破2比特量化极限的KV缓存压缩",
+      "llm_evidence": "利用谱变换编码突破2比特量化极限的KV缓存压缩",
+      "canonical_evidence": "利用谱变换编码突破2比特量化极限的KV缓存压缩",
+      "llm_tldr_en": "SPECTRA compresses the key-value cache of large language models with spectral transform coding, pushing beyond the 2-bit cliff while preserving quality, thereby cutting the GPU memory that dominates long-context inference.",
+      "llm_tldr_cn": "大语言模型长上下文推理的显存开销主要来自KV缓存，而现有量化压缩在每值接近两比特时质量急剧下降。SPECTRA提出谱变换编码方法，不将所有值压到同一低精度，而是在谱域进行变换编码，从而突破2比特悬崖，在极低位数下保持模型质量。该方法可显著降低长序列解码所需的GPU显存，使更长的上下文在现有硬件上可行。",
+      "llm_tldr": "大语言模型长上下文推理的显存开销主要来自KV缓存，而现有量化压缩在每值接近两比特时质量急剧下降。SPECTRA提出谱变换编码方法，不将所有值压到同一低精度，而是在谱域进行变换编码，从而突破2比特悬崖，在极低位数下保持模型质量。该方法可显著降低长序列解码所需的GPU显存，使更长的上下文在现有硬件上可行。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.08097v1",
+      "source": "arxiv",
+      "title": "OasisKV: Scaling In-Decode KV Cache Beyond HBM with Lookahead Sparse Prefetching",
+      "abstract": "Large language model (LLM) inference serving is increasingly constrained by memory rather than compute. As long-context and long-form reasoning workloads become more prevalent, the key-value (KV) cache dominates both memory footprint and memory traffic during LLM token generation, i.e., decode. In particular, HBM capacity has become a scarce and costly resource that heavily limits inference batch size and system throughput. This paper presents OasisKV, a memory-centric LLM inference system design that alleviates HBM capacity pressure by decoupling full KV-cache storage from HBM during LLM decoding. Because decode-time attention is naturally sparse, OasisKV keeps only the KV entries of the most relevant tokens in HBMs for attention computation. We observe that future important tokens can be predicted accurately in advance using lookahead tokens drafted by speculative decoding (SD). OasisKV employs an efficient attention background pipeline to identify important KV blocks. They are then prefetched from higher-capacity memory tiers (e.g., host or remote memory) and staged in HBMs before being used in the next decode step.   We implement OasisKV based on vLLM. The lookahead prediction is accurate enough to keep accuracy within 0.7 points of full attention under a 2,048-token KV budget. This lets OasisKV turn sparsity into throughput gain: $1.69\\times$ over dense vLLM on the reasoning workload at 0.1 points of accuracy loss, and up to $2.1\\times$ on multi-GPU long-context serving. Under prefill--decode disaggregation, OasisKV reaches about $2\\times$ dense throughput while admitting each request with $6.5$--$9.7\\times$ less KV and holding $2.2$-$2.6$ less decode-node host memory than full KV transfer.",
+      "authors": [
+        "Can Xiao",
+        "Sukmin Cho",
+        "Junbong We",
+        "Zhixiong Niu",
+        "Jianyi Cheng",
+        "Yiren Zhao",
+        "Youngjin Kwon",
+        "Yongqiang Xiong",
+        "Rui Ma",
+        "Junyi Liu"
+      ],
+      "primary_category": "cs.DC",
+      "categories": [
+        "cs.DC"
+      ],
+      "published": "2026-08-08T12:27:03+00:00",
+      "link": "https://arxiv.org/pdf/2608.08097v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "decouples full KV-cache storage from HBM with lookahead sparse prefetching",
+      "llm_evidence_cn": "通过前瞻稀疏预取将完整KV缓存存储与HBM解耦",
+      "llm_evidence": "通过前瞻稀疏预取将完整KV缓存存储与HBM解耦",
+      "canonical_evidence": "通过前瞻稀疏预取将完整KV缓存存储与HBM解耦",
+      "llm_tldr_en": "Presents OasisKV, a memory-centric inference system that decouples full KV-cache storage from HBM during decoding, keeping only relevant KV entries in HBM and using lookahead sparse prefetching to scale beyond HBM capacity.",
+      "llm_tldr_cn": "长上下文解码时KV缓存占满HBM，限制批量和系统吞吐。OasisKV在解码时将完整KV缓存存储与HBM解耦，仅在HBM保留最相关token的KV，并采用前瞻稀疏预取，缓解容量压力并扩大批处理规模。",
+      "llm_tldr": "长上下文解码时KV缓存占满HBM，限制批量和系统吞吐。OasisKV在解码时将完整KV缓存存储与HBM解耦，仅在HBM保留最相关token的KV，并采用前瞻稀疏预取，缓解容量压力并扩大批处理规模。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Search for methods to reduce KV cache memory footprint during autoregressive generation",
+      "matched_requirement_id": "req-9",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.08684v1",
+      "source": "arxiv",
+      "title": "RippleKV: Cross-Layer KV Cache Allocation via Perturbation Propagation",
+      "abstract": "Long-context LLM inference is bottlenecked by KV cache memory, yet distributing a limited cache budget across layers remains challenging. Existing methods rely on proxies such as layer depth, attention statistics, or representation change. These proxies do not measure how perturbations at each layer propagate to the output and may therefore cause sensitive layers to be underallocated while tolerant layers are overallocated. To address this issue, we propose RippleKV, which allocates cache across layers by estimating how perturbations to each layer's value cache affect the final predictive distribution. RippleKV independently injects norm-adaptive perturbations into each layer's value cache and measures the induced KL divergence at the model output over a small calibration set. Averaging these responses yields a sensitivity profile specific to the model that need not vary monotonically with depth. RippleKV then converts the sensitivity profile into layer budget multipliers by normalizing the sensitivity scores and applying an exponential mapping. A ratio parameter controls the allocation disparity between sensitive and tolerant layers, while a final normalization preserves the KV cache budget. Experiments on LongBench demonstrate that RippleKV achieves the highest average performance among the evaluated KV cache compression methods under matched cache budgets.",
+      "authors": [
+        "Dongjie Xu",
+        "Kai Qian",
+        "Julius",
+        "Weijie Shi",
+        "Yuxuan Sun",
+        "Minghua Tang",
+        "Fenglei Jin",
+        "Hanchi Dong",
+        "Jiajie Xu"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "published": "2026-08-09T13:01:11+00:00",
+      "link": "https://arxiv.org/pdf/2608.08684v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Cross-layer KV cache allocation using perturbation propagation",
+      "llm_evidence_cn": "基于扰动传播的跨层KV缓存分配方法",
+      "llm_evidence": "基于扰动传播的跨层KV缓存分配方法",
+      "canonical_evidence": "基于扰动传播的跨层KV缓存分配方法",
+      "llm_tldr_en": "RippleKV allocates cross-layer KV cache budgets by injecting norm-adaptive perturbations into value caches and measuring output KL divergence, overcoming proxy-based allocation in long-context LLM inference.",
+      "llm_tldr_cn": "长上下文LLM推理受KV缓存内存限制，但现有的跨层分配依赖层深度、注意力统计等代理指标，可能造成敏感层分配不足。RippleKV通过向每层值缓存注入范数自适应扰动，并测量模型输出的KL散度，直接估计扰动传播影响，从而更合理地分配缓存预算。该方法解决了代理指标无法反映真实输出影响的问题，为跨层KV缓存优化提供了新思路。",
+      "llm_tldr": "长上下文LLM推理受KV缓存内存限制，但现有的跨层分配依赖层深度、注意力统计等代理指标，可能造成敏感层分配不足。RippleKV通过向每层值缓存注入范数自适应扰动，并测量模型输出的KL散度，直接估计扰动传播影响，从而更合理地分配缓存预算。该方法解决了代理指标无法反映真实输出影响的问题，为跨层KV缓存优化提供了新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "id": "2608.09412v1",
+      "source": "arxiv",
+      "title": "KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models",
+      "abstract": "KV-cache compression reduces long-context memory, but aggregate task scores reveal neither which correct executions fail nor why. We present KVDiagnosis, a diagnostic dataset and benchmark with three contributions. First, a 25-method taxonomy groups methods into five mechanism families and links them to eight verified implementations and their valid diagnostic measurements. Second, for every supported method setting, we evaluate all sources in each fixed split against a per-source FullCache control before selecting FullCache-correct/compressed-wrong (C-to-W) rows separately for each method-setting, so no compressor defines another's test set. Third, a common record format links paired outputs and run metadata to cache, likelihood, attention, and decoding measurements with explicit applicability states. On Qwen3-8B, four evidence-aware workloads yield 59 800 supported compressed runs over 2600 sources and 12 520 C-to-W rows. Under fixed diagnostic rules, 63.2% have low or partial measured/projected coverage. Only 19 rows (0.2%) combine high measured/projected coverage with strong likelihood drift; another 2,126 (17.0%) preserve structural position addressability, for which representation fidelity remains unknown, while showing the same drift. Against C-to-C success controls, all ten diagnostics separate failed from successful compression (stratified AUROC 0.684-0.871). Among 96 reproducible low-EAR failures, a controlled 4x evidence-attention boost repairs 29.2%, versus 6.3% under a count-matched sham intervention and 3.3% degradation on matched C-to-C controls. Code and data are available at https://github.com/ChosenQC/KVDiagnosis.",
+      "authors": [
+        "Chen Qiu",
+        "Ziwu Liu",
+        "Chao Fei",
+        "Guozhong Li",
+        "Panos Kalnis"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI"
+      ],
+      "published": "2026-08-10T10:38:05+00:00",
+      "link": "https://arxiv.org/pdf/2608.09412v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "Diagnostic benchmark for KV-cache compression in long-context language models",
+      "llm_evidence_cn": "长上下文语言模型的KV缓存压缩诊断基准",
+      "llm_evidence": "长上下文语言模型的KV缓存压缩诊断基准",
+      "canonical_evidence": "长上下文语言模型的KV缓存压缩诊断基准",
+      "llm_tldr_en": "KV-cache compression in long-context LMs needs diagnostics beyond aggregate scores. KVDiagnosis contributes a 25-method taxonomy, per-method FullCache controls, and a unified record format linking outputs and cache metadata to pinpoint why compressors fail.",
+      "llm_tldr_cn": "长上下文KV缓存压缩虽然省内存，但聚合任务分数看不出哪步正确执行失败以及为什么。KVDiagnosis提供了一个诊断数据集与基准：建立25种方法的五类机制分类并关联八个实现；对每种方法用各自FullCache对照挑选压缩前后正确变错误的样本；统一记录格式连接输出、缓存与似然等元数据。基准能按方法定位失败原因，为KV缓存压缩研究提供了细致评估工具。",
+      "llm_tldr": "长上下文KV缓存压缩虽然省内存，但聚合任务分数看不出哪步正确执行失败以及为什么。KVDiagnosis提供了一个诊断数据集与基准：建立25种方法的五类机制分类并关联八个实现；对每种方法用各自FullCache对照挑选压缩前后正确变错误的样本；统一记录格式连接输出、缓存与似然等元数据。基准能按方法定位失败原因，为KV缓存压缩研究提供了细致评估工具。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2608.08086v1",
+      "source": "arxiv",
+      "title": "Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models",
+      "abstract": "Diffusion language models (DLMs) iteratively refine a sequence, allowing earlier predictions to be revised as context evolves. This rollback capability distinguishes them from irreversible autoregressive generation, but makes inference costly. Every denoising update alters the global context, forcing both prompt and response states to be recomputed even though only response tokens are revisable. Key-value (KV) caching could reduce this cost, yet conventional caching assumes immutable historical states and is therefore difficult to reconcile with rollback.In this paper, we introduce Adaptive Reuse of Cached Hidden States for Efficient Rollback (Archer), a training-free KV caching method for rollback-capable DLMs. Archer asymmetrically keeps the mutable response synchronized with the current hypothesis while reusing prompt K/V within a bounded state neighborhood. Although prompt representations also change under bidirectional attention, their token identities remain fixed; bounded reuse therefore amortizes repeated prompt computation without caching mutable response states. It also delays feedback from tentative tokens, reducing premature reinforcement of transient high-confidence errors and giving rollback more opportunity to correct them. Our analysis characterizes prompt reuse as a reversibility-aligned cache boundary, bounds its state-dependent approximation error, and gives a decoder-margin condition for preserving full-refresh decisions.Existing DLM acceleration often trades quality for speed. Archer shifts this frontier, attaining the best mean performance of 33.63% together with a 2.57x mean speedup on the main suite. Across evaluated settings, it improves Pass@1 by up to 3.05 points and reaches up to 2.95x speedup. Controlled analyses connect the quality gain to delayed prompt feedback and validate state-aware refresh. Our code is available at https://github.com/Hxnng/Archer.",
+      "authors": [
+        "Xuning He",
+        "Zinan Sheng",
+        "Yongding Tao",
+        "Huanyu Liu",
+        "Ge Li",
+        "Xue Jiang",
+        "Yihong Dong"
+      ],
+      "primary_category": "cs.CL",
+      "categories": [
+        "cs.CL"
+      ],
+      "published": "2026-08-08T12:13:10+00:00",
+      "link": "https://arxiv.org/pdf/2608.08086v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Proposes a KV caching method for diffusion language models, adapting cache reuse for rollback.",
+      "llm_evidence_cn": "提出面向扩散语言模型的KV缓存方法，适应回滚场景的缓存复用",
+      "llm_evidence": "提出面向扩散语言模型的KV缓存方法，适应回滚场景的缓存复用",
+      "canonical_evidence": "提出面向扩散语言模型的KV缓存方法，适应回滚场景的缓存复用",
+      "llm_tldr_en": "Introduces Archer, a training-free KV caching method for diffusion language models that adaptively reuses cached hidden states during rollback, reducing inference cost while supporting revision.",
+      "llm_tldr_cn": "扩散语言模型通过迭代精化序列，允许修正早期预测，但此回滚能力导致推理代价高昂，每个去噪步骤都需重算提示与响应状态。本文提出Archer，一种免训练的KV缓存方法，针对可回滚的扩散语言模型，非对称地复用缓存隐状态以降低重算开销。该方法在保持回滚能力的同时显著减少推理成本，为扩散式语言模型的缓存优化提供了新的思路。",
+      "llm_tldr": "扩散语言模型通过迭代精化序列，允许修正早期预测，但此回滚能力导致推理代价高昂，每个去噪步骤都需重算提示与响应状态。本文提出Archer，一种免训练的KV缓存方法，针对可回滚的扩散语言模型，非对称地复用缓存隐状态以降低重算开销。该方法在保持回滚能力的同时显著减少推理成本，为扩散式语言模型的缓存优化提供了新的思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "key-value cache for large language models",
+      "matched_requirement_id": "req-1",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2608.09225v1",
+      "source": "arxiv",
+      "title": "Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference",
+      "abstract": "The key-value (KV) cache is the primary throughput optimization in modern large language model (LLM) inference, enabling prefix reuse across requests. In multi-tenant deployments this cache is shared across tenants, creating a timing side channel: an adversarial tenant can reconstruct another tenant's private prompt by probing cache-hit latency. Three published attacks exploit it -- PROMPTPEEK, EarlyBird and InputSnatch -- reaching up to 100% attack success rate against unprotected vLLM and SGLang, with rates varying by cache architecture and prompt structure.   We present KVGov, a governance layer addressing all three attack families' prefix-cache paths under one mechanism. A per-principal salt sigma_p = HMAC_K(secret, principal_id) seeds the block-hash chain, making cache keys cryptographically disjoint across principals. An ablation (N=1000 trials, seed 2026, deterministic judges) isolates this salt as the necessary and sufficient component. KVGov adds ORIGAMI, a Stackelberg water-filling audit scheduler that reduces adversary expected utility by 12.6% at realistic tenant heterogeneity (Gini 0.63), and an evolutionary stability analysis giving a 31.6% adversary-prevalence tipping point below which global caching remains stable.   On real hardware (Qwen2.5-7B-Instruct, vLLM 0.26.0, NVIDIA A100) we measure a gate-verified cold/cached TTFT ratio of 0.22, confirming the channel is exploitable at production scale; the defense itself is evaluated in simulation calibrated to those measurements. We replicate the channel on an independent stack (llama.cpp on Apple Metal, ratio 0.093). Finally, isolation and cache efficiency need not conflict: identifying information resides only where prompts diverge, so injecting the salt at that boundary rather than the chain root retains an estimated 93% of the prefix-cache benefit with no cross-principal signal.",
+      "authors": [
+        "Tejasvi C. Addagada"
+      ],
+      "primary_category": "cs.CR",
+      "categories": [
+        "cs.CR",
+        "cs.AI"
+      ],
+      "published": "2026-08-10T07:47:57+00:00",
+      "link": "https://arxiv.org/pdf/2608.09225v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Focuses on prefix caching in multi-tenant LLM inference and proposes governance to prevent side-channel leakage.",
+      "llm_evidence_cn": "聚焦多租户LLM推理中的前缀缓存，并提出治理机制防止侧信道攻击",
+      "llm_evidence": "聚焦多租户LLM推理中的前缀缓存，并提出治理机制防止侧信道攻击",
+      "canonical_evidence": "聚焦多租户LLM推理中的前缀缓存，并提出治理机制防止侧信道攻击",
+      "llm_tldr_en": "Identifies timing side-channel attacks on shared KV cache prefix reuse in multi-tenant LLM inference and presents KVGov, a governance layer using per-principal salting to prevent prompt leakage.",
+      "llm_tldr_cn": "在多租户大语言模型推理中，KV缓存通过前缀复用提升吞吐，但也带来时序侧信道风险，攻击者可窃取他人私有提示。本文提出KVGov治理层，利用基于HMAC的每主体盐值对前缀缓存进行隔离，统一防御三类已知攻击路径。实验显示该方法能有效阻止攻击成功，同时保持前缀复用带来的性能收益。该工作首次从安全治理角度系统处理KV缓存共享问题。",
+      "llm_tldr": "在多租户大语言模型推理中，KV缓存通过前缀复用提升吞吐，但也带来时序侧信道风险，攻击者可窃取他人私有提示。本文提出KVGov治理层，利用基于HMAC的每主体盐值对前缀缓存进行隔离，统一防御三类已知攻击路径。实验显示该方法能有效阻止攻击成功，同时保持前缀复用带来的性能收益。该工作首次从安全治理角度系统处理KV缓存共享问题。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "prefix caching for transformer inference",
+      "matched_requirement_id": "req-6",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    }
+  ]
+}
