@@ -1,0 +1,679 @@
+Title: ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover
+
+URL Source: https://arxiv.org/pdf/2608.10545v1
+
+Published Time: Wed, 12 Aug 2026 00:40:22 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover 
+
+Minwoo Kim, Soochang Song, Namyoon Lee, Bang Chul Jung, and Yongjune Kim 
+
+Abstract —Edge LLMs must preserve inference continuity when a user hands over between edge nodes, requiring key-value (KV) cache transfer to the target node. However, simul-taneous handovers saturate the backhaul, preventing full cache delivery within the mobility-imposed transfer window. Rather than allocating bandwidth as if all cache entries were equally valuable, we order each user’s KV cache by importance and transmit only its most informative fraction, turning token-level sparsity into communication savings. We cast the transfer as a multi-user backhaul allocation problem that maximizes average accuracy across users. Each user’s partial-cache accuracy serves as its utility: a sigmoid that fits measurements on the RULER benchmark with R2 > 0.99 across models and context lengths. Because importance ordering front-loads the high-value entries, the concave region of the accuracy curve spans nearly the entire cache. Our proposed allocator keeps served users within this region, making each per-slot allocation problem convex. The optimum is derived via a weighted water-filling solution that generalizes information-theoretic water-filling and enables online scheduling. The proposed allocator attains over 93.7% average accuracy in a 500ms transfer window, within 0.5pp of the full-cache ceiling, and reaches 98.2–99.5% of a clairvoyant upper bound. 
+
+Index Terms —Edge LLM, KV cache transfer, resource alloca-tion, token communications, multi-access edge computing. 
+
+I. I NTRODUCTION 
+
+Next-generation communication networks are evolving be-yond simple data delivery into an infrastructure that supports real-time artificial intelligence (AI) inference for applications such as large language model (LLM) services, autonomous driving, and robotics [1], [2]. These services share two re-quirements: ultra-low latency and seamless mobility. The first is difficult to meet with remote cloud inference, whose round-trip time alone can exceed the millisecond-scale latency budget of real-time AI [3]. Multi-access edge computing (MEC) addresses this by hosting computation at the network edge, close to users. For AI workloads, this paradigm has taken shape as Edge AI and, more recently, Edge LLM, in which model inference runs directly on edge nodes [4], [5]. However, unlike cloud-based serving, edge inference is directly exposed to user mobility. Whenever a moving user is reassigned to another edge node, inference continuity must be preserved across the handover. Although virtual machine or 
+
+M. Kim, S. Song, N. Lee, and Y. Kim are with the Department of Electrical Engineering, Pohang University of Science and Technology (POSTECH), Pohang 37673, South Korea (e-mail: {minwoo.kim, ssc6351, nylee, yongjune }@postech.ac.kr) B. C. Jung is with the Department of Electrical and Computer Engineering, Ajou University, Suwon 16499, South Korea (e-mail: bcjung@ajou.ac.kr). 
+
+> AI Service
+> KV Cache
+
+! " #
+
+> AI Service
+> KV Cache
+
+! " #        
+
+> !!
+> Backhaul
+> 3 2 4 1 234423
+> User A User B User C
+
+… 
+
+> Prioritize Reconstruct
+
+Fig. 1. Concept of ImpactHO framework. 
+
+container migration has been studied for MEC handover [6]– [8], modern AI models carry tens to hundreds of gigabytes of weights (e.g., 16 GB for 8B-parameter models), making such migration impractical and pushing handover latency to tens of seconds. Since the model itself is already provisioned at each edge node, only the user-specific context needs to move. Transformer-based LLMs store this context as a key-value (KV) cache, and recent work proposes treating the KV cache itself as the transfer target [9]. Unlike transferring the raw text or tokens, which requires re-prefilling at the target node, transferring the KV cache lets the target node resume inference immediately. However, the KV cache is substantially larger than the raw text it encodes, so concurrent long-context handovers still saturate the backhaul. A natural remedy is to transfer only part of the KV cache. Recent studies on KV cache eviction have shown that not all entries are equally important at inference time: LLMs can retain most of their accuracy using only a small fraction of their cache [10]–[14]. These results, however, address a single model’s memory budget, not how a shared backhaul should be divided across users. To address this gap, we propose ImpactHO (Imp ortance-
+
+aware KV cache transfer for multi-user hand over), a frame-work that orders each user’s cache by importance and transmits arXiv:2608.10545v1 [cs.NI] 11 Aug 2026 its most informative entries first, as illustrated in Fig. 1. To capture how accuracy grows with the delivered cache, we model each user’s accuracy as a function of its received cache fraction and treat this curve as a per-user utility. The scheduling task then becomes a utility-maximization problem: allocate the limited backhaul bandwidth across users so as to maximize the average accuracy. Importance ordering plays a structural role beyond prioritiz-ing informative cache. Partial-cache accuracy is intrinsically concave once enough context has arrived for the model to become operable. By front-loading the highest-value entries, importance ordering pulls this operable point (i.e., the inflec-tion point of the accuracy curve) down to only a small cache fraction. The concave region therefore spans nearly the entire cache, and every user can be brought into it at low cost. An admission rule then lifts every served user past this point, so each per-slot allocation reduces to a convex subproblem, whose optimum takes a weighted water-filling form with each user’s cache size acting as its weight. We summarize our main contributions as follows:  
+
+> •
+
+ImpactHO framework : We formulate importance-ordered partial KV cache transfer as a multi-user backhaul al-location problem for edge LLM handover, repurposing per-entry importance scores from KV cache eviction to set the transmission order. Modeling each user’s partial-cache accuracy as its utility casts the scheduling task as a utility-maximization problem over the shared bandwidth.  
+
+> •
+
+Empirical sigmoid characterization of partial-cache ac-curacy : On the RULER benchmark [15], partial-cache accuracy follows a sigmoid ( R2 > 0.99 ) robustly across context lengths, models, and ordering schemes. Impor-tance ordering pulls its inflection point down to about 
+
+6.5 % of the cache, so the concave region spans nearly the entire cache. This validates our utility assumption and provides a reusable parametric foundation for KV cache-aware networking research.  
+
+> •
+
+Two-regime allocator with low overhead : We derive the per-slot optimum in closed form as a weighted water-filling solution over a feasible region expanded by im-portance ordering. It reduces to classical water-filling as a special case and runs in near-linear time per slot. Coupled with an admission rule that suppresses starvation under heavy load, the allocator consistently outperforms base-lines and reaches near-full accuracy faster than target-side re-prefill of even a single 8K context. II. R ELATED WORK 
+
+The KV cache stores the key and value tensors of previously processed tokens at each Transformer layer and attention head, avoiding their recomputation during autoregressive decoding. However, because its memory footprint grows linearly with the context length, the KV cache has become a major bottle-neck for long-context inference. To alleviate this bottleneck, eviction-based methods [10]–[14] estimate the importance of cached entries and retain only the most important ones, thereby reducing memory consumption while largely preserving model accuracy. Among these, KVzip [13] derives query-agnostic per-(layer, head, token) importance scores from a context-reconstruction pass, reaching near-lossless accuracy with less than 30 % of the cache. Fast KVzip [14] distills these scores into lightweight gating modules offline, achieving comparable accuracy with-out the inference-time scoring overhead. While prior work uses these importance scores only for memory reduction, we repurpose them to set the transmission order over the backhaul. Since the future query is unavailable at handover time, query-agnostic importance estimation is particularly well suited to our setting; hence, we adopt Fast KVzip. Nevertheless, our framework can accommodate any scoring method that provides a per-entry importance ranking. Beyond the memory pressure addressed by eviction, moving the cache between nodes is itself a bottleneck. In disaggregated datacenter serving, DistServe [16] and Splitwise [17] place prefill and decode on separate instances, requiring the KV cache to be transferred between them. However, these systems are designed for datacenter environments with high-bandwidth interconnects and do not address mobility-driven handovers or contention among multiple migrating users over bandwidth-constrained backhaul links. More closely related to our setting, CacheGen [18] streams a compressed KV cache adaptively, but focuses on loading a single context rather than allocating shared backhaul bandwidth across concurrent handovers. Such KV compression is complementary to our allocation frame-work: it can be applied before transmission to further reduce the required backhaul traffic. While sharing our motivation to preserve inference conti-nuity under mobility, a recent edge LLM handover scheme ctHO [9] adopts a fundamentally different formulation. It minimizes the maximum handover delay across users, couples resource allocation with target-side computation, and requires the handover timing of all users to be known in advance. In contrast, we transmit only a selected fraction of each KV cache and maximize inference accuracy subject to an online per-slot backhaul budget, thereby decoupling backhaul allocation from target-side compute. ImpactHO supports anytime inference because the target can resume decoding after any completed prefix of the KV cache stream using the partial cache re-ceived up to that point. In contrast, re-prefill must complete prefill over the full context, while ctHO must complete its prescribed cache-transfer and target-side re-prefill operations before decoding can resume. Hence, neither baseline supports inference before full context restoration. Table I summarizes these structural differences, and Section VI-D provides a quantitative comparison. Our importance-ordered KV cache transfer shares the prin-ciple of task-oriented and semantic communications, which prioritize information according to its relevance to the given task rather than bit-level fidelity [19], [20]. A recent instan-tiation of this principle is token communications, in which tokenized multimodal source signals are transmitted and re-constructed at the receiver [21], [22]. Our setting differs in TABLE I STRUCTURAL COMPARISON OF HANDOVER STRATEGIES .           
+
+> Re-prefill ctHO [9] ImpactHO
+> Target-GPU prefill Full Partial None
+> Scheduling N/A Offline Online
+> Anytime property No No Yes
+
+what is transmitted: not source tokens, but the per-token KV cache entries constituting the internal inference state of a deployed LLM. The target node consumes these entries di-rectly to resume inference, without reconstructing the original source. By sending only a high-value fraction in descending order of measured importance, we extend this paradigm to mainstream LLM serving. Our framework also relates to network utility maximization (NUM), which shares a fixed capacity by maximizing the sum of per-user utilities. For elastic flows with concave utilities, NUM admits globally optimal distributed solutions [23]. Real-time inelastic flows are a closer match to our setting: their utilities are sigmoidal, and this shape makes the problem nonconvex, so standard dual algorithms can miss a feasible global optimum. Prior work has addressed this regime in two ways: sub-threshold flows can self-regulate, turning off when a persistently low net utility signals infeasibility [24]; alternatively, link capacity can be provisioned large enough to guarantee convergence of the distributed algorithm [25]. In both approaches, the application determines a fixed utility curve, and the network can only select an operating point along that curve. In our setting, by contrast, the utility is empirically measured and depends not only on the user’s context length but also on the order in which KV cache entries are transmitted. Our approach is therefore to shape the utility itself through importance ordering, so that the concave regime covers nearly the entire operating range. III. S YSTEM MODEL AND PROBLEM FORMULATION 
+
+A. Framework Overview 
+
+The overall concept of ImpactHO is illustrated in Fig. 1. While serving a user, the source node assigns an importance score to each KV cache entry and maintains the entries in descending order of importance. Consequently, any prefix of the ordered cache contains the highest-ranked entries for the corresponding cache size. When a handover occurs, the source node streams these entries to the target node in importance order over the shared backhaul. If the finite transfer window expires before the entire cache is delivered, this ordering ensures that the target has received the most valuable subset available under the transfer budget and can resume inference using the resulting partial cache. When multiple handovers concurrently contend for the shared backhaul, ImpactHO allocates the per-slot transmission budget among users to maximize their aggregate inference accuracy. The remainder of this section formalizes the KV cache size and importance-induced accuracy utility and formulates the resulting per-slot resource-allocation problem. 
+
+B. Multi-user Edge LLM Handover 
+
+We consider an edge node hosting a shared LLM that concurrently serves multiple users, reflecting a typical edge deployment in which GPU memory constraints favor sharing a single model instance across users. Each user i maintains an individual context stored at the edge node as a KV cache of size 
+
+Li = 2 nLnH dhqT i bits , (1) where the factor of two accounts for the key and value tensors, 
+
+nL is the number of transformer layers, nH is the number of KV heads, dh is the head dimension, q is the number of bits used to represent each scalar, and Ti is the context length. 
+
+Li depends on the transformer architecture and grows linearly with the context length Ti. For example, the KV cache of Qwen3-8B [26] occupies approximately 1.2 GB (9.66 Gb ) for an 8K-token context. Once a handover is triggered, we assume that Li remains fixed throughout the KV cache transfer. An edge inference node may serve users across multiple radio cells; hence, inference-state migration is required only when a user moves beyond the coverage of its current node. To preserve inference continuity, the source node transfers the user’s KV cache to the target node. In AI-RAN archi-tectures for beyond-5G networks, edge inference nodes may be deployed at the distributed unit (DU) or central unit (CU) level and connected through fiber-based transport networks using interfaces such as F1 or X2/Xn [27]. For brevity, we collectively refer to the transport path between the source and target nodes as the backhaul . KV cache transfers share a backhaul bandwidth of B bits/s among the active handover users, where B denotes the bandwidth allocated to KV cache transfer, not the raw physical link capacity. We model backhaul allocation in discrete time slots of duration ∆t. At the beginning of each slot, the scheduler observes the set of active handover users and determines their allocations, which remain fixed throughout the slot. A handover request arriving during a slot becomes eligible for scheduling at the beginning of the next slot. We focus on the given slot in which N users concurrently undergo handover and compete for the available backhaul bandwidth B, i.e., per-slot budget of B∆t bits. We denote by Nt the index set of these active handover users, so that |N t| = N . We consider a single transfer direction, with B the bandwidth provisioned for that direction; the N contending users are those handing over in it, and the reverse direction forms a symmetric instance. 
+
+C. Importance-aware KV Cache Ordering 
+
+We assign an importance score to each individual KV cache entry, defined as the key–value pair associated with one token at a specific layer and KV head, rather than to an entire token. Each entry occupies 2dhq bits ( 0.5 KB for Qwen3-8B in BF16), and user i’s cache therefore contains nLnH Ti entries. The source node orders these entries by decreasing importance and transmits them in that order. Consequently, any delivered prefix is the top-ranked subset of its size: when a fraction 
+
+xi ∈ [0 , 1] of user i’s cache has arrived, the target node holds the highest-ranked xiLi bits. As xi increases, newly trans-mitted entries have progressively lower importance, naturally inducing diminishing returns. This observation motivates the concave accuracy-utility model introduced in Section III-D. In this paper, we obtain the importance ordering from the gating-network scores of Fast KVzip [14], chosen for its near-state-of-the-art retention quality at low computational cost. Importance-ordered transmission does introduce implementa-tion overhead beyond standard cache transfer, which we quan-tify and discuss in Section VI-E. Our optimization framework is not restricted to Fast KVzip or even to importance-based or-dering: any fixed ordering, including random ordering, can be accommodated as long as its induced utility is monotonically increasing and concave over the operating region considered; Section IV examines this condition in detail. 
+
+D. Utility Function 
+
+We define the per-user utility Ai(y) as the inference accu-racy for user i when the target node has received a fraction 
+
+y ∈ [0 , 1] of the user’s importance-ordered KV cache. Once the target node has received a sufficient fraction, increasing y adds progressively lower-ranked entries to those already delivered, so accuracy is expected to improve with diminishing marginal gains. This motivates the following assumption, on which the optimal-allocation analysis of Section V relies. 
+
+Assumption 1 (Concave Operating Region): For each user 
+
+i, there exists a concavity anchor τi ∈ (0 , 1) such that Ai(y)
+
+is continuously differentiable, strictly increasing, and strictly concave on [τi, 1] . We restrict the analysis to y ∈ [τi, 1] .Operationally, τi denotes the minimum cache fraction at which the target enters the concave operating region consid-ered for resource allocation. Below τi, the received KV cache entries may be insufficient for reliable task performance, and 
+
+Ai need not be concave. Above τi, transmitting additional, progressively lower-ranked entries yields diminishing accuracy gains. Section IV shows that the measured accuracy curves exhibit operating regions consistent with Assumption 1. 
+
+E. Optimization Problem 
+
+At the beginning of a slot, the target node has received a fraction xi of user i’s KV cache. The scheduler assigns user 
+
+i a normalized cache-delivery rate bi, in cache fractions per second, so that the received fraction at the end of the slot is 
+
+yi , xi + bi∆t. (2) Because the full cache contains Li bits, this allocation corre-sponds to a transmission rate of Libi bits/s. We maximize the aggregate accuracy improvement achieved during the slot: 
+
+maximize  
+
+> {bi}
+> N
+
+∑
+
+> i=1
+
+[ Ai(yi) − Ai(xi) ]
+
+subject to 
+
+> N
+
+∑
+
+> i=1
+
+Li bi ≤ B, bi ≥ 0, τi ≤ yi ≤ 1, ∀ i ∈ { 1, . . . , N }.
+
+(3) The first constraint enforces that the aggregate transmission rate does not exceed the available backhaul bandwidth B. The remaining constraints prevent the received cache fraction from decreasing, restrict each user to the concave operating region specified in Assumption 1, and cap the received fraction at the full cache. Because bi ≥ 0 is equivalent to yi ≥ xi, the two lower bounds on yi can be combined as ˜xi , max {xi, τ i},yielding the individual feasible interval yi ∈ [˜ xi, 1] .Moreover, xi is fixed at the beginning of the slot, so ∑ 
+
+> i
+
+Ai(xi) is constant and can be omitted from the objective. Using bi = ( yi − xi)/∆t, Problem (3) is equivalent to 
+
+minimize  
+
+> {yi}
+
+−
+
+> N
+
+∑
+
+> i=1
+
+Ai(yi)
+
+subject to 
+
+> N
+
+∑
+
+> i=1
+
+Li(yi − xi)∆t ≤ B, 
+
+˜xi ≤ yi ≤ 1, ∀i ∈ { 1, . . . , N }.
+
+(4) The objective over the feasible set is convex and all constraints are affine. We solve this convex optimization problem in Section V. The formulation requires every active user to reach its concave operating region by the end of the slot. This is possible only when the available backhaul budget is sufficient to raise every user currently below its concavity anchor τ .
+
+Lemma 1 (Feasibility): Problem (4) is feasible if and only if 
+
+B ≥ Bmin , 1∆t
+
+> N
+
+∑
+
+> i=1
+
+Li [τi − xi]+, (5) where [ · ]+ , max {· , 0}.
+
+Proof: Any feasible {yi} satisfies yi ≥ ˜xi, hence yi−xi ≥
+
+max {xi, τ i} − xi = [ τi − xi]+. It must therefore transmit at least ∑ 
+
+> i
+
+Li[τi −xi]+ bits during the slot, proving the necessity of (5). Conversely, if (5) holds, choosing yi = ˜ xi for every user satisfies both the individual bounds and the backhaul constraint. When B < Bmin , not all active users can reach their concave operating regions within the slot, and we instead invoke the fallback policy described in Section V. IV. U TILITY FUNCTION CHARACTERIZATION 
+
+Recall from Section III-D that Ai(y) denotes the inference accuracy for user i as a function of its received cache frac-tion y, and that Assumption 1 posits a concavity anchor τi
+
+beyond which Ai(y) is concave. We hypothesize that Ai(y)
+
+exhibits a sigmoidal shape: accuracy remains low when the received cache is insufficient, increases rapidly once enough informative entries have been delivered, and eventually satu-rates because subsequently delivered entries are progressively lower ranked and provide smaller marginal gains. This section evaluates this hypothesis through systematic measurements. In addition to supporting the analysis in Section V, the resulting characterization provides a compact parametric utility model for importance-ordered KV cache transfer. Received cache fraction           
+
+> 00.05 0.1 0.15 0.2 0.25 0.3
+> RULER accuracy (%)
+> 020 40 60 80 100 Qwen3-8B Qwen3-14B Llama-3.1-8B-Inst.
+> (a) Fast KVzip, 8K context
+> Received cache fraction
+> 0.2 0.4 0.6 0.8 1
+> RULER accuracy (%)
+> 020 40 60 80 100 Qwen3-8B Qwen3-14B Llama-3.1-8B-Inst.
+> (b) Random ordering, 8K context Fig. 2. Algebraic sigmoid fits to the measured RULER accuracy as a function of the received KV cache fraction at 8K context length for Qwen3-8B, Qwen3-14B, and Llama-3.1-8B-Instruct: (a) Fast KVzip and (b) random ordering. Markers indicate measured RULER accuracy, and solid curves show the algebraic sigmoid fits defined in (6).
+
+1) Empirical Setup: We test this hypothesis by fitting four canonical sigmoid families—algebraic, logistic, error function (erf), and arctan—to measured LLM accuracy across multiple context lengths. Although prior KV cache eviction studies have reported the qualitative dependence of LLM accuracy on the retained cache fraction [11], [14], our objective is to identify a parametric model that both accurately represents the measured utility and permits tractable resource-allocation analysis. We use Qwen3-8B [26] as the primary LLM, and additionally evaluate Qwen3-14B and Llama-3.1-8B-Instruct [28] to as-sess robustness across model architectures and sizes. As the benchmark, we use RULER [15], a long-context evaluation suite comprising diverse tasks at multiple context lengths. We compare the importance ordering produced by Fast KVzip with random ordering as a baseline. 
+
+2) Fitting Results: Fig. 2 shows that the algebraic sigmoid fits well for Qwen3-8B at 8K ( R2 > 0.999 , RMSE = 0 .936 ). The algebraic sigmoid remains accurate across the 4K, 8K, and 16K context lengths, achieving R2 > 0.999 in every case. Thus, the observed sigmoidal behavior is not specific to a single context length. The remaining three families fit the same measurements equally well, so the sigmoidal shape is a property of the measured accuracy. The fitted inflection points are stable across the four functional families, lying within the narrow range τ ∈ [0 .064 , 0.067] . Moreover, the algebraic sigmoid achieves R2 > 0.99 for both Qwen3-14B and Llama-3.1-8B-Instruct under both Fast KVzip and random ordering. Collectively, these results support the existence of a concave operating region consistent with Assumption 1 across the con-sidered models, context lengths, and transmission orderings. 
+
+3) Choice of Functional Form: A practical utility model should provide both an accurate empirical fit and a tractable marginal-utility inversion. Although all four fitted families yield optimal solutions, we adopt the algebraic sigmoid because its marginal-utility inverse involves only arithmetic operations and radicals: 
+
+Ai(y) = Mi
+
+2
+
+(
+
+1 + ki(y − τi)
+
+√1 + k2 
+
+> i
+
+(y − τi)2
+
+)
+
+, (6) 
+
+A′
+
+> i
+
+(y) = Mi ki
+
+2 (1 + k2 
+
+> i
+
+(y − τi)2)3/2 . (7) The parameters Mi, ki, and τi represent the upper accuracy asymptote, transition sharpness, and concavity anchor, respec-tively. These parameters may vary across users because of differences in context length and task characteristics. V. I MPORTANCE -A WARE RESOURCE ALLOCATION VIA 
+
+WEIGHTED WATER -F ILLING 
+
+A. Optimal Weighted Water-Filling Structure 
+
+The solution to Problem (4) exhibits a weighted water-filling 
+
+structure, analogous to generalized water-filling solutions for constrained resource allocation [29]. A single dual price coor-dinates all users, but their water levels differ according to their cache sizes and marginal-utility curves. Each user’s allocation fills the positive gap between its current progress xi and its price-dependent water level. 
+
+Theorem 1 (Weighted Water-Filling): Under Assumption 1, if B ≥ Bmin , the primal optimum is 
+
+y⋆i = max {xi, W i(λ⋆)}, b⋆i = y⋆i − xi
+
+∆t , (8) where 
+
+Wi(λ) ,
+
+
+
+1, si(λ) ≤ A′
+
+> i
+
+(1) ,
+
+(A′
+
+> i
+
+)−1(si(λ)), A′
+
+> i
+
+(1) < s i(λ) < A ′
+
+> i
+
+(τi),τi, si(λ) ≥ A′
+
+> i
+
+(τi).
+
+(9) Here, we set si(λ) , λL i/∆t, and λ⋆ ≥ 0 is a dual-optimal variable associated with the backhaul-rate constraint. When the budget binds, λ⋆ can be chosen to satisfy 
+
+∑
+
+> i
+
+Li(y⋆i − xi)∆t = B. (10) Since Ai is strictly concave on [τi, 1] , its derivative is strictly decreasing on this interval, and the inverse in the second branch is well defined. These optimal solutions are derived via the Karush–Kuhn–Tucker (KKT) conditions of Problem (4); a formal proof is provided in Appendix A. Let zi = Li(yi − xi) denote the number of additional cache bits transmitted for user i. For every user satisfying ˜xi < y ⋆i <
+
+1, dAi(xi + zi/L i)dzi
+
+∣∣∣∣zi=z⋆i
+
+= A′
+
+> i
+
+(y⋆i )
+
+Li
+
+= λ⋆
+
+∆t , (11) where z⋆i = Li(y⋆i −xi). Thus, the optimal allocation equalizes the marginal accuracy gain per additional transmitted cache bit across all interior users. Theorem 1 does not require a particular parametric utility family. Specializing the result to a given family requires only evaluating (A′
+
+> i
+
+)−1 for the interior branch, while the boundary cases are handled by (9). We illustrate this using the algebraic and logistic sigmoids characterized in Section IV. 
+
+Example 1 (Water Levels for Sigmoid Utilities): For the interior branch of (9), the algebraic sigmoid in (6) gives 
+
+(A′
+
+> i
+
+)−1(si(λ)) = τi + 1
+
+ki
+
+√( Miki
+
+2si(λ)
+
+)2/3
+
+− 1. (12) For the logistic sigmoid Ai(y) = Mi/ (1 + e−ki(y−τi)), it gives 
+
+(A′
+
+> i
+
+)−1(si(λ)) = τi + 1
+
+ki
+
+arcosh 
+
+( Miki
+
+2si(λ) − 1
+
+)
+
+. (13) We adopt the algebraic specialization because it combines strong empirical fit with efficient per-user allocation: once the dual price is determined, each user’s optimal allocation can be evaluated using only arithmetic operations and radicals. When 
+
+B < B min , the feasibility condition of Lemma 1 fails and the closed form above no longer applies; Section V-B handles this regime with an explicit admission policy. 
+
+B. Fallback Policy and Resource Allocation Algorithm 
+
+By Lemma 1, Problem (4) is feasible if and only if 
+
+B ≥ Bmin . When B < B min , no allocation can bring every active user into its concave region within the current slot. The scheduler must therefore invoke a fallback admission policy that prioritizes users under the insufficient backhaul budget. The benefit of such an explicit policy is evaluated empirically in Section VI-C (Fig. 5(b)). As our default fallback, we adopt 
+
+equalized bytes (EB) .Let S , {i ∈ N t : xi < τ i} denote the users that have not yet reached their concavity anchors. EB equalizes the number of cache bits delivered during the slot among the users in S.Since all users share the same slot duration, this is equivalent to initially assigning each user i ∈ S a physical backhaul rate of B/ |S| , corresponding to the relative allocation bEB  
+
+> i
+
+= 
+
+> B
+> |S| Li
+
+. Each relative allocation is capped at the rate required to complete the remaining cache transfer within the slot, (1 −
+
+xi)/∆t. If a user reaches this cap, the released backhaul rate is redistributed equally among the remaining unfinished users in 
+
+S. Users outside S receive no bandwidth under the fallback policy. By prioritizing users that have not yet reached their anchors, EB mitigates sub-τ starvation under heavy load. The complete two-regime allocator is summarized in Al-gorithm 1. It first evaluates the feasibility threshold Bmin .If B < Bmin , it invokes the EB fallback. Otherwise, it computes the optimal allocation characterized in Theorem 1 by locating a dual-optimal price λ⋆ through the bisection subroutine F IND WATER LEVEL .FIND WATER LEVEL exploits the monotonicity of the ag-gregate demand g(λ) , ∑Ni=1 Li
+
+(y⋆i (λ) − xi
+
+)/∆t, which is continuous and non-increasing in λ. If g(0) ≤ B, the entire remaining cache fits within the slot and λ⋆ = 0 ; otherwise, bisection solves g(λ) = B to tolerance ε. Each evaluation of g costs O(|N t |), and the search range is bounded by ¯λ,the price at which g(¯λ) = Bmin , so the allocator runs in 
+
+Algorithm 1 Importance-Aware Resource Allocation 
+
+Input: Active user index set Nt with user parameters 
+
+{(Li, x i, τ i, A i)}i∈N t , total bandwidth B, slot duration ∆t.
+
+Output: Bandwidth allocation {b⋆i }i∈N t . 
+
+> 1:
+
+S ← { i ∈ N t : xi < τ i} ⊲ Sub-τ users  
+
+> 2:
+
+Bmin ← 1∆t
+
+∑ 
+
+> i∈S
+
+Li(τi − xi) 
+
+> 3:
+
+if B < B min then ⊲ Infeasibility  
+
+> 4:
+
+return EQUALIZED BYTES (S, B, ∆t) 
+
+> 5:
+
+end if  
+
+> 6:
+
+λ⋆ ← FIND WATER LEVEL (Nt, B, ∆t) 
+
+> 7:
+
+for each i ∈ N t do  
+
+> 8:
+
+y⋆i ← max( xi, W i(λ⋆)) ⊲ Optimal target  
+
+> 9:
+
+b⋆i ← (y⋆i − xi)/∆t ⊲ Bandwidth assignment  
+
+> 10:
+
+end for  
+
+> 11:
+
+return {b⋆i }i∈N t
+
+O(|N t| log( ¯λ/ε )) time per slot, i.e., near-linear in the number of active users. 
+
+C. Connection to Classical Water-Filling 
+
+When all users have the same utility function and cache size, i.e., Ai(·) = A(·) and Li = L, the user-specific water levels 
+
+Wi(λ) reduce to a common level W (λ), and users differ only in their current progress xi. When the backhaul constraint is active, let W ⋆ , W (λ⋆) and A , {i ∈ N t : xi < W ⋆}
+
+denote the set of users receiving positive allocations. The budget equality then gives 
+
+W ⋆ = 1
+
+|A| 
+
+∑
+
+> i∈A
+
+xi + B ∆t
+
+|A| L , b⋆i = 1∆t
+
+[W ⋆ − xi
+
+]+. (14) This has the same algebraic form as classical water-filling [29], [30], with the channel-dependent ground level replaced by the progress floor xi and the total power replaced by the deliverable cache fraction B∆t/L . Then, a user with greater current progress has a higher ground level and requires less additional bandwidth to reach the common target level. VI. E XPERIMENTAL RESULTS 
+
+A. Experiment Settings 1) Simulation environment: We follow the slotted system model of Section III. At the beginning of each time slot of duration ∆t, the scheduler observes all active users Nt
+
+and updates the bandwidth allocation, which remains fixed throughout the slot. Handover events arrive according to a Poisson process with mean rate ρ (users per second). Upon each event, the context length of a new user is uniformly sampled from {4K , 8K , 16K } tokens to model heterogeneous context lengths. Each user attempts to complete its handover within an allowed transfer window Tmax . Unless otherwise noted, the default settings are B = 20 Gbps , ∆t = 100 ms ,
+
+Tmax = 500 ms , ρ = 4 users /s, and context lengths drawn uniformly from {4K , 8K , 16K }, with each point averaged over 
+
+100 s of simulation across 100 Monte-Carlo runs. We adopt B = 20 Gbps as a beyond-5G baseline. While over-provisioned networks ( ≥50 Gbps ) make allocation trivial, and severely limited ones reduce the problem to pure admis-sion control, 20 Gbps serves as a practical yet challenging operating point; its sensitivity is examined in Section VI-B. Similarly, the slot duration ∆t = 100 ms balances the re-allocation period against scheduler overhead. The transfer window Tmax = 500 ms is a mobility-imposed budget for completing the transfer in the background, not an inference-time latency: in soft-handover architectures, the target can begin loading the cache before the user formally migrates. When the window expires, the transfer is truncated, and the user resumes inference on whatever prefix has arrived. We analyze the sensitivity of both ∆t and Tmax in Section VI-C. All experiments use Qwen3-8B [26] in BF16 precision with KV cache importance scored by Fast KVzip [14]. The per-user accuracy utility Ai(·) follows the algebraic sigmoid form of Eq. (6), with parameters Mi, k i, τ i fitted independently for each context length {4, 8, 16 }K on the RULER bench-mark [15] as detailed in Section IV. Because delivery proceeds in importance order, the received fraction xi in the simulation indexes exactly the top-xi fraction of Section III-C. Thus, the reported accuracy at each slot is obtained by evaluating this fitted sigmoid at the user’s current xi. To further validate that this sigmoid-based simulation tracks real inference under the scheduler-induced distribution of xi, we also measure end-to-end accuracy under the same simulation settings. It is obtained by having each user perform inference using the directly delivered top-xi fraction of the cache. 
+
+2) Baselines and metrics: Throughout, Ours refers to the proposed two-regime allocator. When the per-slot budget suf-fices to lift every sub-τ user to the concavity anchor (i.e., the feasibility regime), it applies the weighted water-filling of Theorem 1. Otherwise, it falls back to an admission policy that distributes the budget equally among the contending sub-
+
+τ users. We compare the proposed allocator against three baselines, each of which applies a fixed rule in every slot, irrespective of feasibility.  
+
+> •
+
+Equal allocation (EA) : The backhaul capacity is dis-tributed uniformly across active users so that each user receives bandwidth Libi = B/ |N t| bps , independent of importance or current progress.  
+
+> •
+
+Winner-take-all (WTA) : The greedy heuristic which assigns the slot budget to the user with the largest single-slot marginal accuracy gain. We use the cascading variant throughout: when the chosen user cannot absorb the full slot budget (its remaining cache is smaller than B · ∆t), the leftover rolls over to the next-best user within the same slot. The pure WTA, which discards any leftover capacity, is strictly dominated and is therefore omitted from the main comparisons.  
+
+> •
+
+Proportional-fair (PF) : The unweighted proportional-fair allocation that maximizes ∑ 
+
+> i
+
+log( Liyi) subject to the shared budget, without accessing the accuracy curves [23]. In our single-resource setting, its KKT solution reduces to a common-water-level water-filling on cumulative received bits, which we solve directly. It thus                      
+
+> Handover frequency (/s) 12345678
+> Average accuracy (%)
+> 82 84 86 88 90 92 94 96 Ours PF WTA EA
+> (a) Accuracy vs. ρ.
+> Backhaul Bandwidth (Gbps) 10 15 20 25 30
+> Average accuracy (%)
+> 82 84 86 88 90 92 94 96 Ours PF WTA EA
+> (b) Accuracy vs. B.Fig. 3. Performance comparison of the proposed allocator against EA, PF, and WTA baselines under edge-LLM handover conditions across (a) varying handover frequency ρand (b) varying backhaul bandwidth B. Solid curves are computed from the simulation, evaluating each user’s accuracy at its delivered fraction xithrough the fitted sigmoid utility Ai(xi). Markers additionally show end-to-end measured accuracy. Each marker averages the first 4000
+> users of the trace, and error bars are 95% confidence intervals over RULER samples. The close agreement between curves and markers confirms that the sigmoid-based simulation reliably predicts real inference accuracy.
+
+represents a fairness-oriented baseline that is agnostic to the sigmoidal accuracy utility. These baselines span the fairness–throughput spectrum of resource allocation, with EA and WTA at its two extremes and PF occupying the middle ground [23]. All schemes share the same importance ordering, differing only in allocation: among the baselines, only WTA consults the accuracy utility, while EA and PF are utility-agnostic. Additionally, we compare the proposed method against compute-based baselines: a target-side re-prefill strategy and the hybrid token and cache trans-mission design from [9]. 
+
+B. Main Results 
+
+We first evaluate the performance of the proposed allocator against the baselines along two axes that jointly govern the system load: the handover frequency ρ and the backhaul bandwidth B. In Fig. 3, the solid curves denote the simulation accuracy derived from the fitted sigmoid utility in Fig. 2, whereas the markers with error bars indicate the measured end-to-end accuracy. Focusing on Fig. 3(a), ρ is varied over 1–8 users /s. As ρ in-creases, the accuracy of all schemes decreases, since the fixed budget B must be shared among more concurrent transfers. The proposed allocator outperforms the baselines throughout, and the gap widens, since heavy loads make importance-aware prioritization essential for maximizing accuracy with scarce resources. At the default ρ = 4 users /s, it attains 93 .7 % 
+
+accuracy, within 0.5 pp of the 94 .1 % full-cache ceiling. In Fig. 3(b), we sweep B over 10 –30 Gbps . The result demonstrates that the proposed allocator consistently outper-forms all three baselines across the entire operating range. Among the baselines, the two extremes, EA and WTA, exhibit a characteristic crossover. In the bandwidth-scarce regime, WTA outperforms EA by concentrating the limited budget to ensure at least one user reaches the operable region, whereas EA leaves all users starved. Conversely, in the bandwidth-abundant regime, the ordering reverses: EA benefits from Timeslot (ms) 20 40 60 80 100 
+
+> Average accuracy (%)
+> 92.2 92.4 92.6 92.8 93 93.2 93.4 93.6 93.8 Ours PF WTA EA
+
+(a) Accuracy vs. ∆t.    
+
+> Transfer window (ms) 200 400 600 800 1000
+> Average accuracy (%)
+> 80 85 90 95 Ours PF WTA EA
+
+(b) Accuracy vs. Tmax .Fig. 4. Performance comparison of the proposed allocator against baselines across (a) varying slot duration ∆t and (b) varying transfer window Tmax .      
+
+> Handover frequency (/s) 2345678
+> Average accuracy (%)
+> 10 20 30 40 50 60 70 80 90 100 Ours (Fast KVzip) Ours (Random)
+
+(a) Effect of ordering.     
+
+> Handover frequency (/s) 46810 12
+> Average accuracy (%)
+> 70 75 80 85 90 95 Ours (WTA) Ours (EB) No admission
+
+(b) Admission control policy. Fig. 5. The impacts of (a) importance-aware KV cache ordering relative to random ordering and (b) the admission control mechanism. 
+
+serving multiple users in parallel, while WTA wastes capacity by driving its current winner deep into the saturated tail of its utility before advancing to the next. PF weights each share by progress and cache size, yet trails the proposed allocator: blind to the accuracy curve, it over-serves saturated users and under-serves those near τ .
+
+C. Sensitivity and Ablation Analysis 
+
+We next examine robustness to two system configuration parameters: the slot duration ∆t, and the transfer window 
+
+Tmax . Fig. 4(a) sweeps ∆t over 20 –100 ms with all other parameters at their defaults. The proposed allocator stays above all three baselines across the entire range. EA and WTA cross near ∆t ≈ 90 ms : as the slot gets coarser, the better fixed rule switches from one to the other. The proposed allocator, however, keeps its accuracy even at the coarsest slots, so it can re-allocate far less often without losing quality. In Fig. 4(b), the transfer window is swept over 200 –
+
+1000 ms , showing the same crossover near 400 ms : short windows penalize EA, while longer ones let its parallelism overtake WTA. The proposed allocator again outperforms throughout, so its advantage is not tied to a particular Tmax .To analyze the sources of the performance improvements, we isolate the two core mechanisms behind our method in Fig. 5: importance-based cache ordering and the admission-control policy. For the latter, we compare the default policy (Ours (EB) , which refers to equalized bytes) against the same allocator with cascading WTA as its fallback ( Ours (WTA) ). 
+
+TABLE II PER -USER LATENCY COMPARISON OF THE COMPUTE -BASED BASELINES AND THE PROPOSED METHOD FOR QWEN 3-8B. Context Re-prefill (ms) Hybrid (ms) Ours (ms) NVIDIA RTX PRO 6000 PRO 6000, 20 Gbps 20 Gbps 
+
+4K 300 211 229 8K 676 396 353 16K 1,566 694 590 
+
+Avg 847 434 391 
+
+Ours (WTA) is distinct from the standalone WTA baseline used above, which applies cascading WTA in every slot. Fig. 5(a) sweeps ρ for the proposed allocator under Fast KVzip and random ordering. Importance ordering keeps av-erage accuracy above 90 % across the entire range, whereas random ordering falls sharply from 56 .7 % at ρ = 2 to 20 .2 % 
+
+at ρ = 8 . This demonstrates that importance-based ordering strengthens ImpactHO’s anytime inference capability by trans-mitting higher-ranked cache entries first, thereby improving inference accuracy at intermediate transfer points. Fig. 5(b) sweeps ρ over 4–12 users /s to stress the in-feasibility regime. Both variants with admission control are compared against the same allocator with the fallback disabled (No admission ). At low ρ, the three curves coincide, as the feasibility regime dominates. As ρ grows, both variants with admission control pull away sharply from the one without it, confirming that admission control is the dominant factor in this regime. We define the sub-τ starvation rate as the fraction of users whose received fraction never reaches τ within the transfer window Tmax . At ρ = 12 users /s, the sub-τ starvation rate is 20 .8 % without admission versus 0.65 % with EB. At our main slot duration ( ∆t = 100 ms ), EB consistently outperforms WTA, whose starvation rate is 15 .5 % versus EB’s 
+
+0.65 % . This is because WTA drives one user into the saturated tail beyond τ before advancing the next, whereas EB lets several progress toward operability. 
+
+D. Comparison with Compute-Based Baselines 
+
+We evaluate the per-user latency performance of the pro-posed method by comparing it against compute-based re-prefill baselines. In Table II, Re-prefill reconstructs the con-text directly from the raw tokens, whereas Hybrid transmits both tokens and KV cache to balance the prefill processing time and cache transmission latency, a scheme appropriately modified from [9] for our evaluation. In the hybrid baseline, KV cache importance is not taken into account, and the backhaul bandwidth is allocated entirely in a first-come, first-served (FCFS) manner. Because the data size of the tokens is negligible compared to the KV cache, we do not consider token transmission latency. For comparison, we generate user arrivals following aPoisson process with ρ = 4 over the time window t ∈ [0 , 1]s ,and repeat this process 1,000 times. For each user, the service latency is measured from the moment of request arrival. Specifically, for the re-prefill and hybrid baselines, latency spans until the context is fully restored; for the proposed method, it lasts until a sufficient amount of the KV cache is transferred to reach 99 % of the full accuracy. Here, the transfer window Tmax is set to ∞, so that no scheme is truncated by the deadline. We assume that both the re-prefill and hybrid baselines are provisioned with sufficient GPUs to process each user request independently, so their latencies are free of compute contention. This idealized assumption establishes a much stricter baseline than a direct comparison with [9]. At a context length of 4K, the proposed method shows comparable performance to the baselines. However, as the context length increases, the proposed method outperforms the baselines, which suffer from severe computational overhead during full context recomputation. Moreover, the proposed method can further reduce latency by leveraging its anytime property, while ensuring graceful performance degradation. 
+
+E. Discussion 
+
+The reported gains require importance-ordered transmission, which adds two source-side costs and a small wire overhead. (i) Scoring : assigning a Fast KVzip [14] score to every KV entry is a one-time, per-session computation done while the source still serves the user, not at handover. (ii) Sorting :reordering by score is an O(n log n) sort over indices, a small fraction of the transfer time. (iii) Metadata : because the transfer may be truncated, each entry carries its 3-byte 
+
+(layer , head , token ) coordinate against the 0.5 KB payload of Section III-C, under 1 % overhead. The proposed allocator optimizes each slot rather than the horizon. To bound the resulting loss, we compare against a clairvoyant upper bound that observes all future arrivals and maximizes the objective without the concave-region restric-tion. Solved to certified global optimality via a piecewise-linear MILP with a validated upper correction, this bound never underestimates the true continuous optimum. The pro-posed allocator attains 98 .2–99 .5 % of it across all loads (within 0.53 % at ρ = 1 , 1.77 % at ρ = 8 ). Thus, neither the myopic objective nor the concave-region restriction costs much in practice, though the widening gap at higher load suggests horizon-aware scheduling as a direction for future work. VII. C ONCLUSION 
+
+We presented the ImpactHO framework, an importance-aware framework for maximizing the average inference accu-racy across users during edge LLM handover subject to limited backhaul bandwidth. ImpactHO combines three key compo-nents: (1) importance-ordered sequential KV cache transfer, which exploits sparsity in token-level cache importance to transmit the most useful entries first; (2) an empirically vali-dated sigmoid characterization of inference accuracy with par-tially transferred caches; and (3) an optimal weighted water-filling allocator whose homogeneous special case reduces to classical water-filling. In realistic edge regimes, importance-ordered transfer attains near-full-cache accuracy with lower latency than baselines. Moreover, across a range of slot dura-tions, backhaul bandwidths, and concurrent handover loads, the proposed allocator consistently achieves higher average accuracy than the baselines. These results confirm that jointly accounting for KV cache importance and backhaul resource allocation enables accurate and efficient LLM handover at the network edge. APPENDIX APROOF OF THEOREM 1Recall the effective lower bound ˜xi = max( τi, x i) from Section III, which collapses the box constraint of (4) to the single interval yi ∈ [˜ xi, 1] . We work in the feasibility regime 
+
+B ≥ Bmin of Lemma 1. By Assumption 1, −Ai is strictly convex on [τi, 1] and the constraint set is a polytope, so Problem (4) is convex with a strictly convex objective. The Lagrangian is 
+
+L(y, λ, μ, ν) = −
+
+> N
+
+∑
+
+> i=1
+
+Ai(yi) + λ
+
+( N∑
+
+> i=1
+
+Li(yi − xi)∆t − B
+
+)
+
++
+
+> N
+
+∑
+
+> i=1
+
+μi(˜ xi − yi) + 
+
+> N
+
+∑
+
+> i=1
+
+νi(yi − 1) . (15) The KKT conditions for the optimal (y⋆, λ ⋆, μ⋆, ν⋆) are as follows: 
+
+> N
+
+∑
+
+> i=1
+
+Li(y⋆i − xi)∆t ≤ B, λ ⋆ ≥ 0, (16) 
+
+λ⋆
+
+( N∑
+
+> i=1
+
+Li(y⋆i − xi)∆t − B
+
+)
+
+= 0 , (17) 
+
+˜xi ≤ y⋆i ≤ 1, μ ⋆i , ν ⋆i ≥ 0, (18) 
+
+μ⋆i (˜ xi − y⋆i ) = 0 , ν ⋆i (y⋆i − 1) = 0 (19) for i ∈ {1, . . . , N }. From ∂L/∂y i = 0, the stationarity condition gives 
+
+A′
+
+> i
+
+(y⋆i ) = λ⋆Li
+
+∆t − μ⋆i + ν⋆i . (20) By Assumption 1, A′ 
+
+> i
+
+is strictly decreasing on [τi, 1] , hence invertible. Stationarity (20) with complementary slackness (19) gives the three branches of (9): the interior case μ⋆i = ν⋆i = 0 
+
+yields A′
+
+> i
+
+(y⋆i ) = si(λ⋆), while ν⋆i > 0 and μ⋆i > 0 activate the bounds Wi = 1 and Wi = τi when si(λ⋆) ≤ A′
+
+> i
+
+(1) and 
+
+si(λ⋆) ≥ A′
+
+> i
+
+(τi), respectively. Combining with y⋆i ≥ xi from 
+
+b⋆i ≥ 0 gives 
+
+y⋆i = max {xi, W i(λ⋆)}. (21) It remains to characterize λ⋆. Define the aggregate demand 
+
+g(λ) ,
+
+> N
+
+∑
+
+> i=1
+
+Li (y⋆i (λ) − xi)∆t (22) with y⋆i (λ) given by (21). Because A′ 
+
+> i
+
+is strictly decreasing on [τi, 1] , Wi(λ) is strictly decreasing in λ on its interior region and constant elsewhere; taking max {xi, ·} preserves this monotonicity, so g(λ) is continuous and non-increasing on λ ≥ 0, with boundary values g(0) = ∑ 
+
+> i
+
+Li(1 − xi)/∆t
+
+and g(¯λ) = Bmin , where ¯λ , max i A′
+
+> i
+
+(τi)∆ t/L i. By the intermediate value theorem, a λ⋆ ≥ 0 with g(λ⋆) = B exists for every B ∈ [Bmin , g (0)] , and for B > g (0) the budget is slack with λ⋆ = 0 ; λ⋆ is unique when some user is strictly interior, and otherwise any such λ⋆ yields the same y⋆, which is unique by strict convexity. This completes the proof of Theorem 1. REFERENCES [1] W. Saad, M. Bennis, and M. Chen, “A vision of 6G wireless systems: Applications, trends, technologies, and open research problems,” IEEE Netw. , vol. 34, no. 3, pp. 134–142, 2020. [2] K. B. Letaief, W. Chen, Y. Shi, J. Zhang, and Y.-J. A. Zhang, “The roadmap to 6G: AI empowered wireless networks,” IEEE Commun. Mag. , vol. 57, no. 8, pp. 84–90, Aug. 2019. [3] Y. Mao, C. You, J. Zhang, K. Huang, and K. B. Letaief, “A survey on mobile edge computing: The communication perspective,” IEEE Commun. Surveys Tuts. , vol. 19, no. 4, pp. 2322–2358, 2017. [4] E. Li, L. Zeng, Z. Zhou, and X. Chen, “Edge AI: On-demand acceler-ating deep neural network inference via edge computing,” IEEE Trans. Wireless Commun. , vol. 19, no. 1, pp. 447–457, Jan. 2020. [5] S. Kholmatov, S. Cho, S. Chong, and K. Lee, “AoRA: AI-on-RAN for backhaul-free edge inference,” in Proc. ACM Conf. SIGCOMM , Aug. 2025, pp. 1263–1265. [6] S. Wang, R. Urgaonkar, M. Zafer, T. He, K. Chan, and K. K. Leung, “Dynamic service migration in mobile edge computing based on Markov decision process,” IEEE/ACM Trans. Netw. , vol. 27, no. 3, pp. 1272– 1288, Jun. 2019. [7] A. Machen, S. Wang, K. K. Leung, B. J. Ko, and T. Salonidis, “Live service migration in mobile edge clouds,” IEEE Wireless Commun. Mag. ,vol. 25, no. 1, pp. 140–147, Feb. 2018. [8] M. V. Ngo, T. Luo, H. T. Hoang, and T. Q. Quek, “Coordinated container migration and base station handover in mobile edge computing,” in Proc. IEEE Global Commun. Conf. (GLOBECOM) , 2020, pp. 1–6. [9] S. Lee, J. Park, C. Zheng, and H. Park, “Low-latency edge LLM handover via joint KV cache transfer and token prefill,” arXiv preprint arXiv:2603.28018 , Mar. 2026. [10] G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis, “Efficient streaming language models with attention sinks,” in Proc. Int. Conf. Learn. Representations (ICLR) , 2024. [11] Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. R´ e, C. Barrett, Z. Wang, and B. Chen, “H2O: Heavy-hitter oracle for efficient generative inference of large language models,” in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS) , vol. 36, 2023, pp. 34 661–34 710. [12] Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen, “SnapKV: LLM knows what you are looking for before generation,” in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS) ,vol. 37, Dec. 2024, pp. 22 947–22 970. [13] J.-H. Kim, J. Kim, S. Kwon, J. W. Lee, S. Yun, and H. O. Song, “KVzip: Query-agnostic KV cache compression with context reconstruction,” in 
+
+Proc. Adv. Neural Inf. Process. Syst. (NeurIPS) , Oct. 2025. [14] J.-H. Kim, D. Han, and S. Yun, “Fast KVzip: Efficient and accurate LLM inference with gated KV eviction,” arXiv preprint arXiv:2601.17668 ,Jan. 2026. [15] C.-P. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, and B. Ginsburg, “RULER: What’s the real context size of your long-context language models?” in Proc. Conf. Lang. Model. (COLM) , 2024. [16] Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang, “DistServe: Disaggregating prefill and decoding for goodput-optimized large language model serving,” in Proc. USENIX Symp. Oper. Syst. Des. Implement. (OSDI) , Jul. 2024, pp. 193–210. [17] P. Patel, E. Choukse, C. Zhang, A. Shah, I. Goiri, S. Maleki, and R. Bianchini, “Splitwise: Efficient generative llm inference using phase splitting,” in Proc. ACM/IEEE Annu. Int. Symp. Comput. Archit. (ISCA) ,2024, pp. 118–132. [18] Y. Liu, H. Li, Y. Cheng, S. Ray, Y. Huang, Q. Zhang, K. Du, J. Yao, S. Lu, G. Ananthanarayanan, M. Maire, H. Hoffmann, A. Holtzman, and J. Jiang, “CacheGen: KV cache compression and streaming for fast large language model serving,” in Proc. ACM Conf. SIGCOMM , 2024, pp. 38–56. [19] D. G¨ und¨ uz, Z. Qin, I. E. Aguerri, H. S. Dhillon, Z. Yang, A. Yener, K. K. Wong, and C.-B. Chae, “Beyond transmitting bits: Context, seman-tics, and task-oriented communications,” IEEE J. Sel. Areas Commun. ,vol. 41, no. 1, pp. 5–41, Jan. 2023. [20] J. Im, N. Kwon, T. Park, J. Woo, J. Lee, and Y. Kim, “Attention-aware semantic communications for collaborative inference,” IEEE Internet Things J. , vol. 11, no. 22, pp. 37 008–37 020, Nov. 2024. [21] L. Qiao, M. B. Mashhadi, Z. Gao, R. Tafazolli, M. Bennis, and D. Niyato, “Token communications: A large model-driven framework for cross-modal context-aware semantic communications,” IEEE Wireless Communications , vol. 32, no. 5, pp. 80–88, Oct. 2025. [22] L. Qiao, M. B. Mashhadi, Z. Gao, and D. G¨ und¨ uz, “Token-domain multiple access: Exploiting semantic orthogonality for collision mit-igation,” in IEEE INFOCOM 2025 - IEEE Conference on Computer Communications Workshops (INFOCOM WKSHPS) , 2025, pp. 1–6. [23] F. P. Kelly, A. K. Maulloo, and D. K. H. Tan, “Rate control for commu-nication networks: shadow prices, proportional fairness and stability,” J. Oper. Res. Soc. , vol. 49, no. 3, pp. 237–252, 1998. [24] J.-W. Lee, R. Mazumdar, and N. Shroff, “Non-convex optimization and rate control for multi-class services in the internet,” IEEE/ACM Trans. Netw. , vol. 13, no. 4, pp. 827–840, Aug. 2005. [25] P. Hande, S. Zhang, and M. Chiang, “Distributed rate allocation for inelastic flows,” IEEE/ACM Trans. Netw. , vol. 15, no. 6, pp. 1240–1253, Dec. 2007. [26] A. Yang et al. , “Qwen3 technical report,” arXiv preprint arXiv:2505.09388 , May 2025. [27] L. Kundu, X. Lin, R. Gadiyar, J.-F. Lacasse, and S. Chowdhury, “Ai-ran: Transforming ran with ai-driven computing infrastructure,” IEEE Commun. Mag. , vol. 64, no. 1, pp. 168–174, Jan. 2026. [28] A. Grattafiori et al. , “The Llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , Jul. 2024. [29] D. P. Palomar and J. R. Fonollosa, “Practical algorithms for a family of waterfilling solutions,” IEEE Trans. Signal Process. , vol. 53, no. 2, pp. 686–695, Feb. 2005. [30] T. M. Cover and J. A. Thomas, Elements of Information Theory , 2nd ed. Hoboken, NJ, USA: Wiley-Interscience, 2006.

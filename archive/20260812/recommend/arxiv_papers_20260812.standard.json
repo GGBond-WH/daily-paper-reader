@@ -1,0 +1,139 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-12T21:03:20.372468+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 1,
+    "deep_cap": 6,
+    "deep_selected": 1,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2608.10545v1",
+      "source": "arxiv",
+      "title": "ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover",
+      "abstract": "Edge LLMs must preserve inference continuity when a user hands over between edge nodes, requiring key-value (KV) cache transfer to the target node. However, simultaneous handovers saturate the backhaul, preventing full cache delivery within the mobility-imposed transfer window. Rather than allocating bandwidth as if all cache entries were equally valuable, we order each user's KV cache by importance and transmit only its most informative fraction, turning token-level sparsity into communication savings. We cast the transfer as a multi-user backhaul allocation problem that maximizes average accuracy across users. Each user's partial-cache accuracy serves as its utility: a sigmoid that fits measurements on the RULER benchmark with $R^2>0.99$ across models and context lengths. Because importance ordering front-loads the high-value entries, the concave region of the accuracy curve spans nearly the entire cache. Our proposed allocator keeps served users within this region, making each per-slot allocation problem convex. The optimum is derived via a closed-form weighted water-filling solution that generalizes information-theoretic water-filling and enables online scheduling. The proposed allocator attains over 93.7% average accuracy in a 500ms transfer window, within 0.5pp of the full-cache ceiling, and reaches 98.2-99.5% of a clairvoyant upper bound.",
+      "authors": [
+        "Minwoo Kim",
+        "Soochang Song",
+        "Namyoon Lee",
+        "Bang Chul Jung",
+        "Yongjune Kim"
+      ],
+      "primary_category": "cs.NI",
+      "categories": [
+        "cs.NI",
+        "cs.AI",
+        "cs.DC"
+      ],
+      "published": "2026-08-11T06:37:10+00:00",
+      "link": "https://arxiv.org/pdf/2608.10545v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 8.0,
+      "llm_evidence_en": "importance-aware KV cache transfer reduces communication overhead in edge handover",
+      "llm_evidence_cn": "面向边缘切换的重要性感知KV缓存传输以降低通信开销",
+      "llm_evidence": "面向边缘切换的重要性感知KV缓存传输以降低通信开销",
+      "canonical_evidence": "面向边缘切换的重要性感知KV缓存传输以降低通信开销",
+      "llm_tldr_en": "ImpactHO orders each user's KV cache by importance and transmits only the most informative fraction during edge handovers, formulating backhaul allocation to maximize average accuracy.",
+      "llm_tldr_cn": "ImpactHO针对边缘LLM在用户切换时需要传输KV缓存而后传带宽有限的问题，提出按重要性对每个用户的KV缓存排序，仅传输最有信息量的部分，将传输问题建模为最大化平均精度的多用户回传分配问题。每个用户的部分缓存精度用实测拟合的Sigmoid函数表示，从而将token级稀疏性转化为通信节省。实验表明该方法能在有限传输窗口内有效保持推理精度，为边缘场景下的KV缓存流动提供了新思路。",
+      "llm_tldr": "ImpactHO针对边缘LLM在用户切换时需要传输KV缓存而后传带宽有限的问题，提出按重要性对每个用户的KV缓存排序，仅传输最有信息量的部分，将传输问题建模为最大化平均精度的多用户回传分配问题。每个用户的部分缓存精度用实测拟合的Sigmoid函数表示，从而将token级稀疏性转化为通信节省。实验表明该方法能在有限传输窗口内有效保持推理精度，为边缘场景下的KV缓存流动提供了新思路。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Find research papers on KV cache optimization techniques for large language models",
+      "matched_requirement_id": "req-7",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2608.10824v1",
+      "source": "arxiv",
+      "title": "Neural Introspection Gating for Adaptive KV-Cache Reuse in Vision-Language-Action Models",
+      "abstract": "Vision-Language-Action(VLA) models map camera images and language instructions directly to motor commands through a single autoregressive transformer. In real-time control, they still spend substantial compute recomputing key-value(KV) representations for visual tokens that barely change across neighboring frames. Recent work such as VLA-Cache reduces that cost by reusing KV states for visually static patches, but its policy relies only on observation-space heuristics and does not account for the model's own uncertainty. We propose Gated VLA-Cache, a lightweight, training-free extension that augments visual-similarity caching with neural introspection. The method monitors the logit margin between the top two predicted action tokens, a zero-cost confidence signal available during decoding. When the margin drops below a threshold, the cache is invalidated and a full recompute is triggered. Evaluated on four LIBERO benchmark suites with both OpenVLA and OpenVLA-OFT, Gated VLA-Cache improves reliability when blind caching hurts. On LIBERO-Goal and LIBERO-Long, it recovers over 100% of the lost accuracy while retaining 80% of the compute savings.",
+      "authors": [
+        "Zhijie Wu",
+        "Kento Kawaharazuka",
+        "Kei Okada"
+      ],
+      "primary_category": "cs.RO",
+      "categories": [
+        "cs.RO",
+        "cs.CV"
+      ],
+      "published": "2026-08-11T11:53:10+00:00",
+      "link": "https://arxiv.org/pdf/2608.10824v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Adaptive KV-cache reuse with neural introspection gating for VLA transformer models",
+      "llm_evidence_cn": "面向视觉-语言-动作Transformer的自适应KV缓存复用与神经内省门控",
+      "llm_evidence": "面向视觉-语言-动作Transformer的自适应KV缓存复用与神经内省门控",
+      "canonical_evidence": "面向视觉-语言-动作Transformer的自适应KV缓存复用与神经内省门控",
+      "llm_tldr_en": "This paper extends VLA-Cache by gating KV reuse with neural introspection, using the logit margin of predicted action tokens to decide when visual KV states can be reused across frames, reducing recompute.",
+      "llm_tldr_cn": "视觉-语言-动作模型在实时控制中需反复计算几乎不变的视觉令牌KV表示，VLA-Cache虽能基于视觉相似度复用KV，但未考虑模型自身的不确定性。论文提出Gated VLA-Cache，以预测动作令牌的对数间隔作为神经内省信号，为视觉相似性缓存加装轻量门控，决定哪些视觉KV可安全复用。该方法无需训练，在保持控制性能的同时减少视觉令牌重计算，提升了VLA模型的计算效率。",
+      "llm_tldr": "视觉-语言-动作模型在实时控制中需反复计算几乎不变的视觉令牌KV表示，VLA-Cache虽能基于视觉相似度复用KV，但未考虑模型自身的不确定性。论文提出Gated VLA-Cache，以预测动作令牌的对数间隔作为神经内省信号，为视觉相似性缓存加装轻量门控，决定哪些视觉KV可安全复用。该方法无需训练，在保持控制性能的同时减少视觉令牌重计算，提升了VLA模型的计算效率。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "attention mechanism key-value caching",
+      "matched_requirement_id": "req-3",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2608.07408v1",
+      "source": "arxiv",
+      "title": "Addressable Memory for Video World Models",
+      "abstract": "We study visual persistence in interactive video world models. These models rely on a Key-Value (KV) cache as a growing visual memory to carry forward previously generated frames. However, we find that models can no longer reliably address stored content once rollouts extend beyond the training horizon, because temporal Rotary Positional Embeddings (RoPE) offsets then fall outside the range seen during training and the model struggles to retrieve the relevant visual information through attention. Moreover, naively compressing the cache in the RoPE-rotated space corrupts memory by averaging together incompatible positional phases. To address this, we propose WorldTrace, a training-free memory framework for long-horizon visual persistence. WorldTrace keeps compressed memory addressable by assigning each summary slot a distinct, in-distribution virtual position. Within this addressable cache, we study two memory compression approaches: WorldTrace-Field compresses history for temporal coherence, while WorldTrace-Landmark stores verbatim scene traces at detected transitions for episodic recall. We further introduce LoopBench, a benchmark evaluating whether a compressed cache can reconstruct a previously visited scene after a long detour. WorldTrace-Field improves temporal consistency by +15.5%, and WorldTrace-Landmark improves episodic recall by +19.5% on LoopBench, extending visually persistent generation without retraining.",
+      "authors": [
+        "Xindi Wu",
+        "Sven Elflein",
+        "James Lucas",
+        "Olga Russakovsky",
+        "Laura Leal-Taixé",
+        "Despoina Paschalidou",
+        "Jonathan Lorraine",
+        "Aljoša Ošep"
+      ],
+      "primary_category": "cs.CV",
+      "categories": [
+        "cs.CV",
+        "cs.LG"
+      ],
+      "published": "2026-08-07T16:55:57+00:00",
+      "link": "https://arxiv.org/pdf/2608.07408v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "KV cache compression and addressability in video world models under RoPE offsets",
+      "llm_evidence_cn": "视频世界模型中基于RoPE偏移的KV缓存压缩与可寻址性",
+      "llm_evidence": "视频世界模型中基于RoPE偏移的KV缓存压缩与可寻址性",
+      "canonical_evidence": "视频世界模型中基于RoPE偏移的KV缓存压缩与可寻址性",
+      "llm_tldr_en": "WorldTrace is a training-free memory framework for video world models that keeps compressed KV memory addressable, overcoming RoPE offset generalization failure and phase corruption in long rollouts.",
+      "llm_tldr_cn": "视频世界模型依靠不断增长的KV缓存作为视觉记忆，但当生成超过训练长度时，时间RoPE偏移超出训练范围，模型难以正确寻址，直接压缩还会因相位平均破坏记忆。WorldTrace提出无需训练的记忆框架，在压缩KV缓存的同时保持记忆可寻址性，避免对不兼容位置相位求平均。实验表明其能有效支持长程视觉保持，改善视频世界模型在长交互轨迹中的记忆检索与生成一致性问题。",
+      "llm_tldr": "视频世界模型依靠不断增长的KV缓存作为视觉记忆，但当生成超过训练长度时，时间RoPE偏移超出训练范围，模型难以正确寻址，直接压缩还会因相位平均破坏记忆。WorldTrace提出无需训练的记忆框架，在压缩KV缓存的同时保持记忆可寻址性，避免对不兼容位置相位求平均。实验表明其能有效支持长程视觉保持，改善视频世界模型在长交互轨迹中的记忆检索与生成一致性问题。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

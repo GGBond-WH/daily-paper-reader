@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-11</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-11 20:59:00 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 21:06:55 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读7篇、速读2篇，重点聚焦KV Cache压缩与MoE推理优化。</p>
-<p>最值得看《RotaryQuant》实现120B MoE模型在消费级硬件运行，《DistillCache》用KL引导自适应驱逐缓存、显著省显存。</p>
-<p>建议优先关注融合压缩注意力与缓存淘汰策略，兼顾性能与部署成本。</p>
+<p>今日精读1篇、速读2篇，聚焦KV缓存高效迁移与复用，共3篇论文。</p>
+<p>最值得关注的是《ImpactHO》（8.0分），针对多用户边缘LLM切换场景，提出重要性感知的KV缓存迁移方法，显著降低推理开销。</p>
+<p>建议普通读者优先理解KV缓存迁移如何提升边缘端切换效率，可结合速读中的自适应门控和视频世界模型方向拓宽视野。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RotaryQuant: Fitting 120B MoE Models on Consumer Hardware via Fused Compressed-Space Attention">RotaryQuant: Fitting 120B MoE Models on Consumer Hardware via Fused Compressed-Space Attention</span></li><li><span class="dpr-home-dashboard-paper-title" title="DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference">DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents">CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover">ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>7</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models">Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference">Governing the KV Cache: Preventing Timing Side-Channel Leakage in Multi-Tenant LLM Inference</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Neural Introspection Gating for Adaptive KV-Cache Reuse in Vision-Language-Action Models">Neural Introspection Gating for Adaptive KV-Cache Reuse in Vision-Language-Action Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Addressable Memory for Video World Models">Addressable Memory for Video World Models</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
