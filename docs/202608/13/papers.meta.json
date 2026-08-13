@@ -1,0 +1,39 @@
+{
+  "label": "2026-08-13",
+  "date": "2026-08-13",
+  "generated_at": "2026-08-13T21:04:48",
+  "count": 2,
+  "papers": [
+    {
+      "paper_id": "202608/13/2608.12121v1-qv-pic-query-aware-visual-position-independent-caching-for-efficient-rag-serving",
+      "section": "deep",
+      "title_en": "QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving",
+      "authors": "Yilin Liu, Rui Meng, Wangze Ni, Jianxin Yan, Heng Cao, Libin Zheng, Peng Cheng, Jinfei Liu",
+      "date": "2026-08-12",
+      "pdf": "https://arxiv.org/pdf/2608.12121v1",
+      "score": "9.0",
+      "evidence": "位置无关缓存跨位置复用预计算的键值对，以高效服务RAG",
+      "tldr": "RAG服务中重复预填充相同文本块造成冗余计算，位置无关缓存（PIC）虽可复用KV，但文本质检效率受限于大Token量。将文本渲染为图像可压缩Token，但图像PIC质量下降更严重，源于上下文错配与视觉压缩损失细节。本文提出QV-PIC，离线按模型原生模板编译视觉缓存，在线按累计查询相关性分配高分辨率预算，兼顾全局上下文与细节恢复。六项任务中平均F1较原始图像PIC提升21.6，超过优化文本PIC 2.58，TTFT降低83.8%。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Retrieval-Augmented Generation (RAG) repeatedly prefills identical text chunks across queries, incurring redundant computations. Position-Independent Caching (PIC) mitigates it by reusing precomputed Key-Value (KV) across positions, but its efficiency is constrained by the large volume of text tokens. Rendering text chunks as images can compress the text into fewer visual tokens, but the rendered-image PIC suffers more severe quality degradation than the text PIC. This representation-specific gap primarily arises from contextual mismatches across independently compiled caches and the loss of fine-grained textual evidence during visual compression. Existing PIC repair methods mainly address the former through selective recomputation, but they incur online computation and cannot recover lost textual details. We propose QV-PIC, a query-aware dual-resolution PIC reuse framework guided by model-native templates. Offline, QV-PIC compiles visual caches under the model's native chat-template prefix, improving PIC quality without online recomputation. Online, it preserves global context with low resolution and restores fine-grained textual evidence within a high-resolution budget by cumulative query relevance scores, retaining the efficiency benefit of visual compression. Across six tasks, QV-PIC improves average F1 by 21.6 points over vanilla rendered-image PIC, closes the gap to vanilla text PIC, and surpasses optimized text PIC by 2.58 F1 while reducing TTFT by 17.2\\%. Relative to full prefill, it cuts TTFT by 83.8%.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202608/13/2608.08794v1-deferred-audio-pruning-with-local-audio-visual-dynamics-for-omni-llms",
+      "section": "deep",
+      "title_en": "Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs",
+      "authors": "Kyeongyoon Lee, Hongyeob Kim, Youngeun Kim, Sungeun Hong",
+      "date": "2026-08-09",
+      "pdf": "https://arxiv.org/pdf/2608.08794v1",
+      "score": "8.0",
+      "evidence": "针对长多模态序列的KV缓存开销，通过在LLM前/内部压缩令牌以减少KV缓存内存",
+      "tldr": "全模态大语言模型处理长多模态序列时面临高额预填充与键值缓存成本，现有压缩方法多局限于进入LLM前的token减少。为此提出A-PACK两阶段框架：延迟音频剪枝至查询条件交互出现，LLM前依据局部音频-视觉动态压缩视频，LLM内逐步剪除低相关音频与视觉token及其键值缓存条目。在Qwen2.5-Omni-7B/3B的四个基准上取得最强平均性能，预填充FLOPs降低78%，解码吞吐量提升2.21倍，为跨越LLM边界的模态压缩提供了有效范式。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Omni-modal LLMs jointly process audio, video, and text, but long multimodal sequences incur substantial prefill and KV-cache costs. Existing omni-modal compression methods primarily focus on pre-LLM token reduction, leaving modality-specific compression across the LLM boundary underexplored. We propose A-PACK, a two-stage framework that defers audio pruning until query-conditioned multimodal interactions emerge. Our analysis shows that audio exhibits higher task-relevant information density and representational diversity per token than video. We further find that local audio-visual dynamics provide a more effective cue for visual selection than token-wise matching. We therefore preserve audio and compress video with local dynamics before the LLM, then progressively prune low-relevance audio and visual tokens and their KV-cache entries inside the LLM. Across four benchmarks on Qwen2.5-Omni-7B/3B, A-PACK achieves the strongest average performance among the evaluated prior methods while reducing prefill FLOPs by up to 78% and improving decoding throughput by up to 2.21x.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,41 @@
+{
+  "date": "20260813",
+  "date_label": "",
+  "generated_at": "2026-08-13 21:04:46 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2608.12121v1",
+      "route": "202608/13/2608.12121v1-qv-pic-query-aware-visual-position-independent-caching-for-efficient-rag-serving",
+      "title": "QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "位置无关缓存跨位置复用预计算的键值对，以高效服务RAG",
+      "first_seen_at": "2026-08-13 21:04:46 UTC",
+      "updated_at": "2026-08-13 21:04:46 UTC"
+    },
+    {
+      "paper_id": "2608.08794v1",
+      "route": "202608/13/2608.08794v1-deferred-audio-pruning-with-local-audio-visual-dynamics-for-omni-llms",
+      "title": "Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 8.0,
+      "evidence": "针对长多模态序列的KV缓存开销，通过在LLM前/内部压缩令牌以减少KV缓存内存",
+      "first_seen_at": "2026-08-13 21:04:46 UTC",
+      "updated_at": "2026-08-13 21:04:46 UTC"
+    }
+  ]
+}

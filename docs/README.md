@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 21:06:55 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 21:04:46 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读1篇、速读2篇，聚焦KV缓存高效迁移与复用，共3篇论文。</p>
-<p>最值得关注的是《ImpactHO》（8.0分），针对多用户边缘LLM切换场景，提出重要性感知的KV缓存迁移方法，显著降低推理开销。</p>
-<p>建议普通读者优先理解KV缓存迁移如何提升边缘端切换效率，可结合速读中的自适应门控和视频世界模型方向拓宽视野。</p>
+<p>今日精读2篇，聚焦RAG缓存与多模态音频剪枝；最值得看的是《QV-PIC》，提出查询感知的视觉位置无关缓存，显著提升RAG服务效率；建议优先关注RAG系统成本优化，可延伸阅读相关推理加速工作。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover">ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving">QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs">Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Neural Introspection Gating for Adaptive KV-Cache Reuse in Vision-Language-Action Models">Neural Introspection Gating for Adaptive KV-Cache Reuse in Vision-Language-Action Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Addressable Memory for Video World Models">Addressable Memory for Video World Models</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
+
 </section>
 </div>
 
