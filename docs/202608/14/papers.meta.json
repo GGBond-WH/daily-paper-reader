@@ -1,0 +1,69 @@
+{
+  "label": "2026-08-14",
+  "date": "2026-08-14",
+  "generated_at": "2026-08-14T21:21:17",
+  "count": 4,
+  "papers": [
+    {
+      "paper_id": "202608/14/2608.13263v1-vtoken-token-level-virtualization-for-reclaimable-kv-caches",
+      "section": "deep",
+      "title_en": "vToken: Token-Level Virtualization for Reclaimable KV Caches",
+      "authors": "Yuanhang Gao, Xiangrui Yang, Yuanfeng Chen, Hongjia Chen, Qianru Lv, Wenfei Wu, Dongsheng Li",
+      "date": "2026-08-13",
+      "pdf": "https://arxiv.org/pdf/2608.13263v1",
+      "score": "10.0",
+      "evidence": "直接以令牌级KV缓存虚拟化扩展PagedAttention，回收块内碎片",
+      "tldr": "在LLM服务中，KV缓存随着序列长度和批处理量增长而成为内存瓶颈。PagedAttention采用固定大小块管理内存，但token级逐出算法与块粒度错配，导致块内碎片，大量已分配内存无法回收。vToken提出token级虚拟化层，利用token表间接引用解耦逻辑token存活与物理块位置，并异步重打包活跃token实现物理回收，同时保持内核兼容性。在vLLM中实现并评测，相比Naive-Evict基线，保留KV块减少27.2%-72.3%，SLA约束吞吐量最高提升1.37倍，受限预算下最大并发度提升2倍，且集成代码从500行降至50行以内。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Large language model serving faces a critical memory bottleneck: the KV cache grows with sequence length and batch size. PagedAttention uses fixed-size memory blocks to reduce allocator-level fragmentation, but recent KV eviction algorithms operate at a token granularity finer than block-level management. This mismatch causes intra-block fragmentation, leaving a large fraction of allocated KV memory unreclaimable. We present vToken, a lightweight token-level virtualization layer that decouples logical token liveness from physical block placement. vToken maintains a stable logical token view through token-table indirection and realizes physical reclamation by repacking live tokens asynchronously. The design preserves PagedAttention kernels and CUDA Graph compatibility. We implement vToken in vLLM and evaluate it with H2O, Random, and Scissorhands across models. Compared with a paired Naive-Evict baseline, vToken reduces retained KV blocks per request by 27.2\\%--72.3\\% and improves SLA-constrained throughput by up to 1.37$\\times$. Under a constrained active-KV budget, it extends the maximum feasible concurrency by up to 2$\\times$, while reducing the per-policy integration footprint from 500+ lines to under 50.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202608/14/2608.11668v1-a-full-stack-characterization-of-high-bandwidth-flash-for-kv-centric-llm-serving",
+      "section": "deep",
+      "title_en": "A Full-Stack Characterization of High-Bandwidth Flash for KV-Centric LLM Serving",
+      "authors": "Zhuoran Li, Zhuohang Bian, Xin Huang, Yibo Zhao, Guangyu Sun, Youwei Zhuo",
+      "date": "2026-08-12",
+      "pdf": "https://arxiv.org/pdf/2608.11668v1",
+      "score": "8.0",
+      "evidence": "直接分析高带宽闪存场景下KV缓存卸载和大模型服务存储层次",
+      "tldr": "高带宽闪存(HBF)通过更宽的封装接口提供闪存容量与更低延迟，常被视为KV缓存卸载中SSD的简单升级。作者用扩展的TokenSim模拟器，结合生产级trace和H100/B200配置，对HBF替换SSD的Mooncake式堆栈进行全栈评估。结果显示服务性能反而恶化：端到端延迟上升2-5.5倍，最大SLO goodput下降1.1-2.7倍，源于瞬时KV流量写多读少、带宽不可持续以及封装对近层资源的挤占。HBF不应作为SSD的替代品，而应作为选择性、重用感知、写预算与热协调的独立层级使用。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "High-Bandwidth Flash (HBF) stacks NAND behind a wide, package-local interface, giving flash-scale capacity with far better read latency and bandwidth than an SSD. This makes it tempting to keep an SSD-style Mooncake KV-offloading stack and swap only the backing tier for HBF. We test that substitution with an extended TokenSim, four complete two-hour Qwen-Bailian production traces, five dense and mixture-of-experts models, and H100/B200 profiles. Serving gets worse, not better, and a cost-benefit model explains why. A faster far tier helps only when read I/O is the serving bottleneck, reads outweigh writes, and delivered bandwidth is sustainable. All three must hold together, and transient KV fails every one. The package trade that buys flash costs GPU near-tier capacity and bandwidth, so average end-to-end latency rises 2--5.5x and maximum SLO goodput falls 1.1--2.7x across H100 and B200. Serving is almost insensitive to HBF's own read/write latency, and base-die near-memory compute does not raise the flash tier's share of the critical path. The two-tier hierarchy keeps reuse in the near tier and hands HBF a write-heavy stream, so writes outnumber reads on every trace. A 3D-ICE model shows that stream drives the stack to its thermal limit well below peak bandwidth, and a TLC tier wears out sooner than a capacity-matched SSD pool. The faster device yields a slower system because the package gives up more than the medium returns. HBF is not the problem; using it as a faster SSD for transient KV is. It belongs in serving as a selective, reuse-aware, write-budgeted, and thermally coordinated tier, not as a drop-in SSD replacement.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202608/14/2608.12435v1-march-scaling-recurrent-memory-with-content-routed-state-anchors",
+      "section": "quick",
+      "title_en": "MARCH: Scaling Recurrent Memory with Content-Routed State Anchors",
+      "authors": "Ming Zhang, Kaisen Yang, Shu Yu, Ermo Hua, Ning Ding, Xia Hu, Bowen Zhou, Chaochao Lu, Youbang Sun",
+      "date": "2026-08-12",
+      "pdf": "https://arxiv.org/pdf/2608.12435v1",
+      "score": "7.0",
+      "evidence": "提出循环记忆架构以应对自回归推理中KV缓存线性增长问题",
+      "tldr": "Transformer 虽以词级记忆获得强大长程检索，但训练计算量随长度二次增长，推理缓存也线性增大。循环模型将历史压缩为固定状态，解码高效却因早期信息被覆盖而检索不足。MARCH 周期性地缓存循环状态检查点作为内容路由的锚点，使记忆库可随上下文增长，在历史分辨率与内存成本间取得平衡。预训练后，它在常识推理、LongBench 和上下文检索上持续优于线性注意力变体，同时保持循环解码的高效性。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "Transformers owe much of their strong long-context retrieval capability to a token-level memory that grows with context length. This flexibility, however, incurs a quadratic computation complexity during training and a key--value cache that grows linearly during autoregressive inference. Recurrent alternatives offer efficient decoding by compressing the entire history into a fixed-size state, but often underperform on recall-intensive tasks since earlier associations usually get overwritten by subsequent updates, and only the most recent contextual information is retained. In this paper, we introduce Memory-Anchor Routing across Context History (MARCH), a network architecture that effectively scales state-space models beyond a fixed-size dimension, while maintaining computational efficiency over long-sequences. MARCH periodically caches cumulative recurrent-state checkpoints as state anchors and associates each anchor with a compact, content-conditioned anchor key. This lets MARCH maintain a memory bank, which can grow as context length increases, providing a controllable trade-off between historical resolution and memory cost. At each token, MARCH produces an anchor query to attend all causally available state anchors, and the output is calculated as an attention-style aggregation over all historical anchors along the current state. We show that after standard pretraining, MARCH consistently outperforms multiple linear attention variants across commonsense reasoning, LongBench, and in-context retrieval. These results demonstrate that content-routed state caching substantially strengthens recurrent long-range memory while preserving its native computation path.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    },
+    {
+      "paper_id": "202608/14/2608.13127v1-potential-applications-of-hbf-in-llm-serving-systems",
+      "section": "quick",
+      "title_en": "Potential Applications of HBF in LLM Serving Systems",
+      "authors": "Yihan Yin, Yinlun Zhao, Zhixin Yun, Guanying Wu, Feng Zhu, Kai Tao, Shu Li, Fei Huang, Zhe Zhang, Shuangchen Li, Hongzhong Zheng",
+      "date": "2026-08-13",
+      "pdf": "https://arxiv.org/pdf/2608.13127v1",
+      "score": "7.0",
+      "evidence": "提出将高带宽闪存(HBF)作为LLM服务中包括KV缓存在内的内存容量扩展方案",
+      "tldr": "LLM serving受限于内存容量，模型权重、KV缓存及多模型变体增长迅速。本文提出将高带宽闪存(HBF)作为GPU内存层次的容量扩展层，用于扩大模型权重的驻留集。基于系统级模拟，HBF可提升MoE服务的专家副本容量和多模型服务中的热模型复制效率，减少模型加载开销。结果表明，保留HBM上的执行路径是利用HBF扩展容量的关键。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "LLM serving is increasingly constrained by memory capacity as model weights, KV caches, and the number of served model variants continue to grow. This report examines High-Bandwidth Flash (HBF) as a capacity-oriented extension to HBM-based serving systems. We first discuss how HBF can be integrated into the GPU memory hierarchy without undermining the bandwidth expected by the compute die. We then model the system-level value of added capacity as expanded residency for read-mostly model-state objects. Under this view, HBF can improve MoE serving by enabling more expert replicas and can improve multi-model serving by reducing model loading and supporting hot-model replication. Our simulation results show that these benefits depend on preserving the HBM-resident execution path while using HBF to expand the resident set of model weights.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}

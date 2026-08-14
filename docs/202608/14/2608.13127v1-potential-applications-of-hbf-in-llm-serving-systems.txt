@@ -1,0 +1,464 @@
+Title: Potential Applications of HBF in LLM Serving Systems
+
+URL Source: https://arxiv.org/pdf/2608.13127v1
+
+Published Time: Fri, 14 Aug 2026 00:54:07 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# Potential Applications of HBF in LLM Serving Systems 
+
+# Yihan Yin 
+
+School of Integrated Circuits Peking University Alibaba DAMO Academy China 
+
+# Yilun Zhao 
+
+Alibaba DAMO Academy China 
+
+# Zhixin Yun 
+
+Alibaba DAMO Academy China 
+
+# Guanying Wu 
+
+Alibaba Cloud Computing China 
+
+# Feng Zhu 
+
+Alibaba Cloud Computing China 
+
+# Kai Tao 
+
+Alibaba Cloud Computing China 
+
+# Shu Li 
+
+Alibaba Cloud Computing China 
+
+# Fei Huang 
+
+Alibaba DAMO Academy Hupan Lab China 
+
+# Zhe Zhang 
+
+Alibaba DAMO Academy Hupan Lab China 
+
+# Shuangchen Li 
+
+Alibaba DAMO Academy Hupan Lab China 
+
+# Hongzhong Zheng 
+
+Alibaba DAMO Academy Hupan Lab China 
+
+## Abstract 
+
+LLM serving is increasingly constrained by memory capacity as model weights, KV caches, and the number of served model vari-ants continue to grow. This report examines High-Bandwidth Flash (HBF) as a capacity-oriented extension to HBM-based serving sys-tems. We first discuss how HBF can be integrated into the GPU memory hierarchy without undermining the bandwidth expected by the compute die. We then model the system-level value of added capacity as expanded residency for read-mostly model-state ob-jects. Under this view, HBF can improve MoE serving by enabling more expert replicas and can improve multi-model serving by re-ducing model loading and supporting hot-model replication. Our simulation results show that these benefits depend on preserving the HBM-resident execution path while using HBF to expand the resident set of model weights. 
+
+## 1 Introduction 
+
+Large language models (LLMs) are increasingly used in online ap-plications such as chatbots, coding assistants, and emerging agentic workflows, making cloud LLM serving an important datacenter workload. Serving these applications demands token generation under stringent latency requirements while accessing massive vol-umes of data. The data volume continues to grow as individual models become larger, context lengths increase, and providers de-ploy broader sets of model variants, increasing the GPU memory capacity required for serving [1–4]. At the same time, interactive and agentic workloads make per-token latency increasingly impor-tant, requiring the memory system to supply data fast enough for low-latency generation [5, 6]. Together, these capacity and band-width demands make memory a primary design constraint in LLM serving [1, 2, 7]. Modern GPUs rely on high bandwidth memory (HBM) to pro-vide the bandwidth and capacity required by LLM serving. HBM stacks multiple DRAM dies using through-silicon vias (TSVs) and 
+
+Table 1: Representative HBM stack configurations. 
+
+HBM stack Capacity per stack Bandwidth per stack HBM3 12Hi 24 GB 819 GB/s HBM3E 12Hi 36 GB > 1.2 TB/s HBM4 12Hi 36 GB > 2.8 TB/s connects the stack to the compute die through a silicon interposer in a 2.5D package. This organization combines substantial capacity from vertical DRAM stacking with high bandwidth from the wide interposer-based interface. Across generations, HBM has increased both bandwidth and capacity, as summarized in Table 1 [8, 9]. However, these two di-mensions do not scale with the same difficulty; while bandwidth has maintained a relatively smooth scaling pace through wider in-terfaces and higher per-pin data rates, capacity scaling has become increasingly constrained at both the stack and package levels. At the stack level, increasing capacity typically requires denser DRAM dies or more stacked dies, which increases TSV, bonding, stacking, and thermal-management complexity and can make yield control more difficult. At the package level, adding more HBM stacks consumes interposer area, dense routing resources, and package power deliv-ery, limiting the number of stacks that can be integrated around the compute die. Recent products illustrate this asymmetry. Micron’s 12-high HBM4 stack keeps the same 36 GB capacity as its HBM3E counterpart, while increasing per-stack bandwidth to more than 2.8 TB/s, more than twice that of HBM3E [8, 9]. As a result, HBM capacity is becoming the harder dimension to scale for future LLM serving platforms. To move beyond this HBM capacity-scaling bottleneck, SanDisk has proposed High-Bandwidth Flash (HBF), a NAND-flash-based memory technology for AI inference [10]. HBF follows a stacked-memory organization similar to HBM and uses NAND flash cells arXiv:2608.13127v1 [cs.AR] 13 Aug 2026 Yihan Yin, Yilun Zhao, Zhixin Yun, Guanying Wu, Feng Zhu, Kai Tao, Shu Li, Fei Huang, Zhe Zhang, Shuangchen Li, and Hongzhong Zheng Flash die  
+
+> Flash die
+> Flash die
+> Flash die
+> logic die
+> interposer
+> Package Substrate
+> compute die
+> PHY PHY
+> μbump
+
+…… 
+
+> Subarrays
+> CMOS die
+> Periphery
+> bonding
+
+Figure 1: Conceptual organization of HBF as stacked NAND-flash dies with logic and vertical interconnects packaged near the compute die. Conceptual diagram, not drawn to actual layer proportions. 
+
+to target much higher capacity density while still providing high read bandwidth. However, turning this capacity advantage into LLM serving benefits raises two questions. At the architecture level, HBF cannot simply replace HBM because flash introduces longer access latency and coarser access granularity than DRAM-based HBM. The architecture question is therefore how to organize HBM and HBF so that HBF adds capacity without reducing the effective bandwidth needed for low-latency token generation. At the system level, existing LLM serving systems are designed under the capacity limits of HBM-only GPUs. With HBF substantially expanding available memory capacity, the question is how system design should be adapted to better exploit the additional capacity. 
+
+## 2 Motivation 2.1 Data-Intensive LLM Serving 
+
+An LLM request is processed in two phases. The prefill phase pro-cesses the input tokens and initializes the key-value (KV) cache, while the subsequent decoding phase generates output tokens au-toregressively, with each new token conditioned on the previously generated tokens. This autoregressive decoding loop is memory-bound because every output token requires repeated access to model weights and to the growing KV cache [6]. Both sources of data are increasing. Longer context windows enlarge the KV cache associated with each active request, while larger models increase the weight footprint that must be served. MoE models further amplify the capacity pressure because the total parameter set can grow much faster than the number of parame-ters activated per token. For example, DeepSeek-V3 has 671B total parameters and activates 37B parameters per token [11]; DeepSeek-V4-Pro scales this footprint to 1.6T total parameters while activating 49B parameters per token [12]. The service-level footprint also grows because providers deploy model families. A family may include general-purpose, code, vision, reasoning, low-latency, and MoE variants, each targeting a different capability, latency, context-length, or cost point. Figure 2 illustrates this trend for representative server-side variants from the Llama, Qwen, and DeepSeek families. Over time, these families introduce both larger models and more specialized dense/MoE variants. Thus, 2023 2024 2025 2026     
+
+> Release Year
+> 10 100 1K
+> Total Parameters (B)
+> Qwen2 MoE 57B Qwen1.5 110B DeepSeek-V2 236B Llama 4 400B Llama 3.1 405B Qwen3-Coder 480B DeepSeek-V4-Pro 1.6T
+> Llama Qwen DeepSeek Dense MoE
+
+Figure 2: Representative server-side LLM variants from Llama, Qwen, and DeepSeek. 0 100 200 300 400 500 600 
+
+> Time (seconds)
+> 010 20 30
+> Active Models in Window
+> Mean = 14.2 mode
+> Total = 27 models
+> Active Model Set Volatility (W=30s sliding window)
+> 50 60 70 80 90 100 Model Switch Rate (%)
+
+Figure 3: Temporal variation of active models. 
+
+the memory demand of an LLM service grows along two dimen-sions, the size of each served model and the number of variants that must coexist in the serving system. At the same time, latency requirements remain stringent and are becoming even tighter for interactive workloads. MLPerf Inference v5.0 includes a low-latency Llama 2 70B Interactive workload with a 40 ms time-per-output-token (TPOT) constraint, corresponding to 25 output tokens per second per user [13, 14]. Together, increasing data volume and tight TPOT targets require memory systems to scale in both bandwidth and capacity. 
+
+## 2.2 Capacity Constraints in LLM Serving and System-Level Workarounds 
+
+Modern GPUs utilize HBM to provide the high bandwidth required for LLM serving. However, HBM capacity is limited by stack-level and package-level physical constraints. These constraints necessi-tate system-level compromises when serving large MoE models or multiple model variants. For large MoE models, a deployment may need to spread the expert set across many GPUs to fit within aggregate HBM capacity. Serving systems therefore use expert parallelism to shard experts across GPUs. DeepSeek-V3, for example, uses 32-way expert par-allelism for prefill and 320-way expert parallelism for decoding in its production deployment [11]. Thus, expert parallelism alleviates HBM capacity pressure by aggregating memory across devices, while introducing dispatch/combine communication whenever to-kens are routed to remote experts. Potential Applications of HBF in LLM Serving Systems 
+
+In multi-model serving, capacity pressure comes from keeping all models available under limited HBM capacity. Providers serve many models with skewed and time-varying popularity. A small set of hot models receives most requests, while requests to many long-tail models are sparse or bursty, as shown in Figure 3. Existing systems address this pressure with capacity-aware resource-management strategies. They colocate models according to popularity, optimize checkpoint loading or migration for cold models, and pool GPU memory across models to improve utilization under limited HBM capacity [3, 4, 15, 16]. However, they still introduce model-switching overhead and additional complexity in scheduling and memory management. System-level optimizations can mitigate HBM capacity limits, while the underlying capacity constraint remains and adds system cost. A complementary direction is to extend the memory hierarchy with a storage medium that combines much higher capacity density with sufficiently high read bandwidth. 
+
+## 2.3 High-Bandwidth Flash as a Capacity Extension 
+
+HBF has been proposed as a high-capacity memory technology for AI inference beyond HBM [10]. As illustrated in Figure 1, HBF stacks multiple HBF dies and connects them through vertical buses, following a stacked-memory organization similar to HBM. Each HBF die is based on 3D NAND flash, where multi-layer cell arrays are integrated with logic through vertical bonding. This flash-based organization gives HBF higher bit density than DRAM-based HBM. HBF targets high read bandwidth by adapting flash organization for bandwidth-oriented access. It uses single-level cell (SLC) opera-tion to reduce sensing latency and increases internal parallelism through more sub-arrays, analogous to plane parallelism in 3D NAND. The stacked organization also provides abundant vertical wiring resources for external bandwidth. Together, these properties allow an HBF stack to target HBM-comparable read bandwidth with much higher capacity. However, using HBF in LLM serving introduces challenges be-cause its NAND-flash-based characteristics differ from those of DRAM-based HBM. Flash reads have higher latency and coarser granularity than DRAM reads, while flash writes are slower and constrained by write endurance. These characteristics make HBF effective bandwidth depend on access organization. Long read la-tency requires enough concurrency or prefetching to avoid bubbles, while page-level access granularity requires data to be consumed in sufficiently large contiguous chunks. Otherwise, stalls and unused read data reduce effective bandwidth. To summarize, translating HBF’s capacity advantage into perfor-mance gains in LLM serving raises challenges at two levels. At the architecture level, HBM and HBF must be organized to add capacity without reducing effective bandwidth. At the system level, serving systems must exploit the added capacity to improve serving per-formance. The next section addresses these challenges by studying how to architecturally expose large HBF capacity with sufficient bandwidth and how to translate this capacity into system-level benefits for LLM serving. compute         
+
+> die
+> Flash die
+> Flash die
+> DRAM die
+> DRAM die
+> logic die PHY
+> interposer
+> (a) All HBF stacks
+> interposer
+> HBF
+> HBF
+> HBF
+> HBF
+> HBF
+> HBF
+> (b) Side -by -side HBM/HBF stacks
+> compute
+> die
+> interposer
+> HBM
+> HBF
+> HBM
+> HBM
+> HBF
+> HBM
+> compute
+> die
+> interposer
+> mix
+> mix
+> mix
+> mix
+> mix
+> mix
+> (d) Integrated HBM/HBF stack
+> (c) Daisy -chained HBF extension
+> interposer
+> Flash
+> Flash
+> Flash
+> Flash
+> HBM
+> HBM
+> HBM
+> HBM
+> logic logic
+> …
+> …
+> HBM
+> HBM
+> HBM
+> HBF
+> HBF
+> HBF
+> Comp.
+> die PHY PHY PHY
+> interposer
+
+Figure 4: Representative HBF integration options for GPU memory subsystems. 
+
+## 3 Design 3.1 Architectural Trade-offs of HBF Integration 
+
+To satisfy the performance requirements of applications, introduc-ing HBF into the GPU memory subsystem must first ensure that the compute die can obtain sufficiently high available bandwidth .We characterize the bandwidth that the memory subsystem can architecturally expose to the compute die as follows. 
+
+𝐵𝑤 avail = 𝐵𝑤 phy · 𝑈 intra · 𝑈 inter . (1) Here, 𝐵𝑤 phy denotes the physical peak bandwidth provided by the memory media and packaging I/O. 𝑈 intra captures the utilization within each channel and becomes high when requests match the channel’s preferred access granularity, expose sufficient internal parallelism, keep enough requests in flight to hide latency, and avoid excessive control overhead. 𝑈 inter captures the utilization across channels and becomes high when requests can be evenly distributed across channels with similar access characteristics. Taking HBM as an example, its high available bandwidth comes from all three factors in Eq. 1. First, wide I/O, TSV-based stacking, 2.5D packaging, and micro-bump interconnects provide high 𝐵𝑤 phy .Second, each HBM channel/stack provides rich internal parallelism, a relatively fine access granularity, and modest control overhead. Together with the GPU memory controller’s ability to schedule concurrent memory requests, these properties help maintain high 
+
+𝑈 intra . Third, HBM channels/stacks are largely homogeneous, mak-ing them suitable for fine-grained address mapping and channel interleaving. This allows multiple HBM channels/stacks to be ag-gregated as a unified bandwidth pool, resulting in high 𝑈 inter .When introducing HBF into the GPU memory subsystem, the three factors in Eq. 1 must be considered. Existing HBF organiza-tions can be classified into the four designs shown in Figure 4. 
+
+(a) All-HBF stacks. This design replaces all HBM stacks with HBF stacks, making HBF directly serve as the main memory of the GPU. The key challenge is that, with no HBM remaining, HBF must serve as the GPU main memory. Without substantial changes to the compute die, the existing memory access semantics are poorly matched to the preferred access granularity of HBF. This makes it difficult for a single HBF channel/stack to sustain high 𝑈 intra , and thus prevents 𝐵𝑤 phy from being fully converted into 𝐵𝑤 avail .Yihan Yin, Yilun Zhao, Zhixin Yun, Guanying Wu, Feng Zhu, Kai Tao, Shu Li, Fei Huang, Zhe Zhang, Shuangchen Li, and Hongzhong Zheng 
+
+(b) Side-by-side HBM/HBF stacks. This design replaces only a subset of HBM stacks with HBF stacks, so HBM and HBF are both directly attached to the compute die as heterogeneous resources within the same memory tier . Compared with design (a), the remaining HBM stacks can still serve fine-grained and latency-sensitive memory requests, while HBF can be managed through coarse-grained data movement that better matches its preferred access granularity. This relieves the 𝑈 intra challenge of an all-HBF design. However, because HBM and HBF have different access characteristics, they are difficult to saturate simultaneously under the same workload, shifting the main bottleneck to 𝑈 inter .
+
+(c) Daisy-chained HBF extension. This design attaches addi-tional HBF stacks outside the HBM stacks through a daisy-chain organization, with a multiplexer on the HBM logic base die to reuse or select the I/O path. Its main advantage is that the direct HBM-to-compute-die path is preserved, so the HBM-side 𝑈 intra and 𝑈 inter 
+
+are less likely to be disrupted. However, HBF accesses must share I/O resources with the HBM path, requiring careful arbitration and scheduling to avoid interfering with critical HBM traffic. In addi-tion, the extra HBF stacks increase the package footprint and may require a larger interposer, raising packaging cost. 
+
+(d) Integrated HBM/HBF stack. This design integrates HBM and HBF within each stack, allowing them to share the TSV-based vertical interconnection, micro-bump I/O, and stack-level interface to the compute die. Compared with design (b), the compute die still sees a set of homogeneous stack-level interfaces, which helps preserve address mapping and interleaving across stacks and main-tain high 𝑈 inter . Compared with design (a), HBM remains inside each stack, so HBF does not need to serve fine-grained and latency-sensitive memory requests. The key challenge is the stack-internal I/O sharing, arbitration, and scheduling. If HBF accesses do not block the critical HBM path, each stack can maintain high 𝑈 intra .HBF integration exposes a trade-off between memory-side de-sign complexity and the available bandwidth delivered to the compute die . Simpler organizations reduce memory-side complex-ity by introducing HBF as a coarse-grained stack-level resource, at the cost of possible 𝑈 intra or 𝑈 inter degradation that makes HBM-like 
+
+𝐵𝑤 avail harder to obtain. More integrated organizations move more complexity into the memory side, such as I/O sharing, arbitration, and stack-internal scheduling, and provide more opportunities to preserve the bandwidth utilization conditions of an HBM-based system. For bandwidth-sensitive LLM inference, the integrated HBM/HBF stack offers the strongest option among the four designs because it preserves HBM-like compute-side available bandwidth while integrating HBF capacity without substantially increasing the interposer footprint. 
+
+## 3.2 HBF-enabled System Design 
+
+Once HBF is properly organized so that its read bandwidth can be effectively utilized by the compute die, its high capacity density can be translated into system-level performance benefits. As illustrated in Figure 5, we model the capacity benefit as a data-residency-constrained scheduling problem. Consider a distributed inference system with a set of hardware units U, such as devices or nodes, and a set of read-mostly model-state objects O, such as MoE expert weights or model weights. Each hardware unit 𝑢 ∈ U has a capacity 
+
+Figure 5: Capacity-residency model used to reason about locality and load-balancing benefits. 
+
+𝐶 𝑢 , and stores a resident object set 𝑅 𝑢 ⊆ O , subject to the capacity constraint in Eq. 2. ∑︁  
+
+> 𝑜 ∈𝑅 𝑢
+
+size (𝑜 ) ≤ 𝐶 𝑢 . (2) For any object 𝑜 ∈ O , we define its available hardware set in Eq. 3. 
+
+A𝑜 = {𝑢 ∈ U | 𝑜 ∈ 𝑅 𝑢 } . (3) Here, A𝑜 represents the residency coverage of object 𝑜 in the system, i.e., the set of hardware units that can provide this object. A larger capacity 𝐶 𝑢 allows each hardware unit to store a larger resident object set 𝑅 𝑢 . As a result, model-state objects can be placed on more hardware units, enlarging their corresponding A𝑜 .For a schedulable task 𝑞 , let its required object set be 
+
+D𝑞 = {𝑜 1, 𝑜 2, . . . } ⊆ O . (4) Executing task 𝑞 requires choosing an access or execution loca-tion for each required object 𝑜 𝑖 ∈ D 𝑞 , and the candidate locations for each object are determined by its corresponding A𝑜 𝑖 . Therefore, the scheduling space of a task is jointly determined by the available hardware sets of all its required objects. Under this model, the capacity benefit of HBF can be summarized in two ways. First, a larger A𝑜 improves execution locality. 
+
+For a task that depends on multiple objects, if the available hard-ware sets of these objects have larger overlap on the same devices or nodes, the required objects are more likely to be accessed or executed within the local communication domain. This reduces cross-node communication. Second, a larger A𝑜 improves load balancing. For tasks that depend on object 𝑜 , placing 𝑜 on more hardware units gives the scheduler a larger candidate set from which to choose a less loaded device or communication domain, reducing queuing delay and tail latency caused by hot objects. For one specific model-state object 𝑜 , if the capacity 𝐶 𝑢 of each hardware unit increases linearly, the system can place more replicas of this object. Thus, the average replica count 𝑟 𝑜 also increases ap-proximately linearly with capacity. A larger replica count increases the probability 𝜌 𝑜 that object 𝑜 can be found within the local com-munication domain. Equivalently, the probability 𝑃 remote (𝑜 ) that accessing 𝑜 still requires cross-node access decreases approximately linearly before local coverage saturates. Therefore, the number of remote accesses, cross-node traffic, and the communication pres-sure caused by remote accesses can be approximated as decreasing 
+
+linearly with capacity. On the other hand, if tasks depending on the same object can be evenly distributed across its replicas, the average Potential Applications of HBF in LLM Serving Systems device  w/  vs w/o expert  Irrelevant token  node       
+
+> Switch Switch
+> Switch Switch
+> (a) Large expert parallelism (b) Leveraging duplication
+> link routed token
+
+Figure 6: How additional capacity enables expert replication and reduces remote expert communication in MoE serving. 
+
+load per replica is inversely proportional to the replica count. Since the replica count grows approximately linearly with capacity, the per-replica load pressure of a hot object decreases approximately 
+
+inversely with capacity. Increasing capacity expands object cov-erage, which approximately reduces cross-node communication pressure and reduces per-replica load pressure in proportion to 1/𝐶 𝑢 , as summarized in Eq. 5. 
+
+𝑃 remote (𝑜 ) ≈ 1 − 𝜌 𝑜 , 𝜌 𝑜 ∝ 𝑟 𝑜 ∝ 𝐶 𝑢 ,
+
+Load per replica (𝑜 ) ∝ 1
+
+𝑟 𝑜 
+
+∝ 1
+
+𝐶 𝑢 
+
+. (5) This model provides a trend between capacity, communication pressure, and load pressure. 
+
+In MoE inference , expert weights are the model-state objects. 
+
+O = {𝐸 1, 𝐸 2, . . . , 𝐸 𝐾 }. (6) For a token or token group 𝑞 , the router selects a set of experts. 
+
+D𝑞 = {𝐸 𝑖 1 , 𝐸 𝑖 2 , . . . , 𝐸 𝑖 𝑘 }. (7) For each expert 𝐸 𝑖 , A𝐸 𝑖 represents the devices or nodes on which this expert resides. Figure 6 illustrates how additional capacity benefits MoE serving. Large-scale expert parallelism distributes experts across devices and nodes, which introduces remote dis-patch/combine traffic when a token is routed to non-local experts. With additional HBF capacity, more experts can be replicated within the local communication domain, enlarging the corresponding A𝐸 𝑖 .This makes the experts required by a token more likely to be ac-cessed or executed within the local communication domain, re-ducing remote expert accesses and cross-node traffic. Moreover, when hot experts have more replicas, the scheduler can choose a less loaded replica, mitigating compute and communication imbal-ance caused by expert hotspots. Therefore, in the MoE case, the main capacity benefit is to enlarge the available hardware set of experts, reduce remote expert communication, and improve the load distribution of hot experts. 
+
+In multi-model serving , the weights of different models are the model-state objects. 
+
+O = {𝑀 1, 𝑀 2, . . . , 𝑀 𝐿 }. (8) For a request or request batch 𝑞 targeting model 𝑀 𝑗 , the required object set is usually 
+
+D𝑞 = {𝑀 𝑗 }. (9) Figure 7 illustrates the multi-model serving case. When capacity is limited, models must be hard-partitioned or dynamically loaded and evicted. With larger per-device capacity, more model weights can Model A     
+
+> Model B
+> Time
+> Req Rate
+> load
+> HW unit 1
+> HW unit 2
+> load
+> Model A
+> Model B
+> load
+> HW unit 1
+> load Mem. pool
+> HW unit 2
+> Time
+> Time
+> Time
+> Time
+> Model A
+> Model B
+> load HW unit 1
+> load HW unit 2
+> Time
+> Time
+> Model B
+> Model A
+> Req for B
+> Req for A
+> idle overload
+> overload idle
+> Fetch B Fetch A
+> overload
+> Fetch delay
+> Balance / no swap delay
+> (a) Static deployment: hard partitioning
+> (b) Dynamic model swapping
+> (c) Larger capacity per hardware unit
+> Serving Capability
+
+Figure 7: How larger per-device capacity reduces model load-ing and enables better load balance in multi-model serving. 
+
+remain resident across hardware units, expanding A𝑀 𝑗 and giving the scheduler more placement choices. This allows the scheduler to assign requests from a larger candidate set, avoid overloaded devices, reduce queuing delay and tail latency, and reduce the need for dynamic model loading and eviction. Communication overhead may also exist in this case, while request dispatch traffic is usually small and occurs once per request, so it is less likely to dominate performance. Therefore, in multi-model serving, the main capacity benefit is to expand model replica coverage, distribute requests for the same model across more hardware units, reduce per-replica load pressure, and improve scheduling flexibility. HBF-enabled system design can be viewed as expanding the available hardware set A𝑜 of model-state objects by increasing capacity, thereby relaxing data-residency constraints in workload scheduling. For MoE inference, this mainly improves expert access locality and reduces cross-node communication. For multi-model serving, this mainly expands model replica coverage and improves request load balancing. 
+
+## 4 Evaluation 4.1 Methodology 
+
+Evaluation scope. We evaluate the system-level benefits of additional memory capacity in two representative LLM serving scenarios, MoE serving and multi-model serving. We study each scenario separately to isolate its capacity benefit. 
+
+HBF capacity assumption. Our evaluation isolates the system-level benefit of HBF-backed capacity under the bandwidth-preserving integration assumption discussed in Section 3.1. We model HBF as additional device-local capacity for read-mostly model-state ob-jects, while assuming that the integrated HBM/HBF organization can preserve the compute-side available bandwidth through in-dependent stack-level bandwidth, page-granular weight layout, Yihan Yin, Yilun Zhao, Zhixin Yun, Guanying Wu, Feng Zhu, Kai Tao, Shu Li, Fei Huang, Zhe Zhang, Shuangchen Li, and Hongzhong Zheng 
+
+Table 2: MoE serving evaluation setup.         
+
+> Category Configuration
+> Model Qwen3-235B-A22B, 94 layers, 128 routed experts, top-8 experts per token. Cluster 4 H100-class nodes, including 2 prefill nodes and 2 decode nodes, 8 GPUs per node. Memory 80 GB HBM + 512 GB HBF per GPU for resident expert replicas. Interconnect 900 GB/s scale-up within node; 400 GB/s scale-out across nodes. Parallelism DP for attention/projection, EP for MoE FFN, and no tensor parallelism. Placement/ scheduling EPLB-style hierarchical expert replication [17], with expert-load-aware runtime scheduling [18]. Workload Poisson arrivals, with log-normal prompt/output lengths of mean 1024/64 tokens. Expert access Hotset-Zipf distribution, where 16 hot experts cover 90% of expert demand.
+
+prefetch commands, and latency-hiding buffers. Therefore, the ex-periments should be interpreted as the capacity benefit achievable when HBF accesses do not reduce the effective bandwidth of the HBM-resident execution path. If HBF is exposed through a slower off-package path, if weight reads cannot be organized at page gran-ularity, or if HBF traffic interferes with the critical HBM path, the realized benefit would be smaller. We do not place the mutable KV cache or runtime buffers in HBF in this study. They remain HBM-resident, while HBF is used for read-mostly model weights and expert weights. 
+
+Simulation framework. We implement an LLM serving simu-lator for both experiments. The simulator supports (i) Workload traces. synthetic and trace-driven workloads with request arrival times, input/output lengths, target models, and expert selections; 
+
+(ii) Operator performance. operator compute and memory-access volumes derived from model configurations, with latency estimated by a roofline model parameterized by compute throughput and ef-fective memory bandwidth; (iii) Serving dynamics. event-driven request batching, expert/model placement, replica scheduling, and model loading/eviction; (iv) Communication and data move-ment. scale-up, scale-out, and memory-tier data movement with link resources parameterized by bandwidth and latency; and (v) Capacity and residency. device memory capacity and model-state residency, with HBF abstracted as additional device-local capacity under the compute-side available-bandwidth assumption in Sec-tion 3.1. 
+
+## 4.2 MoE Serving Evaluation 
+
+Setup. Table 2 summarizes the MoE serving setup. We evaluate Qwen3-235B-A22B under a PD-separated serving configuration and vary the resident expert capacity to study how HBF-backed capacity affects expert replication, locality, and latency. 
+
+Takeaway 1. HBF-backed capacity improves MoE decoding latency. Figure 8(a) first evaluates the capacity sweep under a fixed request rate of 4 req/s. In this model, one resident expert replica con-sumes about 3.55 GB per device when counted across the 94 MoE layers. Therefore, 8, 12, 16, 20, 24, and 32 resident experts per device consume about 28.4, 42.6, 56.8, 71.0, 85.2, and 113.5 GB, which corre-spond to 35.5%, 53.2%, 71.0%, 88.7%, 106.5%, and 141.9% of an 80 GB HBM device. Without capacity expansion, even moderate expert duplication would leave very limited HBM space for the KV cache and runtime reserve buffers, and the 24- and 32-expert points would exceed the HBM capacity. HBF-backed capacity makes these dupli-cated expert placements feasible without squeezing HBM-resident execution state. With this additional residency space, hot experts can be duplicated across more devices, which reduces the bottle-neck device’s active-expert count and shortens the MoE compute barrier. As a result, increasing the resident expert capacity from 8 to 32 experts per device reduces average TPOT from 10.20 ms to 9.13 ms, a 10.5% reduction, while p95 TPOT decreases from 10.74 ms to 9.73 ms, a 9.4% reduction. 
+
+Takeaway 2. Duplicated experts reduce cross-node traffic. 
+
+Figure 8(b) reports the normalized cross-node expert traffic under the same 4 req/s setting. As the resident expert capacity increases from 12, 16, 20, 24, to 32 experts per device, the normalized cross-node traffic decreases to 45.1%, 33.3%, 22.8%, 17.4%, and 16.1% of the 8-expert baseline, respectively. This is because a larger resident expert budget gives the placement policy and runtime scheduler more local replica candidates, so more dispatch/combine transfers stay within the local node. This trend is consistent with the capacity-locality model in Section 3.2. Since scale-out communication is a barrier determined by the slowest transfer path, lower aggregate traffic may leave latency nearly unchanged when the slowest path remains similar. 
+
+Takeaway 3. Capacity benefit depends on request rate. Fig-ure 8(c) compares 8 and 32 experts per device under different re-quest rates. The larger-capacity setting consistently lowers average TPOT, and the magnitude of improvement is decode-batch-regime dependent. As the request rate increases from 8 to 32 req/s, the reduction grows from 11.1% to 15.4%, because larger decode batches expose more simultaneous expert activations and make the bot-tleneck device’s active-expert count more important. At 40 req/s, the reduction slightly decreases to 14.8%. This suggests that the workload is moving into a denser decode-batch regime, where more simultaneous tokens partially amortize fixed communication and scheduling costs. Therefore, the capacity benefit is strongest when the decode batch is large enough to expose bottleneck-device imbal-ance, while still sparse enough for this imbalance to remain visible after batch-level averaging. 
+
+Takeaway 4. Expert hotness changes capacity benefit. Fig-ure 8(d) varies the hot-expert ratio while keeping the number of hot experts fixed. The 32-expert setting lowers average TPOT across all hotness levels. The reduction is largest for diffuse-to-moderately hot workloads, reaching 14.8% at hot ratio 0.6 and 15.4% at 0.7. As the access pattern becomes more concentrated, the reduction decreases to 11.1% at hot ratio 0.9 and 7.9% at 0.95. This behavior follows from the capacity-locality and load-balancing model. When expert accesses are more diffuse, each decode step can activate a wider and less predictable expert set, so the 8-expert placement may still concentrate active experts on a subset of devices. Extra resident capacity provides broader replica coverage and gives the scheduler more choices to avoid bottleneck active-expert counts. Potential Applications of HBF in LLM Serving Systems 0.6  0.7  0.8  0.9  0.95                               
+
+> HBM infeasible zone
+> 812 16 20 24 32
+> P95 TPOT
+> MoE Comp. MoE Combine MoE Dispatch
+> Projection/Dense FFN/Attn.
+> Average TPOT( ms )
+> Exp.
+> /device 812 16 20 24 32 Req./s 816 24 32 40
+> Average TPOT( ms )
+> 0
+> 4
+> 8
+> 12
+> 16
+> 8 Exp/device 32 Exp/device Reduction ratio
+> 0
+> 5
+> 10
+> 15
+> 20
+> Reduction ratio (%)
+> 8 Exp/device 32 Exp/device Reduction ratio
+> 0
+> 4
+> 8
+> 12
+> 16
+> Reduction ratio (%)
+> Hot ratio
+> Average TPOT( ms )
+> Norm. cross -node traffic
+> Exp.
+> /device
+> (a) TPOT breakdown (b) Cross -node latency/traffic (c) Request -rate sensitivity (d) Expert -hotness sensitivity
+> 0.2
+> 0
+> 0.4
+> 0.6
+> 0.7
+> 0.2
+> 0
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Avg. scale -out latency ( ms ) Comm. transfer time Comm. fixed latency
+> 2
+> 0
+> 4
+> 6
+> 8
+> 10
+> 12
+> 2
+> 0
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+
+Figure 8: Impact of HBF-backed expert capacity on MoE decoding latency, communication locality, and workload sensitivity. 
+
+When the access pattern is highly concentrated, each decode step activates a narrower and more predictable expert set. The baseline placement therefore has less remaining active-expert imbalance for additional replicas to remove. 
+
+## 4.3 Multi-Model LLM Serving 
+
+Experimental setup. We evaluate GPU memory capacity in a 4-GPU PD-separated setup with two prefill GPUs and two de-code GPUs, organized as two placement groups with one GPU on each side. Because model weights must be resident on both sides before serving, we report model-weight residency at the placement-group level. The baseline follows NVIDIA H100 parameters, 80 GB HBM per GPU, H100 compute throughput, and PCIe Gen5 x16 H2D offload bandwidth modeled as 64 GB/s unidirectional bandwidth. HBF-backed capacity provides up to 512 GB of on-device model-weight residency per placement group, or 6.4 × the 80 GB HBM baseline. We sweep the per-placement-group capacity from 1 ×
+
+to 6.4 × while fixing KV-cache space, compute throughput, H2D bandwidth, and KV transfer bandwidth. Scheduling uses Prism with KVPR-based dynamic model placement. For model replication (Takeaway 2), hot models are selected by request popularity and proactively replicated across prefill GPUs; other models follow the Prism placement plan. For Takeaways 1 and 2, we use a production trace with 1,500 requests over 600 seconds, 27 heterogeneous models (1B–40B pa-rameters), Zipf-distributed popularity ( 𝛼 ≈ 1.49), 2.5 req/s average arrival rate, and about 620 GB aggregate FP16 weight footprint. For Takeaway 3, we use synthetic traces with 18 models (total ≈
+
+507 GB) to control arrival rate. 
+
+Takeaway 1. Capacity scaling eliminates model loading overhead. When device memory cannot accommodate all model weights simultaneously, serving systems must dynamically load and evict models on demand, introducing substantial wait latency that dominates Time-To-First-Token (TTFT). In the production trace, increasing GPU memory capacity progressively eliminates this overhead. Mean TTFT decreases from 196.1 ms at 1× capacity to 6.8 ms at 4× capacity, a 28.7× reduction. Concurrently, model activation events fall from 212 to zero. Beyond the 4× threshold where all 27 models fit simultaneously in memory, further capacity increases yield no additional TTFT improvement from the loading-elimination mechanism alone, indicating an all-fit boundary. The improvement originates entirely from eliminating model loading wait time on the request’s serving path. In the PD-separated architecture, both prefill and decode nodes require model weights to be resident before processing. At 1× capacity (80 GB per place-ment group), only a fraction of the 27 models can remain loaded; requests targeting evicted models must wait for Host-to-Device (H2D) weight transfer, which dominates end-to-end latency. As capacity grows from 1× to 3×, the working set of resident mod-els expands, reducing model activation frequency from 212 to just 4 events. At 4× capacity, the total weight footprint (620 GB) fits within the effective model-placement capacity across two placement groups (2 × 4 × 80 GB = 640 GB), entirely removing load-on-demand overhead. 1 2 3 4 5 6.4 
+
+> Capacity Scale (×80 GB)
+> 050 100 150 200
+> Mean TTFT (ms)
+> All-fit
+
+(a) Mean TTFT vs Capacity      
+
+> 123456.4
+> Capacity Scale (×80 GB)
+> 050 100 150 200 250
+> Model Activations
+
+(b) Activations & Load Balance   
+
+> 456.4 6.0 6.5 7.0
+> Zoom
+> 2468
+> Prefill LB Ratio (max/min device time)
+
+Figure 9: Capacity scaling in multi-model serving. All-fit ca-pacity removes loading, and surplus capacity balances prefill load. 
+
+Takeaway 2. Surplus capacity enables weight replication for load balancing. Beyond the all-fit threshold, additional memory capacity permits replication of popular model weights across multi-ple prefill GPUs to balance computational load. In the baseline (no replication) configuration, each model resides on exactly one prefill GPU; requests targeting popular models queue behind each other on a single device, creating load imbalance. With static replication, the hottest models are duplicated across both prefill GPUs, allowing incoming requests to be routed to the less-loaded device. As shown in Figure 9(b), the prefill load balance ratio (defined as the ratio of the most-utilized to least-utilized prefill device running time) drops from 7.87 × at 1 × capacity to approximately 1.03 at 4 ×
+
+capacity as model loading overhead disappears; with replication enabled at capacity levels of 5 ×–6.4 ×, the ratio reaches 1.0. This improved load balance translates directly into reduced prefill queue wait time. With replication, the mean TTFT decreases further from 6.83 ms (at 4 × without replication) to 6.05 ms, a modest but con-sistent 11% improvement enabled by the surplus memory capacity that HBF provides beyond the all-fit threshold. Yihan Yin, Yilun Zhao, Zhixin Yun, Guanying Wu, Feng Zhu, Kai Tao, Shu Li, Fei Huang, Zhe Zhang, Shuangchen Li, and Hongzhong Zheng 1 2 3 4
+
+> Capacity Scale (×80 GB)
+> 01000 2000 3000 4000
+> Mean TTFT (ms)
+
+(a) TTFT vs Capacity    
+
+> Rate
+> 0.5 req/s 1.0 req/s 2.0 req/s 5.0 req/s
+> 0.5 1.0 2.0 5.0
+> Arrival Rate (req/s)
+> 0510 15 20 25
+> Speedup (1× / 4×)
+> 4.1× 9.1× 16.3× 19.4×
+
+(b) Capacity Benefit vs Rate 
+
+Figure 10: Request-rate sensitivity in multi-model serving. Capacity speedup grows with arrival rate. 
+
+Memory capacity beyond the all-fit point can therefore be used for replication-based load balancing, providing an additional per-formance optimization that complements the primary benefit of model residency. 
+
+Takeaway 3. Greater active model set volatility amplifies capacity benefit. Figure 10 shows that expanded memory capac-ity becomes more valuable as the active model set changes more rapidly. A higher request arrival rate increases the frequency at which different models are targeted per unit time, causing more rapid fluctuations in the set of models that must be simultaneously resident. We vary the request arrival rate from 0.5 to 5.0 req/s while holding all other parameters fixed, and measure the TTFT speedup achieved by scaling from 1× to 4× capacity. The speedup increases with request rate. At 0.5 req/s, capacity scaling yields a 4.1× TTFT improvement (368 ms → 90 ms); at 1.0 req/s, 9.1× (902 ms → 99 ms); at 2.0 req/s, 16.3× (2,020 ms → 124 ms); and at 5.0 req/s, 19.4× (4,151 ms → 214 ms). At 4× capacity, where all models fit, TTFT remains consistently low (90–214 ms) regardless of rate. This indi-cates model loading overhead as the source of the amplified penalty at low capacity. The amplification arises from the interaction between active model set volatility and loading latency. At low rates (0.5 req/s), requests are temporally spread and the active model set changes slowly. Each incoming request typically waits only for its own model to load, with 238 model activation events distributed over shallow queue depths, limiting TTFT to 368 ms. At higher rates (5.0 req/s), the active model set fluctuates rapidly. Requests tar-geting diverse models arrive every 200 ms on average, and when a model requires loading (taking 2–5 seconds for large models), subsequent requests queue behind the loading operation. Although the total number of model activation events is actually lower at high rates (103 vs 238, since models remain loaded between closely-spaced requests), each activation event blocks proportionally more concurrent requests, yielding higher mean TTFT. This finding has direct implications for HBF deployment. In production multi-model environments where the active model set fluctuates rapidly, aggre-gate request rates in the 1–5 req/s range can make the capacity bottleneck amplify TTFT by 9–19×, while 512 GB of HBF-backed on-device capacity removes the volatility-dependent loading penalty in this setup. 
+
+## 5 Conclusion 
+
+This report studies how High-Bandwidth Flash (HBF) could be used as a capacity-oriented extension to the memory hierarchy of LLM serving systems. The motivation is that serving workloads are growing along multiple data dimensions. Larger models increase weight footprint, longer contexts increase KV-cache footprint, and broader model families increase the amount of model state that a service must keep available. These trends make HBM capacity a primary constraint, especially for large MoE models and multi-model serving. At the architecture level, adding HBF capacity must preserve the effective bandwidth available to the compute die. We there-fore compare several HBM/HBF integration options and identify an integrated HBM/HBF stack as a promising organization. HBM continues to serve fine-grained, latency-sensitive accesses, and HBF provides additional read-mostly capacity for coarse-grained model-state objects. This design direction preserves the compute-side bandwidth abstraction of an HBM-based system while creating a larger residency space for weights and experts. At the system level, HBF-backed capacity is useful when serving performance is limited by model-state residency. In MoE serving, additional capacity can hold more expert replicas, improving expert locality and reducing cross-node expert communication. In our Qwen3-235B-A22B study, increasing resident expert capacity re-duces average TPOT and lowers cross-node expert traffic by giving the scheduler more local expert choices. In multi-model serving, additional capacity reduces model loading and eviction. Once the active model set fits in device-local capacity, TTFT decreases sub-stantially; surplus capacity can then be used to replicate hot models and improve load balance. HBF complements HBM as a capacity-oriented extension. Its value comes from combining hardware support that exposes high-capacity read bandwidth with serving policies that convert the extra residency space into locality, load balancing, and reduced data movement. In LLM serving, HBM should continue to hold bandwidth-critical execution state, while HBF expands the resident set of read-mostly model-state objects. 
+
+## References          
+
+> [1] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention. In Proceed-ings of the 29th Symposium on Operating Systems Principles , pages 611–626, 2023. doi: 10.1145/3600006.3613165. [2] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Beidi Chen, Clark Barrett, Joseph E. Gonzalez, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. Flexgen: High-throughput generative inference of large language models with a single gpu, 2023. [3] Jiangfei Duan, Runyu Lu, Haojie Duanmu, Xiuhong Li, Xingcheng Zhang, Dahua Lin, Ion Stoica, and Hao Zhang. MuxServe: Flexible spatial-temporal multiplexing for multiple LLM serving. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of ICML’24 , pages 11905–11917, Vienna, Austria, July 2024. JMLR.org. [4] Shan Yu, Jiarong Xing, Yifan Qiao, Mingyuan Ma, Yangmin Li, Yang Wang, Shuo Yang, Zhiqiang Xie, Shiyi Cao, Ke Bao, Ion Stoica, Harry Xu, and Ying Sheng. Prism: Unleashing GPU Sharing for Cost-Efficient Multi-LLM Serving. https://arxiv.org/abs/2505.04021v2, May 2025. [5] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav S. Gulavani, Alexey Tumanov, and Ramachandran Ramjee. Taming throughput-latency tradeoff in llm inference with sarathi-serve. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , pages 117–134, 2024.
+
+Potential Applications of HBF in LLM Serving Systems 
+
+[6] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu, Xin Jin, and Hao Zhang. DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , pages 193–210, 2024. ISBN 978-1-939133-40-3. [7] Xiaoyu Ma and David Patterson. Challenges and Research Directions for Large Language Model Inference Hardware, January 2026. [8] Micron. Micron continues memory industry leadership with HBM3E 12-high 36GB. https://www.micron.com/about/blog/applications/ai/micron-continues-memory-industry-leadership-with-hbm3e-12-high-36gb, February 2024. Blog post. [9] Micron. HBM4. https://www.micron.com/products/memory/hbm/hbm4, 2026. Product page. [10] SanDisk. HBF Fact Sheet. https://www.sandisk.com/content/dam/sandisk-main/ en_us/assets/resources/enterprise/data-center/SanDisk-HBF-Fact-Sheet.pdf, 2025. Fact sheet. [11] DeepSeek-AI, Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Han Bao, Hanwei Xu, Haocheng Wang, Haowei Zhang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Li, Hui Qu, J. L. Cai, Jian Liang, Jianzhong Guo, Jiaqi Ni, Jiashi Li, Jiawei Wang, Jin Chen, Jingchang Chen, Jingyang Yuan, Junjie Qiu, Junlong Li, Junxiao Song, Kai Dong, Kai Hu, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Lei Xu, Leyi Xia, Liang Zhao, Litong Wang, Liyue Zhang, Meng Li, Miaojun Wang, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingming Li, Ning Tian, Panpan Huang, Peiyi Wang, Peng Zhang, Qiancheng Wang, Qihao Zhu, Qinyu Chen, Qiushi Du, R. J. Chen, R. L. Jin, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, Runxin Xu, Ruoyu Zhang, Ruyi Chen, S. S. Li, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shaoqing Wu, Shengfeng Ye, Shengfeng Ye, Shirong Ma, Shiyu Wang, Shuang Zhou, Shuiping Yu, Shunfeng Zhou, Shuting Pan, T. Wang, Tao Yun, Tian Pei, Tianyu Sun, W. L. Xiao, Wangding Zeng, Wanjia Zhao, Wei An, Wen Liu, Wen-feng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, X. Q. Li, Xiangyue Jin, Xianzu Wang, Xiao Bi, Xiaodong Liu, Xiaohan Wang, Xiaojin Shen, Xiaokang Chen, Xiaokang Zhang, Xiaosha Chen, Xiaotao Nie, Xiaowen Sun, Xiaoxiang Wang, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xingkai Yu, Xinnan Song, Xinxia Shan, Xinyi Zhou, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. X. Zhu, Yang Zhang, Yanhong Xu, Yanhong Xu, Yanping Huang, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Li, Yaohui Wang, Yi Yu, Yi Zheng, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He, Ying Tang, Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yu Wu, Yuan Ou, Yuchen Zhu, Yuduan Wang, Yue Gong, Yuheng Zou, Yujia He, Yukun Zha, Yunfan Xiong, Yunxian Ma, Yuting Yan, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou, Z. F. Wu, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhen Huang, Zhen Zhang, Zhenda Xie, Zhengyan Zhang, Zhewen Hao, Zhibin Gou, Zhicheng Ma, Zhigang Yan, Zhihong Shao, Zhipeng Xu, Zhiyu Wu, Zhongyu Zhang, Zhuoshu Li, Zihui Gu, Zijia Zhu, Zijun Liu, Zilin Li, Ziwei Xie, Ziyang Song, Ziyi Gao, and Zizheng Pan. DeepSeek-V3 Technical Report, February 2025. [12] DeepSeek-AI. DeepSeek-V4 Technical Report. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf, April 2026. Technical report. [13] MLCommons. MLCommons releases new MLPerf Inference v5.0 benchmark results. https://mlcommons.org/2025/04/mlperf-inference-v5-0-results/, April 2025. Benchmark results announcement. [14] NVIDIA. NVIDIA Blackwell delivers massive performance leaps in MLPerf Inference v5.0. https://developer.nvidia.com/blog/nvidia-blackwell-delivers-massive-performance-leaps-in-mlperf-inference-v5-0/, April 2025. Developer blog. [15] Yao Fu, Leyang Xue, Yeqi Huang, Andrei-Octavian Brabete, Dmitrii Ustiugov, Yuvraj Patel, and Luo Mai. ServerlessLLM: Low-Latency Serverless Inference for Large Language Models. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , pages 135–153, 2024. ISBN 978-1-939133-40-3. [16] Yuxing Xiang, Xue Li, Kun Qian, Yufan Yang, Diwen Zhu, Wenyuan Yu, Ennan Zhai, Xuanzhe Liu, Xin Jin, and Jingren Zhou. Aegaeon: Effective GPU Pooling for Concurrent LLM Serving on the Market. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles , SOSP ’25, pages 1030–1045, New York, NY, USA, October 2025. Association for Computing Machinery. ISBN 979-8-4007-1870-0. doi: 10.1145/3731569.3764815. [17] DeepSeek-AI. EPLB: Expert parallelism load balancer. https://github.com/ deepseek-ai/eplb, 2025. GitHub repository. [18] Yanpeng Yu, Haiyue Ma, Krish Agarwal, Nicolai Oswald, Qijing Huang, Hugo Linsenmaier, Chunhui Mei, Ritchie Zhao, Ritika Borkar, Bita Darvish Rouhani, David Nellans, Ronny Krashinsky, and Anurag Khandelwal. Efficient MoE serving in the memory-bound regime: Balance activated experts, not tokens, 2025.

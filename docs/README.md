@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-14</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 21:04:46 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-14 21:21:15 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇，聚焦RAG缓存与多模态音频剪枝；最值得看的是《QV-PIC》，提出查询感知的视觉位置无关缓存，显著提升RAG服务效率；建议优先关注RAG系统成本优化，可延伸阅读相关推理加速工作。</p>
+<p>今天精读2篇、速读2篇，聚焦KV缓存与LLM服务系统。</p>
+<p>最值得关注vToken的虚拟化回收KV缓存，以及高带宽闪存的全栈特征分析。</p>
+<p>建议优先精读vToken，理解可回收KV缓存如何提升推理效率。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +76,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving">QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs">Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="vToken: Token-Level Virtualization for Reclaimable KV Caches">vToken: Token-Level Virtualization for Reclaimable KV Caches</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Full-Stack Characterization of High-Bandwidth Flash for KV-Centric LLM Serving">A Full-Stack Characterization of High-Bandwidth Flash for KV-Centric LLM Serving</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MARCH: Scaling Recurrent Memory with Content-Routed State Anchors">MARCH: Scaling Recurrent Memory with Content-Routed State Anchors</span></li><li><span class="dpr-home-dashboard-paper-title" title="Potential Applications of HBF in LLM Serving Systems">Potential Applications of HBF in LLM Serving Systems</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">llm-kv-cache <strong>2</strong></span></div>
 </section>
 </div>
 
