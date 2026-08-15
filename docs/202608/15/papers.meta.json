@@ -1,0 +1,24 @@
+{
+  "label": "2026-08-15",
+  "date": "2026-08-15",
+  "generated_at": "2026-08-15T19:24:05",
+  "count": 1,
+  "papers": [
+    {
+      "paper_id": "202608/15/2608.09468v1-mixformer-linear-transformer-with-mixture-of-memory-experts",
+      "section": "quick",
+      "title_en": "MixFormer: Linear Transformer with Mixture of Memory Experts",
+      "authors": "Yu Guo, Lei Duan",
+      "date": "2026-08-10",
+      "pdf": "https://arxiv.org/pdf/2608.09468v1",
+      "score": "6.0",
+      "evidence": "通过混合记忆专家与线性注意力降低注意力内存，与KV缓存压缩的技术目标相通。",
+      "tldr": "状态空间模型（SSM）作为线性Transformer主流方向，存在输入自适应性有限和记忆容量受限问题，导致超长序列信息丢失。为此提出MixFormer，集成混合记忆专家（MoE）机制，用多个协作专家维护差异化记忆，并提出时间感知线性注意力（TALA），以可学习指数衰减和位置偏移动态更新记忆，选择性增强重要历史信息。在长序列文本和图像生成任务上，MixFormer显著提升性能，为下一代网络基础设施提供更可持续的计算骨干。",
+      "tags": "query:llm-kv-cache",
+      "abstract_en": "State Space Models (SSMs), as a mainstream research direction of linear Transformers, aim to achieve higher efficiency than standard Transformers in long-context modeling. However, existing SSMs suffer from limited input adaptivity and constrained memory capacity, leading to information loss when modeling ultra-long sequences. To address these limitations, we propose MixFormer, a novel linear Transformer that integrates a Mixture-of-Memory-Experts (MoE) mechanism. Specifically, the model maintains differentiated memory states through multiple collaborating memory experts and employs a novel Time-Aware Linear Attention (TALA) mechanism, which leverages learnable exponential decay functions and positional biases to dynamically update memory. This design enables the model to selectively reinforce important historical information while effectively mitigating memory dilution, substantially improving long-range dependency modeling. Experiments on long-sequence text and image generation tasks demonstrate that MixFormer not only achieves significant performance gains but also provides a more sustainable computational backbone for the next generation of web infrastructure.",
+      "source": "arxiv",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "errors": []
+}
