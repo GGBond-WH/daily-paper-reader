@@ -1,0 +1,136 @@
+{
+  "mode": "standard",
+  "generated_at": "2026-08-17T20:41:08.361627+00:00",
+  "stats": {
+    "mode": "standard",
+    "tag_count": 1,
+    "deep_divecandidates": 1,
+    "deep_cap": 6,
+    "deep_selected": 1,
+    "quick_candidates": 2,
+    "quick_skim_target": 11,
+    "quick_selected": 2
+  },
+  "deep_dive": [
+    {
+      "id": "2608.14191v1",
+      "source": "arxiv",
+      "title": "KV Cache Compression Through the Lens of Transform Coding",
+      "abstract": "The key-value (KV) cache stores information from past tokens and is a major memory bottleneck in long-context inference. Existing quantization methods address this bottleneck by representing the KV cache uniformly with lower-precision data types and designing quantization schemes to minimize reconstruction error in the cache itself, without accounting for how that error propagates through attention mechanisms. We prove that, under a white-noise quantization model, the expected attention-aware distortion decomposes into additive key and value contributions that factor across tokens and channels. Building on transform coding and reverse water-filling, which are classical tools from signal processing and rate-distortion theory, we introduce Attention-Aware Transform Coding (AATC), which allocates bits over a calibration set to minimize attention-aware distortion. On Llama-3.1-8B-Instruct and Qwen-2.5-7B-Instruct, evaluated across LongBench, RULER, GSM8K, MMLU-Pro, and MATH-500, our method achieves near-lossless accuracy at approximately $5.8\\times$ compression, whereas each baseline degrades in at least some settings.",
+      "authors": [
+        "Hannah Laus",
+        "Claudio Mayrink Verdun",
+        "Hao Wang",
+        "Flavio du Pin Calmon",
+        "Felix Krahmer"
+      ],
+      "primary_category": "cs.LG",
+      "categories": [
+        "cs.LG",
+        "cs.CL",
+        "eess.SP"
+      ],
+      "published": "2026-08-14T11:08:01+00:00",
+      "link": "https://arxiv.org/pdf/2608.14191v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 9.0,
+      "llm_evidence_en": "directly addresses KV cache quantization and compression with attention-aware distortion and transform coding",
+      "llm_evidence_cn": "直接针对KV缓存的量化与压缩问题，提出注意力感知失真度量与变换编码方法",
+      "llm_evidence": "直接针对KV缓存的量化与压缩问题，提出注意力感知失真度量与变换编码方法",
+      "canonical_evidence": "直接针对KV缓存的量化与压缩问题，提出注意力感知失真度量与变换编码方法",
+      "llm_tldr_en": "This paper applies transform coding and reverse water-filling to KV cache compression, proving that attention-aware distortion decomposes additively across keys, values, tokens, and channels, guiding more effective cache quantization.",
+      "llm_tldr_cn": "KV缓存是长上下文推理的主要内存瓶颈，现有量化方法仅最小化缓存自身重建误差，未考虑误差经由注意力机制的传播。本文证明在白噪声量化模型下，期望注意力感知失真可分解为跨令牌和通道的键值加性贡献，并引入信号处理中的变换编码与逆注水原理，提出注意力感知变换压缩方法。该方法从速率失真理论角度统一了KV缓存压缩的优化目标，为设计更优的量化方案提供了理论支撑。",
+      "llm_tldr": "KV缓存是长上下文推理的主要内存瓶颈，现有量化方法仅最小化缓存自身重建误差，未考虑误差经由注意力机制的传播。本文证明在白噪声量化模型下，期望注意力感知失真可分解为跨令牌和通道的键值加性贡献，并引入信号处理中的变换编码与逆注水原理，提出注意力感知变换压缩方法。该方法从速率失真理论角度统一了KV缓存压缩的优化目标，为设计更优的量化方案提供了理论支撑。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "compression techniques for key-value cache in transformers",
+      "matched_requirement_id": "req-5",
+      "selection_source": "fresh_fetch"
+    }
+  ],
+  "quick_skim": [
+    {
+      "id": "2608.13868v1",
+      "source": "arxiv",
+      "title": "Exploring High-Bandwidth Flash for Modern LLM Inference: Opportunities and Challenges",
+      "abstract": "This work investigates the potential benefits and technical challenges of using high-bandwidth flash (HBF) for large language model (LLM) inference. HBF has gained increasing attention as a promising solution to mitigate memory-capacity bottlenecks in modern LLM-serving systems, but its benefits and challenges remain largely uninvestigated. To address this gap, we thoroughly analyze HBF-based LLM-serving systems under diverse system configurations and operating scenarios in which HBF serves as a main GPU-memory component to handle both reads and writes. Our analysis shows that, despite its limited write performance, HBF can significantly improve the batch size, throughput, and flexibility of LLM-serving systems while reducing the minimum GPU requirements, but realizing these benefits critically depends on sustaining HBM-comparable read bandwidth and requires significant endurance improvements.",
+      "authors": [
+        "Dowon Son",
+        "Yonggon Park",
+        "Hyunuk Cho",
+        "Hyungkyu Ham",
+        "Onur Mutlu",
+        "Sungjin Lee",
+        "Gwangsun Kim",
+        "Jisung Park"
+      ],
+      "primary_category": "cs.AR",
+      "categories": [
+        "cs.AR"
+      ],
+      "published": "2026-08-14T01:36:12+00:00",
+      "link": "https://arxiv.org/pdf/2608.13868v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 7.0,
+      "llm_evidence_en": "Uses high-bandwidth flash to mitigate memory-capacity bottlenecks in LLM serving, including KV cache growth",
+      "llm_evidence_cn": "利用高带宽闪存缓解LLM服务内存容量瓶颈，涵盖KV缓存增长",
+      "llm_evidence": "利用高带宽闪存缓解LLM服务内存容量瓶颈，涵盖KV缓存增长",
+      "canonical_evidence": "利用高带宽闪存缓解LLM服务内存容量瓶颈，涵盖KV缓存增长",
+      "llm_tldr_en": "Investigates high-bandwidth flash as main GPU-memory component for LLM inference, showing it can improve batch size, throughput and flexibility despite limited write performance.",
+      "llm_tldr_cn": "LLM推理系统面临内存容量瓶颈，尤其是日益增长的KV缓存和模型权重。本文系统分析高带宽闪存（HBF）作为GPU主存组件在LLM服务中的收益与挑战。结果显示，尽管HBF写入性能受限，但它能显著提升批处理大小、吞吐量和灵活性，同时降低最低延迟需求。该研究为在存储层级中引入HBF解决KV缓存等内存压力提供了量化依据。",
+      "llm_tldr": "LLM推理系统面临内存容量瓶颈，尤其是日益增长的KV缓存和模型权重。本文系统分析高带宽闪存（HBF）作为GPU主存组件在LLM服务中的收益与挑战。结果显示，尽管HBF写入性能受限，但它能显著提升批处理大小、吞吐量和灵活性，同时降低最低延迟需求。该研究为在存储层级中引入HBF解决KV缓存等内存压力提供了量化依据。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "7"
+    },
+    {
+      "id": "2608.13987v1",
+      "source": "arxiv",
+      "title": "Nanbeige4.2-3B on Apple Silicon: Fixing Deployment Bugs and Decreasing Looped Transformer Memory Overhead",
+      "abstract": "Nanbeige4.2-3B is a 3B-parameter agentic model built around a Looped Transformer (LT) that reuses one stack of layers for a second forward pass, adding effective depth without additional parameters. Evaluated on Apple Silicon (MPS), we identify five independent bugs which prevent the released checkpoint from running via Hugging Face transformers out of the box (including a silently-zeroed RoPE buffer and calls to removed transformers cache APIs). Furthermore, we show that fixing these bugs is still not sufficient for agentic tasks, due to the LT's layer-reuse strategy (which effectively doubles peak attention memory) used to achieve parameter efficiency. We thus introduce a chunked-prefill strategy which alleviates the incurred memory-capacity penalty, extending allowable context width by $2.7 \\times$ on 32~GiB shared memory. However, even with the reduced memory overhead, we show that patches are required to render Nanbeige4.2-3B usable; resolving both system prompt and MPS-native memory bugs finally allows reliable evaluation on standard MCP and tool-calling benchmarks. On a subset of MCPMark, the debugged model completes up to 30\\% of real agentic tasks (up from the original's 0\\%), while, on BFCL, it is near-perfect at single tool calls (yet fails the majority of multi-tool tests). We release the patched checkpoint, system prompt optimizer, and evaluation harnesses at https://github.com/johnhalloran321/Nanbeige4.2-3B-mps-fix.",
+      "authors": [
+        "John T. Halloran"
+      ],
+      "primary_category": "cs.AI",
+      "categories": [
+        "cs.AI",
+        "cs.LG"
+      ],
+      "published": "2026-08-14T06:05:26+00:00",
+      "link": "https://arxiv.org/pdf/2608.13987v1",
+      "tags": [
+        "keyword:llm-kv-cache",
+        "query:llm-kv-cache"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "Introduces chunked-prefill to alleviate peak attention memory, addressing KV cache memory overhead in a transformer decoder.",
+      "llm_evidence_cn": "提出分块预填充以缓解峰值注意力内存，解决变压器解码器中的KV缓存内存开销问题。",
+      "llm_evidence": "提出分块预填充以缓解峰值注意力内存，解决变压器解码器中的KV缓存内存开销问题。",
+      "canonical_evidence": "提出分块预填充以缓解峰值注意力内存，解决变压器解码器中的KV缓存内存开销问题。",
+      "llm_tldr_en": "Reports deployment bugs of a 3B Looped Transformer on Apple Silicon and proposes a chunked-prefill strategy to reduce peak attention memory, which is relevant to memory-efficient KV cache management.",
+      "llm_tldr_cn": "针对Nanbeige4.2-3B在Apple Silicon上的部署问题，论文识别出五个bug并修复了包括RoPE缓冲区与transformers缓存API调用在内的缺陷。修复后层重用策略仍使峰值注意力内存翻倍，因此提出分块预填充来缓解该开销。实验显示该方法能有效降低内存，对KV缓存优化有参考价值。",
+      "llm_tldr": "针对Nanbeige4.2-3B在Apple Silicon上的部署问题，论文识别出五个bug并修复了包括RoPE缓冲区与transformers缓存API调用在内的缺陷。修复后层重用策略仍使峰值注意力内存翻倍，因此提出分块预填充来缓解该开销。实验显示该方法能有效降低内存，对KV缓存优化有参考价值。",
+      "llm_tags": [
+        "query:llm-kv-cache"
+      ],
+      "matched_query_tag": "query:llm-kv-cache",
+      "matched_query_text": "Retrieve papers about memory efficient key value cache management in transformer decoders",
+      "matched_requirement_id": "req-8",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
+}

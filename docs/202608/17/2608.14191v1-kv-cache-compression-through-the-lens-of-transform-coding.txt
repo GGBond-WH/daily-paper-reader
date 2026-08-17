@@ -1,0 +1,3267 @@
+Title: KV Cache Compression Through the Lens of Transform Coding
+
+URL Source: https://arxiv.org/pdf/2608.14191v1
+
+Published Time: Mon, 17 Aug 2026 00:42:52 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+> 1
+
+# KV Cache Compression Through the Lens of Transform Coding 
+
+Hannah Laus, Claudio Mayrink Verdun, Hao Wang, Flavio du Pin Calmon, Felix Krahmer 
+
+Abstract —The key-value (KV) cache stores informa-tion from past tokens and is a major memory bottle-neck in long-context inference. Existing quantization methods address this bottleneck by representing the KV cache uniformly with lower-precision data types and designing quantization schemes to minimize re-construction error in the cache itself, without account-ing for how that error propagates through attention mechanisms. We prove that, under a white-noise quan-tization model, the expected attention-aware distor-tion decomposes into additive key and value contribu-tions that factor across tokens and channels. Building on transform coding and reverse water-filling, which are classical tools from signal processing and rate-distortion theory, we introduce Attention-Aware Trans-form Coding (AATC), which allocates bits over a cali-bration set to minimize attention-aware distortion. On 
+
+Llama-3.1-8B-Instruct and Qwen-2.5-7B-Instruct , eval-uated across LongBench , RULER , GSM8K , MMLU-Pro , and 
+
+MATH-500 , our method achieves near-lossless accuracy at approximately 5.8× compression, whereas each baseline degrades in at least some settings. 
+
+Index Terms —KV cache compression, quantization, transform coding, reverse waterfilling, large language models 
+
+I. Introduction 
+
+Signal quantization, that is, the representation of signals by bit sequences, is a key building block of digital signal processing. A central task in this context is bit allocation, the question of how many bits to use for different parts of the signal representation. This topic is well studied in the signal processing literature and in various models, one can precisely characterize how to optimally allocate the bits (see [1] for a detailed discussion). Key ingredients for many methods attempting optimal bit allocation are transform coding [2] and reverse water-filling [3]. The transform coding step whitens the signal, yielding a signal representation with components that are uncorrelated but of varying strengths. The reverse water-filling step then distributes the bits to best represent the components under a fixed budget, allocating more bits to larger components and fewer bits to smaller components. In recent years, an analogous problem of data repre-sentation with a fixed bit budget has arisen in machine                    
+
+> Hannah Laus and Felix Krahmer are with the Technical University of Darmstadt, the Technical University of Munich and the Munich Center for Machine Learning (hannah.laus@tum.de) Claudio Mayrink Verdun is with the Massachusetts Institute of Technology Hao Wang is with the Red Hat AI Innovation Team and the MIT-IBM Watson AI Lab Flavio du Pin Calmon is with the John A. Paulson School Of Engineering And Applied Sciences at Harvard University
+
+learning in the context of inference with large language models (LLMs). At inference time, an LLM decomposes its input into tokens and then generates new tokens by sampling from next token predictions. In transformer models [4], each token yields a sequence of key-value (KV) pairs at each layer of the model. These values are cached to accelerate inference when generating new tokens. At the same time, LLMs increasingly operate over long contexts: documents, transcripts, and multi-turn histories spanning more than a million tokens. As a consequence, the KV cache grows linearly with context length, and at long contexts it becomes the dominant memory cost of inference. KV cache compression has become essential for deploying transformer-based LLMs under realistic memory and latency budgets. In that context, efficient quantization plays a key role [5], [6]. Approaches based on low-rank projection [7], [8] can be interpreted as identifying compo-nents with no bits allocated to them. A third ingredient in state-of-the-art KV cache compression that is somewhat orthogonal is based on eviction [9], [10]. Quantization and low-rank projection are highly effec-tive for KV cache compression, and several such meth-ods already draw on ideas from signal quantization and transform coding [7], [8], [11]. We develop this connection systematically, studying KV cache compression through the lens of transform coding. This perspective leads us to an attention-aware distortion measure that, rather than minimizing raw reconstruction error on the cache, decom-poses the impact of quantization on the output into three distinct error dimensions, which have been individually studied in previous works, but without including their interaction. The decomposition unifies several previously disconnected viewpoints: it shows that these separately-discovered effects in token eviction, quantization or low-rank projection are facets of a single distortion objective, which both motivates our method and provides a unify-ing perspective on existing work that we map onto the individual factors in Section IV-B. To distribute the bits in a way that leads to a small distortion, we determine a bit allocation scheme via a reverse waterfilling algorithm [3] applied to calibration data and then apply it individually to each token. In-spired by the fact that reverse waterfilling is designed for uncorrelated data and is therefore often combined with a transform coding step for decorrelation [2], our method first whitens the key and value features on a calibration set, which approximately decorrelates them and trans-forms the data into components of varying strength, before distributing the total bit budget across the transformed channels by reverse waterfilling. We validate these findings on Llama-3.1-8B-Instruct and Qwen-2.5-7B-Instruct ,arXiv:2608.14191v1 [cs.LG] 14 Aug 2026 2
+
+across LongBench , RULER , GSM8K , MMLU-Pro , and MATH-500 
+
+which are standard long-context quality benchmarks. Our main contributions are as follows.  
+
+> •
+
+We derive an attention-aware distortion measure that separates key and value quantization errors into token- and channel-dependent factors.  
+
+> •
+
+We provide a unifying perspective across several exist-ing KV cache compression methods by relating them to the attention-aware distortion measure.  
+
+> •
+
+Based on this measure, we develop Attention-Aware Transform Coding (AATC), which combines whiten-ing with reverse waterfilling to obtain an optimal channel-wise allocation under the attention-aware dis-tortion.  
+
+> •
+
+We show that AATC achieves near-lossless accu-racy across all benchmarks at approximately 5 .8×
+
+compression, outperforming the baselines (KIVI, KVQuant and PALU), since they degrade at least on one benchmark. 
+
+II. Related Work 
+
+A. KV cache Compression 
+
+Approaches to reducing the memory footprint of the KV cache fall into several families. Scalar quantization methods reduce per-element precision: KIVI [5] uses per-channel asymmetric quantization for keys and per-token quantization for values; KVQuant [6] employs non-uniform quantization with sensitivity-weighted codebooks and dense outlier handling. These methods preserve all dimensions of the cache and degrade precision uniformly or near-uniformly. Vector quantization methods such as A2ATS [12], CommVQ [13], and TurboQuant [14] jointly quantize groups of coefficients via learned codebooks. Low-rank and transform-based methods, such as PALU [7], Eigen Attention [15] and xKV [16] compress along the fea-ture dimension by deleting low-energy subspaces from the cache. Transform-coding methods instead decorrelate and allocate bits without hard truncation: KVTC [8] applies a global, cross-layer transform folowed by bit allocation and is the closest prior method to ours. MiniCache [17] alternatively merges KV pairs across layers. Rotation-based methods [18], [19] apply orthogonal transforms be-fore quantization to suppress outliers. A complementary line of work [20], [21] aims to minimize the distortion after multiplying key and query vectors, as this corresponds to the input of the attention. Eviction and merging methods reduce the cache by combining or deleting previous tokens: H2O [9], SnapKV [22] and StreamingLLM [10] evict tokens based on different importance scoring techniques, which are all related to attention-derived importance. A more recent line of evic-tion work [23]–[26] refines the importance criterion beyond accumulated attention scores by incorporating value-side information. The new eviction criteria mentioned in those works correspond to projections of our decomposition onto its token-dependent factor (Section IV-B). Our work is in the transform-coding family and proposes a bit allocation criterion derived from a general distortion analysis. We perform empirical comparisons against KIVI, PALU, and KVQuant in Section VI. In Appendix C we relate many of the above works to our distortion decomposition (The-orem 1). 
+
+B. Theoretical Analyses of KV cache Quantization 
+
+Several recent works analyze KV cache quantization theoretically, each tied to a specific method. Closest to our key-side analysis is QAQ [27], which via a short second-order expansion obtains the query-weighted key sensitivity and allocates per-token bits from the aggregate query norm. We instead resolve the query weighting per channel, carry a controlled remainder (Lemma 1), and add the value-side weight. Concurrent work [28] likewise splits the attention-output error into key and value terms, but as a worst-case runtime bound used to fall back to exact atten-tion rather than to allocate precision offline, so it carries no channel weights or transform. [29] applies random matrix theory, modeling the cache as a low-rank shared-context component plus a residual that is unique for every token. RateQuant [11] is based on applying rate-distortion theory to head-level mixed-precision allocation. Finally, Zhou et al. [19] prove that attention-aware rotations are optimal under a frozen residual model, with the per-channel bit allocation held uniform rather than optimized. We further relate the last two papers to our distortion decomposition in Section IV-B and Appendix C. 
+
+C. Signal Quantization 
+
+On the signal-processing side, our method instantiates the classical transform-coding architecture, first decorre-late, then allocate, introduced by Huang and Schultheiss [30], whose components we review in Section III-A. Closest in spirit is perceptual coding [31], which adapts the distor-tion measure to the receiver of the signal, there the human perceptual system. We adapt it to the transformer’s read-out. Here attention plays the role of the perceptual model, with the induced weighted metric derived in Theorem 1 rather than posited. Learned nonlinear transform coding [32] continues the same blueprint with trained nonlinear transforms. In contrast, ours is fixed by calibration statis-tics, so the transform is exactly invertible and any loss is confined to the allocation step. 
+
+III. Preliminaries 
+
+We briefly review transform coding, attention and KV cache quantization. 
+
+A. Transform Coding 
+
+Let x ∈ Rd be a zero-mean source with covariance 
+
+Σ ∈ Rd × Rd, and let ˆ x be its reconstruction after lossy compression. We measure fidelity by the average squared-error distortion per dimension [1], 
+
+D = 1
+
+d E[∥x − ˆx∥22
+
+] = 1
+
+d
+
+> d
+
+∑
+
+> i=1
+
+Di, Di = E[(xi − ˆxi)2] .
+
+(1) 3
+
+When each coordinate is quantized separately, the design problem is thus to distribute a bit budget across coordi-nates. 
+
+Transform coding [2], the framework behind classical media codecs such as JPEG [33], solves this problem in a transformed coordinate system: an orthonormal transform 
+
+y = U⊤x decorrelates the source and concentrates its variance in a few leading coefficients ( energy compaction ); the coefficients are quantized with independent scalar quantizers, and the signal is reconstructed as ˆ x = Uˆy.Orthonormal transforms preserve the MSE, so (1) applies unchanged to the coefficients yi, whose variances σ2 
+
+> i
+
+now differ widely: high-variance coefficients deserve many bits, low-variance ones few or none. For Gaussian sources, the optimal transform is the Karhunen–Loève transform, the eigenbasis of Σ. In practice one uses a whitening transform estimated from data. To allocate the bits, note that under high-rate as-sumptions a scalar quantizer with bi bits achieves Di ≈
+
+c σ 2 
+
+> i
+
+2−2bi for a quantizer-dependent constant c [1]. Mini-mizing (1) subject to 1
+
+> d
+
+∑ 
+
+> i
+
+bi = ¯b and bi ≥ 0 yields the classical allocation of Huang and Schultheiss [30], which coincides with the reverse waterfilling solution for a source of independent Gaussian components [3, Chapter 10]: 
+
+b⋆i =
+
+{ 12 log 2 
+
+> σ2
+> i
+> λ
+
+, if σ2 
+
+> i
+
+> λ 
+
+0 otherwise, (2) where the water level λ is chosen so that 1
+
+> d
+
+∑ 
+
+> i
+
+b⋆i = ¯b.Every coefficient which is retained is quantized to the same distortion cλ , while coefficients whose variance falls below the water level receive no bits and are reconstructed as zero. Both the transform and the allocation depend on source statistics that are typically unknown; in practice, they are estimated from a calibration sample, as we do in this work. 
+
+B. Attention and the KV cache 
+
+A decoder-only transformer [34], the architecture behind modern large language models, takes a sequence of tokens and predicts the next token. Internally, each token is rep-resented as a vector and the transformer applies L layers in sequence, to map the current token vectors to new ones. Within a layer, the token vectors are first mixed across the sequence and then passed through a per-token nonlinear-map. The mixing step, called self-attention, is the only operation that introduces interdependence between the tokens. In each layer the input is linearly projected into three sequences of vectors, the queries, keys and values. In-tuitively, a token’s query states what information it is looking for, its key states what it offers and its value is the content it contributes. The self-attention mechanism maps each query to a data-dependent weighted combination across tokens. Unlike a fixed linear filter, the combination weights are computed from the input itself. More precisely, for every query, self-attention forms a scaled dot-product similarity with all keys, passes these scores through a softmax to obtain nonnegative weights that sum to one, and returns the corresponding weighted average of the values. To generate text, the model predicts the next token, appends it to the sequence and repeats. The sequence is the given context followed by the tokens generated so far, so its length T grows by one at every step and with it the set of keys and values that must remain available. To avoid recomputing them, the keys and values of all past tokens are stored in the KV cache, whose size therefore grows with T .To represent this in mathematical notation, let T be the number of tokens and L the number of layers. The input to layer ℓ is X(ℓ) ∈ RT ×dmodel whose t-th row x(ℓ) 
+
+> t
+
+∈ Rdmodel is the hidden representation of token t at layer ℓ. Suppressing 
+
+ℓ the query, key and value sequences introduced above are 
+
+Q = XW Q, K = XW K , V = XW V with W(ℓ) 
+
+> Q
+
+, W(ℓ) 
+
+> K
+
+∈
+
+Rdmodel ×dk and W(ℓ) 
+
+> V
+
+∈ Rdmodel ×dv (typically dk = dv =
+
+dmodel ) and rows qt = xtWQ, k t, v t .
+
+Definition 1 (Scaled Dot-Product Attention [4]) . Given 
+
+Q, K ∈ RT ×dk , V ∈ RT ×dv , and a mask M ∈ (R ∪{−∞} )T ×T ,
+
+Attention (Q, K, V) := AVW O , A = softmax 
+
+( QK ⊤
+
+> √dk
+
++ M
+
+)
+
+,
+
+with row-wise softmax weights 
+
+ati = exp( sti )
+
+∑ 
+
+> j
+
+exp( stj ) , sti = q⊤ 
+
+> t
+
+ki
+
+√dk
+
++ Mti ,
+
+so ati ≥ 0 and ∑ 
+
+> i
+
+ati = 1 . Throughout the remainder of the paper, we consider the following causal mask: Mti = 0 
+
+for i ≤ t and −∞ otherwise. Further, we consider mostly a single decode-step attention, which corresponds to the current row of attention Attention (Q, K, V) as introduced above, i.e., 
+
+ot =
+
+> t
+
+∑
+
+> i=1
+
+ati vi WO . (3) 
+
+Remark 1. Modern LLMs adopt different variants of attention mechanisms (e.g., group query attention [35]). Our method, described later, naturally extends to them (see Section V), but for now we will report everything as defined above. 
+
+LLM inference has two phases. In the prefill phase, a prompt of T tokens is processed in parallel and for each layer ℓ, the keys K(ℓ) ∈ RT ×dk and values V(ℓ) ∈ RT ×dv
+
+are stored in the cache. In the decode phase, each step t =
+
+T + 1 , T + 2 , . . . processes only the new token, appends its key kt and value vt, and computes attention for qt against all T cached keys and values. The KV cache at step t is 
+
+Ct = {(K(ℓ) 
+
+> ≤t
+
+, V(ℓ) 
+
+> ≤t
+
+) | ℓ ∈ [L]},
+
+where K(ℓ) 
+
+> ≤t
+
+∈ Rt×dk has rows k1, . . . , k t and its columns are called channels; analogously for V(ℓ) 
+
+> ≤t
+
+.4
+
+C. Quantization of the KV cache 
+
+Definition 2 (Uniform Scalar Quantization (following [36])) . A b-bit uniform scalar quantizer with scale ∆ > 0
+
+and zero-point z ∈ R maps a scalar x ∈ R to a quantized integer and back via 
+
+qtz (x) = clamp 
+
+(⌊ x − z
+
+∆ + 12
+
+⌋
+
+, 0, 2b − 1
+
+)
+
+,
+
+dqtz (c) = ∆ · c + z, 
+
+where ⌊·⌋ denotes the floor function and clamp (x, a, b ) = min(max( x, a ), b ) clips the range to [a, b ]. The reconstruc-tion ˆx = dqtz (qtz (x)) satisfies |x − ˆx| ≤ ∆/2 for values within the clipping range. 
+
+A quantized cache replaces each ki, v i by ˆki =
+
+dqtz (qtz (ki)), ˆvi = dqtz (qtz (vi)), with error vectors 
+
+δk i = ˆki − ki, δv i = ˆvi − vi The quantized output is ˆot = Attention (˜ qt, ˆK≤t, ˆV≤t)WO . The pair (∆ , z ) may be computed at different granularities : per-tensor (one pair per matrix); per-token/row-wise (one pair per ki); per-channel/column-wise (one pair per dimension c, adapting to each channel’s range across tokens); or group quan-tization (one pair per contiguous group of G elements along a chosen axis). Transform-coding approaches such as KVTC [8] choose the quantizer to minimize the distortions 
+
+E∥ki − ˆki∥2 and E∥vi − ˆvi∥2 which only optimize over the reconstruction error of the keys and values, but not the reconstruction error of the attention output. Therefore, these are only proxies for the quantity of interest, a gap that [8] themselves acknowledge. The quantity of interest is the output distortion defined as follows. 
+
+Definition 3 (Attention output distortion) . In line with the discussion in Section III-A, the expected squared-error distortion between the quantized attention output ˆot and ot,the attention output for token t, is defined as 
+
+D = E∥ot − ˆot∥22,
+
+averaged over the empirical distribution of keys and values. 
+
+Three effects drive the gap between these two distortion measures. First, the keys influence the attention output only through their alignment with the query. Second, a token with almost no attention weight ai can be quantized coarsely for both its keys and values without increasing the output distortion. Third, value errors enter the attention output linearly and are reshaped by the output projec-tion. Theorem 1 characterizes this relationship explicitly, and Section IV-B shows how the resulting decomposition subsumes several asymmetries that prior methods exploit only in isolation. 
+
+IV. Attention-Aware Distortion Formula for KV cache compression 
+
+In this section, we decompose the difference between the outputs of the attention mechanism computed using the quantized and original KV caches. Theorem 1 decomposes the distortion, defined in Definition 3, into key- and value-induced contributions in which these factors appear as explicit weights, yielding the distortion measure our bit allocation minimizes. 
+
+A. Derivation of the Distortion Formula 
+
+To make the distortion analytically tractable, we model the quantization noise under the standard additive white-noise hypothesis stated below and we assume the key quantization error to be bounded. 
+
+Assumption 1 (White-noise quantization model) . The quantization errors δkic = ˆkic − kic , δvic = ˆvic − vic 
+
+(kic is the c-th element of the vector ki, analogue for the values) are zero-mean, mutually independent across tokens 
+
+i and channels c, independent between keys and values, and symmetrically distributed. In particular, all odd moments vanish, E[δk 3
+
+> ic
+
+] = E[δv 3
+
+> ic
+
+] = 0 .
+
+Assumption 2 (Bounded key quantization error) . There exists a constant κ ≥ 1 such that, almost surely, 
+
+|δkic | ≤ κ σ K for all tokens i and channels c. 
+
+Remark 2. The additive white-noise model of quantiza-tion (Assumption 1) is the standard idealization underlying rate-distortion analyses of quantization [37]–[39], even though it is known to be exact only in the high-rate limit, we demonstrate in our experiments that the distortion metric remains predictive at 2 − 4 bits. We adopt it in this paper, as for the uniform symmetric quantizer used in Section V, the zero-mean and symmetry properties are in exact analogy to the transform coding literature. Key and value independence follow similarly, since they arise from distinct projections. Cross-channel independence is justi-fied along similar lines when the channels are decorrelated before quantization. In contrast, cross-token independence is an idealization: neighboring KV representations are correlated, so per-token errors are not strictly independent. Exploiting this dependence, however, would require a com-putationally intractable token varying bit allocation. For that reason, almost all quantization methods rely on an idealization along these lines. Accordingly, we adopt the standard independence approximation used in transform coding and most existing KV cache quantization methods. Assumption 2 corresponds to boundedness of the token entries as the max-based token scaling (Section V) is non-overloading. Namely, the quantization step scales with the maximum entry and each key error is at most half a quantization step (Definition 2). 
+
+The following theorem shows that under this model, the distortion, defined in 3, decomposes into a key term and a value term, each factoring across tokens and channels. 
+
+Theorem 1 (Attention Output Distortion) . Consider the single decode-step attention model of (3) and assume that its quantized keys ˆki = ki + δki and its quantized values 
+
+ˆvi = vi+δvi satisfy the white-noise hypothesis (Assumption 1) and assume that δki is bounded (Assumption 2). Then the expected squared distortion of the attention output D
+
+separates into additive key and value contributions, 
+
+D = E[∥o − ˆo∥2] = DK + DV + R, (4) 5
+
+DK = ∑
+
+> i,c
+
+a2 
+
+> i
+
+∥viWO − o∥2 q2 
+
+> c
+
+E[(δkic )2],DV = ∑
+
+> i,c
+
+a2 
+
+> i
+
+E[(δvic )2] ∥WOc ∥2 
+
+> F
+
+,
+
+each factoring across tokens i and channels c, dropping the token index t in ot for readability. The remainder is higher order in σK and σV ,
+
+|R| ≤ C ∥q∥2∥WO ∥2 
+
+> F
+
+σ2 
+
+> K
+
+σ2 
+
+> V
+
++ C (A30 ∥WO ∥2 
+
+> F
+
+σ2 
+
+> V
+
++ Do A40
+
+),
+
+where A0 = κ∥q∥1σK , Do := max i ∥viWO − o∥2 and C
+
+is absolute constant. R is negligible whenever the effective noise scales A0 and ∥WO ∥2 
+
+> F
+
+σ2 
+
+> V
+
+are small. 
+
+Remark 3 (Remainder term) . The remainder measures the difference between the exact output distortion and its second-order approximation. The theoretical derivation guarantees that it vanishes asymptotically as the quan-tization noise decreases. In practice, we work in low-bit regimes, the experiments in Section VI suggest that the approximation even remains predictive in those regimes. 
+
+We will continue with a proof sketch of Theorem 1, the full proof is given in Appendix A. 
+
+Proof Sketch Theorem 1. In short, we expand the output error to second order in the quantization noise, take expectations, keep the leading terms, and bound the rest. First, subtracting the quantized output from the exact one cancels the unperturbed term and splits the error into three parts, cancels against the corresponding term in o:
+
+o − ˆo = −
+
+( T∑
+
+> i=1
+
+δaiviWO
+
+︸ ︷︷ ︸ 
+
+> =: EK
+
++
+
+> T
+
+∑
+
+> i=1
+
+aiδviWO
+
+︸ ︷︷ ︸ 
+
+> =: EV
+
++
+
+> T
+
+∑
+
+> i=1
+
+δaiδviWO
+
+︸ ︷︷ ︸ 
+
+> =: E×
+
+)
+
+,
+
+where EK collects the effect of the key error through the perturbed attention weights δai, EV the effect of the value error, and E× a second-order cross-term. A first- and second-order Taylor expansion of the softmax writes the weight perturbation as δai = δa(1)  
+
+> i
+
++ δa(2)  
+
+> i
+
++ r i, with the remainder ri controlled by Lemma 1. Second, expanding E[∥EK +EV +E×∥2] and using that the key and value errors are independent and zero-mean (Assumption 1), the key-value cross-terms E[EK E⊤ 
+
+> V
+
+] and 
+
+E[EK E⊤× ] vanish exactly, and the remaining cross-terms are higher order. The distortion reduces to E[∥EK ∥2] + 
+
+E[∥EV ∥2] plus a remainder. Third, for the key term, recentering each value by the output o leaves EK unchanged, since the weight pertur-bations sum to zero and channel independence then gives 
+
+E[EK E⊤× ] = ∑ 
+
+> i,c
+
+a2 
+
+> i
+
+∥viWO − o∥2 q2 
+
+> c
+
+E[(δkic )2] = DK up to higher-order terms. Finally, the value term is exact. With EV =∑ 
+
+> i
+
+a2 
+
+> i
+
+(δvi)2WO and deterministic ai, token independence and zero mean leave only the diagonal, giving DV =∑ 
+
+> i,c
+
+a2 
+
+> i
+
+E[(δvic )2] ∥WOc ∥2 
+
+> F
+
+.Collecting the two leading terms and the bounded higher-order contributions yields D = DK + DV + R, with 
+
+R controlled through A0 = κ∥q∥1σK .
+
+B. Interpretation of the Distortion Measure a) Key distortion DK : Each channel c of the key token is weighted by (a) the squared attention weight 
+
+a2 
+
+> i
+
+, reflecting how much the token participates in the output; (b) the residual ∥viWO −o∥2, measuring how much switching attention to this token would change the output; and (c) the squared query component q2 
+
+> c
+
+, capturing which key channels the current query actually reads. Therefore, compressing channels for which q2 
+
+> c
+
+is small or deleting tokens for which a2 
+
+> i
+
+or ∥viWO − o∥2 is small does not change the distortion much. 
+
+b) Value distortion DV : Each channel c of value token i is weighted by a2 
+
+> i
+
+, so only tokens that receive significant attention contribute to value distortion. The output projection WOc further scales the contribution of each value channel. A central observation is that the distortion in (4) fac-torizes: the token-dependent weights ( a2 
+
+> i
+
+, ∥viWO − o∥2)and the channel-dependent weights (q2 
+
+> c
+
+, W2 
+
+> Oc
+
+) appear in distinct factors. Under Assumption 1, E[( δkic )2] only depends on the bit allocation bc for channel c but is the same across tokens. Therefore, the total distortion factors are 
+
+DK =
+
+(∑
+
+> i
+
+a2 
+
+> i
+
+∥viWO − o∥2
+
+)
+
+·
+
+(∑
+
+> c
+
+q2 
+
+> c
+
+E[(δkic )2])
+
+, (5) and analogously for DV . This separation has two con-sequences. First, it implies that we can focus on either channel-wise or token-wise compression and design a quan-tizer that allocates bits accordingly. Second, the keys and values can be quantized independently: DK and DV are separate terms, with no cross-term coupling key and value quantization errors. Existing KV cache compression meth-ods can be classified by which of the factors above they target. Table I summarizes this classification. A detailed explanation that identifies the methods addressing each factor and describes our method’s position relative to them can be found in Appendix C. Our method synthesizes the channel-level factors of the decomposition; the token-wise allocation is out of scope here. 
+
+V. AATC: Attention-Aware Bit Allocation via Transform Coding 
+
+The channel-wise allocation determines how many bits to assign to each hidden dimension of the key and value cache. As in classical transform coding, we compute it via reverse waterfilling on an empirical distribution obtained in advance from a calibration dataset. Such a set can, however, only capture the varying importance of chan-nels , not of individual tokens . The allocation, therefore, operates per token, distributing bits across channels. The procedure consists of two steps: (i) a linear transform that decorrelates and importance-orders the dimensions, and (ii) an optimization that assigns bits to each transformed dimension so as to minimize the attention-aware distortion under a global budget. 6          
+
+> TABLE I
+> Distortion factors in D=DK+DVand the design axes they motivate. Each row corresponds to one factor in the per-token, per-channel decomposition of attention-output error under KV quantization. Methods are listed by the factor they primarily target. Here, VQ =Vector quantization, MP =mixed precision and TC =transform coding.
+
+Factor Design axis Mechanism Representative methods 
+
+a2
+
+> i
+
+(token) token eviction drop tokens H2O [9], SnapKV [22], StreamingLLM [10], VATP [23], CriticalKV [24], Expected Attention [26] 
+
+∥viWO − o∥2
+
+(token) output-relevance drop tokens CAOTE [25](pre-WO )
+
+q2 
+
+> c
+
+, CQ
+
+(K channel) query-aware key precision VQ/MP/rotation/ TC+bit-alloc. A2ATS [12], MixKVQ [21], OSCAR [19], SQuat [20], Ours (SectionV) WOc
+
+(V channel) output-projection-aware value TC+bit-alloc (implicit in KVQuant [6]), Ours (SectionV) 
+
+E[( δkic )2], 
+
+E[( δvic )2]per-channel sensitivity scaling/codebook/ SVD/MP/ TC+bit-alloc KIVI [5], KVQuant [6], KVTC [8], PALU [7], RateQuant [11], Ours (SectionV) 
+
+A. Step 1: Whitening-Based Feature Decorrelation 
+
+KV caches are especially amenable to transform cod-ing, since key and value vectors are strongly correlated across dimensions and their effective rank is typically below dk [7], [8]. We achieve decorrelation by computing a whitening-based SVD of the weight matrices WK and 
+
+WV , which approximately satisfy the independence as-sumptions required for classical transform coding. Given calibration activations X ∈ RT ×dmodel and a projection matrix W ∈ Rdmodel ×d (either WK or WV ), we proceed as follows to compute a transformed representation H
+
+(denoted by HK or HV , respectively). Define the empirical input covariance ΣX = 1 
+
+> T
+
+X⊤X. Let ΣX = LL ⊤ be its Cholesky decomposition. The whitened weight matrix is 
+
+˜W = L⊤ W, which absorbs the input statistics into the projection. Let ˜W = USP ⊤ be its reduced SVD. We then factorize the original projection as 
+
+W = L−⊤ USP ⊤ = A B , (6) with A = L−⊤ U√S, B = √S P ⊤.
+
+At inference time, instead of caching K = XW K ∈ RT ×dk ,we cache the transformed representation 
+
+HK = XA K ∈ RT ×dk , (7) and recover the original keys via K = HK BK . Same for the values, we have HV = XA V and therefore V =
+
+HV BV . In the transformed space, the dimensions of HK
+
+and HV are decorrelated and ordered by the singular values S = A⊤ΣX A = HT H, which capture the com-bined effect of input variance and projection magnitude. High-index dimensions correspond to small singular values and contribute little to the output, making them natural candidates for low-precision or zero-bit allocation. 
+
+Remark 4. In practice, one often considers a so-called multi-head attention, where each W is split into H sub-matrices ( W1, ..., WH ∈ Rdin ×dk /H ) referred to as heads and computes the attention individually for each head before eventually combining it again. For the transform coding step in such a setup, the heads get combined into 
+
+G head-groups and therefore we have B1, ..., BG. Further, 
+
+BKi ∈ Rdk /G , same for the values we have BVi ∈ Rdv /G .
+
+A, on the other hand, remains global. 
+
+The above transform is the same as the one used in [7] in the context of dimension reduction and its decor-relation step coincides with the PCA of K, hence with the transform of a per-layer KVTC [8], for details see Appendix D. The equivalence concerns the transform only: KVTC operates on a global, cross-layer cache and allocates based on reconstruction error, whereas we operate per layer under a global bit budget and allocate based on the output-aware distortion of Theorem 1. 
+
+B. Step 2: Attention-Aware Bit Allocation via Waterfilling 
+
+With the transform in hand, we formulate the channel-wise bit allocation as a constrained optimization problem. A detailed derivation of it can be found in Appendix B. 
+
+a) The waterfilling problem for the keys and values: 
+
+The channel-wise allocation for the keys is the solution to min 
+
+> {bℓ,c }
+> L
+
+∑
+
+> ℓ=1
+> dk
+
+∑
+
+> c=1
+
+w(K) 
+
+> ℓ,c
+
+(σ(K) 
+
+> ℓ,c
+
+)22−2bℓ,c s.t. 
+
+> L
+
+∑
+
+> ℓ=1
+> dk
+
+∑
+
+> c=1
+
+bℓ,c ≤ B K ,
+
+(8) with w(K) 
+
+> ℓ,c
+
+= 1
+
+T
+
+> T
+
+∑
+
+> i=1
+
+(( BKℓ,c )⊤q(i,ℓ,c ))2
+
+a per-channel weight with i being the tokens from the calibration set, T the size of the calibration set and 
+
+bℓ,c ∈ { 0, 1, . . . , b max } where BK is the total bit budget for the keys. The continuous relaxation of (8) admits a weighted variant of the classical closed-form reverse waterfilling solution [3, Ch. 10]. A channel receives b∗ 
+
+> ℓ,c
+
+= 
+
+> 12
+
+log 2(w(K) 
+
+> ℓ,c
+
+σ(K) 
+
+> ℓ,c
+
+)2/λ ) bits when w(K) 
+
+> ℓ,c
+
+(σ(K) 
+
+> ℓ,c
+
+)2 > λ and zero bits otherwise, with the water level λ > 0 chosen so that ∑
+
+> ℓ
+
+∑ 
+
+> c
+
+b∗ 
+
+> ℓ,c
+
+= BK . Channels below the water level are 7
+
+discarded entirely. The waterfilling problem for the values reads as min 
+
+> {bℓ,c }
+> L
+
+∑
+
+> ℓ=1
+> dv
+
+∑
+
+> c=1
+
+w(V ) 
+
+> ℓ,c
+
+(σ(V ) 
+
+> ℓ,c
+
+)22−2bℓ,c s.t. 
+
+> L
+
+∑
+
+> ℓ=1
+> dv
+
+∑
+
+> c=1
+
+bℓ,c ≤ B V ,
+
+with w(V ) 
+
+> ℓ,c
+
+= ∥(BV WO )⊤
+
+> ℓ,c
+
+∥2 
+
+> F
+
+and bℓ,c ∈ { 0, 1, . . . , b max }.
+
+b) The right scaling: After fixing the bits per channel, one needs to think about how to choose the scale to apply uniform scalar quantization (Definition 2) to the fixed number of bits. This we do in the following way: we first calculate a channel scale ( sℓ,c ) on the calibration data by calculating the 99th percentile of |hℓ,c | across all calibration tokens for every channel existing for keys and for values. During inference time, we compute the token-wise scaling for every token in every layer as αℓ,t =max c(|hℓ,c,t /s ℓ,c |) and quantize 
+
+qtz (h) = clamp 
+
+(⌊ h 
+
+> ∆ℓ,c,t
+
++ 12
+
+⌋
+
+, −2bℓ,c −1, 2bℓ,c −1 − 1
+
+)
+
+,
+
+dqtz (c) = ∆ ℓ,c,t qtz (h) with ∆ ℓ,c,t := 2αℓ,t sℓ,c 
+
+2bℓ,c .
+
+In practice we actually compute the token-wise scaling per head-group g (defined in Remark 4), so we obtain αℓ,g,t =max c∈g (|hℓ,c,t /s ℓ,c |)
+
+c) Separate budgets for keys and values.: Keys and values play asymmetric roles in attention, this is why we solve separate allocation problems for WK and WV , each with its own budget BK and BV .
+
+Remark 5 (Zero-bit dimensions and rank reduction) . The dynamic program naturally assigns zero bits to trailing dimensions whose weight wc is too small to justify even one bit, which is equivalent to rank reduction. The effective cache dimensionality is reduced from dk to the number of dimensions receiving at least one bit. Unlike fixed-rank SVD truncation like PALU [7], the cutoff adapts to the attention-aware weight profile and the available budget. In contrast to our method, PALU does not optimize bit allocation. In the experiments, we also see favorable performance for our method compared to PALU (see Section VI). 
+
+To summarize, our method operates in two stages: an offline calibration stage that determines the channel-wise bit allocation, and an online inference stage that applies quantization during inference. We summarize the full pro-cedure of our method, called attention-aware transform coding (AATC), in Algorithm 1. 
+
+VI. Experiments 
+
+To show the performance of our method we eval-uate it on LongBench [40], RULER [41], GSM8K [42], 
+
+MATH-500 [43] and MMLU-Pro [44] (math and com-puter science subtasks) to validate its qualitative performance against existing methods (KIVI, PALU and KVQuant) on Llama-3.1-8B-Instruct [45] and 
+
+Qwen-2.5-7B-Instruct [46]. For KIVI and KVQuant, we reimplemented their method and, for fairness, added a recent-token window of size 128, which gets flushed in blocks of 32 tokens. We also kept the first 4 tokens in full 
+
+Algorithm 1 Attention-Aware Transform Coding (AATC) for KV cache Compression 
+
+Require: Model weights {W(ℓ) 
+
+> K
+
+, W(ℓ) 
+
+> V
+
+, W(ℓ) 
+
+> O
+
+}; calibration data X; bit budget B; min bits bmin 
+
+Ensure: Compressed KV cache with attention-aware bit allocation 
+
+— Calibration (offline, once per model) —  
+
+> 1:
+
+for each layer ℓ do  
+
+> 2:
+
+Compute Σ(ℓ) 
+
+> X
+
+, Cholesky L(ℓ) 
+
+> 3:
+
+SVD of full W(ℓ) 
+
+> K
+
+: obtain AKℓ and BKℓ 
+
+> 4:
+
+Run forward pass; record latent variance ( σ(K) 
+
+> ℓ,c
+
+)2
+
+for each c ∈ { 1, . . . , d k} 
+
+> 5:
+
+Compute w(K) 
+
+> ℓ,c
+
+← 1
+
+> T
+
+∑
+
+> i
+
+(BKℓ [c, :] · qi
+
+)2 
+
+> 6:
+
+Compute BVℓ , σ(V ) 
+
+> ℓ,c
+
+, w(V ) 
+
+> ℓ,c
+
+← ∥ (BV WO )⊤
+
+> ℓ,c
+
+∥2 
+
+> F
+> 7:
+
+end for  
+
+> 8:
+
+Allocate bits globally via reverse waterfilling over all (ℓ, c )
+
+{b(K,ℓ ) 
+
+> c
+
+} ← arg min ∑  
+
+> ℓ,c b(K)
+> c≤B K
+
+∑
+
+> ℓ,c
+
+(
+
+w(K) 
+
+> ℓ,c
+
+· (σ(K) 
+
+> ℓ,c
+
+)22−2bℓ,c 
+
+)
+
+{b(V,ℓ ) 
+
+> c
+
+} ← arg min ∑   
+
+> ℓ,c b(V)
+> c≤B V
+
+∑
+
+> ℓ,c
+
+(
+
+w(V ) 
+
+> ℓ,c
+
+· (σ(V ) 
+
+> ℓ,c
+
+)22−2bℓ,c 
+
+)
+
+— Inference (online, per decode step t) —  
+
+> 9:
+
+for each new token at step t do  
+
+> 10:
+
+for each layer ℓ do  
+
+> 11:
+
+Project: hKℓ,t ← x(ℓ) 
+
+> t
+
+AKℓ , hVℓ,t ← x(ℓ) 
+
+> t
+
+AVℓ 
+
+> 12:
+
+Append qtz (hKℓ,t ) and qtz (hVℓ,t ) to cache  
+
+> 13:
+
+Reconstruct K(ℓ) 
+
+> i
+
+← ˆhKℓ,i BKℓ V (ℓ) 
+
+> i
+
+← ˆhVℓ,i BVℓ 
+
+> 14:
+
+Compute αt,i ← softmax (qtK⊤ 
+
+> i
+
+/√d) 
+
+> 15:
+
+Output o(ℓ) 
+
+> t
+
+← ∑ 
+
+> i≤t
+
+αt,i V (ℓ) 
+
+> i
+> 16:
+
+end for  
+
+> 17:
+
+end for 
+
+precision. AATC is implemented as described in Algorithm 1. We further keep the first s tokens and the most recent 
+
+w tokens in full precision, following standard practice [8], [10]. We use s = 4 and w = 128. Once the recent-token window is full, we quantize the oldest 16 tokens and refill until the window again holds w tokens. For PALU, we applied a transform with 30% dimension reduction and afterwards quantized to 4 bits. Further, we used s = 4 and w = 128 for the non-zero dimensions. We further evaluate AATC var-only, which uses the same per-layer transform and reverse-waterfilling allocation but drops the attention-aware weights q2 
+
+> c
+
+and WOc , allocating on the quantization-error variance alone. KVTC [8] is the closest method to ours: it likewise decorrelates the cache and allocates bits by transform coding. It differs on two axes: it uses a single global, cross-layer transform (we use per-layer transforms under a global budget, the natural granularity given that each layer maintains its own KV cache) and it allocates on reconstruction error (we allocate on the output-aware distortion of Theorem 1, via q2 
+
+> c
+
+and WOc ). In the per-layer setting, the two coincide: the transforms 8
+
+match (Appendix D) and the var-only’s variance-based allocation is exactly the reconstruction error criterion, so the var-only variant above can be interpreted as a per-layer analog of the KVTC algorithm. For more information on the methods, see Appendix E. Llama has 8 KV-heads, 32 Query heads and 32 layers. Qwen has 4 KV-heads, 28 Query heads and 28 layers. Therefore, both methods use grouped query attention. Our method we use with G = 2 head-groups for Llama and G = 1 head-group for Qwen. To generate the transform AB for the whitening-based feature decorrelation, we use wikitext2 [47]. For the rate-distortion calibration, we use a balanced mixture of FineWeb [48] (sample-10BT, web text) and OpenR1-Math-220k [49] (mathematical reasoning traces). We draw 256 calibration sequences of length 2048 tokens, split equally between FineWeb and OpenR1-Math-220k (128 sequences each), and shuffle them together before calibration. The mixture is intended to provide coverage over both general-domain and structured reasoning text distributions, following the approach of KVTC [8]. 
+
+A. Main Results 
+
+Table II reports the main comparison; we mark in bold the best compressed method. The FP16 model is a reference and is not bolded. For each benchmark we take σ
+
+to be the standard error of its score, which is the standard deviation of the per-example scores divided by √N over the N evaluated samples. We call a method statistically indistinguishable from FP16 when its score lies within 2 σ
+
+of the FP16 score on that benchmark. Across all 18 cells, AATC is never statistically distin-guishable from the uncompressed FP16 model. At 5 .82 ×
+
+compression it is lossless to within evaluation noise on ev-ery benchmark and both backbones. This operating points reduces the memory budget of Llama from 1.07 GB for the FP16 baseline to 184MB. On Qwen, it is moreover the unique best compressed method on long-context retrieval (RULER -32k) and on multiple-choice reasoning ( MMLU-Pro 
+
+math), exceeding the strongest quantization baseline by 7.2 and 16 .8 points. The two backbones respond differently to compression. On Llama, where even naive quantization (KIVI) stays near-lossless, AATC and AATC var-only are statistically tied throughout. On Qwen, which is markedly harder to compress (KIVI falls to 0 .351 on LongBench 
+
+and below 0 .28 on RULER ), the additional adaptivity of the full method gives consistent gains over AATC var-only (RULER -32k +2 .5, MMLU -m +3 .6). PALU is competitive only at short contexts, where it is best at RULER -4k on Qwen, but it attains the weakest LongBench average (0 .483), a behavior we attribute to its low-rank parameterization. For a detailed explanation, see Appendix G. We report further analyses in the appendix: a per-subtask LongBench breakdown (in Appendix G), an av-erage bit sweep from 4-bit to 1-bit (Appendix H), detailed results at the aggressive 2-bit setting (Appendix H), an ab-lation of the allocation and calibration choices (Appendix I), full implementation details for all methods (Appendix E) and details about the benchmarks (Appendix F). 4k 8k 16k 32k           
+
+> RULER context length
+> 0.70 0.75 0.80 0.85
+> RULER score
+> Llama-3.1-8B-Instruct
+> 4k 8k 16k 32k
+> RULER context length
+> 0.60 0.65 0.70
+> Qwen-2.5-7B-Instruct
+> AATC (full) AATC var-only 2.5-bit (5.8×) 2-bit (7×)
+> Fig. 1. RULER score versus context length for AATC and AATC var-only at 2.5-bit (solid) and 2-bit (dashed), on Llama-3.1-8B-Instruct
+> and Qwen-2.5-7B-Instruct .
+
+B. Benefits of Attention-Awareness 
+
+At the 5 .82 × operating point of Table II, AATC var-only is statistically indistinguishable from full AATC for Llama, which raises the question of whether including the 
+
+q2 
+
+> c
+
+and WO terms in the bit-allocation is necessary for all models. Figure 1 answers this by evaluating both variants at a more aggressive ≈ 7× compression, corresponding to a 2-bit budget. At 2.5-bit (solid), the two curves are indistinguishable at every context length for Llama. For Qwen we already see a small advantage of AATC. At 2-bit (dashed) the full method retains near-baseline 
+
+RULER accuracy across lengths for both models, whereas AATC var-only degrades sharply as the context grows. The more we compress, the better we can see the effect of the attention-aware allocation. We see, especially under aggressive compression and in long-context regimes, which is what we care about. 
+
+VII. Limitations and Future Work 
+
+On the theoretical side, our analysis assumes that tokens are independent, which may not always hold in practice, since natural language can exhibit non-trivial correlation structures. While this assumption is common in related works and does not seem to have a strong negative impact on the encoding quality, we still think characterizing the dependence, or deriving guarantees under weaker assump-tions, is an interesting direction for future theoretical work. On the empirical side, our implementation is not system-level optimized, in particular, it lacks a dedicated CUDA implementation, which would be required before the method could be used in production. Our evaluation also covers only two model families (Llama and Qwen), while these differ in scale and attention configuration, testing on a wider range of models is left for future work. Finally, it would be interesting to study how our method interacts with token-eviction methods [9], [10], [22] or how it can be extended to a global cache as it is deployed in in [8]. 9          
+
+> TABLE II
+> Comp. is the KV cache compression ratio relative to the FP16 baseline. LongBench is the task-averaged score over seven English subsets (per-subtask breakdown in Table III). Here σis the standard error of each score, the standard deviation of the per-example scores divided by √Nover the Nevaluated samples. A method is called statistically indistinguishable from FP16 when its score lies within 2σof the FP16 score.
+
+LongBench RULER Reasoning 
+
+Method Comp. avg. 4k 8k 16k 32k GSM8K MMLU -m MMLU -cs MATH-500 Llama-3.1-8B-Instruct 
+
+Baseline 1.00 0.570 0.859 0.856 0.828 0.775 0.789 0.438 0.456 0.454 KIVI 5.00 0.564 0.846 0.840 0.810 0.763 0.730 0.390 0.420 0.452 PALU 5.39 0.550 0.851 0.849 0.83 0.769 0.617 0.274 0.320 0.314 KVQuant 5.91 0.549 0.715 0.729 0.676 0.654 0.754 0.376 0.402 0.392 AATC var 5.82 0.566 0.859 0.861 0.842 0.774 0.780 0.402 0.449 0.490 
+
+AATC (ours) 5.82 0.558 0.857 0.863 0.841 0.778 0.773 0.416 0.442 0.488 
+
+Qwen-2.5-7B-Instruct 
+
+Baseline 1.00 0.574 0.720 0.716 0.718 0.720 0.818 0.708 0.567 0.680 KIVI 5.00 0.351 0.279 0.224 0.277 0.233 0.165 0.166 0.222 0.680 
+
+PALU 5.39 0.483 0.725 0.690 0.682 0.625 0.672 0.542 0.454 0.492 KVQuant 5.91 0.558 0.694 0.674 0.667 0.643 0.801 0.478 0.490 0.680 
+
+AATC var 5.82 0.558 0.705 0.701 0.706 0.690 0.824 0.674 0.551 0.668 AATC (ours) 5.82 0.567 0.709 0.708 0.721 0.715 0.822 0.710 0.573 0.680 
+
+Appendix 
+
+A. Proof of Theorem 1 Proof of Theorem 1. We proceed in four steps: (1) express the output error in terms of the perturbations δai, δvi;(2) show that the cross-terms vanish or are of higher order in expectation; (3) compute the key distortion term; (4) compute the value distortion term. Throughout, C
+
+denotes an absolute constant depending only on q, WO ,and the attention weights {ai}. Its value may change from line to line. We write σ2 
+
+> K
+
+:= max i,c E[( δkic )2] and 
+
+σ2 
+
+> V
+
+:= max i,c E[( δvic )2]. 
+
+Step 1: Decomposition of the output error. Let ˆ ai
+
+denote the attention weights computed from the quan-tized keys and define the attention-weight perturbation 
+
+δai := ˆai − ai, so that ˆ ai = ai + δai . The unper-turbed and perturbed outputs are o = ∑Ti=1 ai vi WO
+
+and ˆ o = ∑Ti=1 ˆai ˆvi WO = ∑Ti=1 (ai + δai)( vi + δvi) WO .Multiplying out the product ( ai + δai)( vi + δvi) = aivi +
+
+ai δvi + δai vi + δai δvi and subtracting, the unperturbed term aivi cancels against the corresponding term in o:
+
+o − ˆo = 
+
+> T
+
+∑
+
+> i=1
+
+aiviWO
+
+−
+
+> T
+
+∑
+
+> i=1
+
+[aivi + aiδvi + δaivi + δaiδvi
+
+]WO
+
+= −
+
+( T∑
+
+> i=1
+
+δaiviWO
+
+︸ ︷︷ ︸ 
+
+> =: EK
+
++
+
+> T
+
+∑
+
+> i=1
+
+aiδviWO
+
+︸ ︷︷ ︸ 
+
+> =: EV
+
++
+
+> T
+
+∑
+
+> i=1
+
+δaiδviWO
+
+︸ ︷︷ ︸ 
+
+> =: E×
+
+)
+
+,
+
+and consequently 
+
+E[∥o − ˆo∥2] = E[∥EK + EV + E×∥2]. (9) The term EK captures the effect of key quantization (through the perturbed attention weights), EV captures the effect of value quantization and E× is a second-order cross-term involving both perturbations. 
+
+Softmax expansion. Both the key distortion (computed in Step 3 below) and the cross-terms (computed in Step 2 below) require the response of the attention weights to the key perturbation. Because the attention logits are given by 
+
+q⊤ki, the quantized keys perturb them by 
+
+q⊤ˆki = q⊤(ki + δki) = q⊤ki + αi,
+
+where αi := q⊤δki = ∑
+
+> c
+
+qcδkic ,
+
+so αi is the scalar perturbation to the i-th logit induced by the key error. Under Assumption 1 the δkic are in-dependent and zero-mean, hence so are the αi, so, in particular, E[αiαℓ] = 0 for i̸ = ℓ. Furthermore, expanding the square of the sum and using channel independence, 
+
+E[δkic δkic ′ ] = 1c=c′ E[( δkic )2], one obtains that, 
+
+E[α2 
+
+> i
+
+] = E
+
+[(∑  
+
+> c
+
+qc δkic 
+
+)2]
+
+= ∑ 
+
+> c
+
+q2 
+
+> c
+
+E[( δkic )2] ≤ ∥ q∥2σ2 
+
+> K
+
+.
+
+(10) The last step uses that E[( δkic )2] ≤ σ2 
+
+> K
+
+and ∑ 
+
+> c
+
+q2 
+
+> c
+
+=
+
+∥q∥2. Moreover, as a linear combination of independent symmetric variables αi is itself symmetric and all of its odd moments vanish, in particular E[αi] = E[α3 
+
+> i
+
+] = 0. Under Assumption 2, the logit perturbations are moreover bounded, which means |αi| ≤ ∑ 
+
+> c
+
+|qc| | δkic | ≤ κ∥q∥1σK := 
+
+A0 almost surely. The perturbations will be centered at the attention-weighted mean ¯ α := ∑Tℓ=1 aℓ αℓ. The weights aℓ
+
+being the unperturbed attention weights leads to aℓ ≥ 0and ∑ 
+
+> ℓ
+
+aℓ = 1. Since ¯ α is a convex combination of the αℓ,also |¯α| ≤ A0 and |αi − ¯α| ≤ 2A0 almost surely. Writing 
+
+sℓ := q⊤kℓ for the unperturbed logits, the attention weight is ˆ ai = softmax (s + α)i. Decompose the attention-weight 10 
+
+perturbation as 
+
+δai = ai
+
+(αi − ¯α)︸ ︷︷ ︸ 
+
+> =: δa(1)
+> i
+
++ 12 ai
+
+[(αi − ¯α)2 − ∑
+
+> ℓ
+
+aℓ
+
+(αℓ − ¯α)2]︸ ︷︷ ︸ 
+
+> =: δa(2)
+> i
+
++r i
+
+(11) where δa(1)  
+
+> i
+
+is linear, δa(2)  
+
+> i
+
+quadratic in the entries of α and ri := δai − δa(1)  
+
+> i
+
+− δa(2)  
+
+> i
+
+is defined as the exact difference. By Remark 6, δa(1)  
+
+> i
+
+and δa(2)  
+
+> i
+
+are precisely the first-and second-order Taylor terms of the softmax response 
+
+θ 7 → softmax (s + θα )i at θ = 0, so r i is its exact second-order Taylor remainder. It is bounded in Lemma 1 below. Because the ˆ ai and ai are both probability distributions (∑ 
+
+> i
+
+ˆai = ∑ 
+
+> i
+
+ai = 1), their difference satisfies 
+
+∑
+
+> i
+
+δai = ∑
+
+> i
+
+(ˆ ai − ai) = 0 . (12) We use this expansion throughout Steps 2–4. 
+
+Step 2: Controlling the cross-terms in expectation. 
+
+Expanding the squared norm in (9) yields, 
+
+∥EK + EV + E×∥2 =∥EK ∥2 + ∥EV ∥2 + ∥E×∥2 (13) + 2 EK E⊤ 
+
+> V
+
++ 2 EK E⊤× + 2 EV E⊤× .
+
+We will now show that E[EK E⊤ 
+
+> V
+
+] and E[EK E⊤× ] vanish exactly, while E[EV E⊤× ] and E[∥E×∥2] are of higher or-der and collected into the remainder. The leading terms 
+
+E[∥EK ∥2] and E[∥EV ∥2] are evaluated in Steps 3 and 4. 
+
+(a) The term E[EK E⊤ 
+
+> V
+
+] vanishes exactly. Writing both factors as sums gives, 
+
+E[EK E⊤ 
+
+> V
+
+] = 
+
+> T
+
+∑
+
+> i=1
+
+E
+
+[ T∑
+
+> ℓ=1
+
+δaiaℓ(viWO )( δvℓWO )⊤
+
+]
+
+=
+
+> T
+
+∑
+
+> i=1
+> T
+
+∑
+
+> ℓ=1
+
+(vi WO ) Eδk[δai]aℓW⊤ 
+
+> O
+
+Eδv[δv⊤ 
+
+> ℓ
+
+] = 0 .
+
+As the perturbation δai does not depend on the value errors δvℓ, the independence of key and value errors (As-sumption 1) yields that δai and δvℓ are also independent and the last row follows, since E[δvℓ] = 0. 
+
+(b) The term E[EK E⊤× ] vanishes exactly. Analogously to (a), δai δaℓ and δvℓ are independent. Thus, 
+
+E[EK E⊤× ] = 
+
+> T
+
+∑
+
+> i=1
+> T
+
+∑
+
+> ℓ=1
+
+E[δai δaℓ (viWO )( δvℓ WO )⊤]=
+
+> T
+
+∑
+
+> i=1
+> T
+
+∑
+
+> ℓ=1
+
+Eδk[δai δaℓ] ( viWO )W⊤ 
+
+> O
+
+Eδv[δv⊤ 
+
+> ℓ
+
+] = 0 .
+
+(c) E[EV E⊤× ] is O((∥q∥2σ2 
+
+> K
+
++A30) ∥WO ∥2 
+
+> F
+
+σ2
+
+> V
+
+). Expanding both factors, 
+
+E[E⊤ 
+
+> V
+
+E×] = 
+
+> T
+
+∑
+
+> i=1
+> T
+
+∑
+
+> ℓ=1
+
+E[ai δaℓ (δvi WO )( δvℓ WO )⊤]=
+
+> T
+
+∑
+
+> i=1
+> T
+
+∑
+
+> ℓ=1
+
+ai Eδk[δaℓ] Eδv
+
+[(δvi WO )( δvℓ WO )⊤].
+
+The second equality holds, since δaℓ depends only on 
+
+{δkm}, which are independent of the value errors. By token independence and E[δvi] = 0, the value expectation vanishes for i̸ = ℓ, so only the diagonal i = ℓ survives therefore we get 
+
+E[EV E⊤×
+
+] =
+
+> T
+
+∑
+
+> i=1
+
+ai Eδk[δai] Eδv
+
+[∥δvi WO ∥2].
+
+It remains to evaluate E[δai]. From the expansion (11), 
+
+E[δa(1)  
+
+> i
+
+] = ai E[αi − ¯α] = 0 because the αi are zero-mean (Assumption 1). The leading nonzero contribution is the second-order term, with the tail controlled by Lemma 1: 
+
+E[δai] = E[δa(2)  
+
+> i
+
+] + E[r i],
+
+E[δa(2)  
+
+> i
+
+] = 12 ai
+
+(
+
+E[( αi − ¯α)2] − ∑ 
+
+> ℓ
+
+aℓ E[( αℓ − ¯α)2]
+
+)
+
+,
+
+where |E[r i]| ≤ E|ri| ≤ 7A30 by (26). The centered second moments are computed exactly once here and reused in (d) below. Using E[αℓ ¯α] = aℓ E[α2 
+
+> ℓ
+
+] since, only the m = ℓ term of ¯ α contributes, by token independence and zero mean, and E[ ¯ α2] = ∑ 
+
+> m
+
+a2 
+
+> m
+
+E[α2
+
+> m
+
+], we obtain 
+
+E[(αℓ − ¯α)2] = (1 −2aℓ) E[α2 
+
+> ℓ
+
+]+ ∑
+
+> m
+
+a2 
+
+> m
+
+E[α2
+
+> m
+
+] ≤ 2 ∥q∥2σ2 
+
+> K
+
+.
+
+(14) Here, the final bound uses E[α2
+
+> m
+
+] ≤ ∥ q∥2σ2 
+
+> K
+
+from (10), 1 −
+
+2aℓ ≤ 1, and ∑ 
+
+> m
+
+a2 
+
+> m
+
+≤ 1. Hence |E[δa(2)  
+
+> i
+
+]| ≤ C a i ∥q∥2σ2
+
+> K
+
+and, in particular, |E[δai]| ≤ C(ai∥q∥2σ2 
+
+> K
+
++ A30
+
+). Combin-ing the above bound with 
+
+E[∥δviWO ∥2] = ∑
+
+> c
+
+E[( δvic )2]∥(WO )c, :∥2 ≤ σ2 
+
+> V
+
+∥WO ∥2
+
+> F
+
+(15) and the fact that the per-token bound carries its own factor ai, so that the token sum collapses through ∑ 
+
+> i
+
+a2 
+
+> i
+
+≤∑ 
+
+> i
+
+ai = 1, we obtain the final bound 
+
+∣∣E[EV E⊤× ]∣∣ ≤ ∑
+
+> i
+
+ai
+
+∣∣E[δai]∣∣ σ2 
+
+> V
+
+∥WO ∥2 
+
+> F
+
+(16) 
+
+≤ C (∥q∥2σ2 
+
+> K
+
++ A30
+
+) ∥WO ∥2 
+
+> F
+
+σ2 
+
+> V
+
+.
+
+(d) The term E[∥E×∥2] is O(∥q∥2∥WO ∥2 
+
+> F
+
+σ2 
+
+> K
+
+σ2 
+
+> V
+
+). Expand-ing the squared norm and using the independence of key and value noise, 
+
+E[∥E×∥2] =
+
+> T
+
+∑
+
+> i=1
+> T
+
+∑
+
+> ℓ=1
+
+Eδk[δai δaℓ] Eδv
+
+[(δvi WO )( δvℓ WO )⊤].
+
+For i̸ = ℓ, the value factor and the key factor both vanish by token independence and zero mean, leaving the diagonal 
+
+E[∥E×∥2] =
+
+> T
+
+∑
+
+> i=1
+
+E[δa2
+
+> i
+
+] E[∥δvi WO ∥2]. (17) The value factor bound is already bounded in (15). There-fore, we only need to bound the key factor. Its leading part 
+
+δa(1)  
+
+> i
+
+= ai(αi − ¯α) given the bound in (14) yields 
+
+E[(δa(1)  
+
+> i
+
+)2] = a2 
+
+> i
+
+E[(αi − ¯α)2] ≤ 2 a2 
+
+> i
+
+∥q∥2 σ2 
+
+> K
+
+.11 
+
+Squaring the full δai = δa(1)  
+
+> i
+
++ δa(2)  
+
+> i
+
++ r i gives 
+
+E[δa2 
+
+> i
+
+] = E[( δa(1)  
+
+> i
+
+)2]+2 E[δa(1)  
+
+> i
+
+(δa(2)  
+
+> i
+
++ r i)] + E[( δa(2)  
+
+> i
+
++ r i)2]
+
+︸ ︷︷ ︸
+
+> =: ci
+
+.
+
+The corrections ci are controlled pathwise. We have that 
+
+|αℓ − ¯α| ≤ 2A0 and ∑ 
+
+> ℓ
+
+aℓ(αℓ − ¯α)2 ≤ 4A20 almost surely, the latter because it is a convex combination of the terms (αℓ − ¯α)2 ≤ 4A20. From those inequalities it follows directly, from (11), |δa(1)  
+
+> i
+
+| ≤ 2aiA0 and |δa(2)  
+
+> i
+
+| ≤ 2aiA20, while |ri| ≤ 
+
+7A30 and ∑ 
+
+> i
+
+E[r 2 
+
+> i
+
+] ≤ 49 A60 by Lemma 1. Summing over tokens with ∑ 
+
+> i
+
+ai = 1 and ∑ 
+
+> i
+
+a2 
+
+> i
+
+≤ 1, 
+
+∑
+
+> i
+
+|ci| ≤ 8A30 + 28 A40 + 8 A40 + 98 A60 ≤ C A 30,
+
+the final inequality holding for A0 ≤ 1 directly, and for 
+
+A0 > 1 because ∑ 
+
+> i
+
+E[δa2 
+
+> i
+
+] ≤ E[( ∑ 
+
+> i
+
+|δai|)2] ≤ 4 and 
+
+∑ 
+
+> i
+
+E[( δa(1)  
+
+> i
+
+)2] ≤ 2A20 give ∑ 
+
+> i
+
+|ci| ≤ 4 + 2 A20 ≤ 6A30
+
+outright. Therefore, the bound on the attention distortion terms is ∑ 
+
+> i
+
+E[δa2 
+
+> i
+
+] ≤ C(∥q∥2σ2 
+
+> K
+
++ A30
+
+). Substituting this and the value factor into (17) and using ∑ 
+
+> i
+
+a2 
+
+> i
+
+≤ 1, 
+
+E[∥E×∥2] ≤ C (∥q∥2σ2 
+
+> K
+
++ A30
+
+) ∥WO ∥2 
+
+> F
+
+σ2 
+
+> V
+
+. (18) Summarizing Step 2: in expectation the expansion (13) retains only the diagonal terms E[∥EK ∥2] and E[∥EV ∥2]together with a controlled remainder. The cross-terms (a) and (b) vanish exactly at all orders, while (c) and (d) are bounded by (16) and (18). Hence 
+
+E[∥o − ˆo∥2] = E[∥EK ∥2] + E[∥EV ∥2] + R2,R2 := E[∥E×∥2] + 2 E[EV E⊤×
+
+]
+
+= O
+
+((∥q∥2σ2 
+
+> K
+
++ A30
+
+)∥WO ∥2 
+
+> F
+
+σ2
+
+> V
+
+)
+
+.
+
+Step 3: The key distortion term E[∥EK ∥2]. We insert the softmax expansion (11) into EK = ∑ 
+
+> i
+
+δai viWO .By (12), ∑ 
+
+> i
+
+δai = 0, so for the constant vector o we have ∑ 
+
+> i
+
+δai o = (∑  
+
+> i
+
+δai
+
+)o = 0, subtracting this from EK lets us recenter each viWO by o without changing the value. Write ui := viWO − o and Do := max i ∥ui∥2. Grouping the softmax expansion as δai = δa(1)  
+
+> i
+
++δa(2)  
+
+> i
+
++r i Lemma 1, 
+
+EK =
+
+> T
+
+∑
+
+> i=1
+
+δai ui =
+
+> T
+
+∑
+
+> i=1
+
+(δa(1)  
+
+> i
+
++ δa(2) 
+
+> i
+
+)ui +
+
+> T
+
+∑
+
+> i=1
+
+ri ui
+
+︸ ︷︷ ︸ 
+
+> =: E(3+)
+> K
+
+.
+
+Writing E(m) 
+
+> K
+
+:= ∑ 
+
+> i
+
+δa(m) 
+
+> i
+
+ui, so that EK = E(1)  
+
+> K
+
++ E(2)  
+
+> K
+
++
+
+E(3+)  
+
+> K
+
+exactly with E(3+)  
+
+> K
+
+:= ∑ 
+
+> i
+
+riui . We first evaluate the leading term exactly. Substituting δa(1)  
+
+> i
+
+= ai(αi − ¯α)and using ∑ 
+
+> i
+
+aiui = ∑ 
+
+> i
+
+ai(viWO −o) = ∑ 
+
+> i
+
+aiviWO −o =
+
+o − o = 0 (the middle step holds by ∑ 
+
+> i
+
+ai = 1), the mean-subtraction term drops out: 
+
+E(1)  
+
+> K
+
+= ∑
+
+> i
+
+ai(αi − ¯α) ui = ∑
+
+> i
+
+aiαi ui − ¯α ∑
+
+> i
+
+aiui
+
+︸ ︷︷ ︸
+
+> = 0
+
+= ∑
+
+> i
+
+aiαi ui.
+
+Therefore, using E[αiαℓ] = δiℓ E[α2 
+
+> i
+
+], 
+
+E[∥E(1)  
+
+> K
+
+∥2] = ∑
+
+> i,ℓ
+
+aiaℓ E[αiαℓ] uiu⊤ 
+
+> ℓ
+
+= ∑
+
+> i
+
+a2 
+
+> i
+
+E[α2 
+
+> i
+
+] ∥ui∥2
+
+= ∑
+
+> i,c
+
+a2 
+
+> i
+
+∥viWO − o∥2 q2 
+
+> c
+
+E[( δkic )2], (19) where the last step inserts E[α2 
+
+> i
+
+] = ∑ 
+
+> c
+
+q2 
+
+> c
+
+E[( δkic )2]from (10). This is precisely DK . In particular, by E[α2 
+
+> i
+
+] ≤∥q∥2σ2 
+
+> K
+
+and ∑ 
+
+> i
+
+a2 
+
+> i
+
+≤ 1, ( E∥E(1)  
+
+> K
+
+∥2)1/2 ≤ ∥ q∥σK D1/2 
+
+> o
+
+≤
+
+A0D1/2 
+
+> o
+
+.Further we bound E(3+)  
+
+> K
+
+via the per-token root-mean-square bound of Lemma 1. By the triangle inequality in 
+
+L2, E∥E(3+)  
+
+> K
+
+∥ ≤ max i ∥ui∥ ∑ 
+
+> i
+
+E|ri| ≤ 7D1/2 
+
+> o
+
+A30, hence 
+
+(E[∥E(3+)  
+
+> K
+
+∥2]) 1/2 ≤ 7D1/2 
+
+> o
+
+A30. (20) Writing EK = E(1)  
+
+> K
+
++ E(2)  
+
+> K
+
++ E(3+)  
+
+> K
+
+, the squared norm expands as 
+
+E[∥EK ∥2] = E[∥E(1)  
+
+> K
+
+∥2] + 2 E[E(1)  
+
+> K
+
+E(2) ⊤
+
+> K
+
+]︸ ︷︷ ︸
+
+> (⋆)
+
++ RK , (21) 
+
+RK := E[∥E(2)  
+
+> K
+
+∥2] + 2 E[E(1)  
+
+> K
+
+E(3+) ⊤
+
+> K
+
+] (22) + 2 E[E(2)  
+
+> K
+
+E(3+) ⊤
+
+> K
+
+] + E[∥E(3+)  
+
+> K
+
+∥2].
+
+The three factors have L2 norms of orders A0, A20,and A30 respectively: ( E∥E(1)  
+
+> K
+
+∥2)1/2 ≤ A0D1/2 
+
+> o
+
+by (19), (E∥E(2)  
+
+> K
+
+∥2)1/2 ≤ ∑ 
+
+> i
+
+2aiA20∥ui∥ ≤ 2A20D1/2 
+
+> o
+
+via the pathwise bound |δa(2)  
+
+> i
+
+| ≤ 2aiA20 and ∑ 
+
+> i
+
+ai = 1 and (E∥E(3+)  
+
+> K
+
+∥2)1/2 ≤ 7A30D1/2 
+
+> o
+
+by (20). By Cauchy-Schwarz, each cross term in (22) is bounded by the product of the corresponding norms, so term by term:  
+
+> •
+
+E[∥E(2)  
+
+> K
+
+∥2] ≤ 4 Do A40;
+
+> •
+
+∣∣2E[E(1)  
+
+> K
+
+E(3+) ⊤ 
+
+> K
+
+]∣∣ ≤ 2(A0D1/2
+
+> o
+
+)( 7A30D1/2
+
+> o
+
+) = 14 DoA40
+
+> •
+
+∣∣2 E[E(2)  
+
+> K
+
+E(3+) ⊤ 
+
+> K
+
+]∣∣ ≤ 28 Do A50 
+
+> •
+
+E[∥E(3+)  
+
+> K
+
+∥2] ≤ 49 Do A60
+
+Combining the four bounds, 
+
+|RK | ≤ C D o A40 :for A0 ≤ 1 directly, absorbing A50 ≤ A40 and A60 ≤ A40; for 
+
+A0 > 1 via the trivial estimate ∥EK ∥ ≤ ∑ 
+
+> i
+
+|δai| ∥ ui∥ ≤ 
+
+2D1/2 
+
+> o
+
+(since ∑ 
+
+> i
+
+|δai| ≤ ∑
+
+> i
+
+(ˆ ai + ai) = 2), which together with the norm bounds above controls every term of (22) by C D o A40 in that regime. Now we evaluate the cross-term ( ⋆), since E(1)  
+
+> K
+
+= ∑ 
+
+> i
+
+δa(1)  
+
+> i
+
+ui is linear and E(2)  
+
+> K
+
+=
+
+∑ 
+
+> i
+
+δa(2)  
+
+> i
+
+ui quadratic in {αℓ}, the scalar E(1)  
+
+> K
+
+E(2) ⊤ 
+
+> K
+
+is a homogeneous cubic in {αℓ}, and its expectation reduces to third-order moments E[αpαq αr ]. Each such moment falls into one of three exhaustive cases, all vanishing under Assumption 1. Three distinct indices are E[αpαq αr ] = 0 by mutual independence and zero mean, one repeated index 
+
+E[α2
+
+> p
+
+αq ] with p̸ = q factors as E[α2
+
+> p
+
+] E[αq ] = 0 also by independence and zero mean. A single cubed index, E[α3
+
+> p
+
+]vanishes by symmetry of αp (established after (10)). Hence (⋆) = 2 E[E(1)  
+
+> K
+
+E(2) ⊤
+
+> K
+
+] = 0 , (23) 12 
+
+so the second-order correction does not pollute the leading 
+
+O(∥q∥2Do σ2 
+
+> K
+
+) distortion, and all second-order and higher contributions are absorbed into the remainder. Together with (23), the expansion (21) reads 
+
+E[∥EK ∥2] = DK + RK with |RK | ≤ C D o A40.
+
+Step 4: The value distortion term E[∥EV ∥2]. The value term is exact and requires no expansion, as EV =∑ 
+
+> i
+
+ai δvi WO with deterministic ai. Thus 
+
+E[∥EV ∥2] = ∑
+
+> i,ℓ
+
+aiaℓ E[(δviWO )( δvℓWO )⊤].
+
+By token independence and E[δvi] = 0, the i̸ = ℓ
+
+terms vanish, leaving the diagonal. Expanding 
+
+δviWO = ∑ 
+
+> c
+
+δvic (WO )c, : and using channel independence E[δvic δvic ′ ] = δcc ′ E[( δvic )2], 
+
+E[∥EV ∥2] = ∑
+
+> i
+
+a2 
+
+> i
+
+E
+
+[∥∥∑ 
+
+> c
+
+δvic (WO )c, :
+
+∥∥2]
+
+= ∑
+
+> i
+
+∑
+
+> c
+
+a2 
+
+> i
+
+E[(δvic )2] ∥WOc ∥2 
+
+> F
+
+,
+
+where WOc := ( WO )c, : is the c-th row of WO . This is precisely DV .
+
+Conclusion: Collecting Steps 2–4, 
+
+E[∥o − ˆo∥2] = E[∥E(1)  
+
+> K
+
+∥2]︸ ︷︷ ︸
+
+> DK
+
++ E[∥EV ∥2]︸ ︷︷ ︸
+
+> DV
+
++ R2
+
+︸︷︷︸ 
+
+> 2(c)+2(d)
+
++ RK
+
+︸︷︷︸ 
+
+> Step 3
+
+,
+
+with |R| = |R2 + RK | ≤ C∥q∥2∥WO ∥2 
+
+> F
+
+σ2 
+
+> K
+
+σ2 
+
+> V
+
++
+
+C(A30∥WO ∥2 
+
+> F
+
+σ2 
+
+> V
+
++ DoA40
+
+).
+
+For the above proof, we need a bound on the remainder. For this, we first record the derivatives of the softmax along the ray used in the proof. 
+
+Remark 6 (Softmax derivatives along the ray) . We record the derivatives of the softmax along the ray θ 7 → s + θα ,
+
+θ ∈ [0 , 1] , from which the expansion (11) follows by Taylor’s theorem. With a = softmax (s), write ˜aℓ(θ) := 
+
+softmax (s + θα )ℓ = aℓeθα ℓ /Z(θ), Z(θ) := ∑ 
+
+> ℓ
+
+aℓeθα ℓ ,and ¯αθ := ∑ 
+
+> ℓ
+
+˜aℓ(θ) αℓ, ˜m2(θ) := ∑ 
+
+> ℓ
+
+˜aℓ(θ)( αℓ − ¯αθ )2,
+
+˜m3(θ) := ∑ 
+
+> ℓ
+
+˜aℓ(θ)( αℓ − ¯αθ )3 for the attention-weighted mean, variance, and third central moment of the perturba-tions under the intermediate weights. Then g(θ) := ˜ ai(θ)
+
+satisfies 
+
+g′(θ) = ˜ ai(θ) ( αi − ¯αθ ),
+
+g′′ (θ) = ˜ ai(θ)[(αi − ¯αθ )2 − ˜m2(θ)],
+
+g′′′ (θ) = ˜ ai(θ)
+
+[
+
+(αi − ¯αθ )3 − 3( αi − ¯αθ ) ˜m2(θ) − ˜m3(θ)
+
+]
+
+.
+
+(24) 
+
+Indeed, differentiating log ˜ aℓ(θ) = log aℓ + θα ℓ − log Z(θ)
+
+with ddθ log Z(θ) = ¯ αθ gives ˜a′
+
+> ℓ
+
+(θ) = ˜ aℓ(θ)( αℓ − ¯αθ ); hence, using ∑ 
+
+> ℓ
+
+˜aℓ(θ)( αℓ − ¯αθ ) = 0 ,
+
+¯α′ 
+
+> θ
+
+= ∑
+
+> ℓ
+
+˜a′
+
+> ℓ
+
+(θ) αℓ = ˜m2(θ),
+
+˜m′
+
+> 2
+
+(θ) = ∑
+
+> ℓ
+
+˜a′
+
+> ℓ
+
+(θ)( αℓ − ¯αθ )2 − 2 ¯ α′
+
+> θ
+
+∑
+
+> ℓ
+
+˜aℓ(θ)( αℓ − ¯αθ )= ˜m3(θ),
+
+and the three formulas follow the chain rule. At θ = 0 the weights reduce to the unperturbed a, so 
+
+¯α0 = ¯ α, ˜m2(0) = ∑ 
+
+> ℓ
+
+aℓ
+
+(αℓ − ¯α)2, and g′(0) = ai(αi − ¯α) = 
+
+δa(1)  
+
+> i
+
+, 12 g′′ (0) = 12 ai
+
+[
+
+(αi − ¯α)2 − ∑ 
+
+> ℓ
+
+aℓ
+
+(αℓ − ¯α)2]
+
+= δa(2) 
+
+> i
+
+the first- and second-order terms of (11) are exactly the first two Taylor coefficients of g at θ = 0 , and ri is the exact second-order Taylor remainder of g, as used in Lemma 1. Summing over i gives ∑ 
+
+> i
+
+δa(1)  
+
+> i
+
+= ∑ 
+
+> i
+
+δa(2)  
+
+> i
+
+= 0 , consistent with (12) .
+
+Given the above remark, let us now state and prove the following lemma, providing the softmax tail bound. 
+
+Lemma 1 (Softmax tail bound) . Let ri := δai − δa(1)  
+
+> i
+
+−
+
+δa(2)  
+
+> i
+
+denote the exact remainder of the softmax response past second order, as in (11) . Under Assumptions 1 and 2, for every token i,
+
+|ri| ≤ 7 A30 for every token i and ∑
+
+> i
+
+|ri| ≤ 7 A30 (25) 
+
+and consequently, for any deterministic row vectors {ui},
+
+E[|ri|] ≤ 7 A30, ∑
+
+> i
+
+E[r2
+
+> i
+
+] ≤ 49 A60, (26) 
+
+∥∥∥∑
+
+> i
+
+ri ui
+
+∥∥∥ ≤ 7 max  
+
+> i
+
+∥ui∥ A30 a.s. .
+
+Proof of Lemma 1. Fix a token i and set, for θ ∈ [0 , 1], 
+
+g(θ) := softmax (s + θα )i,
+
+˜aℓ(θ) := softmax (s + θα )ℓ = aℓeθα ℓ
+
+Z(θ) , Z(θ) := ∑
+
+> ℓ
+
+aℓeθα ℓ ,
+
+and write ¯ αθ := ∑ 
+
+> ℓ
+
+˜aℓ(θ)αℓ, ˜m2(θ) := ∑ 
+
+> ℓ
+
+˜aℓ(θ)( αℓ − ¯αθ )2,
+
+˜m3(θ) := ∑ 
+
+> ℓ
+
+˜aℓ(θ)( αℓ − ¯αθ )3, the attention-weighted mean, variance, and third central moment of the pertur-bations under the intermediate weights. At θ = 0 these reduce to ¯ α and ˜m2(0). By the ray derivatives recorded in Remark 6, equation (24), 
+
+g′′′ (θ) = ˜ ai(θ)
+
+[
+
+(αi − ¯αθ )3 − 3( αi − ¯αθ ) ˜m2(θ) − ˜m3(θ)
+
+]
+
+.
+
+Since g ∈ C3([0 , 1]) with g(0) = ai, g(1) = ˆ ai, g′(0) = 
+
+δa(1)  
+
+> i
+
+, and 12 g′′ (0) = δa(2)  
+
+> i
+
+, Taylor’s theorem with integral remainder (see, e.g., [50]) gives the exact identity ri = 12
+
+∫ 10
+
+(1 − θ)2 g′′′ (θ) dθ. (27) Now bound g′′′ pathwise. |αℓ| = |q⊤δkℓ| ≤∑ 
+
+> c
+
+|qc| | δkℓc | ≤ A0 almost surely for every ℓ. Both ¯ αθ and ¯α are convex combinations of the αℓ, so |¯αθ | ≤ A0 and 
+
+|¯α| ≤ A0, hence |αi − ¯αθ | ≤ 2A0, ˜m2(θ) ≤ (2 A0)2 = 4 A20,
+
+| ˜m3(θ)| ≤ (2 A0)3 = 8 A30, the last two because ˜m2(θ) and 
+
+˜m3(θ) are convex combinations of terms bounded by 4 A20
+
+and 8 A30 respectively. The bracket in g′′′ (θ) is therefore at most 8 A30 +3 ·2A0 ·4A20 +8 A30 = 40 A30, uniformly in θ and in the token. For the prefactor, ˜ a( θ) is a probability vector, so ˜ ai(θ) ≤ 1 per token and ∑ 
+
+> i
+
+˜ai(θ) = 1 in aggregate. 13 
+
+Writing gi for the response of token i, this gives, almost surely and uniformly in θ ∈ [0 , 1], 
+
+|g′′′  
+
+> i
+
+(θ)| ≤ 40 A30 and ∑
+
+> i
+
+|g′′′  
+
+> i
+
+(θ)| ≤ 40 A30
+
+∑
+
+> i
+
+˜ai(θ) = 40 A30.
+
+Integrating (27) with ∫ 10 (1 − θ)2dθ = 13 yields both parts of (25): |ri| ≤ 20 3 A30 ≤ 7A30, and ∑ 
+
+> i
+
+|ri| ≤
+
+> 12
+
+∫ 10 (1 − θ)2 ∑ 
+
+> i
+
+|g′′′  
+
+> i
+
+(θ)| dθ ≤ 7A30. The consequences (26) follow: an almost-sure bound dominates the mean ∑ 
+
+> i
+
+E[r 2 
+
+> i
+
+] ≤ E[max i |ri| · ∑ 
+
+> i
+
+|ri|] ≤ 49 A60 and ∥ ∑ 
+
+> i
+
+riui∥ ≤ 
+
+max i ∥ui∥ ∑ 
+
+> i
+
+|ri|. Assumption 2 enters only through the pathwise bound |αℓ| ≤ A0.
+
+B. Derivation of AATC via Waterfilling 
+
+Next, we derive the distortion of AATC given the transform from Section V-A. In the decorrelated basis the hypotheses of Theorem 1 holds by construction: each transformed channel is quantized independently by its own non-overloading bℓ,c -bit uniform quantizer, so the errors 
+
+δH ic = δ ˆHic − Hic are zero-mean, symmetric, independent across tokens and channels, and bounded, with 
+
+E[(δH ic )2] = R2
+
+> ℓ,c
+
+12 · 22bℓ,c = γ (σℓ,c )2 2−2bℓ,c , (28) where σℓ,c is the standard deviation of transformed chan-nel c (equal to √Sc by the whitening), and γ absorbs the range-to-deviation ratio Rℓ,c ∝ σℓ,c . Since γ is common to all channels, it drops out of the allocation. Instantiating Theorem 1 in this basis (effective query ˜q := BK q, output metric ˜M := BV WO W⊤ 
+
+> O
+
+(BV )⊤)gives DK = ∑ 
+
+> i,c
+
+a2 
+
+> i
+
+∥ui∥2 ˜q 2 
+
+> c
+
+E[( δH ic )2] and DV =
+
+∑ 
+
+> i,c
+
+a2 
+
+> i
+
+E[( δH ic )2] ˜Mcc . Since attention weights are un-available at compression time, we allocate against the attention-agnostic surrogate obtained by dropping the token-dependent factors and averaging ˜ q 2 
+
+> c
+
+over calibration queries: 
+
+DℓK =
+
+> dk
+
+∑
+
+> c=1
+
+w(K) 
+
+> ℓ,c
+
+(σ(K) 
+
+> ℓ,c
+
+)2 · 2−2bℓ,c , (29) with w(K) 
+
+> ℓ,c
+
+= 1
+
+T
+
+> T
+
+∑
+
+> i=1
+
+(( BKℓ,c )⊤q(i,ℓ,c ))2
+
+a per-channel weight with i being the tokens from the calibration set and T the size of the calibration set. The weight combines the query alignment and the reconstruc-tion projection. σ(K) 
+
+> ℓ,c
+
+is the variance of the channel and 2−2bℓ,c captures the distortion at bℓ,c bits. 
+
+Remark 7. For grouped query attention in which multiple query heads attend to one key head we need to sum over all the queries that attend to this head in w(K) 
+
+> ℓ,c
+
+, resulting in w(K) 
+
+> ℓ,c
+
+= 1
+
+> T
+
+∑
+
+> qhead
+
+∑Ti=1 (( BKℓ,c )⊤q(qhead ,i,ℓ,c ))2
+
+The value distortion takes the analogous form 
+
+DℓV =
+
+> dv
+
+∑
+
+> c=1
+
+w(V ) 
+
+> ℓ,c
+
+(σ(V ) 
+
+> ℓ,c
+
+)2 · 2−2bℓ,c (30) with w(V ) 
+
+> ℓ,c
+
+= ∥(BV WO )⊤
+
+> ℓ,c
+
+∥2 
+
+> F
+
+. This is the formula from Theorem 1 with the transform plugged into it. The above defines the distortions per-layer. Overall, we can obtain the global distortions as 
+
+Dglobal K =
+
+> L
+
+∑
+
+> ℓ=1
+
+DℓK ; Dglobal V =
+
+> L
+
+∑
+
+> ℓ=1
+
+DℓV .
+
+Given the above, we can formulate the waterfilling problem as in Section V-B. 
+
+C. Mapping Related Work onto the Distortion Formula 1) Token-Level Attention Weight: The factor a2 
+
+> i
+
+cap-tures how strongly token i contributes to the attention out-put. Tokens with vanishing attention weights contribute negligibly to D no matter how their keys and values are quantized, so the natural way to exploit this is to drop such tokens entirely rather than spend bits on them. In the factorization of Eq. 5, a2 
+
+> i
+
+sits inside the token-dependent factor, so methods that exploit it operate orthogonally to the channel-wise allocation we develop here. Token eviction methods take exactly this route. The earliest of them use attention magnitude as the eviction criterion: StreamingLLM [10] preserves the first tokens together with a sliding window of recent tokens, H2O [9] retains "heavy hitter" tokens identified by accumu-lated attention scores, SnapKV [22] selects which tokens to keep during prefill from recent attention patterns. A more recent line of work refines this criterion with value-side information: VATP [23] take into account attention scores and value ℓ1-norms for token eviction, CriticalKV [24] introduces a method evicting tokens based on a projected value norm ∥ViWO ∥1 combined with the attention scores and Expected Attention [26] uses ai∥WO vi∥ as each KV pair’s residual-stream contribution by approximating ai
+
+through an expected attention score. All three target the contribution magnitude ai∥viWO ∥, the size of token i’s di-rect contribution to the output. This ignores the attention mass that would redistribute to the remaining tokens if i
+
+were evicted. The full leading-order eviction cost includes that redistribution and takes the form ai∥viWO −o∥, which CAOTE [25] almost computes in closed form, will be discussed in Subsection C2. 
+
+2) Token-Level Output Relevance: The factor ∥viWO −
+
+o∥2 measures how much token i’s value, after the output projection, deviates from the attention output. It arises in DK as the sensitivity of the output to perturbations in attention allocation caused by key quantization. If 
+
+viWO ≈ o, then key errors at this token are forgiving because moving attention onto or off token i does not change o much. Like a2 
+
+> i
+
+, this factor lives in the token-dependent part of the factorization (Eq. 5) and would naturally belong to a token-wise allocation rather than the channel-wise one we address. The closest precedent in prior KV compression work is CAOTE [25], which defines token eviction error as the change in attention output upon token removal and derives in closed form that this error has the structure of a residual relative to the 14 
+
+attention-weighted average of the value vectors. CAOTE’s quantity differs from that in the attention-aware distortion formula by operating in value space rather than residual-stream space (i.e., before the output projection WO ). The structural insight is, however, shared. What matters is how different a token’s value contribution is from the rest of the output, not just how large its raw contribution is. The other value-aware eviction methods discussed in Section C1 instead target the contribution magnitude 
+
+ai∥viWO ∥, a related quantity that never references o and so misses this distinction. 
+
+3) Query-Aware Precision: The factor q2 
+
+> c
+
+in DK moti-vates allocating precision to the key directions that queries read from strongly. A2ATS [12] derives the attention score error component and uses it to motivate query-aware vector quantization. MixKVQ [21] uses query relevance for mixed-precision allocation. SQuat [20] projects the key quantization error onto the orthogonal complement of the query subspace, so that the retained error lies in directions queries do not read from; this is query-awareness through the error geometry rather than through bit al-location. OSCAR [19] addresses the factor through rota-tion: working with the full query covariance CQ = Q⊤Q
+
+rather than a per-channel energy, it shows under a frozen-error surrogate (post-rotation residual covariance) that the eigendecomposition of CQ minimizes the surrogate (their Theorem 1). OSCAR composes this eigenrotation with a Hadamard transform and bit-reversal permutation, then applies uniform INT2 in the resulting basis. Our method takes a different route to the same goal on the key side. The rotation we use is obtained by whitening the cached activations and is not query-aware. The query signal enters through the bit allocation instead, with channels carrying more query energy receiving more bits. These two routes, query-awareness through the rotation versus through the allocation, coincide in their treatment of the query signal. Each, on its own, already directs precision toward the directions queries read from, so along that axis, applying both double-counts it. However, one could combine OSCAR’s query-aware rotation with channel-wise bit allocation. 
+
+4) Output-Projection-Aware Value Precision: The fac-tor WOc , the column norm of the output projection at value channel c, appears in DV as a multiplier on the value quantization error in that channel. A value chan-nel that the output projection reads from with a large weight has its quantization error amplified at the output; a channel with a small projection weight is forgiving. The decomposition, therefore, motivates allocating value precision in proportion to WOc (or a norm-based aggregate over the output dimensions). To our knowledge, no prior method exposes WOc as an explicit allocation factor. 
+
+WO enters KVQuant’s Fisher sensitivity only implicitly, through the squared gradient of the language-modeling loss with respect to the value activations, J(V ) = ∂L/∂V ,where WO appears entangled with the attention scores and the rest of the downstream gradient. Our criterion instead names WOc as an explicit, closed-form structural term. OSCAR’s value rotation uses the score-weighted value covariance V ⊤A⊤AV , which contains no factor from the output projection. Our allocation criterion incorpo-rates WOc directly, as a structural term derived from the decomposition which remains fixed for every layer, rather than a quantity inferred through calibration. 
+
+5) Per-Channel Sensitivity: The terms E[( δk ic )2] and 
+
+E[( δv ic )2] capture how much quantization error each chan-nel produces under a given quantizer. KIVI [5] addresses this by per-channel asymmetric scaling for keys and per-token scaling for values. KVQuant [6] additionally employs sensitivity-weighted non-uniform quantization. PALU [7] applies SVD-based low-rank truncation. RateQuant [11] is the closest to our approach. It applies rate-distortion theory to mixed-precision allocation, fitting a distortion-rate curve D(b) = αβ −b per component from calibration data and solving via reverse waterfilling. The substantive difference is not granularity (RateQuant operates at the (head, K-or-V) level but is granularity-agnostic in princi-ple), but what the framework makes explicit. RateQuant’s sensitivity weights are squared gradient norms and its distortion curve is a parametric model whose parameters (α, β ) are fit empirically from MSE at a handful of pre-cisions. Query-awareness, the output-projection weights 
+
+WOc and the attention-score weighting ai never appear. They are bundled invisibly into the fitted gradient norms and curve parameters. Our decomposition surfaces these factors explicitly and ties each to a distinct design axis, deriving in closed form the structure that RateQuant leaves implicit in its empirical fits. 
+
+6) Synthesis (Our Method): The four channel-level fac-tors in the decomposition, namely q2 
+
+> c
+
+and E[( δk ic )2] on the key side as well as WOc and E[( δv ic )2] on the value-side, together determine each channel’s contribution to D. Our method allocates non-uniform precisions across channels using a criterion that combines these factors. The rotation is calibration-derived from the cached activations and is shared across the bit-allocation step. We do not optimize it separately for query awareness, since the bit allocation already directs precision to the channels that matter most according to the attention statistics. Each row of the table above is addressed by an existing method through an existing mechanism. Our contribution is to address the channel-level rows jointly through a single allocation criterion derived from the decomposition. Rather than picking one factor and optimizing for it via a single mechanism, we use the decomposition to set precisions that respond to all channel-level factors simultaneously. Our precise method is described in Section V. 
+
+D. Comparison of SVD and Whitening 
+
+KVTC [8] derives its transform from the PCA of 
+
+K := XW , whereas we use a whitening-based SVD of the projection W. We show that these two constructions yield the same transform. The equivalence is confined to this decorrelation step: KVTC decorrelates a global cross-layer cache and allocates on reconstruction error, while 15 
+
+we decorrelate per layer and allocate on the output-aware distortion of Theorem 1. 
+
+Proposition 1 (Equivalence of Whitening-Based SVD and PCA of XW ). Let X ∈ Rn×dmodel be calibration activations, W ∈ Rmodel ×dk a linear projection matrix, and define K := XW ∈ Rn×dk . Let the empirical input covariance be ΣX := 1 
+
+> n
+
+X⊤X and assume ΣX is sym-metric positive definite. Define the whitened weight matrix 
+
+˜W := Σ1/2 
+
+> X
+
+W. Let ˜W = USP ⊤ be its singular value decomposition. Then the following statements hold: 
+
+1) The right singular vectors P coincide with the right singular vectors of K.
+
+2) The transform coding coordinates obtained via KP 
+
+are identical to XΣ −1/2 
+
+> X
+
+US .Proof. First observe that 
+
+K⊤K = W⊤X⊤XW = n W⊤ΣX W.
+
+On the other hand, ˜W⊤ ˜W = W⊤ΣX W. Therefore, 
+
+K⊤K = n ˜W⊤ ˜W. Since multiplication by the positive scalar n does not change eigenvectors, the right singular vectors of K are identical to those of ˜W. Hence, both SVDs yield the same matrix P of right singular vectors. Next, express W using the SVD of ˜W: W =
+
+Σ−1/2 
+
+> X
+
+USP ⊤. Substituting into K = XW gives K =
+
+XΣ −1/2 
+
+> X
+
+USP ⊤. Right-multiplying by P yields KP =
+
+XΣ −1/2 
+
+> X
+
+US . Thus the transform coding coordinates ob-tained by right-multiplying K with P are identical to those obtained via XΣ −1/2 
+
+> X
+
+US .
+
+Remark 8. First, the same holds for the values. Sec-ond, our method uses U√S rather than US , so even the transform-coding coordinates differ by the factor √S, with 
+
+S the singular values. E. Experimental Setting for KV Cache Quantization Methods 
+
+Let us explain in more detail the experimental settings we used for the different KV cache quantization methods appearing in Section VI. 
+
+a) KIVI: We use KIVI [5] as in its original implemen-tation, quantizing keys channel-wise and values token-wise with recent-token window of size 128 and a scaling group-size of 32. We also keep the first 4 tokens in full precision. 
+
+b) PALU: For PALU [7], we apply their Fisher-uniform implementation with head group size 4 and the decompose-method whiten. For the low-rank part we es-tablish a recent token window of size 128 with a sliding window of 16 and also keep the first 4 tokens in full preci-sion. Further, we use uniform quantization with Hadamard rotation for the low-rank part. 
+
+c) KVQuant: We reimplemented KVQuant [6], fol-lowing their original method. As in their work, we quantize keys per-channel and values per-token, quantize keys pre-RoPE, and use their non-uniform quantization using a look-up table of 2 b signposts derived via Fisher-sensitivity-weighted k-means. We also implement their dense-and-sparse decomposition, which keeps the top 1% of mag-nitude outliers in full precision. For fairness, we match the FP16 window budget of the other methods, keeping a recent window of 128 tokens (flushed in blocks of 32) and keep the first 4 tokens in full precision. 
+
+d) AATC: If not stated otherwise, we keep the first 4 tokens in full precision and set the full precision recent token window to 128 with a sliding step 16. The bit range allowed for bit allocation per channel is 0 to 16 and the allocation is done globally across all layers for keys and values as described in Section V. Since the first three layers are quite important, but exhibit smaller activations and gradients and therefore smaller weights in the waterfilling problem, we protect them and give them the average amount of bits for the values and 1 bit more than average for the keys. We always use the same number of bits for keys and values. For the global allocation, we normalize 
+
+σ2 by each layer’s own 95-th percentile to remove the activation-scale bias between the layers, since early layers have smaller activations and thus smaller σ2 and we do the same for w(K)
+
+e) AATC var-only: This refers to our method, but with allocating the bits via reverse waterfilling without using q2 
+
+> c
+
+and Woc in the weights, therefore only using the variance of the quantization error. 
+
+F. Benchmarks 
+
+Here is a more detailed explanation of the benchmarks we use in our experiments. 
+
+a) LongBench v1 [40]: is a bilingual, multi-task benchmark for evaluating long-context understanding, with document lengths ranging from roughly 1k to 34k to-kens. We evaluate on seven English subsets spanning four task categories: single-document QA (TriviaQA, Qasper), query-based summarization (QMSum, SAMSum), few-shot classification (TREC), and code completion (LCC, RepoBench-P). Following the standard LongBench evalu-ation protocol, we use F1 score for QA tasks, ROUGE-L for summarization, accuracy for classification, and edit-similarity for code completion, and report results for each subset individually. We use greedy decoding with 0-shots and task-dependent maximum new tokens ranging from 32 to 512 (TriviaQA: 32, TREC: 64, Qasper: 128, SAMSum: 128, LCC: 64, RepoBench-P: 64, QMSum: 512). 
+
+b) RULER [41] (What’s the Real Context Size of Your Long-Context Language Models?): also evaluates long con-text models and tests different context lengths to check if the model still performs well on longer contexts or when its performance degrades. The context lengths are split into 4k, 8k, 16k, 32k, 64k, and 128k, we focus on 4k-32k. It includes 13 tasks across 4 categories (retrieval, multi-hop tracing, aggregation, and question answering) with configurable sequence lengths (4k to 128k tokens). For evaluation, RULER uses task-specific metrics. For Needle-in-a-Haystack (NIAH), those are variable tracking, common 16 
+
+word extraction, and frequency word extraction, it checks whether all reference answers are found in the model’s response. Then it calculates Score = (samples where all answers are found) / (total samples) × 100. For QA tasks, it checks if any reference answer is found in the model’s response and the score is calculated as (samples where at least one answer is found) / (total samples) × 100. For evaluation, we use 500 samples per task, which is a common convention. RULER uses 0-shot greedy decoding with a maximum of 512 new tokens. 
+
+c) GSM8K (Grade School Math 8K) [42]: contains 8,500 linguistically diverse grade school math word prob-lems that require multi-step reasoning. The problems take between 2 and 8 steps to solve and mostly involve basic al-gebra and arithmetic operations. The solutions are given in natural language. For evaluation, we report the percentage of answers correctly extracted from model outputs using 8-shot chain-of-thought prompting and the flexible-extract metric, which parses the final numerical answer from free-form generated text before comparison. 
+
+d) MMLU-Pro [44]: is a challenging multiple-choice benchmark extending MMLU with up to 10 answer op-tions and questions requiring deeper reasoning. We evalu-ate on the math and computer science subjects only, using 5-shot prompting with examples drawn from the validation split of the same subject. The model is asked to respond with a single letter (A-J). We use greedy decoding with a 32-token budget and extract the predicted answer via regex matching on the generated text. Accuracy is re-ported as the fraction of test questions answered correctly across both subjects. LongBench uses greedy decoding, allows up to 32 new tokens and truncates the input to 4096 tokens. 
+
+e) MATH-500 : [43] is a 500-problem subset of the MATH competition benchmark [51], spanning seven sub-jects (algebra, number theory, geometry, etc.) and five difficulty levels. We evaluate using 0-shot chain-of-thought prompting, instructing the model to reason step-by-step and place its final answer as answer . Answers are ex-tracted from the last answer expression and graded for symbolic equivalence using math-verify, with a LaTeX normalization fallback. We report accuracy across all 500 problems. MATH-500 also uses greedy decoding, 2048 max new tokens. 
+
+G. Per-Subtask LongBench Results 
+
+Table III gives the per-subtask LongBench scores un-derlying the averages in Table II. The breakdown explains PALU’s weak average on Qwen. Its degradation is not uniform but almost entirely localized to the two code-completion tasks (RepoBench-P 0 .34 vs. 0 .67 for FP16, and LCC 0 .48 vs. 0 .61), while summarization is essentially lossless (QMSum 0 .234 vs. 0 .237). This is the characteristic signature of low-rank KV compression. The truncated low-rank components carry the fine-grained, token-level information that exact-match code completion and long-range retrieval depend on, whereas the retained dominant 4 3 2 1         
+
+> KV average bits
+> 0.2 0.3 0.4 0.5
+> score
+> LongBench avg.
+> 4321
+> KV average bits
+> 0.0 0.2 0.4 0.6 0.8
+> GSM8K
+> FP16 baseline AATC (ours) KIVI
+> Fig. 2. LongBench average and GSM8K versus KV averages bits on
+> Llama-3.1-8B-Instruct .
+
+subspace suffices for short-context needle retrieval. The same mechanism accounts for PALU’s RULER profile in Table II, competitive at 4k but degrading monotonically with length. 
+
+H. Robustness across different Bit Budgets 
+
+Table V and Figure 2 sweep AATC across KV bit averages from 4-bit down to 1-bit. AATC degrades grace-fully. The LongBench average remains within the noise of FP16 from 4-bit down to 2-bit, and GSM8K declines smoothly, with a pronounced drop appearing only at 1.5-bit and below. At the extreme 1-bit setting, AATC remains substantially more robust than KIVI ( LongBench 0.33 vs. 0.20, GSM8K 0.50 vs. 0 .03 on Llama), indicating that the transform-and-allocation design fails far more gracefully than fixed-precision quantization once the bit budget is exhausted. Table IV isolates AATC’s 2-bit operating point ( ≈ 7×)against the FP16 reference. The 2-bit quantization base-lines (KIVI and KVQuant), which run at ≈ 5 to 6 ×, are reported in Table II. AATC stays close to FP16 on Qwen across all context lengths, while AATC var-only falls off on long-context RULER , consistent with Figure 1. 
+
+I. Ablation: Allocation and Calibration 
+
+Table VI ablates the two design axes of AATC at 2-bit on Llama. The bit-allocation strategy is the dominant factor. Replacing the adaptive allocation with a single global allocation costs 8 .6 LongBench points (0 .568 to 0.483), and removing the query-norm term ( q2 
+
+> c
+
+) costs 3 .8points. In contrast, omitting the output-projection ( WO )term ( −0.8) and using a per-layer rather than per-channel allocation ( −1.6) does not drop performance significantly. For the calibration-corpus we cannot see a significant drop for only using OpenR1-Math −0.9, for FineWeb the drop is slightly larger, which one could interpret as reasoning text being important for calibration. GSM8K is not much affected by any variants, so the ablation is resolved on LongBench .Consistent with Section G, the damage from the significant ablations concentrates on the precision-sensitive code and retrieval subtasks (global allocation drops LCC 0 .63 to 0.47 and RepoBench-P 0 .57 to 0 .46). 17 
+
+TABLE III 
+
+Per-subtask LongBench scores at the main-table operating point: F1 for QA (TriviaQA, Qasper), ROUGE-L for summarization (SAMSum, QMSum) and query summarization, accuracy for classification (TREC), and edit-similarity for code (LCC, RepoBench-P). Bold = best compressed method per column, and the FP16 baseline is a reference. 
+
+Method TriviaQA Qasper TREC SAMSum LCC RepoB-P QMSum avg. 
+
+Llama-3.1-8B-Instruct 
+
+Baseline 0.917 0.455 0.725 0.437 0.634 0.567 0.254 0.570 KIVI 0.913 0.440 0.725 0.448 0.619 0.552 0.250 0.564 PALU 0.892 0.449 0.710 0.438 0.539 0.576 0.248 0.550 KVQuant 0.921 0.413 0.675 0.415 0.633 0.546 0.241 0.549 AATC var 0.922 0.452 0.715 0.430 0.634 0.559 0.251 0.566 
+
+AATC (ours) 0.919 0.444 0.690 0.434 0.623 0.546 0.252 0.558 
+
+Qwen-2.5-7B-Instruct 
+
+Baseline 0.900 0.434 0.715 0.460 0.606 0.668 0.237 0.574 KIVI 0.597 0.187 0.568 0.337 0.283 0.316 0.168 0.351 PALU 0.876 0.367 0.650 0.440 0.477 0.342 0.234 0.484 KVQuant 0.900 0.409 0.700 0.449 0.583 0.640 0.226 0.558 AATC var 0.896 0.425 0.675 0.461 0.569 0.648 0.233 0.558 AATC (ours) 0.912 0.435 0.700 0.452 0.609 0.631 0.232 0.567 
+
+TABLE IV 
+
+AATC at the aggressive 2-bit operating point ( ≈7× compression), against the FP16 reference. Baseline compression methods (KIVI, PALU, KVQuant), which run at 2-bit and ≈5 to 6 ×, are reported in the main results table (II). 
+
+LongBench RULER Reasoning 
+
+Method Comp. avg. 4k 8k 16k 32k GSM8K MMLU-m MMLU-cs MATH Llama Baseline (FP16) 1.00 0.570 0.859 0.856 0.828 0.775 0.789 0.438 0.456 0.454 AATC var 7.0 0.543 0.818 0.822 0.775 0.677 0.767 0.402 0.427 0.484 
+
+AATC (ours) 7.0 0.568 0.851 0.861 0.809 0.735 0.756 0.416 0.434 0.448 Qwen Baseline (FP16) 1.00 0.574 0.720 0.716 0.718 0.720 0.818 0.708 0.567 0.680 AATC var 6.9 0.518 0.688 0.653 0.640 0.566 0.795 0.644 0.510 0.664 AATC (ours) 6.9 0.555 0.703 0.702 0.704 0.669 0.802 0.658 0.542 0.676 
+
+TABLE V 
+
+LongBench per-subtask scores and GSM8K across KV multiple bit-budgets. Metrics: F1 (TriviaQA, Qasper), accuracy (TREC), ROUGE-L (SAMSum, QMSum), edit-similarity (LCC, RepoBench-P). LB avg. is the seven-task mean. 
+
+Config Comp TriviaQA Qasper TREC SAMSum LCC RepoB-P QMSum LB avg. GSM8K 
+
+Llama-3.1-8B–Instruct Baseline FP16 1.0 0.917 0.455 0.725 0.437 0.634 0.567 0.254 0.570 0.789 KIVI 4-bit 3.1 0.917 0.454 0.725 0.440 0.634 0.568 0.250 0.570 0.795 KVQuant 4-bit 3.4 0.914 0.447 0.725 0.426 0.631 0.560 0.256 0.566 0.779 AATC 4-bit 3.8 0.916 0.446 0.725 0.436 0.624 0.565 0.253 0.566 0.783 KIVI 3-bit 3.8 0.914 0.450 0.725 0.435 0.634 0.564 0.254 0.568 0.792 KVQuant 3-bit 4.3 0.921 0.452 0.725 0.433 0.631 0.559 0.250 0.567 0.776 AATC 3-bit 4.9 0.920 0.458 0.705 0.439 0.613 0.549 0.251 0.562 0.778 AATC-var 2-bit 7.0 0.897 0.435 0.650 0.436 0.619 0.519 0.243 0.543 0.767 AATC 2-bit 7.0 0.917 0.456 0.720 0.438 0.630 0.570 0.248 0.568 0.756 AATC 1.5-bit 9.1 0.874 0.336 0.630 0.434 0.480 0.358 0.223 0.476 0.718 KIVI 1-bit 7.1 0.256 0.059 0.368 0.114 0.257 0.241 0.122 0.202 0.026 AATC 1-bit 12.4 0.614 0.111 0.265 0.289 0.445 0.375 0.174 0.325 0.497 Qwen-2.5-7B–Instruct Baseline FP16 1.0 0.900 0.434 0.715 0.460 0.606 0.668 0.237 0.574 0.818 KIVI 4-bit 3.1 0.734 0.291 0.665 0.399 0.451 0.518 0.195 0.465 0.131 KVQuant 4-bit 3.4 0.897 0.428 0.710 0.465 0.605 0.667 0.236 0.573 0.820 AATC-var 4-bit 3.8 0.891 0.427 0.735 0.459 0.604 0.661 0.238 0.574 0.820 AATC 4-bit 3.8 0.894 0.434 0.700 0.459 0.612 0.664 0.232 0.571 0.825 KIVI 3-bit 3.8 0.686 0.233 0.620 0.374 0.334 0.380 0.188 0.402 0.182 KVQuant 3-bit 4.3 0.921 0.452 0.725 0.433 0.631 0.558 0.250 0.567 0.816 AATC-var 3-bit 4.9 0.907 0.424 0.705 0.464 0.596 0.652 0.233 0.569 0.832 AATC 3-bit 4.9 0.888 0.433 0.705 0.457 0.599 0.667 0.238 0.570 0.818 AATC-var 2-bit 6.9 0.871 0.365 0.620 0.445 0.500 0.603 0.222 0.518 0.795 AATC 2-bit 6.9 0.898 0.386 0.705 0.456 0.597 0.612 0.230 0.555 0.802 
+
+TABLE VI 
+
+Ablation of AATC’s bit-allocation and calibration choices (2-bit, Llama-3.1-8B-Instruct , with LongBench per-subtask, LB avg. = seven-task mean and GSM8K ). 
+
+AATC variant (2-bit, Llama-3.1-8B-Instruct ) TriviaQA Qasper TREC SAMSum LCC RepoB-P QMSum LB avg. GSM8K 
+
+AATC 2-bit (standard) 0.917 0.456 0.720 0.438 0.630 0.570 0.248 0.568 0.751 
+
+Allocation 
+
+no q2 
+
+> c
+
+in allocation 0.910 0.410 0.685 0.444 0.545 0.473 0.248 0.531 0.752 no WO in allocation 0.916 0.452 0.720 0.430 0.602 0.551 0.251 0.560 0.763 
+
+per-layer allocation 0.913 0.430 0.715 0.445 0.583 0.533 0.249 0.553 0.760 global allocation 0.847 0.337 0.595 0.432 0.475 0.462 0.231 0.483 0.740 
+
+Calibration set 
+
+calib. OpenR1-Math only 0.915 0.449 0.710 0.454 0.600 0.540 0.248 0.559 0.761 calib. FineWeb only 0.895 0.437 0.690 0.446 0.564 0.540 0.248 0.546 0.754 18 
+
+References 
+
+[1] A. Gersho and R. M. Gray, Vector quantization and signal compression . USA: Kluwer Academic Publishers, 1991. [2] V. K. Goyal, “Theoretical foundations of transform coding,” 
+
+IEEE Signal processing magazine , vol. 18, no. 5, pp. 9–21, 2001. [3] T. M. Cover and J. A. Thomas, Elements of information theory .John Wiley & Sons, 2005. [4] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” Advances in neural information processing systems ,vol. 30, 2017. [5] Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu, “KIVI: A tuning-free asymmetric 2bit quantiza-tion for KV cache,” in Proceedings of the 41st International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp, Eds., vol. 235. PMLR, 21–27 Jul 2024, pp. 32 332–32 344. [6] C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami, “Kvquant: Towards 10 million context length llm inference with kv cache quantization,” 
+
+Advances in Neural Information Processing Systems , vol. 37, pp. 1270–1303, 2024. [7] C.-C. Chang, W.-C. Lin, C.-Y. Lin, C.-Y. Chen, Y.-F. Hu, P.-S. Wang, N.-C. Huang, L. Ceze, M. Abdelfattah, and K.-C. Wu, “Palu: Kv-cache compression with low-rank projection,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 50 222–50 249. [8] K. Staniszewski and A. Lancucki, “Kv cache transform coding for compact storage in llm inference,” in International Confer-ence on Learning Representations , vol. 2026, 2026, pp. 37 768– 37 815. [9] Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett et al. , “H2o: Heavy-hitter oracle for efficient generative inference of large language models,” Advances in Neural Information Processing Systems ,vol. 36, pp. 34 661–34 710, 2023. [10] G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis, “Efficient streaming language models with attention sinks,” in Interna-tional Conference on Learning Representations , vol. 2024, 2024, pp. 21 875–21 895. [11] F. Zuo, Z. Zhou, H. Cong, X. Xi, and H. F. Leung, “Rate-quant: Optimal mixed-precision kv cache quantization via rate-distortion theory,” arXiv preprint arXiv:2605.06675 , 2026. [12] J. He, J. Xing, N. Wang, R. Xu, S. Wu, P. Zhou, Q. Liu, C. J. Xue, and Q. Li, “A2ats: Retrieval-based kv cache reduction via windowed rotary position embedding and query-aware vector quantization,” in Findings of the Association for Computational Linguistics: ACL 2025 , 2025, pp. 12 451–12 463. [13] J. Li, Y. Zhang, M. Y. Hassan, T. Chafekar, T. Cai, Z. Ren, P. Guo, B. Karimzadeh, C. J. Reed, C. Wang, and C. Gan, “Commvq: commutative vector quantization for kv cache com-pression,” in Proceedings of the 42nd International Conference on Machine Learning , ser. ICML’25, 2025. [14] A. Zandieh, M. Daliri, M. Hadian, and V. Mirrokni, “Turbo-quant: Online vector quantization with near-optimal distortion rate,” in International Conference on Learning Representations ,vol. 2026, 2026, pp. 56 418–56 439. [15] U. Saxena, G. Saha, S. Choudhary, and K. Roy, “Eigen atten-tion: Attention in low-rank space for kv cache compression,” in Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024, pp. 15 332–15 344. [16] C.-C. Chang, W.-C. Lin, C.-Y. Lin, H.-Y. Chiang, Y. Akhauri, X. Dai, H. Jiang, Y. Li, L. Ceze, K.-C. Wu, and M. S. Abdelfat-tah, “xKV: Cross-layer KV-cache compression via aligned singu-lar vector extraction,” in Forty-third International Conference on Machine Learning , 2026. [17] A. Liu, J. Liu, Z. Pan, Y. He, R. Haffari, and B. Zhuang, “Minicache: Kv cache compression in depth dimension for large language models,” Advances in Neural Information Processing Systems , vol. 37, pp. 139 997–140 031, 2024. [18] Z. Su, Z. Chen, W. Shen, H. Wei, L. Li, H. Yu, and K. Yuan, “Rotatekv: Accurate and robust 2-bit kv cache quantization for llms via outlier-aware adaptive rotations,” arXiv preprint arXiv:2501.16383 , 2025. [19] Z. Zhou, D. Zhuang, J. Li, Z. Chen, S. L. Song, B. Athi-waratkun, and X. Wu, “Oscar: Offline spectral covariance-aware rotation for 2-bit kv cache quantization,” arXiv preprint arXiv:2605.17757 , 2026. [20] H. Wang, L. Han, K. Xu, and A. Srivastava, “SQuat: Subspace-orthogonal KV cache quantization,” in Second Conference on Language Modeling , 2025. [21] T. Zhang, Z. Zeng, H. Peng, H. Zhuang, and C. Chen, “Mixkvq: Query-aware mixed-precision kv cache quantization for long-context reasoning,” in Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2026, pp. 7189–7204. [22] Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen, “Snapkv: Llm knows what you are looking for before generation,” Advances in Neural Informa-tion Processing Systems , vol. 37, pp. 22 947–22 970, 2024. [23] Z. Guo, H. Kamigaito, and T. Watanabe, “Attention score is not all you need for token importance indicator in kv cache reduc-tion: Value also matters,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024, pp. 21 158–21 166. [24] Y. Feng, J. Lv, H. Guo, Y. Cao, S. K. Zhou, and X. Xie, “Criticalkv: Optimizing kv cache eviction from an output per-turbation perspective,” arXiv preprint arXiv:2502.03805 , 2025. [25] R. Goel, J. Park, M. Gagrani, D. Jones, M. J. Morse, M. H. Langston, C. Lott, and M. Lee, “Caote: Optimizing kv cache memory through attention output error-based token eviction,” in ICLR 2026 Workshop on Memory for LLM-Based Agentic Systems , 2026. [26] A. Devoto, M. Jeblick, and S. Jégou, “Expected attention: Kv cache compression by estimating attention from future queries distribution,” arXiv preprint arXiv:2510.00636 , 2025. [27] W. Cheng, S. Dong, J. Qin, and W. Wang, “Qaq: Quality adaptive quantization for llm kv cache,” in 2025 IEEE/CVF International Conference on Computer Vision Workshops (IC-CVW) . IEEE, 2025, pp. 2563–2571. [28] D. Calver, “Runtime-certified bounded-error quantized atten-tion,” arXiv preprint arXiv:2605.20868 , 2026. [29] P.-C. Su, “eoptshrinkq: Near-lossless kv cache compression through optimal spectral denoising and quantization,” arXiv preprint arXiv:2605.02905 , 2026. [30] J. Huang and P. Schultheiss, “Block quantization of correlated gaussian random variables,” IEEE Transactions on Communi-cations Systems , vol. 11, no. 3, pp. 289–296, 1963. [31] N. Jayant, J. Johnston, and R. Safranek, “Signal compression based on models of human perception,” Proceedings of the IEEE ,vol. 81, no. 10, pp. 1385–1422, 1993. [32] J. Ballé, P. A. Chou, D. Minnen, S. Singh, N. Johnston, E. Agustsson, S. J. Hwang, and G. Toderici, “Nonlinear trans-form coding,” IEEE Journal of Selected Topics in Signal Pro-cessing , vol. 15, no. 2, pp. 339–353, 2020. [33] G. K. Wallace, “The jpeg still picture compression standard,” 
+
+Communications of the ACM , vol. 34, no. 4, pp. 30–44, 1991. [34] A. Radford, K. Narasimhan, T. Salimans, I. Sutskever 
+
+et al. , “Improving language understanding by generative pre-training,” Technical report, OpenAI , 2018. [35] J. Ainslie, J. Lee-Thorp, M. De Jong, Y. Zemlyanskiy, F. Le-brón, and S. Sanghai, “Gqa: Training generalized multi-query transformer models from multi-head checkpoints,” in Proceed-ings of the 2023 conference on empirical methods in natural language processing , 2023, pp. 4895–4901. [36] M. Nagel, M. Fournarakis, R. A. Amjad, Y. Bondarenko, M. Van Baalen, and T. Blankevoort, “A white paper on neural network quantization,” arXiv preprint arXiv:2106.08295 , 2021. [37] W. R. Bennett, “Spectra of quantized signals,” The Bell System Technical Journal , vol. 27, no. 3, pp. 446–472, 1948. [38] B. Widrow, I. Kollar, and M.-C. Liu, “Statistical theory of quantization,” IEEE Transactions on instrumentation and mea-surement , vol. 45, no. 2, pp. 353–361, 1996. [39] R. Gray and D. Neuhoff, “Quantization,” IEEE Transactions on Information Theory , vol. 44, no. 6, pp. 2325–2383, 1998. [40] Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou et al. , “Longbench: A bilingual, multi-task benchmark for long context understanding,” in Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , 2024, pp. 3119–3137. 19 
+
+[41] C.-P. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, and B. Ginsburg, “RULER: What’s the real context size of your long-context language models?” in First Conference on Language Modeling , 2024. [42] K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano et al. ,“Training verifiers to solve math word problems,” arXiv preprint arXiv:2110.14168 , 2021. [43] H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe, “Let’s verify step by step,” in International Conference on Learning Representations , vol. 2024, 2024, pp. 39 578–39 601. [44] Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang et al. , “Mmlu-pro: A more robust and challenging multi-task language understanding benchmark,” Advances in Neural Information Processing Sys-tems , vol. 37, pp. 95 266–95 290, 2024. [45] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Ka-dian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [46] Q. A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, G. Dong, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y.-C. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, Z. Qiu, S. Quan, and Z. Wang, “Qwen2.5 technical report,” ArXiv , vol. abs/2412.15115, 2024. [47] S. Merity, C. Xiong, J. Bradbury, and R. Socher, “Pointer sen-tinel mixture models,” arXiv preprint arXiv:1609.07843 , 2016. [48] G. Penedo, H. Kydlíček, A. Lozhkov, M. Mitchell, C. Raffel, L. Von Werra, T. Wolf et al. , “The fineweb datasets: Decanting the web for the finest text data at scale,” Advances in Neural Information Processing Systems , vol. 37, pp. 30 811–30 849, 2024. [49] Hugging Face, “Open r1: A fully open reproduction of deepseek-r1,” January 2025. [Online]. Available: https://github. com/huggingface/open-r1 [50] V. A. Zorich, Mathematical Analysis I . Springer, 2004. [51] D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt, “Measuring mathematical problem solving with the math dataset,” NeurIPS , 2021.

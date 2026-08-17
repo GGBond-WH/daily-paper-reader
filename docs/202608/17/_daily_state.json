@@ -1,0 +1,57 @@
+{
+  "date": "20260817",
+  "date_label": "",
+  "generated_at": "2026-08-17 20:44:33 UTC",
+  "recommend_exists": true,
+  "run_count": 1,
+  "papers": [
+    {
+      "paper_id": "2608.14191v1",
+      "route": "202608/17/2608.14191v1-kv-cache-compression-through-the-lens-of-transform-coding",
+      "title": "KV Cache Compression Through the Lens of Transform Coding",
+      "section": "deep",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 9.0,
+      "evidence": "直接针对KV缓存的量化与压缩问题，提出注意力感知失真度量与变换编码方法",
+      "first_seen_at": "2026-08-17 20:44:33 UTC",
+      "updated_at": "2026-08-17 20:44:33 UTC"
+    },
+    {
+      "paper_id": "2608.13868v1",
+      "route": "202608/17/2608.13868v1-exploring-high-bandwidth-flash-for-modern-llm-inference-opportunities-and-challenges",
+      "title": "Exploring High-Bandwidth Flash for Modern LLM Inference: Opportunities and Challenges",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 7.0,
+      "evidence": "利用高带宽闪存缓解LLM服务内存容量瓶颈，涵盖KV缓存增长",
+      "first_seen_at": "2026-08-17 20:44:33 UTC",
+      "updated_at": "2026-08-17 20:44:33 UTC"
+    },
+    {
+      "paper_id": "2608.13987v1",
+      "route": "202608/17/2608.13987v1-nanbeige42-3b-on-apple-silicon-fixing-deployment-bugs-and-decreasing-looped-transformer-memory-overhead",
+      "title": "Nanbeige4.2-3B on Apple Silicon: Fixing Deployment Bugs and Decreasing Looped Transformer Memory Overhead",
+      "section": "quick",
+      "tags": [
+        {
+          "kind": "query",
+          "label": "llm-kv-cache"
+        }
+      ],
+      "score": 6.0,
+      "evidence": "提出分块预填充以缓解峰值注意力内存，解决变压器解码器中的KV缓存内存开销问题。",
+      "first_seen_at": "2026-08-17 20:44:33 UTC",
+      "updated_at": "2026-08-17 20:44:33 UTC"
+    }
+  ]
+}
